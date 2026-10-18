@@ -1123,6 +1123,10 @@ static void build_page(void)
         lv_obj_t *text = label(ui.page, "Nur im Notfall. Drücken kostet!", round ? 160 : ui.width-24);
         lv_obj_set_style_text_font(text, &katmed_font_12, 0);
         lv_obj_set_style_text_align(text, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_style_bg_color(text, lv_color_black(), 0);
+        lv_obj_set_style_bg_opa(text, LV_OPA_70, 0);
+        lv_obj_set_style_pad_all(text, 4, 0);
+        lv_obj_set_style_radius(text, 8, 0);
         lv_obj_align(text, LV_ALIGN_CENTER, 0, h/2+14);
         return;
     }
