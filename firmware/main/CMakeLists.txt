@@ -1,0 +1,22 @@
+idf_build_get_property(KATMED_FULL_STACK KATMED_FULL_STACK)
+idf_build_get_property(KATMED_WITH_CORE KATMED_WITH_CORE)
+set(req esp_timer esp_hw_support freertos)
+set(sources main.c runtime_metrics.c)
+if(KATMED_FULL_STACK)
+    list(APPEND req mesh_lite lvgl esp_lvgl_port esp_lcd_gc9a01
+        katmed_images board katmed_ui)
+    if(IDF_TARGET STREQUAL "esp32c6")
+        list(APPEND req esp_lcd_jd9853 esp_lcd_touch_axs5106)
+    endif()
+endif()
+if(KATMED_WITH_CORE)
+    list(APPEND req katmed_core)
+endif()
+if(KATMED_FULL_STACK AND KATMED_WITH_CORE)
+    list(APPEND req katmed_store katmed_mesh katmed_time esp_app_format)
+    list(APPEND sources usb_console.c runtime_metrics_idf.c)
+endif()
+idf_component_register(SRCS ${sources} INCLUDE_DIRS "." "${CMAKE_BINARY_DIR}/generated" REQUIRES ${req})
+target_compile_definitions(${COMPONENT_LIB} PRIVATE
+    KATMED_FULL_STACK=$<BOOL:${KATMED_FULL_STACK}>
+    KATMED_WITH_CORE=$<BOOL:${KATMED_WITH_CORE}>)

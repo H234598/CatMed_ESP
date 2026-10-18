@@ -1,0 +1,2525 @@
+{
+  "schema_version": 1,
+  "source_root": null,
+  "image_count": 75,
+  "catalogue_sha256": "d7abf723e8d6fd647d94c546aa5dad03ebbe934de843770ae2c7b16849ee4e57",
+  "encoder": "Version: ImageMagick 7.1.2-27 (Beta) Q16-HDRI x86_64 24344 https://imagemagick.org",
+  "resize": "Lanczos cover, centred crop; no stretching",
+  "jpeg": "baseline, sRGB, 4:2:0, no metadata",
+  "sort": "NFC/casefold basename, then relative path; original path breaks ties",
+  "profiles": {
+    "c3_240x240": {
+      "width": 240,
+      "height": 240,
+      "quality": 70
+    },
+    "c6_172x320": {
+      "width": 172,
+      "height": 320,
+      "quality": 90
+    },
+    "c6_320x172": {
+      "width": 320,
+      "height": 172,
+      "quality": 90
+    }
+  },
+  "packs": {
+    "c3_images.bin": {
+      "profiles": [
+        "c3_240x240"
+      ],
+      "budget": 1310720,
+      "bytes": 1284916,
+      "sha256": "3efa51c3f6ced715e8606c9e6b00d4a4da841080782aac02aaee2bb97e884328",
+      "remaining_bytes": 25804
+    },
+    "c6_images.bin": {
+      "profiles": [
+        "c6_172x320",
+        "c6_320x172"
+      ],
+      "budget": 5505024,
+      "bytes": 4273972,
+      "sha256": "cfedc37e8f965a98644dea90e31896c9cb28a24201f3b667407511539a0d1f18",
+      "remaining_bytes": 1231052
+    }
+  },
+  "images": [
+    {
+      "id": "42bacb6ff5a51d9e",
+      "sort_index": 0,
+      "source": "art_déco_chaos_mit_katzen.png",
+      "source_sha256": "42bacb6ff5a51d9eb4aff53068ff7a3acbfbb776b2d18bece689d41f2f7c11d1",
+      "source_dimensions": [
+        1254,
+        1254
+      ],
+      "variants": {
+        "c3_240x240": {
+          "file": "c3_240x240/art_déco_chaos_mit_katzen.jpg",
+          "bytes": 17490,
+          "sha256": "b095253fdbe3963f39443e4ae0233caef91466f6caf1c6f5023984c810f36d3b",
+          "pack": "c3_images.bin",
+          "offset": 0
+        },
+        "c6_172x320": {
+          "file": "c6_172x320/art_déco_chaos_mit_katzen.jpg",
+          "bytes": 25854,
+          "sha256": "539dfdf94b8860a1c105261d73aa98881c8183ef7d6c2e32334fe23c49698206",
+          "pack": "c6_images.bin",
+          "offset": 0
+        },
+        "c6_320x172": {
+          "file": "c6_320x172/art_déco_chaos_mit_katzen.jpg",
+          "bytes": 27499,
+          "sha256": "4d3e2ca085c693b5846a9c5a99cb8109e0903098e23c40bbb07419f18fe1fd52",
+          "pack": "c6_images.bin",
+          "offset": 2116972
+        }
+      }
+    },
+    {
+      "id": "820b273410e0625e",
+      "sort_index": 1,
+      "source": "art_nouveau_katzen_im_blütengewächshaus.png",
+      "source_sha256": "820b273410e0625e36313a8c09ccc5eba494163415171753ea62e97b8ee1f77f",
+      "source_dimensions": [
+        1254,
+        1254
+      ],
+      "variants": {
+        "c3_240x240": {
+          "file": "c3_240x240/art_nouveau_katzen_im_blütengewächshaus.jpg",
+          "bytes": 17913,
+          "sha256": "183461a8cb429d465edee7dc61eb036e7547d8790b0ba7c96e5cc0c28e906996",
+          "pack": "c3_images.bin",
+          "offset": 17492
+        },
+        "c6_172x320": {
+          "file": "c6_172x320/art_nouveau_katzen_im_blütengewächshaus.jpg",
+          "bytes": 30320,
+          "sha256": "8b4aa760bc6b0f3dce5f5df76a313ad7842637d4277caceb0ed52331137b9495",
+          "pack": "c6_images.bin",
+          "offset": 25856
+        },
+        "c6_320x172": {
+          "file": "c6_320x172/art_nouveau_katzen_im_blütengewächshaus.jpg",
+          "bytes": 30127,
+          "sha256": "7b061652dc352636d3931cb2071f79edaeb7161406762243a55127b3ff4e37c5",
+          "pack": "c6_images.bin",
+          "offset": 2144472
+        }
+      }
+    },
+    {
+      "id": "d272eedfed640975",
+      "sort_index": 2,
+      "source": "barocke_katzen_teeparty_im_chaos.png",
+      "source_sha256": "d272eedfed64097542ed5a34562b3f5096c0fbd2fc71dc14004c309d2c6345c4",
+      "source_dimensions": [
+        1254,
+        1254
+      ],
+      "variants": {
+        "c3_240x240": {
+          "file": "c3_240x240/barocke_katzen_teeparty_im_chaos.jpg",
+          "bytes": 16135,
+          "sha256": "156066054ea98f18231c124bc7cb6438fcd913af9a7fb12c241184272e421cd0",
+          "pack": "c3_images.bin",
+          "offset": 35408
+        },
+        "c6_172x320": {
+          "file": "c6_172x320/barocke_katzen_teeparty_im_chaos.jpg",
+          "bytes": 25734,
+          "sha256": "1930b5153b0a56ae3d8b8544d5bf561ad431518c1964105d419222f7c8fe2646",
+          "pack": "c6_images.bin",
+          "offset": 56176
+        },
+        "c6_320x172": {
+          "file": "c6_320x172/barocke_katzen_teeparty_im_chaos.jpg",
+          "bytes": 27520,
+          "sha256": "a320b0040d82c1c7184cdedef29b1e19d558d553f7ae21afda1e4c1cc43e3969",
+          "pack": "c6_images.bin",
+          "offset": 2174600
+        }
+      }
+    },
+    {
+      "id": "6af74b345f26102a",
+      "sort_index": 3,
+      "source": "barockes_katzenchaos_am_desserttisch_variante_01.png",
+      "source_sha256": "6af74b345f26102a3aa992d3a46b17a024418e54746e935314bb0c278ae7ea9b",
+      "source_dimensions": [
+        1254,
+        1254
+      ],
+      "variants": {
+        "c3_240x240": {
+          "file": "c3_240x240/barockes_katzenchaos_am_desserttisch_variante_01.jpg",
+          "bytes": 15807,
+          "sha256": "88a000df13bd3bae95b365cb8a7ba6dbd7ec3f0f02dc605a3369bd512a9fae91",
+          "pack": "c3_images.bin",
+          "offset": 51544
+        },
+        "c6_172x320": {
+          "file": "c6_172x320/barockes_katzenchaos_am_desserttisch_variante_01.jpg",
+          "bytes": 24243,
+          "sha256": "0c334bcfa69f072343a903405a1502bba6f5c4d1089312f8ae62413d687c29a6",
+          "pack": "c6_images.bin",
+          "offset": 81912
+        },
+        "c6_320x172": {
+          "file": "c6_320x172/barockes_katzenchaos_am_desserttisch_variante_01.jpg",
+          "bytes": 27565,
+          "sha256": "a372cc1a4fb0179ee6d11544270215d322fee9ed213a1ccbf9e7522dac18ac3b",
+          "pack": "c6_images.bin",
+          "offset": 2202120
+        }
+      }
+    },
+    {
+      "id": "94c2378037fc51ff",
+      "sort_index": 4,
+      "source": "barockes_katzenchaos_am_desserttisch_variante_02.png",
+      "source_sha256": "94c2378037fc51fff1ef7fb32722d5f88a5f99b38e58edcd99b62ea069ab68d0",
+      "source_dimensions": [
+        1254,
+        1254
+      ],
+      "variants": {
+        "c3_240x240": {
+          "file": "c3_240x240/barockes_katzenchaos_am_desserttisch_variante_02.jpg",
+          "bytes": 15482,
+          "sha256": "982690e83c00a974d8c0bb4cbb270b9ea6fbff7b605dbc028aa774ee37ae0341",
+          "pack": "c3_images.bin",
+          "offset": 67352
+        },
+        "c6_172x320": {
+          "file": "c6_172x320/barockes_katzenchaos_am_desserttisch_variante_02.jpg",
+          "bytes": 25868,
+          "sha256": "82e2f14f5adc595274c6f52a7fd2b5fd107a33b6f27ab98cd8c7f0686f7d1e54",
+          "pack": "c6_images.bin",
+          "offset": 106156
+        },
+        "c6_320x172": {
+          "file": "c6_320x172/barockes_katzenchaos_am_desserttisch_variante_02.jpg",
+          "bytes": 29193,
+          "sha256": "67b6aefacf6a49595dced356c25f7dcc195de88e69a40058b6cf5506a682cf88",
+          "pack": "c6_images.bin",
+          "offset": 2229688
+        }
+      }
+    },
+    {
+      "id": "b7dc03cd33bfd8c3",
+      "sort_index": 5,
+      "source": "chaotische_speisekammer_mit_katzen_und_popcorn.png",
+      "source_sha256": "b7dc03cd33bfd8c3d5a5fcfa31100e1342cd6528ad395c7dfff82501aac28616",
+      "source_dimensions": [
+        1254,
+        1254
+      ],
+      "variants": {
+        "c3_240x240": {
+          "file": "c3_240x240/chaotische_speisekammer_mit_katzen_und_popcorn.jpg",
+          "bytes": 23047,
+          "sha256": "4042c25e3a36be595a9668af36deec1b5573c118a8ddcf214c413903c6a1add5",
+          "pack": "c3_images.bin",
+          "offset": 82836
+        },
+        "c6_172x320": {
+          "file": "c6_172x320/chaotische_speisekammer_mit_katzen_und_popcorn.jpg",
+          "bytes": 37081,
+          "sha256": "433814f83ee7f99de5952d0622da387af42bbb1ef486311ebd2fca250b2e314c",
+          "pack": "c6_images.bin",
+          "offset": 132024
+        },
+        "c6_320x172": {
+          "file": "c6_320x172/chaotische_speisekammer_mit_katzen_und_popcorn.jpg",
+          "bytes": 36100,
+          "sha256": "e7cc3208593bd4395c8994e64e03f609ef3000ad3bfe36bd72259af8ad36cc0b",
+          "pack": "c6_images.bin",
+          "offset": 2258884
+        }
+      }
+    },
+    {
+      "id": "8d9dc43998356a63",
+      "sort_index": 6,
+      "source": "chaotisches_katzenatelier_in_der_töpferei.png",
+      "source_sha256": "8d9dc43998356a63a6aef663eff6949c739101132629b5a57591506d0925225e",
+      "source_dimensions": [
+        1254,
+        1254
+      ],
+      "variants": {
+        "c3_240x240": {
+          "file": "c3_240x240/chaotisches_katzenatelier_in_der_töpferei.jpg",
+          "bytes": 15955,
+          "sha256": "6dfad1c395a8c5781a1acca3cc84d116790fe0f8d1be765229c59db487598787",
+          "pack": "c3_images.bin",
+          "offset": 105884
+        },
+        "c6_172x320": {
+          "file": "c6_172x320/chaotisches_katzenatelier_in_der_töpferei.jpg",
+          "bytes": 25186,
+          "sha256": "5271bc8939d1514890f7172f069b7da3a182c8fb94342af51b25ed4287d28054",
+          "pack": "c6_images.bin",
+          "offset": 169108
+        },
+        "c6_320x172": {
+          "file": "c6_320x172/chaotisches_katzenatelier_in_der_töpferei.jpg",
+          "bytes": 26663,
+          "sha256": "7ee8a298acfdd9b51f83b1cb152ae159281708dd69074a57a607ee3f7fc28974",
+          "pack": "c6_images.bin",
+          "offset": 2294984
+        }
+      }
+    },
+    {
+      "id": "59f2114ce29fcbcb",
+      "sort_index": 7,
+      "source": "chaotisches_katzenparadies_am_meer.png",
+      "source_sha256": "59f2114ce29fcbcb21003cf3b6e1f3f114e563fc67d84c05f1b2257ca9738ace",
+      "source_dimensions": [
+        1254,
+        1254
+      ],
+      "variants": {
+        "c3_240x240": {
+          "file": "c3_240x240/chaotisches_katzenparadies_am_meer.jpg",
+          "bytes": 18895,
+          "sha256": "4151c3014ccc2908fc6678aec0f905fa5815909dbb175be79538b4f20033ebf0",
+          "pack": "c3_images.bin",
+          "offset": 121840
+        },
+        "c6_172x320": {
+          "file": "c6_172x320/chaotisches_katzenparadies_am_meer.jpg",
+          "bytes": 30476,
+          "sha256": "140cccebb1b3ea11f59f10a9afc2797d46c30ba1245d58f7abc50389900b3f5d",
+          "pack": "c6_images.bin",
+          "offset": 194296
+        },
+        "c6_320x172": {
+          "file": "c6_320x172/chaotisches_katzenparadies_am_meer.jpg",
+          "bytes": 31505,
+          "sha256": "5ec948f4964e39631a1dac8d4cf09355bb039ed5e7f98ada9c39582e66c04e33",
+          "pack": "c6_images.bin",
+          "offset": 2321648
+        }
+      }
+    },
+    {
+      "id": "b65d1f585324a752",
+      "sort_index": 8,
+      "source": "facettenkatzen_im_schneeschlitten_chaos.png",
+      "source_sha256": "b65d1f585324a7521fb23e195fec72338018afafd767a3e24b52c372e4b7041d",
+      "source_dimensions": [
+        1254,
+        1254
+      ],
+      "variants": {
+        "c3_240x240": {
+          "file": "c3_240x240/facettenkatzen_im_schneeschlitten_chaos.jpg",
+          "bytes": 11578,
+          "sha256": "364ee434d5729323d977ff924409c6b4dc6f85fc7385acc8ba02ab8d56ba2464",
+          "pack": "c3_images.bin",
+          "offset": 140736
+        },
+        "c6_172x320": {
+          "file": "c6_172x320/facettenkatzen_im_schneeschlitten_chaos.jpg",
+          "bytes": 18479,
+          "sha256": "95e413966e2978f6012a1f37c6b8bcfc8212110a12504a48f3ecf6d987d1b89a",
+          "pack": "c6_images.bin",
+          "offset": 224772
+        },
+        "c6_320x172": {
+          "file": "c6_320x172/facettenkatzen_im_schneeschlitten_chaos.jpg",
+          "bytes": 20450,
+          "sha256": "3af29998afe6f3f66188113ded52cd1b372824799284717a1b5e72e68c73f64b",
+          "pack": "c6_images.bin",
+          "offset": 2353156
+        }
+      }
+    },
+    {
+      "id": "9a6d8fa97baf576f",
+      "sort_index": 9,
+      "source": "fluffige_katzen_auf_schatzsuche_unter_wasser.png",
+      "source_sha256": "9a6d8fa97baf576ffc88eb9820a77bd296eccbe6de3eeb73a876651052857111",
+      "source_dimensions": [
+        1254,
+        1254
+      ],
+      "variants": {
+        "c3_240x240": {
+          "file": "c3_240x240/fluffige_katzen_auf_schatzsuche_unter_wasser.jpg",
+          "bytes": 18218,
+          "sha256": "b6fb7da576cffc49a96d979b740bd1b52026ea171e51103e2fc7500e127a5bc1",
+          "pack": "c3_images.bin",
+          "offset": 152316
+        },
+        "c6_172x320": {
+          "file": "c6_172x320/fluffige_katzen_auf_schatzsuche_unter_wasser.jpg",
+          "bytes": 31925,
+          "sha256": "97ab0c99913bdd838007f7fe3f51d2be54c0c31f1a15cd456da16c3b7fd0d906",
+          "pack": "c6_images.bin",
+          "offset": 243252
+        },
+        "c6_320x172": {
+          "file": "c6_320x172/fluffige_katzen_auf_schatzsuche_unter_wasser.jpg",
+          "bytes": 32191,
+          "sha256": "e289a51e25c66ce61269256ef31e7e7805881535a2a95b026f6fc6755a5aec6d",
+          "pack": "c6_images.bin",
+          "offset": 2373608
+        }
+      }
+    },
+    {
+      "id": "258952e0b9f3afbe",
+      "sort_index": 10,
+      "source": "katzen_auf_der_herbsttreppe.png",
+      "source_sha256": "258952e0b9f3afbeef4af300406d83c8cbfe9c2428690b61dece91401d1ae5ef",
+      "source_dimensions": [
+        1254,
+        1254
+      ],
+      "variants": {
+        "c3_240x240": {
+          "file": "c3_240x240/katzen_auf_der_herbsttreppe.jpg",
+          "bytes": 14759,
+          "sha256": "27a9623f551395055809366e37ccc9861008f161ef2445de852746bbc5491535",
+          "pack": "c3_images.bin",
+          "offset": 170536
+        },
+        "c6_172x320": {
+          "file": "c6_172x320/katzen_auf_der_herbsttreppe.jpg",
+          "bytes": 25656,
+          "sha256": "5d58e1194b1d33eba6e8cf0f768c6c806055aab9190d2902587282f37d442d78",
+          "pack": "c6_images.bin",
+          "offset": 275180
+        },
+        "c6_320x172": {
+          "file": "c6_320x172/katzen_auf_der_herbsttreppe.jpg",
+          "bytes": 27022,
+          "sha256": "07a7f285b07ab3ec4cb34f1327e159fb209584c2d7f27744dd9d3182c69760ba",
+          "pack": "c6_images.bin",
+          "offset": 2405800
+        }
+      }
+    },
+    {
+      "id": "152cd485a6b3f2ba",
+      "sort_index": 11,
+      "source": "katzen_auf_rasanter_küchenrutschpartie.png",
+      "source_sha256": "152cd485a6b3f2bae39b32203a91d0f67d8c583dceaf8a45481f431888609a83",
+      "source_dimensions": [
+        1254,
+        1254
+      ],
+      "variants": {
+        "c3_240x240": {
+          "file": "c3_240x240/katzen_auf_rasanter_küchenrutschpartie.jpg",
+          "bytes": 13663,
+          "sha256": "a51e29684ea131a5173e010032f637a2dfc85fd684afb0ac574cc04914f23564",
+          "pack": "c3_images.bin",
+          "offset": 185296
+        },
+        "c6_172x320": {
+          "file": "c6_172x320/katzen_auf_rasanter_küchenrutschpartie.jpg",
+          "bytes": 22885,
+          "sha256": "2434fc66abc484100bf2cfc7204a7dbcbd8fd5d97a91e943508bf8c6b4e5f1ca",
+          "pack": "c6_images.bin",
+          "offset": 300836
+        },
+        "c6_320x172": {
+          "file": "c6_320x172/katzen_auf_rasanter_küchenrutschpartie.jpg",
+          "bytes": 23515,
+          "sha256": "ab7ba2ea82091feed326302b5b8d110874a6cd0d04267af6ac90765d22725140",
+          "pack": "c6_images.bin",
+          "offset": 2432824
+        }
+      }
+    },
+    {
+      "id": "356b89df4f1edb4e",
+      "sort_index": 12,
+      "source": "katzen_auf_schatzsuche_im_unterwasserreich.png",
+      "source_sha256": "356b89df4f1edb4e759306b33828c94b95bb898e7be9a9f70fa1bb1685c01021",
+      "source_dimensions": [
+        1254,
+        1254
+      ],
+      "variants": {
+        "c3_240x240": {
+          "file": "c3_240x240/katzen_auf_schatzsuche_im_unterwasserreich.jpg",
+          "bytes": 18885,
+          "sha256": "d1467e89c8d37733459f3a1345e888519b74a5368bc6a12746adf4036306f046",
+          "pack": "c3_images.bin",
+          "offset": 198960
+        },
+        "c6_172x320": {
+          "file": "c6_172x320/katzen_auf_schatzsuche_im_unterwasserreich.jpg",
+          "bytes": 33154,
+          "sha256": "3941c9789fd250b0a0acbdefed4a34fd200b6bae7c2ddd4db61e3dcfa2067cc9",
+          "pack": "c6_images.bin",
+          "offset": 323724
+        },
+        "c6_320x172": {
+          "file": "c6_320x172/katzen_auf_schatzsuche_im_unterwasserreich.jpg",
+          "bytes": 33474,
+          "sha256": "eb775129ea9798c0c31cd56894d78afb73bcfc80e9b6645d895728bab0ff6b76",
+          "pack": "c6_images.bin",
+          "offset": 2456340
+        }
+      }
+    },
+    {
+      "id": "c146d9c3f5d148bd",
+      "sort_index": 13,
+      "source": "katzen_garn_und_grosses_nähchaos.png",
+      "source_sha256": "c146d9c3f5d148bd0e831ba44284323108d8c627f7c361c69191df3c3b798f0c",
+      "source_dimensions": [
+        1254,
+        1254
+      ],
+      "variants": {
+        "c3_240x240": {
+          "file": "c3_240x240/katzen_garn_und_grosses_nähchaos.jpg",
+          "bytes": 17669,
+          "sha256": "ab1a02abe3681f33590c7cba45428b4dd4fda03838b4a1d2d5c85e4126161f75",
+          "pack": "c3_images.bin",
+          "offset": 217848
+        },
+        "c6_172x320": {
+          "file": "c6_172x320/katzen_garn_und_grosses_nähchaos.jpg",
+          "bytes": 30793,
+          "sha256": "6d0ef4a604502368003049f81ee236ad5fac920318ea1dab9363f8d419130fa7",
+          "pack": "c6_images.bin",
+          "offset": 356880
+        },
+        "c6_320x172": {
+          "file": "c6_320x172/katzen_garn_und_grosses_nähchaos.jpg",
+          "bytes": 31621,
+          "sha256": "f3ead53b71d4efac44df5412e683d6f18f813b01332b5a9cb36fae5b8c2c8360",
+          "pack": "c6_images.bin",
+          "offset": 2489816
+        }
+      }
+    },
+    {
+      "id": "f9be1152ba5648c1",
+      "sort_index": 14,
+      "source": "katzen_im_fischraketen_cockpit.png",
+      "source_sha256": "f9be1152ba5648c103744142f899510acd52c39b84ad83f3a77be273c54427dd",
+      "source_dimensions": [
+        1254,
+        1254
+      ],
+      "variants": {
+        "c3_240x240": {
+          "file": "c3_240x240/katzen_im_fischraketen_cockpit.jpg",
+          "bytes": 18453,
+          "sha256": "e189fe7b2eb226927fc4ba4911b824aaf5c8fd36888163ba2e84b2bcef430545",
+          "pack": "c3_images.bin",
+          "offset": 235520
+        },
+        "c6_172x320": {
+          "file": "c6_172x320/katzen_im_fischraketen_cockpit.jpg",
+          "bytes": 29366,
+          "sha256": "bf4d748b2c636ecabba5a3d4f2050c11e3c897617e68ce47acfc89e9bccb81be",
+          "pack": "c6_images.bin",
+          "offset": 387676
+        },
+        "c6_320x172": {
+          "file": "c6_320x172/katzen_im_fischraketen_cockpit.jpg",
+          "bytes": 29676,
+          "sha256": "44959885eef1f7411a29072c94c430e6d9a4caf11fa9d24da199294c4ee9b749",
+          "pack": "c6_images.bin",
+          "offset": 2521440
+        }
+      }
+    },
+    {
+      "id": "fdce0c65052c125c",
+      "sort_index": 15,
+      "source": "katzen_im_raketen_cockpit.png",
+      "source_sha256": "fdce0c65052c125c2a3070f09cab97d20f882184c3d37a7291c8e9dc28219540",
+      "source_dimensions": [
+        1254,
+        1254
+      ],
+      "variants": {
+        "c3_240x240": {
+          "file": "c3_240x240/katzen_im_raketen_cockpit.jpg",
+          "bytes": 17634,
+          "sha256": "ee7fd0bbadde4c456c28db4d942962d87275bcf5c5cc8e12eb358039ccdbaa9b",
+          "pack": "c3_images.bin",
+          "offset": 253976
+        },
+        "c6_172x320": {
+          "file": "c6_172x320/katzen_im_raketen_cockpit.jpg",
+          "bytes": 28965,
+          "sha256": "8d6d4933921cf6906108885d3a28adb7a2a82fe63099b1fdc642297ec8f6d772",
+          "pack": "c6_images.bin",
+          "offset": 417044
+        },
+        "c6_320x172": {
+          "file": "c6_320x172/katzen_im_raketen_cockpit.jpg",
+          "bytes": 31070,
+          "sha256": "a45fd0ad3f6e3ee1a1aaca79882d42e4d9a3f8ce48d4952102d1a69a1baf89af",
+          "pack": "c6_images.bin",
+          "offset": 2551116
+        }
+      }
+    },
+    {
+      "id": "9e5df76b2d9448bc",
+      "sort_index": 16,
+      "source": "katzen_im_wäschekorb_unerquicklich.png",
+      "source_sha256": "9e5df76b2d9448bc5b2ebb6583a3b2287784daa0c9e19aab9d9c3de5d63e07ba",
+      "source_dimensions": [
+        1254,
+        1254
+      ],
+      "variants": {
+        "c3_240x240": {
+          "file": "c3_240x240/katzen_im_wäschekorb_unerquicklich.jpg",
+          "bytes": 14411,
+          "sha256": "56eb9e3ff4c54ddcc662e4537ae8299cd4043a10333a3daea7a0eb89b8774eba",
+          "pack": "c3_images.bin",
+          "offset": 271612
+        },
+        "c6_172x320": {
+          "file": "c6_172x320/katzen_im_wäschekorb_unerquicklich.jpg",
+          "bytes": 24729,
+          "sha256": "939afbcc8ff67013a67fc4d83f9d9ecbeae04f44d39d01c2d7261fcba14358db",
+          "pack": "c6_images.bin",
+          "offset": 446012
+        },
+        "c6_320x172": {
+          "file": "c6_320x172/katzen_im_wäschekorb_unerquicklich.jpg",
+          "bytes": 24455,
+          "sha256": "9deeb78caa8f4408f24f8e22712f24daaf0467aa0349e11a4a6667cd63d965d2",
+          "pack": "c6_images.bin",
+          "offset": 2582188
+        }
+      }
+    },
+    {
+      "id": "d978d458568ac990",
+      "sort_index": 17,
+      "source": "katzen_und_das_kleine_ufo.png",
+      "source_sha256": "d978d458568ac990e33778e1814c1e31eaf0322a593dded77fc7beb7158b1118",
+      "source_dimensions": [
+        1254,
+        1254
+      ],
+      "variants": {
+        "c3_240x240": {
+          "file": "c3_240x240/katzen_und_das_kleine_ufo.jpg",
+          "bytes": 11837,
+          "sha256": "f7851f8d29e14f43c0ff8d4a3752984d496c0948ba2e213b127340ff68295c13",
+          "pack": "c3_images.bin",
+          "offset": 286024
+        },
+        "c6_172x320": {
+          "file": "c6_172x320/katzen_und_das_kleine_ufo.jpg",
+          "bytes": 20834,
+          "sha256": "7caf4c1d267560eb4da31612701f92f6eabb2e368246676fe2a25ef823376bc4",
+          "pack": "c6_images.bin",
+          "offset": 470744
+        },
+        "c6_320x172": {
+          "file": "c6_320x172/katzen_und_das_kleine_ufo.jpg",
+          "bytes": 20261,
+          "sha256": "c6c27b210a0e953cdecf8a516f1585c50f73cdd8a4c2b9af11aa89d456aec93d",
+          "pack": "c6_images.bin",
+          "offset": 2606644
+        }
+      }
+    },
+    {
+      "id": "e5f1914e3a70641e",
+      "sort_index": 18,
+      "source": "katzenabenteuer_auf_tempeltreppen.png",
+      "source_sha256": "e5f1914e3a70641e4b1a7cb9415769b4c4718b24109fe277da9dd2062769d7c1",
+      "source_dimensions": [
+        1254,
+        1254
+      ],
+      "variants": {
+        "c3_240x240": {
+          "file": "c3_240x240/katzenabenteuer_auf_tempeltreppen.jpg",
+          "bytes": 15760,
+          "sha256": "920777209d5e048b78d5ed9921ca36b2c7c3eed8e5330f36bdd107323abd3c7f",
+          "pack": "c3_images.bin",
+          "offset": 297864
+        },
+        "c6_172x320": {
+          "file": "c6_172x320/katzenabenteuer_auf_tempeltreppen.jpg",
+          "bytes": 26408,
+          "sha256": "7f50b33faddcc127cbb32a79f53e7c1fb826878dfc658caf83e3156d41848b86",
+          "pack": "c6_images.bin",
+          "offset": 491580
+        },
+        "c6_320x172": {
+          "file": "c6_320x172/katzenabenteuer_auf_tempeltreppen.jpg",
+          "bytes": 28624,
+          "sha256": "5d520d1786c26c015932036b056efcc88ca361a469cc5797830cf012b86725a1",
+          "pack": "c6_images.bin",
+          "offset": 2626908
+        }
+      }
+    },
+    {
+      "id": "aa728387699e5d8c",
+      "sort_index": 19,
+      "source": "katzenabenteuer_in_der_riesenteetasse.png",
+      "source_sha256": "aa728387699e5d8c82a28ef303d2a12e1ff07918bdf58db0660a21a9911e3a3f",
+      "source_dimensions": [
+        1254,
+        1254
+      ],
+      "variants": {
+        "c3_240x240": {
+          "file": "c3_240x240/katzenabenteuer_in_der_riesenteetasse.jpg",
+          "bytes": 19457,
+          "sha256": "54869b39f3763b0d3ad4e83224409539c086ef9fe4447ea45bd092103f8ae5a1",
+          "pack": "c3_images.bin",
+          "offset": 313624
+        },
+        "c6_172x320": {
+          "file": "c6_172x320/katzenabenteuer_in_der_riesenteetasse.jpg",
+          "bytes": 31608,
+          "sha256": "7f7413dbe05ff94db4c75dcada38447725c389ac4a4a0103a223728df3dc58f0",
+          "pack": "c6_images.bin",
+          "offset": 517988
+        },
+        "c6_320x172": {
+          "file": "c6_320x172/katzenabenteuer_in_der_riesenteetasse.jpg",
+          "bytes": 32168,
+          "sha256": "1c20fe1c6437f691c02b5269916f89faed572780872b2af205bb3539929d7ac0",
+          "pack": "c6_images.bin",
+          "offset": 2655532
+        }
+      }
+    },
+    {
+      "id": "7d58998111513583",
+      "sort_index": 20,
+      "source": "katzenchaos_auf_dem_pfannkuchenstapel.png",
+      "source_sha256": "7d5899811151358382889dc5732f59e5728b1265b4e4489a89f4b07edb268137",
+      "source_dimensions": [
+        1254,
+        1254
+      ],
+      "variants": {
+        "c3_240x240": {
+          "file": "c3_240x240/katzenchaos_auf_dem_pfannkuchenstapel.jpg",
+          "bytes": 15244,
+          "sha256": "257e23aa439a16338fd66c8c52e380ae02378a2c6689bb3019cb202102eb101d",
+          "pack": "c3_images.bin",
+          "offset": 333084
+        },
+        "c6_172x320": {
+          "file": "c6_172x320/katzenchaos_auf_dem_pfannkuchenstapel.jpg",
+          "bytes": 26676,
+          "sha256": "7bd91b9edaf733c87a0642c78894c98660547124fdf3712edef55fc6e45ac1d4",
+          "pack": "c6_images.bin",
+          "offset": 549596
+        },
+        "c6_320x172": {
+          "file": "c6_320x172/katzenchaos_auf_dem_pfannkuchenstapel.jpg",
+          "bytes": 26154,
+          "sha256": "391f2a39a2d8e48ec073904a0eb35c516b84df7d9493d04d8c288ccbc4762a19",
+          "pack": "c6_images.bin",
+          "offset": 2687700
+        }
+      }
+    },
+    {
+      "id": "5b57571f2d24f43b",
+      "sort_index": 21,
+      "source": "katzenchaos_auf_dem_schachbrett.png",
+      "source_sha256": "5b57571f2d24f43b5135a100d86da8da9c8ce04619de04cde183d6d22989d6d6",
+      "source_dimensions": [
+        1254,
+        1254
+      ],
+      "variants": {
+        "c3_240x240": {
+          "file": "c3_240x240/katzenchaos_auf_dem_schachbrett.jpg",
+          "bytes": 12946,
+          "sha256": "f5894c85d0d2bcc8ed3d8c38a1314af22d461c7c6f33b316536591b6fe526380",
+          "pack": "c3_images.bin",
+          "offset": 348328
+        },
+        "c6_172x320": {
+          "file": "c6_172x320/katzenchaos_auf_dem_schachbrett.jpg",
+          "bytes": 20088,
+          "sha256": "ad711274c2195ce64b2b6ed51530e049ff136497e41a2ba50b7c3710c4cb2e4a",
+          "pack": "c6_images.bin",
+          "offset": 576272
+        },
+        "c6_320x172": {
+          "file": "c6_320x172/katzenchaos_auf_dem_schachbrett.jpg",
+          "bytes": 20630,
+          "sha256": "7df96c8ad1a624edbddcba1e3f88901a4398e077021507d285ef9cb4c8159b8c",
+          "pack": "c6_images.bin",
+          "offset": 2713856
+        }
+      }
+    },
+    {
+      "id": "c5b87f88c4f73ce1",
+      "sort_index": 22,
+      "source": "katzenchaos_auf_der_abenteuerkarte.png",
+      "source_sha256": "c5b87f88c4f73ce1c6a3d131c336c2a5c3b7dc972d40c1f30a09c61826992221",
+      "source_dimensions": [
+        1254,
+        1254
+      ],
+      "variants": {
+        "c3_240x240": {
+          "file": "c3_240x240/katzenchaos_auf_der_abenteuerkarte.jpg",
+          "bytes": 16785,
+          "sha256": "ab7ca48bac1aebdaf48cc2ca25722952516889ebd003114cd9dac7a45deda9d4",
+          "pack": "c3_images.bin",
+          "offset": 361276
+        },
+        "c6_172x320": {
+          "file": "c6_172x320/katzenchaos_auf_der_abenteuerkarte.jpg",
+          "bytes": 28836,
+          "sha256": "ad2219c2424057ce1bd429275f69ea3477d46e04a409e74b8fbb83ea7ea14487",
+          "pack": "c6_images.bin",
+          "offset": 596360
+        },
+        "c6_320x172": {
+          "file": "c6_320x172/katzenchaos_auf_der_abenteuerkarte.jpg",
+          "bytes": 29793,
+          "sha256": "b9008cb0ab190ad8c58e221c5585d778772152bdd2c2e9a4311b7f04530d62e7",
+          "pack": "c6_images.bin",
+          "offset": 2734488
+        }
+      }
+    },
+    {
+      "id": "b4d876aacde668c8",
+      "sort_index": 23,
+      "source": "katzenchaos_bei_mondlicht.png",
+      "source_sha256": "b4d876aacde668c8510738f29e1603ca49187424502fa5bd2f8eebc0e4b66b5d",
+      "source_dimensions": [
+        1254,
+        1254
+      ],
+      "variants": {
+        "c3_240x240": {
+          "file": "c3_240x240/katzenchaos_bei_mondlicht.jpg",
+          "bytes": 11396,
+          "sha256": "0f4b2cc5cd5e59fde45f42c5cef3c9bc6aae956ec831c7d9b21099abbb247dde",
+          "pack": "c3_images.bin",
+          "offset": 378064
+        },
+        "c6_172x320": {
+          "file": "c6_172x320/katzenchaos_bei_mondlicht.jpg",
+          "bytes": 20179,
+          "sha256": "a9b61b27b671b8be0f87996702e7dc96e3ae1f46d26bd345af729a70584c064b",
+          "pack": "c6_images.bin",
+          "offset": 625196
+        },
+        "c6_320x172": {
+          "file": "c6_320x172/katzenchaos_bei_mondlicht.jpg",
+          "bytes": 20184,
+          "sha256": "b1d26d52f648fdac815ddc2a14c3870a44d149deac8bfcb01076c7d7cef6750c",
+          "pack": "c6_images.bin",
+          "offset": 2764284
+        }
+      }
+    },
+    {
+      "id": "dafdeaa694e0dde5",
+      "sort_index": 24,
+      "source": "katzenchaos_beim_sonnigen_gartenpicknick.png",
+      "source_sha256": "dafdeaa694e0dde59bdaab713d600b40ff810e95e29a37e1affffe2928edc7dc",
+      "source_dimensions": [
+        1254,
+        1254
+      ],
+      "variants": {
+        "c3_240x240": {
+          "file": "c3_240x240/katzenchaos_beim_sonnigen_gartenpicknick.jpg",
+          "bytes": 20036,
+          "sha256": "20fdf54840458c1a8c2ac5132215b7a1615a8ba34176d3431eb0d35c10f0c033",
+          "pack": "c3_images.bin",
+          "offset": 389460
+        },
+        "c6_172x320": {
+          "file": "c6_172x320/katzenchaos_beim_sonnigen_gartenpicknick.jpg",
+          "bytes": 32087,
+          "sha256": "69d8254a715d4808657d4faafa5ec27ef9f197fef038eb7d707f3358f7401f94",
+          "pack": "c6_images.bin",
+          "offset": 645376
+        },
+        "c6_320x172": {
+          "file": "c6_320x172/katzenchaos_beim_sonnigen_gartenpicknick.jpg",
+          "bytes": 32626,
+          "sha256": "7095c087144de76d3b5493fb276b52f95f747cc822d9fb23fdfab42656fd0faa",
+          "pack": "c6_images.bin",
+          "offset": 2784468
+        }
+      }
+    },
+    {
+      "id": "6ed78a55d2e46160",
+      "sort_index": 25,
+      "source": "katzenchaos_im_dachboden_bücherstapel.png",
+      "source_sha256": "6ed78a55d2e461601923a45db7302c0d540c5bc5b0c7f1e37ac3db051a11bdce",
+      "source_dimensions": [
+        1254,
+        1254
+      ],
+      "variants": {
+        "c3_240x240": {
+          "file": "c3_240x240/katzenchaos_im_dachboden_bücherstapel.jpg",
+          "bytes": 13496,
+          "sha256": "3761b55e623c59ffecf6b27737a2e9caf462990493e9243529113938f5df114b",
+          "pack": "c3_images.bin",
+          "offset": 409496
+        },
+        "c6_172x320": {
+          "file": "c6_172x320/katzenchaos_im_dachboden_bücherstapel.jpg",
+          "bytes": 25070,
+          "sha256": "791cd14e80d63c88a7d57ae56fa79558625402f0d47b2ff52cf58bf2c96f73ac",
+          "pack": "c6_images.bin",
+          "offset": 677464
+        },
+        "c6_320x172": {
+          "file": "c6_320x172/katzenchaos_im_dachboden_bücherstapel.jpg",
+          "bytes": 24098,
+          "sha256": "35988d9bdf4099564fb7c49ccc5f5fc4b8fdb448abfd69b20f7df604c6a231e4",
+          "pack": "c6_images.bin",
+          "offset": 2817096
+        }
+      }
+    },
+    {
+      "id": "90f223d3e9c94a1f",
+      "sort_index": 26,
+      "source": "katzenchaos_im_deckenfort.png",
+      "source_sha256": "90f223d3e9c94a1f117bbe072b1379143a669ced04e75a96d31a63b02739368c",
+      "source_dimensions": [
+        1254,
+        1254
+      ],
+      "variants": {
+        "c3_240x240": {
+          "file": "c3_240x240/katzenchaos_im_deckenfort.jpg",
+          "bytes": 14316,
+          "sha256": "3e712557e3b1486a4a4285b02e3259da874d723676e4762bacdc330826b2cc0f",
+          "pack": "c3_images.bin",
+          "offset": 422992
+        },
+        "c6_172x320": {
+          "file": "c6_172x320/katzenchaos_im_deckenfort.jpg",
+          "bytes": 25939,
+          "sha256": "299bf5d814f029d1451e6fed0dee175720478eade3baa868d6cf973da4e7b00f",
+          "pack": "c6_images.bin",
+          "offset": 702536
+        },
+        "c6_320x172": {
+          "file": "c6_320x172/katzenchaos_im_deckenfort.jpg",
+          "bytes": 26444,
+          "sha256": "c59743a605172244ef8842aebd2d2f6b749c75f3b3f3617b7140f3d333c1fe29",
+          "pack": "c6_images.bin",
+          "offset": 2841196
+        }
+      }
+    },
+    {
+      "id": "322ef181bb90d208",
+      "sort_index": 27,
+      "source": "katzenchaos_im_erfinderatelier.png",
+      "source_sha256": "322ef181bb90d208b7d2594fc7ff4ea72684a95802a79e45c7f59a43800e41d7",
+      "source_dimensions": [
+        1254,
+        1254
+      ],
+      "variants": {
+        "c3_240x240": {
+          "file": "c3_240x240/katzenchaos_im_erfinderatelier.jpg",
+          "bytes": 14798,
+          "sha256": "4f0e31662125dc0414a1cd2892764639296714d128dc4438bd0e4831bece02d4",
+          "pack": "c3_images.bin",
+          "offset": 437308
+        },
+        "c6_172x320": {
+          "file": "c6_172x320/katzenchaos_im_erfinderatelier.jpg",
+          "bytes": 23771,
+          "sha256": "526c3aa694e6db43b203ee27611d21b9365690d220f550ca69bd466fde1bddba",
+          "pack": "c6_images.bin",
+          "offset": 728476
+        },
+        "c6_320x172": {
+          "file": "c6_320x172/katzenchaos_im_erfinderatelier.jpg",
+          "bytes": 26674,
+          "sha256": "78367fdca27513af75d18097ceba05c5e98a72279b6c3910f15f59b416bcaca5",
+          "pack": "c6_images.bin",
+          "offset": 2867640
+        }
+      }
+    },
+    {
+      "id": "26e19f53eba06b22",
+      "sort_index": 28,
+      "source": "katzenchaos_im_gemütlichen_fort.png",
+      "source_sha256": "26e19f53eba06b220a6d13ff72ce3a2aa59a62c042a75345470cfb60b0def376",
+      "source_dimensions": [
+        1254,
+        1254
+      ],
+      "variants": {
+        "c3_240x240": {
+          "file": "c3_240x240/katzenchaos_im_gemütlichen_fort.jpg",
+          "bytes": 14049,
+          "sha256": "8a2cc63f234be5d2b5973bfad15f89306beadf2e2a2fa9a4c5ff169201d70c6e",
+          "pack": "c3_images.bin",
+          "offset": 452108
+        },
+        "c6_172x320": {
+          "file": "c6_172x320/katzenchaos_im_gemütlichen_fort.jpg",
+          "bytes": 25206,
+          "sha256": "3572b570fbc3aafdc40f168b09f659da7bd7958c867c1f1f3f1b062c889f3e2e",
+          "pack": "c6_images.bin",
+          "offset": 752248
+        },
+        "c6_320x172": {
+          "file": "c6_320x172/katzenchaos_im_gemütlichen_fort.jpg",
+          "bytes": 24961,
+          "sha256": "ba5b1c2a8e9d71d5ffd0227fd371fc34e6195efd21bef9d8bb2bbc96049efd91",
+          "pack": "c6_images.bin",
+          "offset": 2894316
+        }
+      }
+    },
+    {
+      "id": "4effd92dbece47de",
+      "sort_index": 29,
+      "source": "katzenchaos_im_musikzimmer.png",
+      "source_sha256": "4effd92dbece47de4261fbf27a9f53fba309d2265f9743147bb907cc9534ea46",
+      "source_dimensions": [
+        1254,
+        1254
+      ],
+      "variants": {
+        "c3_240x240": {
+          "file": "c3_240x240/katzenchaos_im_musikzimmer.jpg",
+          "bytes": 16938,
+          "sha256": "bee83d4cb5e1c989e4b8c8b28787aba4e3bb43069a358b678d054a0d8621fca5",
+          "pack": "c3_images.bin",
+          "offset": 466160
+        },
+        "c6_172x320": {
+          "file": "c6_172x320/katzenchaos_im_musikzimmer.jpg",
+          "bytes": 28955,
+          "sha256": "08d36664faf8fb44e7d3de8427620fba638dfd0f4224a3a9a17bf8e12ad4f1bd",
+          "pack": "c6_images.bin",
+          "offset": 777456
+        },
+        "c6_320x172": {
+          "file": "c6_320x172/katzenchaos_im_musikzimmer.jpg",
+          "bytes": 29051,
+          "sha256": "467867eff47e7e818c854f3485f233f475469a150e3d3356b58ee7768667a2bc",
+          "pack": "c6_images.bin",
+          "offset": 2919280
+        }
+      }
+    },
+    {
+      "id": "002e8ab229eeffd6",
+      "sort_index": 30,
+      "source": "katzenchaos_im_neon_arcadeparadies.png",
+      "source_sha256": "002e8ab229eeffd6f3a1fcd1179285d46f96190e3886d8b7a3244b992d1d9996",
+      "source_dimensions": [
+        1254,
+        1254
+      ],
+      "variants": {
+        "c3_240x240": {
+          "file": "c3_240x240/katzenchaos_im_neon_arcadeparadies.jpg",
+          "bytes": 18237,
+          "sha256": "2943e7824034cbb59f4978f3f7a58dfa9f5a7f53f04e6578c562c589b0a7c613",
+          "pack": "c3_images.bin",
+          "offset": 483100
+        },
+        "c6_172x320": {
+          "file": "c6_172x320/katzenchaos_im_neon_arcadeparadies.jpg",
+          "bytes": 29193,
+          "sha256": "7be62361006ecf1a79f37ca8d6d9fd68119be18527d351e3a39a25482da6fdcf",
+          "pack": "c6_images.bin",
+          "offset": 806412
+        },
+        "c6_320x172": {
+          "file": "c6_320x172/katzenchaos_im_neon_arcadeparadies.jpg",
+          "bytes": 30874,
+          "sha256": "73e6348e972de9de26269d871e42c228b7a56e67e8b2b4db184d9d17b760bc7a",
+          "pack": "c6_images.bin",
+          "offset": 2948332
+        }
+      }
+    },
+    {
+      "id": "d2d870df83a5250b",
+      "sort_index": 31,
+      "source": "katzenchaos_im_retro_waschsalon.png",
+      "source_sha256": "d2d870df83a5250bed5ef1ca8caf6d0df09dabe01a00a5804799d0ebcf7b55c2",
+      "source_dimensions": [
+        1254,
+        1254
+      ],
+      "variants": {
+        "c3_240x240": {
+          "file": "c3_240x240/katzenchaos_im_retro_waschsalon.jpg",
+          "bytes": 24323,
+          "sha256": "91ccf4575df9525f6d669ceaab1ebde7a6bdf64e2b8d15f131cceb3c26986cf3",
+          "pack": "c3_images.bin",
+          "offset": 501340
+        },
+        "c6_172x320": {
+          "file": "c6_172x320/katzenchaos_im_retro_waschsalon.jpg",
+          "bytes": 37272,
+          "sha256": "3a929cec1023fd00161052dad922978d1f5653d64fa4a5fbdbdcfcbcf5e56203",
+          "pack": "c6_images.bin",
+          "offset": 835608
+        },
+        "c6_320x172": {
+          "file": "c6_320x172/katzenchaos_im_retro_waschsalon.jpg",
+          "bytes": 36631,
+          "sha256": "fac5dc72953cbddb13c3c48f69e9c18b752c98cde969a8a412ab5a7703b488fa",
+          "pack": "c6_images.bin",
+          "offset": 2979208
+        }
+      }
+    },
+    {
+      "id": "bee471e64513ef3b",
+      "sort_index": 32,
+      "source": "katzenchaos_im_roten_wollknäuel.png",
+      "source_sha256": "bee471e64513ef3bfb4d1833597a21091bd900fd452a9d5c7e13a419a35d182b",
+      "source_dimensions": [
+        1254,
+        1254
+      ],
+      "variants": {
+        "c3_240x240": {
+          "file": "c3_240x240/katzenchaos_im_roten_wollknäuel.jpg",
+          "bytes": 24122,
+          "sha256": "5f61ca0b89d09ff8e6d0d53d7535a2e1504271cea3b832d1647ba0d04256f1ff",
+          "pack": "c3_images.bin",
+          "offset": 525664
+        },
+        "c6_172x320": {
+          "file": "c6_172x320/katzenchaos_im_roten_wollknäuel.jpg",
+          "bytes": 37625,
+          "sha256": "adedd02a41a2157a3f4d10d5684ea6b959b9d7eeceed39d3ea3649c1c5eff1e9",
+          "pack": "c6_images.bin",
+          "offset": 872880
+        },
+        "c6_320x172": {
+          "file": "c6_320x172/katzenchaos_im_roten_wollknäuel.jpg",
+          "bytes": 38242,
+          "sha256": "de939b6a0c2a613f6f93a956fccf0a3d93912ad5e41f2c8e7471a518f277dc3e",
+          "pack": "c6_images.bin",
+          "offset": 3015840
+        }
+      }
+    },
+    {
+      "id": "c5ada5fa1e983a3d",
+      "sort_index": 33,
+      "source": "katzenchaos_in_der_gemütlichen_küche.png",
+      "source_sha256": "c5ada5fa1e983a3d7fe695d1d5ce44313bc67f414e54c8fe0f3b8c6119917ff0",
+      "source_dimensions": [
+        1254,
+        1254
+      ],
+      "variants": {
+        "c3_240x240": {
+          "file": "c3_240x240/katzenchaos_in_der_gemütlichen_küche.jpg",
+          "bytes": 14217,
+          "sha256": "1666f24243be91906c1c2c8ca282d0fbc27181dc69c78bed58bd64c3dbda36e3",
+          "pack": "c3_images.bin",
+          "offset": 549788
+        },
+        "c6_172x320": {
+          "file": "c6_172x320/katzenchaos_in_der_gemütlichen_küche.jpg",
+          "bytes": 21400,
+          "sha256": "82e5b14185c9b644c891ed58f66de51f77dda16046ecc0675f32380bd4284c33",
+          "pack": "c6_images.bin",
+          "offset": 910508
+        },
+        "c6_320x172": {
+          "file": "c6_320x172/katzenchaos_in_der_gemütlichen_küche.jpg",
+          "bytes": 22899,
+          "sha256": "5f0865cb63dd3d36b91ccc8f958e9a82f8e023b166081981fd9c3192e89312e3",
+          "pack": "c6_images.bin",
+          "offset": 3054084
+        }
+      }
+    },
+    {
+      "id": "863c5f753bc2d1c9",
+      "sort_index": 34,
+      "source": "katzenchaos_in_der_pixelspielhalle.png",
+      "source_sha256": "863c5f753bc2d1c987645a00309ffb2c155917d8300c5155808eadfe3fcd50f7",
+      "source_dimensions": [
+        1254,
+        1254
+      ],
+      "variants": {
+        "c3_240x240": {
+          "file": "c3_240x240/katzenchaos_in_der_pixelspielhalle.jpg",
+          "bytes": 22014,
+          "sha256": "700595af9c46317dd9347678f4470788996653d0169caecea5fb5f20a40a1579",
+          "pack": "c3_images.bin",
+          "offset": 564008
+        },
+        "c6_172x320": {
+          "file": "c6_172x320/katzenchaos_in_der_pixelspielhalle.jpg",
+          "bytes": 34943,
+          "sha256": "9178d40e84916a646ff1accd938658f60b62fee037db299dad064bb180932429",
+          "pack": "c6_images.bin",
+          "offset": 931908
+        },
+        "c6_320x172": {
+          "file": "c6_320x172/katzenchaos_in_der_pixelspielhalle.jpg",
+          "bytes": 35477,
+          "sha256": "a06893490da5869bcb3fb6a50c52cc3097e2f699d5d06897a789491d39dd7d6a",
+          "pack": "c6_images.bin",
+          "offset": 3076984
+        }
+      }
+    },
+    {
+      "id": "0058b7bddd85b451",
+      "sort_index": 35,
+      "source": "katzenchaos_in_der_steampunk_werkstatt.png",
+      "source_sha256": "0058b7bddd85b4519d2c174be8b028387f74fcf17c835820ae75cafb7cb7bd8e",
+      "source_dimensions": [
+        1254,
+        1254
+      ],
+      "variants": {
+        "c3_240x240": {
+          "file": "c3_240x240/katzenchaos_in_der_steampunk_werkstatt.jpg",
+          "bytes": 15971,
+          "sha256": "bef2d323cb36a976464bf2782ee61514e96537517cef1a9c46622e5588826df3",
+          "pack": "c3_images.bin",
+          "offset": 586024
+        },
+        "c6_172x320": {
+          "file": "c6_172x320/katzenchaos_in_der_steampunk_werkstatt.jpg",
+          "bytes": 26610,
+          "sha256": "ee785bce48b6df360e7dee32d7bfb538bab41b0f78fb691a996734819ffbef9c",
+          "pack": "c6_images.bin",
+          "offset": 966852
+        },
+        "c6_320x172": {
+          "file": "c6_320x172/katzenchaos_in_der_steampunk_werkstatt.jpg",
+          "bytes": 27949,
+          "sha256": "4bdbabf355222ef7fc30ffba6c8873224a3bdb2daf3d0c8f39c08101fa219627",
+          "pack": "c6_images.bin",
+          "offset": 3112464
+        }
+      }
+    },
+    {
+      "id": "3badf3a84eb23e3a",
+      "sort_index": 36,
+      "source": "kubistische_katzen_im_kunstchaos.png",
+      "source_sha256": "3badf3a84eb23e3a3a6349350f0f147f010e6d818c235e9bc3c54fdc5a458146",
+      "source_dimensions": [
+        1254,
+        1254
+      ],
+      "variants": {
+        "c3_240x240": {
+          "file": "c3_240x240/kubistische_katzen_im_kunstchaos.jpg",
+          "bytes": 18539,
+          "sha256": "93416a9a0838b8cb28335e6d367cd23a76f31d56e5c274f3ae2df98711d6d76a",
+          "pack": "c3_images.bin",
+          "offset": 601996
+        },
+        "c6_172x320": {
+          "file": "c6_172x320/kubistische_katzen_im_kunstchaos.jpg",
+          "bytes": 29089,
+          "sha256": "b05983204e1a8dbce167aa8f131e53c53efe5f4846a9d96b417489dab2058fe9",
+          "pack": "c6_images.bin",
+          "offset": 993464
+        },
+        "c6_320x172": {
+          "file": "c6_320x172/kubistische_katzen_im_kunstchaos.jpg",
+          "bytes": 28829,
+          "sha256": "d5f898ffb526c737d6bb9dd1c24a9c0d6881f4d3e3371135278890c312cbd8a6",
+          "pack": "c6_images.bin",
+          "offset": 3140416
+        }
+      }
+    },
+    {
+      "id": "683e34035ce49789",
+      "sort_index": 37,
+      "source": "kubistisches_katzenchaos_mit_büchern.png",
+      "source_sha256": "683e34035ce497897930e086fadca270667d6b98f409514e51090f239a4b5455",
+      "source_dimensions": [
+        1254,
+        1254
+      ],
+      "variants": {
+        "c3_240x240": {
+          "file": "c3_240x240/kubistisches_katzenchaos_mit_büchern.jpg",
+          "bytes": 16571,
+          "sha256": "a3745d2732ecfcea07aa1ffbec0c0e4bb0ff74cc5ce3953e7eeb36f57cb88c81",
+          "pack": "c3_images.bin",
+          "offset": 620536
+        },
+        "c6_172x320": {
+          "file": "c6_172x320/kubistisches_katzenchaos_mit_büchern.jpg",
+          "bytes": 26410,
+          "sha256": "abd2545cbace2476e6cff0d6c10622ccf36151489b216ba1b9508aa9bb21d9ee",
+          "pack": "c6_images.bin",
+          "offset": 1022556
+        },
+        "c6_320x172": {
+          "file": "c6_320x172/kubistisches_katzenchaos_mit_büchern.jpg",
+          "bytes": 26599,
+          "sha256": "25a454df0fb4cd7688bcdd9830909261680e257059a14025f131ee565319929f",
+          "pack": "c6_images.bin",
+          "offset": 3169248
+        }
+      }
+    },
+    {
+      "id": "52e6decc4b2e87ee",
+      "sort_index": 38,
+      "source": "kuschelige_katzen_im_deckenfort.png",
+      "source_sha256": "52e6decc4b2e87ee7285171ae0a404950cb056e2ef4126506ecb21ba8b9fb427",
+      "source_dimensions": [
+        1254,
+        1254
+      ],
+      "variants": {
+        "c3_240x240": {
+          "file": "c3_240x240/kuschelige_katzen_im_deckenfort.jpg",
+          "bytes": 15319,
+          "sha256": "b2e491070f0ba9bc1dc6b739650ae1cb5e33db82a366322e85f5a8bda59cafc4",
+          "pack": "c3_images.bin",
+          "offset": 637108
+        },
+        "c6_172x320": {
+          "file": "c6_172x320/kuschelige_katzen_im_deckenfort.jpg",
+          "bytes": 27375,
+          "sha256": "fc13c5980e33f87e596252e978a2e335a1ffdeba68692e45557772e3469bd6dc",
+          "pack": "c6_images.bin",
+          "offset": 1048968
+        },
+        "c6_320x172": {
+          "file": "c6_320x172/kuschelige_katzen_im_deckenfort.jpg",
+          "bytes": 26530,
+          "sha256": "bfaa3b8f575c78f7757902fe14cc8ddf161978efd17e9a562e9780d31e3185b0",
+          "pack": "c6_images.bin",
+          "offset": 3195848
+        }
+      }
+    },
+    {
+      "id": "209eea888a61fbd5",
+      "sort_index": 39,
+      "source": "kätzchen_chaos_beim_pfannkuchenfrühstück.png",
+      "source_sha256": "209eea888a61fbd54d167787a5e4049f7081a695a20388162d78defa9aba09ac",
+      "source_dimensions": [
+        1254,
+        1254
+      ],
+      "variants": {
+        "c3_240x240": {
+          "file": "c3_240x240/kätzchen_chaos_beim_pfannkuchenfrühstück.jpg",
+          "bytes": 16436,
+          "sha256": "074938c3c5c1f3cc4efcee9d4cdc27a4075f0ced230c40f6dfedd2f1dd112d2f",
+          "pack": "c3_images.bin",
+          "offset": 652428
+        },
+        "c6_172x320": {
+          "file": "c6_172x320/kätzchen_chaos_beim_pfannkuchenfrühstück.jpg",
+          "bytes": 26961,
+          "sha256": "9024917e04e5142e2871f56535d0bd88c6ae87afc7543b0c9cd5c6289be32ca1",
+          "pack": "c6_images.bin",
+          "offset": 1076344
+        },
+        "c6_320x172": {
+          "file": "c6_320x172/kätzchen_chaos_beim_pfannkuchenfrühstück.jpg",
+          "bytes": 29502,
+          "sha256": "478980c76c2b75d17736a1720b3ae56033274513b50831a8fc71a589209f6850",
+          "pack": "c6_images.bin",
+          "offset": 3222380
+        }
+      }
+    },
+    {
+      "id": "901443b4d5676aa6",
+      "sort_index": 40,
+      "source": "neon_katzen_arcade_voller_spiele_und_spass.png",
+      "source_sha256": "901443b4d5676aa6b8368933b780baca4a729a474a40357b509363f4104432f6",
+      "source_dimensions": [
+        1254,
+        1254
+      ],
+      "variants": {
+        "c3_240x240": {
+          "file": "c3_240x240/neon_katzen_arcade_voller_spiele_und_spass.jpg",
+          "bytes": 22292,
+          "sha256": "5ca582c3e144c1e43b30de83df533fc95f45e3dc5c0e17ae9f386a82ffd20d7b",
+          "pack": "c3_images.bin",
+          "offset": 668864
+        },
+        "c6_172x320": {
+          "file": "c6_172x320/neon_katzen_arcade_voller_spiele_und_spass.jpg",
+          "bytes": 36148,
+          "sha256": "e0d016cae0f73e26aebf1d1232362a7919c87762c5ee62e2c58b22f901393c6f",
+          "pack": "c6_images.bin",
+          "offset": 1103308
+        },
+        "c6_320x172": {
+          "file": "c6_320x172/neon_katzen_arcade_voller_spiele_und_spass.jpg",
+          "bytes": 34352,
+          "sha256": "9d4d9b884df517f0eb28c9cb839b5b1bf76c0ade4aa1ac74b7d5e6f25e8afb0a",
+          "pack": "c6_images.bin",
+          "offset": 3251884
+        }
+      }
+    },
+    {
+      "id": "6f442078dd66d90e",
+      "sort_index": 41,
+      "source": "neon_katzen_auf_fischjagd.png",
+      "source_sha256": "6f442078dd66d90ef2532e4fef43061b7bf2911cc50d68e3492b98c1e00f2bcd",
+      "source_dimensions": [
+        1254,
+        1254
+      ],
+      "variants": {
+        "c3_240x240": {
+          "file": "c3_240x240/neon_katzen_auf_fischjagd.jpg",
+          "bytes": 17693,
+          "sha256": "8817edbf095b0a6481b528b6962bca0875bafb640ef8315a07e193cd7dcbf737",
+          "pack": "c3_images.bin",
+          "offset": 691156
+        },
+        "c6_172x320": {
+          "file": "c6_172x320/neon_katzen_auf_fischjagd.jpg",
+          "bytes": 28928,
+          "sha256": "b882b27482b51687cad17ee11bfb6086ca3fa2866d7946e5ab780bc2efe2574d",
+          "pack": "c6_images.bin",
+          "offset": 1139456
+        },
+        "c6_320x172": {
+          "file": "c6_320x172/neon_katzen_auf_fischjagd.jpg",
+          "bytes": 28336,
+          "sha256": "3e79abfe63eb992c6e6c124cbc50d3f3b2a0c7640b32124b6e718a06c105ee20",
+          "pack": "c6_images.bin",
+          "offset": 3286236
+        }
+      }
+    },
+    {
+      "id": "49e8182a727740a8",
+      "sort_index": 42,
+      "source": "neon_katzen_und_der_schillernde_orb.png",
+      "source_sha256": "49e8182a727740a805c3eb4220893406ff0ec673aa5536ac75c8d535d81bc0c7",
+      "source_dimensions": [
+        1254,
+        1254
+      ],
+      "variants": {
+        "c3_240x240": {
+          "file": "c3_240x240/neon_katzen_und_der_schillernde_orb.jpg",
+          "bytes": 17796,
+          "sha256": "19537bae83be6d045882e40b3f0a5671aec71e5fba94885d477c6be82288353d",
+          "pack": "c3_images.bin",
+          "offset": 708852
+        },
+        "c6_172x320": {
+          "file": "c6_172x320/neon_katzen_und_der_schillernde_orb.jpg",
+          "bytes": 28713,
+          "sha256": "dca35687d1a0f129e6943dd89effa0cc196f92208c99a67320a149c8ec3334cd",
+          "pack": "c6_images.bin",
+          "offset": 1168384
+        },
+        "c6_320x172": {
+          "file": "c6_320x172/neon_katzen_und_der_schillernde_orb.jpg",
+          "bytes": 30138,
+          "sha256": "773067206ad608e691a73130411ccc213848dc24878d8664fb528e735fd5de15",
+          "pack": "c6_images.bin",
+          "offset": 3314572
+        }
+      }
+    },
+    {
+      "id": "b90f5ab27005cd2b",
+      "sort_index": 43,
+      "source": "neon_katzenchaos_in_der_pixelspielhalle.png",
+      "source_sha256": "b90f5ab27005cd2b05fa3ea0f47b8967c040e5b6c6d26319984221ad3faff60d",
+      "source_dimensions": [
+        1254,
+        1254
+      ],
+      "variants": {
+        "c3_240x240": {
+          "file": "c3_240x240/neon_katzenchaos_in_der_pixelspielhalle.jpg",
+          "bytes": 20184,
+          "sha256": "f473ee7c731317e77c9b09ae3fcdae0a2937a395f74a55373b6822ee46ecce2d",
+          "pack": "c3_images.bin",
+          "offset": 726648
+        },
+        "c6_172x320": {
+          "file": "c6_172x320/neon_katzenchaos_in_der_pixelspielhalle.jpg",
+          "bytes": 31679,
+          "sha256": "9adaa2d352464c895d8d22bafa5f6ae6c6b993baed93910c9125ffe4a6a0fb2a",
+          "pack": "c6_images.bin",
+          "offset": 1197100
+        },
+        "c6_320x172": {
+          "file": "c6_320x172/neon_katzenchaos_in_der_pixelspielhalle.jpg",
+          "bytes": 32142,
+          "sha256": "0fa08b08861b86c765fad9f58a0414795efdabddfc3c8576af476ad4a9b73152",
+          "pack": "c6_images.bin",
+          "offset": 3344712
+        }
+      }
+    },
+    {
+      "id": "393c5397da58d7c2",
+      "sort_index": 44,
+      "source": "neonkatzen_im_pixel_arcade_fieber.png",
+      "source_sha256": "393c5397da58d7c2ab7715ba9f7bbb194f7c0321bfe0958083cb270d093d0ad7",
+      "source_dimensions": [
+        1254,
+        1254
+      ],
+      "variants": {
+        "c3_240x240": {
+          "file": "c3_240x240/neonkatzen_im_pixel_arcade_fieber.jpg",
+          "bytes": 22783,
+          "sha256": "a874584e1458518aef5e0a5c4a43efaa8e706d7ff3a015c66b10ae30f070b135",
+          "pack": "c3_images.bin",
+          "offset": 746832
+        },
+        "c6_172x320": {
+          "file": "c6_172x320/neonkatzen_im_pixel_arcade_fieber.jpg",
+          "bytes": 36406,
+          "sha256": "d962521dfa43f9c3c63379058456893fe6c59eb24e1377107f680de07321f7be",
+          "pack": "c6_images.bin",
+          "offset": 1228780
+        },
+        "c6_320x172": {
+          "file": "c6_320x172/neonkatzen_im_pixel_arcade_fieber.jpg",
+          "bytes": 36348,
+          "sha256": "e8d98b76aaa2727eda0a6988ca4b3ea9a7f2dc66e555c2609fc3e37f9edce492",
+          "pack": "c6_images.bin",
+          "offset": 3376856
+        }
+      }
+    },
+    {
+      "id": "c7d5626014d4a72f",
+      "sort_index": 45,
+      "source": "niedliche_katzen_im_fisch_krallenautomaten.png",
+      "source_sha256": "c7d5626014d4a72f8e2447466cc158eb601b70272affa225582e72cfcc5c606c",
+      "source_dimensions": [
+        1254,
+        1254
+      ],
+      "variants": {
+        "c3_240x240": {
+          "file": "c3_240x240/niedliche_katzen_im_fisch_krallenautomaten.jpg",
+          "bytes": 20819,
+          "sha256": "5c5f7d77ed64dfba808f947c38981dc6f9d61834ba70f1769be3bc035caad04f",
+          "pack": "c3_images.bin",
+          "offset": 769616
+        },
+        "c6_172x320": {
+          "file": "c6_172x320/niedliche_katzen_im_fisch_krallenautomaten.jpg",
+          "bytes": 33748,
+          "sha256": "163a3bf058d5429f82435e54231ea102241208c53fe60942c69a3ea2de1dfa0e",
+          "pack": "c6_images.bin",
+          "offset": 1265188
+        },
+        "c6_320x172": {
+          "file": "c6_320x172/niedliche_katzen_im_fisch_krallenautomaten.jpg",
+          "bytes": 35129,
+          "sha256": "d2e745ef7a7875cb99b624720e2ef83aa540dd918f4e78b2a296b6dfd4a7722c",
+          "pack": "c6_images.bin",
+          "offset": 3413204
+        }
+      }
+    },
+    {
+      "id": "1119d86636daf14d",
+      "sort_index": 46,
+      "source": "origami_katzen_im_papierchaos.png",
+      "source_sha256": "1119d86636daf14d92e46988c85d9e44870a407aaf7e722508c1c68cb97d468e",
+      "source_dimensions": [
+        1254,
+        1254
+      ],
+      "variants": {
+        "c3_240x240": {
+          "file": "c3_240x240/origami_katzen_im_papierchaos.jpg",
+          "bytes": 15876,
+          "sha256": "1c7971fbdcd3dd67e32fd61c8b899047339c975cbd6a4066bbb9353ebb4c2415",
+          "pack": "c3_images.bin",
+          "offset": 790436
+        },
+        "c6_172x320": {
+          "file": "c6_172x320/origami_katzen_im_papierchaos.jpg",
+          "bytes": 26230,
+          "sha256": "9d0e682c72371615d323f93aa0550b31aece367b585d07bf1c1e8a874bd7c62e",
+          "pack": "c6_images.bin",
+          "offset": 1298936
+        },
+        "c6_320x172": {
+          "file": "c6_320x172/origami_katzen_im_papierchaos.jpg",
+          "bytes": 27102,
+          "sha256": "19eca1d36f559c5baad50c3647086c0c0cf2a2f086453748fc0664104560118c",
+          "pack": "c6_images.bin",
+          "offset": 3448336
+        }
+      }
+    },
+    {
+      "id": "f10bd813c5586ffc",
+      "sort_index": 47,
+      "source": "papiercollage_katzen_im_küchenchaos.png",
+      "source_sha256": "f10bd813c5586ffca4a05b10ed211506a4854c6ada5024a4bd5ab899a4785f23",
+      "source_dimensions": [
+        1254,
+        1254
+      ],
+      "variants": {
+        "c3_240x240": {
+          "file": "c3_240x240/papiercollage_katzen_im_küchenchaos.jpg",
+          "bytes": 15707,
+          "sha256": "9ea753e3b892af8565caaf7e3ea0b19f8910353f366b0546392509471a4becd1",
+          "pack": "c3_images.bin",
+          "offset": 806312
+        },
+        "c6_172x320": {
+          "file": "c6_172x320/papiercollage_katzen_im_küchenchaos.jpg",
+          "bytes": 24513,
+          "sha256": "218ed55c558a25546eb577d29bd00a12a1ec48f6c6d06353dbfb013230bb7985",
+          "pack": "c6_images.bin",
+          "offset": 1325168
+        },
+        "c6_320x172": {
+          "file": "c6_320x172/papiercollage_katzen_im_küchenchaos.jpg",
+          "bytes": 25683,
+          "sha256": "fd7367872e1c33f820bba232db2b8df12cdd42619d9326514aeabc544d656c09",
+          "pack": "c6_images.bin",
+          "offset": 3475440
+        }
+      }
+    },
+    {
+      "id": "69f4fe125c5eb1b6",
+      "sort_index": 48,
+      "source": "papierkunst_katzen_im_kite_chaos.png",
+      "source_sha256": "69f4fe125c5eb1b6bec6f1f62c2e5afb54d8a8af78faf25fa226ef090ab1fd6a",
+      "source_dimensions": [
+        1254,
+        1254
+      ],
+      "variants": {
+        "c3_240x240": {
+          "file": "c3_240x240/papierkunst_katzen_im_kite_chaos.jpg",
+          "bytes": 17152,
+          "sha256": "4ccc10eb5047c18b80b9e8b781c27684dba20d676ac0d5b4ae25f39f9f0404b7",
+          "pack": "c3_images.bin",
+          "offset": 822020
+        },
+        "c6_172x320": {
+          "file": "c6_172x320/papierkunst_katzen_im_kite_chaos.jpg",
+          "bytes": 27165,
+          "sha256": "1b054a5249cd910fd8210e55070f8eab14ff31e83cc74f3959123b76838ae2fc",
+          "pack": "c6_images.bin",
+          "offset": 1349684
+        },
+        "c6_320x172": {
+          "file": "c6_320x172/papierkunst_katzen_im_kite_chaos.jpg",
+          "bytes": 28481,
+          "sha256": "da538374e58e3b653f87238d3d89af8a1d124debbaf37c5c120bd2390b917afa",
+          "pack": "c6_images.bin",
+          "offset": 3501124
+        }
+      }
+    },
+    {
+      "id": "311f28af09d647ea",
+      "sort_index": 49,
+      "source": "papierkunst_katzen_im_schneespass.png",
+      "source_sha256": "311f28af09d647ea6c5f8996e8a1a7d4f952b53f2ec68cdc9b0ac579898a9b96",
+      "source_dimensions": [
+        1254,
+        1254
+      ],
+      "variants": {
+        "c3_240x240": {
+          "file": "c3_240x240/papierkunst_katzen_im_schneespass.jpg",
+          "bytes": 15780,
+          "sha256": "d4222093701659c0112246c4b6fc5ac8b087491a590596c98fdd46a473b16ebd",
+          "pack": "c3_images.bin",
+          "offset": 839172
+        },
+        "c6_172x320": {
+          "file": "c6_172x320/papierkunst_katzen_im_schneespass.jpg",
+          "bytes": 24766,
+          "sha256": "9298ec4df9876d052891860984b1de7dd22363b4d7d319e782d3cf7d6b94e32e",
+          "pack": "c6_images.bin",
+          "offset": 1376852
+        },
+        "c6_320x172": {
+          "file": "c6_320x172/papierkunst_katzen_im_schneespass.jpg",
+          "bytes": 26288,
+          "sha256": "25a76d72996618c22da6d9901269a8b87668875681432dab6dafaec82e3e9df7",
+          "pack": "c6_images.bin",
+          "offset": 3529608
+        }
+      }
+    },
+    {
+      "id": "686de171e0174a54",
+      "sort_index": 50,
+      "source": "pastellchaos_mit_zwei_katzen.png",
+      "source_sha256": "686de171e0174a54c6aa7bb488da560740b34a6ac89bd12c61684ae1ac82d86f",
+      "source_dimensions": [
+        1254,
+        1254
+      ],
+      "variants": {
+        "c3_240x240": {
+          "file": "c3_240x240/pastellchaos_mit_zwei_katzen.jpg",
+          "bytes": 15532,
+          "sha256": "56e197b706f87187f1abeaa2a8702c5e2388b2c61a7743e2dc879a7bd0146deb",
+          "pack": "c3_images.bin",
+          "offset": 854952
+        },
+        "c6_172x320": {
+          "file": "c6_172x320/pastellchaos_mit_zwei_katzen.jpg",
+          "bytes": 27377,
+          "sha256": "eb5fb0235847395810d2a7ff06a0e6e02e8a835f32cae6922126bbccbac22e61",
+          "pack": "c6_images.bin",
+          "offset": 1401620
+        },
+        "c6_320x172": {
+          "file": "c6_320x172/pastellchaos_mit_zwei_katzen.jpg",
+          "bytes": 27483,
+          "sha256": "2d22d5329dc2cf01633a86601791ffaaeb19680e0ab3d81e1af9480049e2ec30",
+          "pack": "c6_images.bin",
+          "offset": 3555896
+        }
+      }
+    },
+    {
+      "id": "6a3ac83dcdf8294e",
+      "sort_index": 51,
+      "source": "porzellan_kätzchen_im_dessertchaos.png",
+      "source_sha256": "6a3ac83dcdf8294e51b260b124584716094559286046433658d345981a01956e",
+      "source_dimensions": [
+        1254,
+        1254
+      ],
+      "variants": {
+        "c3_240x240": {
+          "file": "c3_240x240/porzellan_kätzchen_im_dessertchaos.jpg",
+          "bytes": 14979,
+          "sha256": "fa58b606ae786df5a36a664815acfd0c1c9c735b7898882a2c22298f9b908a57",
+          "pack": "c3_images.bin",
+          "offset": 870484
+        },
+        "c6_172x320": {
+          "file": "c6_172x320/porzellan_kätzchen_im_dessertchaos.jpg",
+          "bytes": 22656,
+          "sha256": "0ea058bc812f0b709be68a5c9d730bc4bdca2e69ae247fa10e43cd19dd2251df",
+          "pack": "c6_images.bin",
+          "offset": 1429000
+        },
+        "c6_320x172": {
+          "file": "c6_320x172/porzellan_kätzchen_im_dessertchaos.jpg",
+          "bytes": 26243,
+          "sha256": "f6acceb7da6bd65c0a61ee96f231dc58bd325f34f1ad8a765de998222537514d",
+          "pack": "c6_images.bin",
+          "offset": 3583380
+        }
+      }
+    },
+    {
+      "id": "0bc66cb19083d907",
+      "sort_index": 52,
+      "source": "schwebendes_katzenzimmer_im_mondlicht.png",
+      "source_sha256": "0bc66cb19083d90702aa12249c537e0d648933b7f4a0c86288ac4b608235310b",
+      "source_dimensions": [
+        1254,
+        1254
+      ],
+      "variants": {
+        "c3_240x240": {
+          "file": "c3_240x240/schwebendes_katzenzimmer_im_mondlicht.jpg",
+          "bytes": 15133,
+          "sha256": "ee5360efff028f966f151657fa3458d5f0ce8ebe6929b954201a39c030fba7df",
+          "pack": "c3_images.bin",
+          "offset": 885464
+        },
+        "c6_172x320": {
+          "file": "c6_172x320/schwebendes_katzenzimmer_im_mondlicht.jpg",
+          "bytes": 25344,
+          "sha256": "abcba1b496a0cf7a57c9237e88051f19e4c3d9669f75d2cbbbf8ca344337e0d0",
+          "pack": "c6_images.bin",
+          "offset": 1451656
+        },
+        "c6_320x172": {
+          "file": "c6_320x172/schwebendes_katzenzimmer_im_mondlicht.jpg",
+          "bytes": 25704,
+          "sha256": "7ad54b48054750861e8787a2b5231823ef4237b1e2a648490291ebb776e7a112",
+          "pack": "c6_images.bin",
+          "offset": 3609624
+        }
+      }
+    },
+    {
+      "id": "fb0c2a252592a54a",
+      "sort_index": 53,
+      "source": "verspielte_katzen_auf_der_kalligrafie_schriftrolle.png",
+      "source_sha256": "fb0c2a252592a54acc1373c4f4ee63dcf46dd12836ebbaa35bf7da2d41519256",
+      "source_dimensions": [
+        1254,
+        1254
+      ],
+      "variants": {
+        "c3_240x240": {
+          "file": "c3_240x240/verspielte_katzen_auf_der_kalligrafie_schriftrolle.jpg",
+          "bytes": 16044,
+          "sha256": "e2ab673a3393e93cab0b480d647eacae8b594c9d01134b5a88fa9a9be1fc8db0",
+          "pack": "c3_images.bin",
+          "offset": 900600
+        },
+        "c6_172x320": {
+          "file": "c6_172x320/verspielte_katzen_auf_der_kalligrafie_schriftrolle.jpg",
+          "bytes": 25196,
+          "sha256": "2963106fef995930297482b05783c5f93e038b208272fa7e08297ffb129189bb",
+          "pack": "c6_images.bin",
+          "offset": 1477000
+        },
+        "c6_320x172": {
+          "file": "c6_320x172/verspielte_katzen_auf_der_kalligrafie_schriftrolle.jpg",
+          "bytes": 26473,
+          "sha256": "18be02a1ac49b20427d795b635ab045b33e123e0a355d1240b30f9ff6355dd51",
+          "pack": "c6_images.bin",
+          "offset": 3635328
+        }
+      }
+    },
+    {
+      "id": "114d5436fb6dae8a",
+      "sort_index": 54,
+      "source": "verspielte_katzen_im_art_nouveau_gewächshaus.png",
+      "source_sha256": "114d5436fb6dae8adb6acc0ab508b44e05707745b01f1783718a3556c5bfa74d",
+      "source_dimensions": [
+        1254,
+        1254
+      ],
+      "variants": {
+        "c3_240x240": {
+          "file": "c3_240x240/verspielte_katzen_im_art_nouveau_gewächshaus.jpg",
+          "bytes": 18829,
+          "sha256": "6711eca4ad72c7afb9a5e3dac71b14b5e944769f2454b7f6cb289f2ba26bdbd0",
+          "pack": "c3_images.bin",
+          "offset": 916644
+        },
+        "c6_172x320": {
+          "file": "c6_172x320/verspielte_katzen_im_art_nouveau_gewächshaus.jpg",
+          "bytes": 32822,
+          "sha256": "b7923095ae78e4d3835b55c3f1d9b44635a98e76d9a8296e66ac370c4e8b0bb0",
+          "pack": "c6_images.bin",
+          "offset": 1502196
+        },
+        "c6_320x172": {
+          "file": "c6_320x172/verspielte_katzen_im_art_nouveau_gewächshaus.jpg",
+          "bytes": 31310,
+          "sha256": "0f0c84007821311fb87c0df668b11005b2d89a2cab3ae61b657d3104f234737f",
+          "pack": "c6_images.bin",
+          "offset": 3661804
+        }
+      }
+    },
+    {
+      "id": "3d40352110ccb0d5",
+      "sort_index": 55,
+      "source": "verspielte_katzen_im_blumenbrunnen.png",
+      "source_sha256": "3d40352110ccb0d58a7f4bb0dc66b487747e6d79e58f14d541c251dc915b31f9",
+      "source_dimensions": [
+        1254,
+        1254
+      ],
+      "variants": {
+        "c3_240x240": {
+          "file": "c3_240x240/verspielte_katzen_im_blumenbrunnen.jpg",
+          "bytes": 17731,
+          "sha256": "62ced9c224fa68d9b701a8114a04f51f61278c9edc1f58f0eb188b1bcfcf787e",
+          "pack": "c3_images.bin",
+          "offset": 935476
+        },
+        "c6_172x320": {
+          "file": "c6_172x320/verspielte_katzen_im_blumenbrunnen.jpg",
+          "bytes": 30652,
+          "sha256": "568afcf984d10b754ce3e194ce74af74b3e90502176892f6b9f1e9501fd8d621",
+          "pack": "c6_images.bin",
+          "offset": 1535020
+        },
+        "c6_320x172": {
+          "file": "c6_320x172/verspielte_katzen_im_blumenbrunnen.jpg",
+          "bytes": 30505,
+          "sha256": "a214754d989af24b5317a6f2b214b2ceca02cffb49ce8d6f20257674f4f3199b",
+          "pack": "c6_images.bin",
+          "offset": 3693116
+        }
+      }
+    },
+    {
+      "id": "c5690ca37e7ca42c",
+      "sort_index": 56,
+      "source": "verspielte_katzen_im_buntglaszauber.png",
+      "source_sha256": "c5690ca37e7ca42ce2ab21b2376028c7f11bcf7e6091c31eaf53df5a702d35c2",
+      "source_dimensions": [
+        1254,
+        1254
+      ],
+      "variants": {
+        "c3_240x240": {
+          "file": "c3_240x240/verspielte_katzen_im_buntglaszauber.jpg",
+          "bytes": 20929,
+          "sha256": "f8f3e45dc08ccbc1a6496231308d01138efb9a73986a090747f97e6999a5dba1",
+          "pack": "c3_images.bin",
+          "offset": 953208
+        },
+        "c6_172x320": {
+          "file": "c6_172x320/verspielte_katzen_im_buntglaszauber.jpg",
+          "bytes": 35644,
+          "sha256": "59cbf1a58892d54ecc70e9f5cdf4c2d1a71ea0644867f92077bb6fa0078f774a",
+          "pack": "c6_images.bin",
+          "offset": 1565672
+        },
+        "c6_320x172": {
+          "file": "c6_320x172/verspielte_katzen_im_buntglaszauber.jpg",
+          "bytes": 33649,
+          "sha256": "639ded75d875f4e55f868c7c2d4a4cc278b4b73e5b25690729609241e4498e0a",
+          "pack": "c6_images.bin",
+          "offset": 3723624
+        }
+      }
+    },
+    {
+      "id": "c276ad1dd8fc2ddc",
+      "sort_index": 57,
+      "source": "verspielte_katzen_im_burggarten.png",
+      "source_sha256": "c276ad1dd8fc2ddcfa26a1ce45fb374c3c666b45ac36491e7ada892ba4ae0fd4",
+      "source_dimensions": [
+        1254,
+        1254
+      ],
+      "variants": {
+        "c3_240x240": {
+          "file": "c3_240x240/verspielte_katzen_im_burggarten.jpg",
+          "bytes": 20289,
+          "sha256": "4cf94cdee056a1d4a1e11e9b3ddbe834168f1a66629638120099de745f7e2728",
+          "pack": "c3_images.bin",
+          "offset": 974140
+        },
+        "c6_172x320": {
+          "file": "c6_172x320/verspielte_katzen_im_burggarten.jpg",
+          "bytes": 32185,
+          "sha256": "0c4b9f61b1b0b82d58a2564087a492a1e2848aaeb8fd85e11e05942c53aae8db",
+          "pack": "c6_images.bin",
+          "offset": 1601316
+        },
+        "c6_320x172": {
+          "file": "c6_320x172/verspielte_katzen_im_burggarten.jpg",
+          "bytes": 32867,
+          "sha256": "3fa9bac4162d292b79e72a6fc559c4adfffb0058a8f3531c5a1b57febc3c8b50",
+          "pack": "c6_images.bin",
+          "offset": 3757276
+        }
+      }
+    },
+    {
+      "id": "67dedd0c6a7eea29",
+      "sort_index": 58,
+      "source": "verspielte_katzen_im_glasblüten_gewächshaus.png",
+      "source_sha256": "67dedd0c6a7eea290252bc4f4df9912b593e99672634a76ac378f72284f4dd72",
+      "source_dimensions": [
+        1254,
+        1254
+      ],
+      "variants": {
+        "c3_240x240": {
+          "file": "c3_240x240/verspielte_katzen_im_glasblüten_gewächshaus.jpg",
+          "bytes": 22160,
+          "sha256": "c1cad72e300d6bcf34d9ef2071dd761b05fea5e31a466e62f79f179a830ffa61",
+          "pack": "c3_images.bin",
+          "offset": 994432
+        },
+        "c6_172x320": {
+          "file": "c6_172x320/verspielte_katzen_im_glasblüten_gewächshaus.jpg",
+          "bytes": 36547,
+          "sha256": "73f746cff2648c48f82f0beeaa48bb071cf8a5730f6efe8f0515ba291d2f3d4d",
+          "pack": "c6_images.bin",
+          "offset": 1633504
+        },
+        "c6_320x172": {
+          "file": "c6_320x172/verspielte_katzen_im_glasblüten_gewächshaus.jpg",
+          "bytes": 36137,
+          "sha256": "74b83ed2f7e1057bd7b377543242fd87f5b01afa67f4ccc5fcb568c432616a8a",
+          "pack": "c6_images.bin",
+          "offset": 3790144
+        }
+      }
+    },
+    {
+      "id": "53b79dbcafc5bb6d",
+      "sort_index": 59,
+      "source": "verspielte_katzen_im_herbstlaub.png",
+      "source_sha256": "53b79dbcafc5bb6d0ab6519992ab8be4f573de4620514b5822c0a65de867ccda",
+      "source_dimensions": [
+        1254,
+        1254
+      ],
+      "variants": {
+        "c3_240x240": {
+          "file": "c3_240x240/verspielte_katzen_im_herbstlaub.jpg",
+          "bytes": 14458,
+          "sha256": "2762b589f835f5327d4cc2a5011c5f123be0ac2d0f995c24f104c6f27043396a",
+          "pack": "c3_images.bin",
+          "offset": 1016592
+        },
+        "c6_172x320": {
+          "file": "c6_172x320/verspielte_katzen_im_herbstlaub.jpg",
+          "bytes": 23131,
+          "sha256": "a2bca3c6ff05b26658f72cfc0bb3a2ddcd085d031cb0f293d5b93001072f4a5c",
+          "pack": "c6_images.bin",
+          "offset": 1670052
+        },
+        "c6_320x172": {
+          "file": "c6_320x172/verspielte_katzen_im_herbstlaub.jpg",
+          "bytes": 25324,
+          "sha256": "c0e8b7c596d27b91963086c8cf4113553dd1e58c5be15c4c133922bffc2ae90a",
+          "pack": "c6_images.bin",
+          "offset": 3826284
+        }
+      }
+    },
+    {
+      "id": "f74249a1a5031390",
+      "sort_index": 60,
+      "source": "verspielte_katzen_im_mittelalterlichen_rosengarten.png",
+      "source_sha256": "f74249a1a503139082676d7000eff7561cb28b625697921add81f4b7e377ef11",
+      "source_dimensions": [
+        1254,
+        1254
+      ],
+      "variants": {
+        "c3_240x240": {
+          "file": "c3_240x240/verspielte_katzen_im_mittelalterlichen_rosengarten.jpg",
+          "bytes": 19500,
+          "sha256": "943f376c57ea849c5c2c2adef8c98a791e99f9a5b5a5b189c02d4e190d3bd131",
+          "pack": "c3_images.bin",
+          "offset": 1031052
+        },
+        "c6_172x320": {
+          "file": "c6_172x320/verspielte_katzen_im_mittelalterlichen_rosengarten.jpg",
+          "bytes": 32538,
+          "sha256": "284b20e3b91120fb495c446d881f0d83fc6953754a9510ed5dbe1bd27e0a38c6",
+          "pack": "c6_images.bin",
+          "offset": 1693184
+        },
+        "c6_320x172": {
+          "file": "c6_320x172/verspielte_katzen_im_mittelalterlichen_rosengarten.jpg",
+          "bytes": 32763,
+          "sha256": "c053fb037967e6d85b33652ce65ed98b0e333c753d84b7603824e42173bd2ade",
+          "pack": "c6_images.bin",
+          "offset": 3851608
+        }
+      }
+    },
+    {
+      "id": "c824679d39870fb5",
+      "sort_index": 61,
+      "source": "verspielte_katzen_im_origami_sonnenuntergang.png",
+      "source_sha256": "c824679d39870fb5be04a6529d4628204737a5a27c67759f4f12063924c98bce",
+      "source_dimensions": [
+        1254,
+        1254
+      ],
+      "variants": {
+        "c3_240x240": {
+          "file": "c3_240x240/verspielte_katzen_im_origami_sonnenuntergang.jpg",
+          "bytes": 14572,
+          "sha256": "6fedb0f59abaf76dcdc0b99c231002549c778e1f2c402e12c99d5c1c6e162e37",
+          "pack": "c3_images.bin",
+          "offset": 1050552
+        },
+        "c6_172x320": {
+          "file": "c6_172x320/verspielte_katzen_im_origami_sonnenuntergang.jpg",
+          "bytes": 22810,
+          "sha256": "96973a8dfbdd6eddbef901d24947621f78bb2aa4c8c4ce36eb1e2312817eef2b",
+          "pack": "c6_images.bin",
+          "offset": 1725724
+        },
+        "c6_320x172": {
+          "file": "c6_320x172/verspielte_katzen_im_origami_sonnenuntergang.jpg",
+          "bytes": 24780,
+          "sha256": "24ea49cc042edffddf461a04539326981e211aea8a570570a490a71fc4cb25bc",
+          "pack": "c6_images.bin",
+          "offset": 3884372
+        }
+      }
+    },
+    {
+      "id": "9968449ab58b5049",
+      "sort_index": 62,
+      "source": "verspielte_katzen_im_ukiyo_e_zimmer.png",
+      "source_sha256": "9968449ab58b504926886bdd567ca555549c1bc4d0292e3349b13d66f1438cfc",
+      "source_dimensions": [
+        1254,
+        1254
+      ],
+      "variants": {
+        "c3_240x240": {
+          "file": "c3_240x240/verspielte_katzen_im_ukiyo_e_zimmer.jpg",
+          "bytes": 15250,
+          "sha256": "09d216200b9614d479c791f302513a30936787f4bfe079cc818a9d8c393d0ee7",
+          "pack": "c3_images.bin",
+          "offset": 1065124
+        },
+        "c6_172x320": {
+          "file": "c6_172x320/verspielte_katzen_im_ukiyo_e_zimmer.jpg",
+          "bytes": 26096,
+          "sha256": "70b1dc814d17f5112d87b64f5d3f0c32f9e8febdea8384a785dc71d910220ad1",
+          "pack": "c6_images.bin",
+          "offset": 1748536
+        },
+        "c6_320x172": {
+          "file": "c6_320x172/verspielte_katzen_im_ukiyo_e_zimmer.jpg",
+          "bytes": 26427,
+          "sha256": "2007af54d329e0e920f503155564fc38638b2cd1fb5d8908efe2e1cdf254c10c",
+          "pack": "c6_images.bin",
+          "offset": 3909152
+        }
+      }
+    },
+    {
+      "id": "cff0e6dcfe163e37",
+      "sort_index": 63,
+      "source": "verspielte_katzen_und_fallender_teetassenturm.png",
+      "source_sha256": "cff0e6dcfe163e375f608e817342a2e9378a7bd36218c94ebcc736015345bbe2",
+      "source_dimensions": [
+        1254,
+        1254
+      ],
+      "variants": {
+        "c3_240x240": {
+          "file": "c3_240x240/verspielte_katzen_und_fallender_teetassenturm.jpg",
+          "bytes": 13888,
+          "sha256": "e60257c041ec8b807e1134cbbd0825314e69c9d360a24d7ac8fdb342891c5e96",
+          "pack": "c3_images.bin",
+          "offset": 1080376
+        },
+        "c6_172x320": {
+          "file": "c6_172x320/verspielte_katzen_und_fallender_teetassenturm.jpg",
+          "bytes": 22162,
+          "sha256": "948c19a7b6ceefd74b577c38e86ace5411bba1c9253c150f65d706912344e71f",
+          "pack": "c6_images.bin",
+          "offset": 1774632
+        },
+        "c6_320x172": {
+          "file": "c6_320x172/verspielte_katzen_und_fallender_teetassenturm.jpg",
+          "bytes": 22907,
+          "sha256": "84d1f82951fdf9d639cb847276606ceb56ba1d260d749681a00ed0731b224248",
+          "pack": "c6_images.bin",
+          "offset": 3935580
+        }
+      }
+    },
+    {
+      "id": "61e4f4446196c337",
+      "sort_index": 64,
+      "source": "verspielte_katzentapisserie_im_burghof.png",
+      "source_sha256": "61e4f4446196c337fc28d40f7a41cf91ee04ba64bcffa003c77814e8ceedbca6",
+      "source_dimensions": [
+        1254,
+        1254
+      ],
+      "variants": {
+        "c3_240x240": {
+          "file": "c3_240x240/verspielte_katzentapisserie_im_burghof.jpg",
+          "bytes": 20147,
+          "sha256": "5df192494030ea7b7ec7a3ab4053ab3326ea0d0415651b857239b95220eb3dde",
+          "pack": "c3_images.bin",
+          "offset": 1094264
+        },
+        "c6_172x320": {
+          "file": "c6_172x320/verspielte_katzentapisserie_im_burghof.jpg",
+          "bytes": 33289,
+          "sha256": "01d5d71cd23d0c8b0ae832c31b508bc3ca26ecd2254342aec83147719472e4e3",
+          "pack": "c6_images.bin",
+          "offset": 1796796
+        },
+        "c6_320x172": {
+          "file": "c6_320x172/verspielte_katzentapisserie_im_burghof.jpg",
+          "bytes": 33548,
+          "sha256": "20b4a6d6c1a883aef305fef468dfd299f5d43b43f0e7f1c634050e3e7ff82697",
+          "pack": "c6_images.bin",
+          "offset": 3958488
+        }
+      }
+    },
+    {
+      "id": "d3a30df7bc85dfd7",
+      "sort_index": 65,
+      "source": "verspielte_kätzchen_im_kreidechaos.png",
+      "source_sha256": "d3a30df7bc85dfd7333cac18cc8d51530df4b092660780a3a3576f9d0aa42618",
+      "source_dimensions": [
+        1254,
+        1254
+      ],
+      "variants": {
+        "c3_240x240": {
+          "file": "c3_240x240/verspielte_kätzchen_im_kreidechaos.jpg",
+          "bytes": 17244,
+          "sha256": "af47b518e7b291c50059f7c950f813b463fb99a7ec75534f16a55b129e7c6b8f",
+          "pack": "c3_images.bin",
+          "offset": 1114412
+        },
+        "c6_172x320": {
+          "file": "c6_172x320/verspielte_kätzchen_im_kreidechaos.jpg",
+          "bytes": 30061,
+          "sha256": "f0c067dec7a7fb7a6bb5c4269c4c190d040b5a8e032f1a4e5f27bbe1b44f7439",
+          "pack": "c6_images.bin",
+          "offset": 1830088
+        },
+        "c6_320x172": {
+          "file": "c6_320x172/verspielte_kätzchen_im_kreidechaos.jpg",
+          "bytes": 27644,
+          "sha256": "b686648334f455069a1ec186e0704e7c9e82246885dee250331a4daccecf06b1",
+          "pack": "c6_images.bin",
+          "offset": 3992036
+        }
+      }
+    },
+    {
+      "id": "a8c441271aaf26aa",
+      "sort_index": 66,
+      "source": "verspieltes_katzenchaos_im_blumengarten.png",
+      "source_sha256": "a8c441271aaf26aa428d8a972897f604a6ab4298a7dc6372dc19d57b3c19887e",
+      "source_dimensions": [
+        1254,
+        1254
+      ],
+      "variants": {
+        "c3_240x240": {
+          "file": "c3_240x240/verspieltes_katzenchaos_im_blumengarten.jpg",
+          "bytes": 19195,
+          "sha256": "68513e821891fbbce65d64b989e87b1c91081d948f39a6824647c2f42b09ba35",
+          "pack": "c3_images.bin",
+          "offset": 1131656
+        },
+        "c6_172x320": {
+          "file": "c6_172x320/verspieltes_katzenchaos_im_blumengarten.jpg",
+          "bytes": 32525,
+          "sha256": "f53ec3f0b335537b73408b36e27acf0c324adcd367d7a636aec3c1e13fc7abd7",
+          "pack": "c6_images.bin",
+          "offset": 1860152
+        },
+        "c6_320x172": {
+          "file": "c6_320x172/verspieltes_katzenchaos_im_blumengarten.jpg",
+          "bytes": 31059,
+          "sha256": "63f53814a7470aef79b6e92553742cb309dcecdcedb84b121d8fd01e1846af64",
+          "pack": "c6_images.bin",
+          "offset": 4019680
+        }
+      }
+    },
+    {
+      "id": "d6e713b0e98e45ee",
+      "sort_index": 67,
+      "source": "verspieltes_katzenchaos_im_glasgewächshaus.png",
+      "source_sha256": "d6e713b0e98e45ee9673f813f770c80d713fa73a8adb2dda824a670a6ff26361",
+      "source_dimensions": [
+        1254,
+        1254
+      ],
+      "variants": {
+        "c3_240x240": {
+          "file": "c3_240x240/verspieltes_katzenchaos_im_glasgewächshaus.jpg",
+          "bytes": 23219,
+          "sha256": "912e0e3895292e0925f7ae8bee3e0f066b91a0d631d80cfa07829f15cb0acebb",
+          "pack": "c3_images.bin",
+          "offset": 1150852
+        },
+        "c6_172x320": {
+          "file": "c6_172x320/verspieltes_katzenchaos_im_glasgewächshaus.jpg",
+          "bytes": 38282,
+          "sha256": "2ca9322d87a69779d147c850d4f6521c5b34e9c1426f0b49355d3136e4a6ea89",
+          "pack": "c6_images.bin",
+          "offset": 1892680
+        },
+        "c6_320x172": {
+          "file": "c6_320x172/verspieltes_katzenchaos_im_glasgewächshaus.jpg",
+          "bytes": 36277,
+          "sha256": "3fb61dcde77e03907ee4813e1bbb3ac0938040482ab71912429657eba6095c96",
+          "pack": "c6_images.bin",
+          "offset": 4050740
+        }
+      }
+    },
+    {
+      "id": "4bfc92a3a3e46e84",
+      "sort_index": 68,
+      "source": "verspieltes_katzenchaos_im_glashaus.png",
+      "source_sha256": "4bfc92a3a3e46e84b9e8befed0344942a7c4123e880348492b6c60c5ab113666",
+      "source_dimensions": [
+        1254,
+        1254
+      ],
+      "variants": {
+        "c3_240x240": {
+          "file": "c3_240x240/verspieltes_katzenchaos_im_glashaus.jpg",
+          "bytes": 19539,
+          "sha256": "2b8b3e6b1f7500cd067d8386c75ea2c61049577ac4f3d961e3fba2db6625a8d3",
+          "pack": "c3_images.bin",
+          "offset": 1174072
+        },
+        "c6_172x320": {
+          "file": "c6_172x320/verspieltes_katzenchaos_im_glashaus.jpg",
+          "bytes": 33121,
+          "sha256": "f1acbcd5dc24160949cb51dc2684801c49c461c1094a51dd22bbac60253c43f9",
+          "pack": "c6_images.bin",
+          "offset": 1930964
+        },
+        "c6_320x172": {
+          "file": "c6_320x172/verspieltes_katzenchaos_im_glashaus.jpg",
+          "bytes": 32534,
+          "sha256": "9e0f18feda9eedbd83927eb51837308a8ce7738c7f39ab8391ef7bd5584f1bcb",
+          "pack": "c6_images.bin",
+          "offset": 4087020
+        }
+      }
+    },
+    {
+      "id": "8066e4f7ddf93033",
+      "sort_index": 69,
+      "source": "verspieltes_katzenchaos_im_roten_garn.png",
+      "source_sha256": "8066e4f7ddf930337c60c1d322735d586c6d60d8219d23ec06f7630b053de48b",
+      "source_dimensions": [
+        1254,
+        1254
+      ],
+      "variants": {
+        "c3_240x240": {
+          "file": "c3_240x240/verspieltes_katzenchaos_im_roten_garn.jpg",
+          "bytes": 15464,
+          "sha256": "e4623e23db61d320da308cee738dc89ee13862290c50486a9994a553f952cfbc",
+          "pack": "c3_images.bin",
+          "offset": 1193612
+        },
+        "c6_172x320": {
+          "file": "c6_172x320/verspieltes_katzenchaos_im_roten_garn.jpg",
+          "bytes": 27514,
+          "sha256": "025f331be7d50941b2e9feae0b24d673644d2439953d939aa604ca3fb035186a",
+          "pack": "c6_images.bin",
+          "offset": 1964088
+        },
+        "c6_320x172": {
+          "file": "c6_320x172/verspieltes_katzenchaos_im_roten_garn.jpg",
+          "bytes": 28363,
+          "sha256": "e0f439a77741c8711206a44304b13ce31f73899e793206dc46e587ee71882d1d",
+          "pack": "c6_images.bin",
+          "offset": 4119556
+        }
+      }
+    },
+    {
+      "id": "4288bb55b430d514",
+      "sort_index": 70,
+      "source": "verspieltes_katzenchaos_im_spielzeugatelier.png",
+      "source_sha256": "4288bb55b430d514703f880ffff7d13e17f92413808235e35925ea6cb94c6a48",
+      "source_dimensions": [
+        1254,
+        1254
+      ],
+      "variants": {
+        "c3_240x240": {
+          "file": "c3_240x240/verspieltes_katzenchaos_im_spielzeugatelier.jpg",
+          "bytes": 14302,
+          "sha256": "31ea0bb11be6a06a8b929998a3af1a9f50f2bc28482e3d23bde2fd14e96b42ba",
+          "pack": "c3_images.bin",
+          "offset": 1209076
+        },
+        "c6_172x320": {
+          "file": "c6_172x320/verspieltes_katzenchaos_im_spielzeugatelier.jpg",
+          "bytes": 22081,
+          "sha256": "5ba504a9e9f91e2b0ca0bd4665df7b047f22bb34c2ddc64ff87d4edf3562d6fb",
+          "pack": "c6_images.bin",
+          "offset": 1991604
+        },
+        "c6_320x172": {
+          "file": "c6_320x172/verspieltes_katzenchaos_im_spielzeugatelier.jpg",
+          "bytes": 23111,
+          "sha256": "05bfa0376dc7adebe800ece08ce65e6399d04f7f8722cf1ef6ad1f6b0104ff40",
+          "pack": "c6_images.bin",
+          "offset": 4147920
+        }
+      }
+    },
+    {
+      "id": "bd37a368566ba2b7",
+      "sort_index": 71,
+      "source": "verspieltes_katzenchaos_im_teetassenturm.png",
+      "source_sha256": "bd37a368566ba2b7a463d6cdf8946b2fc6ca5ee905f0e2f4ddf1b27578c33441",
+      "source_dimensions": [
+        1254,
+        1254
+      ],
+      "variants": {
+        "c3_240x240": {
+          "file": "c3_240x240/verspieltes_katzenchaos_im_teetassenturm.jpg",
+          "bytes": 16093,
+          "sha256": "4228c8f406a58015f8af59becbc088eb7485e57890b2589ffea478217b4faaad",
+          "pack": "c3_images.bin",
+          "offset": 1223380
+        },
+        "c6_172x320": {
+          "file": "c6_172x320/verspieltes_katzenchaos_im_teetassenturm.jpg",
+          "bytes": 25462,
+          "sha256": "40dada08384b794a923007804f18ac035c0da899e8cbc415a34530db9d6d06e6",
+          "pack": "c6_images.bin",
+          "offset": 2013688
+        },
+        "c6_320x172": {
+          "file": "c6_320x172/verspieltes_katzenchaos_im_teetassenturm.jpg",
+          "bytes": 24869,
+          "sha256": "e0bfa4fbc94e41bc5a27128ea0b1df58f4f736652bcad61ebd4014d381e5a780",
+          "pack": "c6_images.bin",
+          "offset": 4171032
+        }
+      }
+    },
+    {
+      "id": "acac7bd3ee8929bd",
+      "sort_index": 72,
+      "source": "verspieltes_unterwasser_abenteuer_der_katzen.png",
+      "source_sha256": "acac7bd3ee8929bdec255b25d2be940cb8a9ab5f8a1b9db38148ebbd76d69893",
+      "source_dimensions": [
+        1254,
+        1254
+      ],
+      "variants": {
+        "c3_240x240": {
+          "file": "c3_240x240/verspieltes_unterwasser_abenteuer_der_katzen.jpg",
+          "bytes": 19113,
+          "sha256": "2eaff573c9d45ea9eabbd0759b2e0ea861023f8ef63f589d25c38b878184a5b7",
+          "pack": "c3_images.bin",
+          "offset": 1239476
+        },
+        "c6_172x320": {
+          "file": "c6_172x320/verspieltes_unterwasser_abenteuer_der_katzen.jpg",
+          "bytes": 32855,
+          "sha256": "c300a832f00c39b9a148e91bf6d623b98ccbd574fe6fd2fa7f167a29212f879c",
+          "pack": "c6_images.bin",
+          "offset": 2039152
+        },
+        "c6_320x172": {
+          "file": "c6_320x172/verspieltes_unterwasser_abenteuer_der_katzen.jpg",
+          "bytes": 32152,
+          "sha256": "8465d202eea38256f8261dc3c189f5636720d9e1d382f9bca57e47315feb4b48",
+          "pack": "c6_images.bin",
+          "offset": 4195904
+        }
+      }
+    },
+    {
+      "id": "b5a1448a5a0ac2ec",
+      "sort_index": 73,
+      "source": "voxel_katzen_im_wilden_schlittenabenteuer.png",
+      "source_sha256": "b5a1448a5a0ac2ecb76de0136a5e171c1f42d20ba42bcf4ec29771854a84dcef",
+      "source_dimensions": [
+        1254,
+        1254
+      ],
+      "variants": {
+        "c3_240x240": {
+          "file": "c3_240x240/voxel_katzen_im_wilden_schlittenabenteuer.jpg",
+          "bytes": 12818,
+          "sha256": "361a6a6db2de5e248b3bd6fc0c4f3278a747f3f4e313a7c622bba5f01e5ec0be",
+          "pack": "c3_images.bin",
+          "offset": 1258592
+        },
+        "c6_172x320": {
+          "file": "c6_172x320/voxel_katzen_im_wilden_schlittenabenteuer.jpg",
+          "bytes": 20759,
+          "sha256": "ed88c9ab974d2807c361d96df6443a7f402a0bda814479b1feb9ffe288c46231",
+          "pack": "c6_images.bin",
+          "offset": 2072008
+        },
+        "c6_320x172": {
+          "file": "c6_320x172/voxel_katzen_im_wilden_schlittenabenteuer.jpg",
+          "bytes": 21813,
+          "sha256": "cedfb0464f6c9bab043ab6971a7caaf6325887a7ee5a684e4cba9d8e96455479",
+          "pack": "c6_images.bin",
+          "offset": 4228056
+        }
+      }
+    },
+    {
+      "id": "79c3e6e9ab52092e",
+      "sort_index": 74,
+      "source": "wackelige_katzen_auf_dem_bücherstapel.png",
+      "source_sha256": "79c3e6e9ab52092ef6bd32ee18fa6d3efbf1046075fced0dd34247cb7feb821b",
+      "source_dimensions": [
+        1254,
+        1254
+      ],
+      "variants": {
+        "c3_240x240": {
+          "file": "c3_240x240/wackelige_katzen_auf_dem_bücherstapel.jpg",
+          "bytes": 13501,
+          "sha256": "6d09be4e51a207349ab91d9a49deca736d5ec5c5356edb416bd1a66ff56f1d00",
+          "pack": "c3_images.bin",
+          "offset": 1271412
+        },
+        "c6_172x320": {
+          "file": "c6_172x320/wackelige_katzen_auf_dem_bücherstapel.jpg",
+          "bytes": 24201,
+          "sha256": "6f0da6e5431477db414f87f4e3917966273787999b462da6986b4dd2254b0112",
+          "pack": "c6_images.bin",
+          "offset": 2092768
+        },
+        "c6_320x172": {
+          "file": "c6_320x172/wackelige_katzen_auf_dem_bücherstapel.jpg",
+          "bytes": 24099,
+          "sha256": "fb12aaef692e128c2a601d01b715faf5a7dc847b45a17e445228edc415fcf5a2",
+          "pack": "c6_images.bin",
+          "offset": 4249872
+        }
+      }
+    }
+  ]
+}

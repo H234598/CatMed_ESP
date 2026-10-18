@@ -1,0 +1,306 @@
+{
+  "schema_version": 1,
+  "description": "Visuell geprüfte Motivschwerpunkte in normierten Quellkoordinaten. X und Y liegen zwischen 0 und 1. Der Ausschnitt bleibt innerhalb des Bildes.",
+  "focus_by_source": {
+    "art_déco_chaos_mit_katzen.png": [
+      0.45,
+      0.43
+    ],
+    "art_nouveau_katzen_im_blütengewächshaus.png": [
+      0.35,
+      0.23
+    ],
+    "barocke_katzen_teeparty_im_chaos.png": [
+      0.56,
+      0.43
+    ],
+    "barockes_katzenchaos_am_desserttisch_variante_01.png": [
+      0.53,
+      0.48
+    ],
+    "barockes_katzenchaos_am_desserttisch_variante_02.png": [
+      0.6,
+      0.32
+    ],
+    "chaotische_speisekammer_mit_katzen_und_popcorn.png": [
+      0.55,
+      0.37
+    ],
+    "chaotisches_katzenatelier_in_der_töpferei.png": [
+      0.3,
+      0.32
+    ],
+    "chaotisches_katzenparadies_am_meer.png": [
+      0.72,
+      0.3
+    ],
+    "facettenkatzen_im_schneeschlitten_chaos.png": [
+      0.51,
+      0.4
+    ],
+    "fluffige_katzen_auf_schatzsuche_unter_wasser.png": [
+      0.53,
+      0.42
+    ],
+    "katzen_auf_der_herbsttreppe.png": [
+      0.48,
+      0.5
+    ],
+    "katzen_auf_rasanter_küchenrutschpartie.png": [
+      0.52,
+      0.43
+    ],
+    "katzen_auf_schatzsuche_im_unterwasserreich.png": [
+      0.35,
+      0.36
+    ],
+    "katzen_garn_und_grosses_nähchaos.png": [
+      0.72,
+      0.43
+    ],
+    "katzen_im_fischraketen_cockpit.png": [
+      0.47,
+      0.42
+    ],
+    "katzen_im_raketen_cockpit.png": [
+      0.3,
+      0.35
+    ],
+    "katzen_im_wäschekorb_unerquicklich.png": [
+      0.49,
+      0.47
+    ],
+    "katzen_und_das_kleine_ufo.png": [
+      0.4,
+      0.36
+    ],
+    "katzenabenteuer_auf_tempeltreppen.png": [
+      0.59,
+      0.47
+    ],
+    "katzenabenteuer_in_der_riesenteetasse.png": [
+      0.48,
+      0.36
+    ],
+    "katzenchaos_auf_dem_pfannkuchenstapel.png": [
+      0.49,
+      0.29
+    ],
+    "katzenchaos_auf_dem_schachbrett.png": [
+      0.4,
+      0.31
+    ],
+    "katzenchaos_auf_der_abenteuerkarte.png": [
+      0.7,
+      0.36
+    ],
+    "katzenchaos_bei_mondlicht.png": [
+      0.25,
+      0.43
+    ],
+    "katzenchaos_beim_sonnigen_gartenpicknick.png": [
+      0.55,
+      0.42
+    ],
+    "katzenchaos_im_dachboden_bücherstapel.png": [
+      0.7,
+      0.42
+    ],
+    "katzenchaos_im_deckenfort.png": [
+      0.54,
+      0.43
+    ],
+    "katzenchaos_im_erfinderatelier.png": [
+      0.65,
+      0.39
+    ],
+    "katzenchaos_im_gemütlichen_fort.png": [
+      0.53,
+      0.45
+    ],
+    "katzenchaos_im_musikzimmer.png": [
+      0.7,
+      0.39
+    ],
+    "katzenchaos_im_neon_arcadeparadies.png": [
+      0.72,
+      0.45
+    ],
+    "katzenchaos_im_retro_waschsalon.png": [
+      0.61,
+      0.43
+    ],
+    "katzenchaos_im_roten_wollknäuel.png": [
+      0.4,
+      0.51
+    ],
+    "katzenchaos_in_der_gemütlichen_küche.png": [
+      0.57,
+      0.5
+    ],
+    "katzenchaos_in_der_pixelspielhalle.png": [
+      0.72,
+      0.36
+    ],
+    "katzenchaos_in_der_steampunk_werkstatt.png": [
+      0.45,
+      0.34
+    ],
+    "kubistische_katzen_im_kunstchaos.png": [
+      0.75,
+      0.35
+    ],
+    "kubistisches_katzenchaos_mit_büchern.png": [
+      0.7,
+      0.38
+    ],
+    "kuschelige_katzen_im_deckenfort.png": [
+      0.49,
+      0.39
+    ],
+    "kätzchen_chaos_beim_pfannkuchenfrühstück.png": [
+      0.57,
+      0.39
+    ],
+    "neon_katzen_arcade_voller_spiele_und_spass.png": [
+      0.72,
+      0.39
+    ],
+    "neon_katzen_auf_fischjagd.png": [
+      0.61,
+      0.46
+    ],
+    "neon_katzen_und_der_schillernde_orb.png": [
+      0.38,
+      0.49
+    ],
+    "neon_katzenchaos_in_der_pixelspielhalle.png": [
+      0.74,
+      0.48
+    ],
+    "neonkatzen_im_pixel_arcade_fieber.png": [
+      0.3,
+      0.34
+    ],
+    "niedliche_katzen_im_fisch_krallenautomaten.png": [
+      0.35,
+      0.37
+    ],
+    "origami_katzen_im_papierchaos.png": [
+      0.68,
+      0.45
+    ],
+    "papiercollage_katzen_im_küchenchaos.png": [
+      0.52,
+      0.4
+    ],
+    "papierkunst_katzen_im_kite_chaos.png": [
+      0.3,
+      0.53
+    ],
+    "papierkunst_katzen_im_schneespass.png": [
+      0.53,
+      0.4
+    ],
+    "pastellchaos_mit_zwei_katzen.png": [
+      0.74,
+      0.6
+    ],
+    "porzellan_kätzchen_im_dessertchaos.png": [
+      0.55,
+      0.4
+    ],
+    "schwebendes_katzenzimmer_im_mondlicht.png": [
+      0.74,
+      0.4
+    ],
+    "verspielte_katzen_auf_der_kalligrafie_schriftrolle.png": [
+      0.44,
+      0.5
+    ],
+    "verspielte_katzen_im_art_nouveau_gewächshaus.png": [
+      0.36,
+      0.27
+    ],
+    "verspielte_katzen_im_blumenbrunnen.png": [
+      0.3,
+      0.48
+    ],
+    "verspielte_katzen_im_buntglaszauber.png": [
+      0.72,
+      0.53
+    ],
+    "verspielte_katzen_im_burggarten.png": [
+      0.7,
+      0.53
+    ],
+    "verspielte_katzen_im_glasblüten_gewächshaus.png": [
+      0.4,
+      0.27
+    ],
+    "verspielte_katzen_im_herbstlaub.png": [
+      0.73,
+      0.57
+    ],
+    "verspielte_katzen_im_mittelalterlichen_rosengarten.png": [
+      0.55,
+      0.47
+    ],
+    "verspielte_katzen_im_origami_sonnenuntergang.png": [
+      0.58,
+      0.41
+    ],
+    "verspielte_katzen_im_ukiyo_e_zimmer.png": [
+      0.28,
+      0.52
+    ],
+    "verspielte_katzen_und_fallender_teetassenturm.png": [
+      0.35,
+      0.36
+    ],
+    "verspielte_katzentapisserie_im_burghof.png": [
+      0.72,
+      0.42
+    ],
+    "verspielte_kätzchen_im_kreidechaos.png": [
+      0.3,
+      0.48
+    ],
+    "verspieltes_katzenchaos_im_blumengarten.png": [
+      0.5,
+      0.57
+    ],
+    "verspieltes_katzenchaos_im_glasgewächshaus.png": [
+      0.33,
+      0.39
+    ],
+    "verspieltes_katzenchaos_im_glashaus.png": [
+      0.68,
+      0.36
+    ],
+    "verspieltes_katzenchaos_im_roten_garn.png": [
+      0.7,
+      0.49
+    ],
+    "verspieltes_katzenchaos_im_spielzeugatelier.png": [
+      0.4,
+      0.23
+    ],
+    "verspieltes_katzenchaos_im_teetassenturm.png": [
+      0.55,
+      0.28
+    ],
+    "verspieltes_unterwasser_abenteuer_der_katzen.png": [
+      0.32,
+      0.41
+    ],
+    "voxel_katzen_im_wilden_schlittenabenteuer.png": [
+      0.49,
+      0.37
+    ],
+    "wackelige_katzen_auf_dem_bücherstapel.png": [
+      0.54,
+      0.23
+    ]
+  }
+}

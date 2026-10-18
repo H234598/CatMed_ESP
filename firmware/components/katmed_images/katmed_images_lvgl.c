@@ -1,0 +1,366 @@
+#ifndef ESP_PLATFORM
+#define _POSIX_C_SOURCE 200809L
+#endif
+#include "katmed_images_internal.h"
+#include "src/draw/lv_image_decoder_private.h"
+#include <string.h>
+#include <stdint.h>
+#ifdef ESP_PLATFORM
+#include "esp_timer.h"
+#else
+#include <time.h>
+#endif
+
+typedef struct {
+    uint8_t index;
+    uint8_t profile;
+    uint32_t position;
+    KatmedImageStatus sticky;
+    bool used;
+} ImageFile;
+
+static lv_fs_drv_t fs_driver;
+static bool registered;
+static uint32_t open_files;
+static ImageFile file_pool[KATMED_IMAGE_MAX_OPEN_FILES];
+static lv_obj_t *active_image;
+static lv_obj_t *active_fallback;
+static lv_display_t *active_display;
+static lv_image_decoder_info_f_t tjpgd_info;
+static lv_image_decoder_open_f_t tjpgd_open;
+static lv_image_decoder_get_area_cb_t tjpgd_get_area;
+static KatmedImageTimingSample jpeg_decode_timing;
+static uint32_t failed_presentations;
+
+static void record_failed_presentation(void)
+{
+    if(failed_presentations != UINT32_MAX) ++failed_presentations;
+}
+
+static uint64_t monotonic_us(void)
+{
+#ifdef ESP_PLATFORM
+    int64_t now = esp_timer_get_time();
+    return now < 0 ? 0 : (uint64_t)now;
+#else
+    struct timespec now;
+    if(clock_gettime(CLOCK_MONOTONIC, &now) != 0) return 0;
+    return (uint64_t)now.tv_sec * 1000000u + (uint64_t)now.tv_nsec / 1000u;
+#endif
+}
+
+KatmedImageTimingSample katmed_images_jpeg_decode_timing(void) { return jpeg_decode_timing; }
+uint32_t katmed_images_failed_presentations(void) { return failed_presentations; }
+
+uint32_t katmed_images_open_file_count(void) { return open_files; }
+
+static bool katmed_source(const lv_image_decoder_dsc_t *dsc)
+{
+    return dsc->src_type == LV_IMAGE_SRC_FILE && dsc->src != NULL &&
+           strncmp((const char *)dsc->src, "K:/", 3) == 0;
+}
+
+/* Observe the pinned decoder's results, without implementing JPEG decoding.
+ * This also catches a late decoder allocation failure with no storage error. */
+static lv_result_t monitored_info(lv_image_decoder_t *decoder, lv_image_decoder_dsc_t *dsc,
+                                  lv_image_header_t *header)
+{
+    lv_result_t result = tjpgd_info(decoder, dsc, header);
+    if(result != LV_RESULT_OK && katmed_source(dsc))
+        katmed_images_record_error(KATMED_IMAGE_IO_ERROR);
+    return result;
+}
+
+static lv_result_t monitored_open(lv_image_decoder_t *decoder, lv_image_decoder_dsc_t *dsc)
+{
+    lv_result_t result = tjpgd_open(decoder, dsc);
+    if(result != LV_RESULT_OK && katmed_source(dsc))
+        katmed_images_record_error(KATMED_IMAGE_IO_ERROR);
+    return result;
+}
+
+static lv_result_t monitored_area(lv_image_decoder_t *decoder, lv_image_decoder_dsc_t *dsc,
+                                  const lv_area_t *full, lv_area_t *area)
+{
+    bool already_complete = area->x2 == (lv_coord_t)dsc->header.w - 1 &&
+                            area->y2 == (lv_coord_t)dsc->header.h - 1;
+    lv_result_t result = tjpgd_get_area(decoder, dsc, full, area);
+    if(result != LV_RESULT_OK && !already_complete && katmed_source(dsc))
+        katmed_images_record_error(KATMED_IMAGE_IO_ERROR);
+    return result;
+}
+
+static bool parse_path(const char *path, uint32_t *index, uint32_t *profile)
+{
+    /* LVGL removes "K:" before calling the driver and leaves the slash. */
+    if(path == NULL || strlen(path) != 9u || path[0] != '/' ||
+       path[1] < '0' || path[1] > '9' || path[2] < '0' || path[2] > '9' ||
+       path[3] != '_' || path[4] < '0' || path[4] > '1' ||
+       strcmp(path + 5, ".jpg") != 0) return false;
+    *index = (uint32_t)(path[1] - '0') * 10u + (uint32_t)(path[2] - '0');
+    *profile = (uint32_t)(path[4] - '0');
+    return katmed_images_variant(*index, *profile) != NULL;
+}
+
+static void *fs_open(lv_fs_drv_t *driver, const char *path, lv_fs_mode_t mode)
+{
+    LV_UNUSED(driver);
+    if(mode != LV_FS_MODE_RD) return NULL;
+    uint32_t index, profile;
+    if(!parse_path(path, &index, &profile)) return NULL;
+    ImageFile *file = NULL;
+    for(unsigned i = 0; i < KATMED_IMAGE_MAX_OPEN_FILES; ++i) {
+        if(!file_pool[i].used) {
+            file = &file_pool[i];
+            break;
+        }
+    }
+    if(file == NULL) {
+        katmed_images_record_error(KATMED_IMAGE_UNAVAILABLE);
+        return NULL;
+    }
+    if(katmed_images_validate_variant(index, profile) != KATMED_IMAGE_OK) return NULL;
+    *file = (ImageFile){.index = (uint8_t)index, .profile = (uint8_t)profile,
+                        .position = 0u, .sticky = KATMED_IMAGE_OK, .used = true};
+    ++open_files;
+    return file;
+}
+
+static lv_fs_res_t fs_close(lv_fs_drv_t *driver, void *opaque)
+{
+    LV_UNUSED(driver);
+    for(unsigned i = 0; i < KATMED_IMAGE_MAX_OPEN_FILES; ++i) {
+        if(opaque == &file_pool[i] && file_pool[i].used) {
+            file_pool[i].used = false;
+            --open_files;
+            return LV_FS_RES_OK;
+        }
+    }
+    return LV_FS_RES_INV_PARAM;
+}
+
+static lv_fs_res_t fs_read(lv_fs_drv_t *driver, void *opaque, void *buffer,
+                           uint32_t wanted, uint32_t *actual)
+{
+    LV_UNUSED(driver);
+    if(actual) *actual = 0;
+    if(opaque == NULL || (wanted && buffer == NULL)) return LV_FS_RES_INV_PARAM;
+    ImageFile *file = (ImageFile *)opaque;
+    if(file->sticky != KATMED_IMAGE_OK) return LV_FS_RES_FS_ERR;
+    const KatmedImageVariant *variant = katmed_images_variant(file->index, file->profile);
+    if(variant == NULL || file->position > variant->length) {
+        file->sticky = KATMED_IMAGE_BAD_RANGE;
+        katmed_images_record_error(file->sticky);
+        return LV_FS_RES_FS_ERR;
+    }
+    uint32_t available = variant->length - file->position;
+    size_t take = wanted < available ? wanted : available;
+    size_t read_count = 0;
+    KatmedImageStatus status = katmed_images_read_variant(
+        file->index, file->profile, file->position, (uint8_t *)buffer, take, &read_count);
+    if(status != KATMED_IMAGE_OK || read_count != take) {
+        file->sticky = status == KATMED_IMAGE_OK ? KATMED_IMAGE_IO_ERROR : status;
+        katmed_images_record_error(file->sticky);
+        return LV_FS_RES_FS_ERR;
+    }
+    file->position += (uint32_t)read_count;
+    if(actual) *actual = (uint32_t)read_count;
+    return LV_FS_RES_OK;
+}
+
+static lv_fs_res_t fs_seek(lv_fs_drv_t *driver, void *opaque, uint32_t position,
+                           lv_fs_whence_t whence)
+{
+    LV_UNUSED(driver);
+    if(opaque == NULL) return LV_FS_RES_INV_PARAM;
+    ImageFile *file = (ImageFile *)opaque;
+    if(file->sticky != KATMED_IMAGE_OK) return LV_FS_RES_FS_ERR;
+    const KatmedImageVariant *variant = katmed_images_variant(file->index, file->profile);
+    if(variant == NULL) return LV_FS_RES_FS_ERR;
+    uint64_t next;
+    if(whence == LV_FS_SEEK_SET) next = position;
+    else if(whence == LV_FS_SEEK_CUR) next = (uint64_t)file->position + position;
+    else if(whence == LV_FS_SEEK_END) next = (uint64_t)variant->length + position;
+    else next = UINT64_MAX;
+    if(next > variant->length) {
+        file->sticky = KATMED_IMAGE_BAD_RANGE;
+        katmed_images_record_error(file->sticky);
+        return LV_FS_RES_INV_PARAM;
+    }
+    file->position = (uint32_t)next;
+    return LV_FS_RES_OK;
+}
+
+static lv_fs_res_t fs_tell(lv_fs_drv_t *driver, void *opaque, uint32_t *position)
+{
+    LV_UNUSED(driver);
+    if(opaque == NULL || position == NULL) return LV_FS_RES_INV_PARAM;
+    ImageFile *file = (ImageFile *)opaque;
+    if(file->sticky != KATMED_IMAGE_OK) return LV_FS_RES_FS_ERR;
+    *position = file->position;
+    return LV_FS_RES_OK;
+}
+
+void katmed_images_register_lvgl_fs(void)
+{
+    if(registered) return;
+    lv_fs_drv_init(&fs_driver);
+    fs_driver.letter = 'K';
+    fs_driver.cache_size = 0;
+    fs_driver.open_cb = fs_open;
+    fs_driver.close_cb = fs_close;
+    fs_driver.read_cb = fs_read;
+    fs_driver.seek_cb = fs_seek;
+    fs_driver.tell_cb = fs_tell;
+    lv_fs_drv_register(&fs_driver);
+    lv_image_decoder_t *decoder = NULL;
+    while((decoder = lv_image_decoder_get_next(decoder)) != NULL) {
+        if(decoder->name != NULL && strcmp(decoder->name, "TJPGD") == 0 &&
+           decoder->info_cb != NULL && decoder->open_cb != NULL && decoder->get_area_cb != NULL) {
+            tjpgd_info = decoder->info_cb;
+            tjpgd_open = decoder->open_cb;
+            tjpgd_get_area = decoder->get_area_cb;
+            lv_image_decoder_set_info_cb(decoder, monitored_info);
+            lv_image_decoder_set_open_cb(decoder, monitored_open);
+            lv_image_decoder_set_get_area_cb(decoder, monitored_area);
+            break;
+        }
+    }
+    registered = true;
+}
+
+static KatmedImageStatus decode_check(const KatmedImageSelection *selection)
+{
+    uint64_t start = monotonic_us();
+    lv_image_decoder_dsc_t decoder;
+    if(lv_image_decoder_open(&decoder, selection->lvgl_path, NULL) != LV_RESULT_OK) {
+        uint64_t end = monotonic_us();
+        jpeg_decode_timing = (KatmedImageTimingSample){
+            .elapsed_us = end >= start ? end - start : 0,
+            .status = KATMED_IMAGE_IO_ERROR, .measured = true};
+        return KATMED_IMAGE_IO_ERROR;
+    }
+    lv_area_t full = {0, 0, (lv_coord_t)selection->width - 1,
+                      (lv_coord_t)selection->height - 1};
+    lv_area_t area = {LV_COORD_MIN, LV_COORD_MIN, LV_COORD_MIN, LV_COORD_MIN};
+    bool complete = false;
+    for(uint32_t i = 0; i < 1280u; ++i) {
+        if(lv_image_decoder_get_area(&decoder, &full, &area) != LV_RESULT_OK) break;
+        if(area.x2 == (lv_coord_t)selection->width - 1 &&
+           area.y2 == (lv_coord_t)selection->height - 1) {
+            complete = true;
+            break;
+        }
+    }
+    lv_image_decoder_close(&decoder);
+    KatmedImageStatus status = complete ? KATMED_IMAGE_OK : KATMED_IMAGE_IO_ERROR;
+    uint64_t end = monotonic_us();
+    jpeg_decode_timing = (KatmedImageTimingSample){
+        .elapsed_us = end >= start ? end - start : 0,
+        .status = status, .measured = true};
+    return status;
+}
+
+static void show_fallback(lv_obj_t *image, lv_obj_t *label)
+{
+    lv_image_set_src(image, NULL);
+    lv_obj_add_flag(image, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_remove_flag(label, LV_OBJ_FLAG_HIDDEN);
+}
+
+static void image_event(lv_event_t *event)
+{
+    lv_obj_t *image = lv_event_get_target_obj(event);
+    if(image != active_image) return;
+    lv_event_code_t code = lv_event_get_code(event);
+    if(code == LV_EVENT_DELETE) {
+        active_image = NULL;
+        active_fallback = NULL;
+    }
+}
+
+static void fallback_event(lv_event_t *event)
+{
+    if(lv_event_get_target_obj(event) == active_fallback) active_fallback = NULL;
+}
+
+static void display_event(lv_event_t *event)
+{
+    if(lv_event_get_target(event) != active_display) return;
+    if(lv_event_get_code(event) == LV_EVENT_DELETE) {
+        active_display = NULL;
+    }
+    else if(lv_event_get_code(event) == LV_EVENT_REFR_READY && active_image != NULL &&
+            active_fallback != NULL && katmed_images_last_error() != KATMED_IMAGE_OK &&
+            !lv_obj_has_flag(active_image, LV_OBJ_FLAG_HIDDEN)) {
+        // LVGL 9.4 forbids invalidation during DRAW_POST/RENDER_READY.
+        // REFR_READY runs after rendering and requires no deferred allocation.
+        record_failed_presentation();
+        show_fallback(active_image, active_fallback);
+    }
+}
+
+static void prepare_fallback(lv_obj_t *image, lv_obj_t *label)
+{
+    if(active_image != NULL && active_image != image)
+        lv_obj_remove_event_cb(active_image, image_event);
+    if(active_image != image)
+        lv_obj_add_event_cb(image, image_event, LV_EVENT_ALL, NULL);
+    if(active_fallback != NULL && active_fallback != label)
+        lv_obj_remove_event_cb(active_fallback, fallback_event);
+    if(active_fallback != label)
+        lv_obj_add_event_cb(label, fallback_event, LV_EVENT_DELETE, NULL);
+    lv_display_t *display = lv_obj_get_display(image);
+    if(active_display != display) {
+        if(active_display != NULL)
+            lv_display_remove_event_cb_with_user_data(active_display, display_event, NULL);
+        lv_display_add_event_cb(display, display_event, LV_EVENT_ALL, NULL);
+        active_display = display;
+    }
+    active_image = image;
+    active_fallback = label;
+    /* These allocations and styles happen before the decode. A late I/O
+     * failure need only flip existing flags and release the image source. */
+    lv_label_set_text_static(label, "Bild nicht verfügbar");
+    lv_obj_set_size(label, LV_PCT(100), LV_PCT(100));
+    lv_obj_set_style_bg_color(label, lv_color_hex(0x303438), 0);
+    lv_obj_set_style_bg_opa(label, LV_OPA_COVER, 0);
+    lv_obj_set_style_text_color(label, lv_color_hex(0xf0f0f0), 0);
+    lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
+}
+
+KatmedImageStatus katmed_images_present(lv_obj_t *image, lv_obj_t *fallback_label,
+                                        uint32_t index, Orientation orientation)
+{
+    /* A failed selection has no decoder run. Do not expose the preceding
+     * scene's duration as if it belonged to this request. */
+    jpeg_decode_timing = (KatmedImageTimingSample){0};
+    if(image == NULL || fallback_label == NULL) {
+        record_failed_presentation();
+        return KATMED_IMAGE_BAD_ID;
+    }
+    prepare_fallback(image, fallback_label);
+    KatmedImageSelection selection;
+    KatmedImageStatus status = katmed_images_select(index, orientation, &selection);
+    if(status == KATMED_IMAGE_OK) status = decode_check(&selection);
+    if(status == KATMED_IMAGE_OK) {
+        lv_image_set_src(image, selection.lvgl_path);
+        const void *actual_source = lv_image_get_src(image);
+        /* LVGL can retain the previous source when copying a new path fails.
+         * A non-NULL source alone therefore does not prove this selection. */
+        if(actual_source == NULL || lv_image_src_get_type(actual_source) != LV_IMAGE_SRC_FILE ||
+           strcmp((const char *)actual_source, selection.lvgl_path) != 0)
+            status = KATMED_IMAGE_IO_ERROR;
+    }
+    if(status == KATMED_IMAGE_OK) {
+        lv_obj_remove_flag(image, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(fallback_label, LV_OBJ_FLAG_HIDDEN);
+        katmed_images_clear_error();
+    }
+    else {
+        record_failed_presentation();
+        katmed_images_record_error(status);
+        show_fallback(image, fallback_label);
+    }
+    return status;
+}

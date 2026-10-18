@@ -1,0 +1,42 @@
+name: Host contracts and firmware
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  host:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: espressif/esp-idf-ci-action@9d38657f3d789ca759b2b37aaf5ceffbc42c4f0d # official v1
+        with:
+          esp_idf_version: v5.5.5
+          target: esp32c3
+          extra_docker_args: -e CI=true
+          command: >-
+            apt-get update && apt-get install -y libssl-dev zlib1g-dev python3-pil &&
+            tools/ci.sh dependencies c3 && tools/ci.sh host
+  firmware:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - board: c3
+            target: esp32c3
+          - board: c6
+            target: esp32c6
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: espressif/esp-idf-ci-action@9d38657f3d789ca759b2b37aaf5ceffbc42c4f0d # official v1
+        with:
+          esp_idf_version: v5.5.5
+          target: ${{ matrix.target }}
+          extra_docker_args: -e CI=true
+          command: apt-get update && apt-get install -y python3-pil && tools/ci.sh firmware ${{ matrix.board }}

@@ -1,0 +1,7 @@
+Source: Waveshare ESP32-C6-Touch-LCD-1.47 official demo
+URL: https://files.waveshare.com/wiki/ESP32-C6-Touch-LCD-1.47/ESP32-C6-Touch-LCD-1.47-Demo.zip
+Archive SHA-256: ad8e27b172035fb73b5dbe88b821b1ff37bd677c20db294a9da7e5317ee176dd
+Path: ESP-IDF/03_lvgl_example/components/esp_lcd_touch_axs5106
+Retrieved: 2026-10-14
+Source and header are unchanged. Build integration is owned by Katmed TL.
+This is a compile/link check, not physical acceptance of the board.

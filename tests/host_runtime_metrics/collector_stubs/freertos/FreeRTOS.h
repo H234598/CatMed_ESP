@@ -1,0 +1,3 @@
+#ifndef KATMED_TEST_FREERTOS_H
+#define KATMED_TEST_FREERTOS_H
+#endif

@@ -1,0 +1,21 @@
+# Local output and dependency downloads
+/build*/
+firmware/build*/
+firmware/managed_components/
+firmware/sdkconfig*
+!firmware/sdkconfig.defaults*
+__pycache__/
+*.pyc
+# Backups may contain Wi-Fi credentials and are deliberately never versioned.
+/private-backups/
+/.local/
+.env
+.env.*
+
+# Firmware and diagnostic output are local; image packs are intentional assets.
+*.elf
+*.map
+*.log
+*.bin
+!assets/generated/*.bin
+/core
