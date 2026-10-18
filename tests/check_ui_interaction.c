@@ -200,6 +200,81 @@ int main(int argc, char **argv)
     project(&state, &local, &clock, 6600);
     lv_obj_t *loss=find_label(lv_screen_active(), "Impulse: Speicher voll");
     assert(loss && !lv_obj_has_flag(loss, LV_OBJ_FLAG_HIDDEN));
+    /* Local sender colour is gated by real grant/key state, not just Down. */
+    interaction.overflow = interaction.receive_white = false;
+    interaction.can_request = true;
+    clock.monotonic_ms = 10000;
+    ui_render(&state, &local, SETTINGS, &clock);
+    click_label(lv_screen_active(), "Morsecode");
+    project(&state, &local, &clock, 10010);
+    ui_touch_sample(false, 0, 0, true, 10020);
+    send = lv_obj_get_parent(find_label(lv_screen_active(), "Senden"));
+    x = lv_obj_get_x(send); y = lv_obj_get_y(send); diameter = lv_obj_get_width(send);
+    uint16_t normal = host.frame[12*host.width+host.width/2];
+    uint16_t blue = lv_color_to_u16(lv_color_hex(0x87cefa));
+    uint16_t button_normal = host.frame[(y+3*diameter/4)*host.width+x+diameter/2];
+    for (unsigned n=0; n<2; ++n) {
+        uint64_t at=10100+n*200;
+        ui_touch_sample(true, x+diameter/2, y+diameter/2, true, at);
+        if (!n) {
+            project(&state, &local, &clock, at+10);
+            assert(host.frame[12*host.width+host.width/2] == normal); /* waiting grant */
+            interaction.owns_token = true; interaction.grant_id = 123;
+            project(&state, &local, &clock, at+20);
+            assert(host.frame[12*host.width+host.width/2] == normal); /* not yet key_down */
+        }
+        interaction.key_down = true;
+        if (!n) {
+            ++interaction.menu_entry;
+            project(&state, &local, &clock, at+30);
+            assert(host.frame[12*host.width+host.width/2] == normal); /* stale menu grant */
+            --interaction.menu_entry;
+        }
+        project(&state, &local, &clock, at+40);
+        assert(host.frame[12*host.width+host.width/2] == blue);
+        assert(host.frame[(y+diameter/2)*host.width+x+diameter+4] == blue);
+        assert(host.frame[(y+3*diameter/4)*host.width+x+diameter/2] == button_normal);
+        ui_touch_sample(false, 0, 0, true, at+100); draw();
+        assert(host.frame[12*host.width+host.width/2] == normal); /* no new snapshot */
+        project(&state, &local, &clock, at+110);
+        assert(host.frame[12*host.width+host.width/2] == normal); /* stale key_down */
+    }
+    ui_touch_sample(true, x+diameter/2, y+diameter/2, true, 10600);
+    project(&state, &local, &clock, 10620);
+    assert(host.frame[12*host.width+host.width/2] == blue);
+    interaction.owns_token = interaction.key_down = interaction.can_request = false;
+    interaction.mode = KATMED_INTERACTION_REMOTE;
+    project(&state, &local, &clock, 10640);
+    assert(host.frame[12*host.width+host.width/2] == normal); /* token loss */
+    ui_touch_sample(false, 0, 0, true, 10660);
+    before=input_count; tap(x+diameter/2, y+diameter/2, 10700);
+    assert(input_count == before); /* another sender blocks the button */
+    interaction.owns_token = interaction.key_down = interaction.can_request = true;
+    project(&state, &local, &clock, 10820);
+    ui_touch_sample(true, x+diameter/2, y+diameter/2, true, 10840);
+    project(&state, &local, &clock, 10860);
+    assert(host.frame[12*host.width+host.width/2] == blue);
+    ui_touch_sample(false, 0, 0, false, 10880); draw();
+    assert(host.frame[12*host.width+host.width/2] == normal); /* cancel */
+    ui_touch_sample(false, 0, 0, true, 10900);
+    ui_touch_sample(true, x+diameter/2, y+diameter/2, true, 10910);
+    project(&state, &local, &clock, 10920);
+    assert(host.frame[12*host.width+host.width/2] == blue);
+    state.alarm_active = true; ++state.round.ordinal;
+    project(&state, &local, &clock, 10940);
+    assert(ui_current_view() == ALARM);
+    assert(host.frame[12*host.width+host.width/2] != blue);
+    ui_touch_sample(false, 0, 0, true, 10960);
+    assert(host.submit_calls == 0);
+    state.alarm_active = false;
+    project(&state, &local, &clock, 10980);
+    assert(ui_current_view() == UI_VIEW_INTERACTION);
+    assert(host.frame[12*host.width+host.width/2] == normal);
+    ui_touch_sample(false, 0, 0, true, 11000);
+    vertical(10, 80, 11100);
+    project(&state, &local, &clock, 11300);
+    assert(ui_current_view() == UI_VIEW_PLACEHOLDER);
+    assert(host.frame[12*host.width+host.width/2] != blue); /* exit */
     lv_display_delete(display); lv_deinit(); free(buffer); free(host.frame);
     return 0;
 }

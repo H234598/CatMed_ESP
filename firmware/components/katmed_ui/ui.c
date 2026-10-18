@@ -1048,6 +1048,8 @@ static void interaction_cancel(uint64_t now)
     if (ui.send_contact)
         interaction_input(KATMED_INTERACTION_CANCEL, 0, 0, ui.interaction.grant_id, now);
     ui.send_contact = false;
+    if (ui.page && ui.view == UI_VIEW_INTERACTION)
+        lv_obj_set_style_bg_color(ui.page, lv_color_hex(0x101c27), 0);
 }
 
 static void delete_page(void)
@@ -1246,6 +1248,12 @@ static void update_interaction(uint64_t now)
             }
         }
     }
+    if (ui.page && ui.view == UI_VIEW_INTERACTION) {
+        bool sending = ui.send_contact && ui.touch_down && ui.interaction.owns_token &&
+            ui.interaction.key_down && ui.interaction.connected && ui.interaction.synchronized &&
+            ui.interaction.menu_entry == ui.menu_entry && !ui.state.alarm_active && !kind;
+        lv_obj_set_style_bg_color(ui.page, lv_color_hex(sending ? 0x87cefa : 0x101c27), 0);
+    }
     if (ui.notice) lv_obj_move_foreground(ui.notice);
     bool white = !ui.state.alarm_active && !ui.interaction.owns_token &&
         ((ui.interaction.receive_white && now < ui.interaction.receive_until_ms) || now < ui.rx_until);
@@ -1388,6 +1396,8 @@ void ui_touch_sample(bool touched, int16_t x, int16_t y,
             ui.send_contact = false;
             ui.touch_down = false;
             ui.touch_armed = true;
+            if (ui.page && ui.view == UI_VIEW_INTERACTION)
+                lv_obj_set_style_bg_color(ui.page, lv_color_hex(0x101c27), 0);
             return;
         } else return;
     }
