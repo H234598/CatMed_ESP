@@ -35,6 +35,5 @@ void ui_grid_move(UiGrid *grid, int horizontal, int vertical)
 {
     if (!grid) return;
     if (vertical) grid->row = (uint8_t)((grid->row + (vertical > 0 ? 1 : 2)) % 3);
-    if (horizontal > 0 && grid->column < 2) ++grid->column;
-    if (horizontal < 0 && grid->column > 0) --grid->column;
+    if (horizontal) grid->column = (uint8_t)((grid->column + (horizontal > 0 ? 1 : 2)) % 3);
 }

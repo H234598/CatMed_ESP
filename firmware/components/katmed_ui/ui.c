@@ -1406,6 +1406,7 @@ void ui_touch_sample(bool touched, int16_t x, int16_t y,
         if (touched && !ui.touch_down) {
             katmed_morse_stop(&ui.morse);
             ui.view = BACKGROUND;
+            ui.grid = (UiGrid){1, 1};
             ui.touch_down = true;
             ui.reject_contact = true;
             ui.reject_confirm_motion = true;

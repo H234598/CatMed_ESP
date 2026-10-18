@@ -32,12 +32,25 @@ int main(void)
         for (unsigned n = 0; n < 3; ++n) ui_grid_move(&grid, 0, 1);
         assert(grid.row == 1 && grid.column == column);
     }
-    UiGrid edge = {0, 0};
-    ui_grid_move(&edge, -1, 0);
-    assert(edge.column == 0);
-    ui_grid_move(&edge, 1, 0);
-    ui_grid_move(&edge, 1, 0);
-    ui_grid_move(&edge, 1, 0);
-    assert(edge.row == 0 && edge.column == 2);
+    const UiView middle_views[] = {CLOCK, BACKGROUND, SETTINGS};
+    for (unsigned row = 0; row < 3; ++row) {
+        for (unsigned column = 0; column < 3; ++column) {
+            for (int direction = -1; direction <= 1; direction += 2) {
+                UiGrid grid = {(uint8_t)row, (uint8_t)column};
+                for (unsigned step = 1; step <= 3; ++step) {
+                    ui_grid_move(&grid, direction, 0);
+                    unsigned expected = (column + step * (direction > 0 ? 1u : 2u)) % 3u;
+                    assert(grid.row == row && grid.column == expected);
+                    assert(ui_grid_view(grid) == (row == 1 ? middle_views[expected] :
+                           row == 0 ? UI_VIEW_PLACEHOLDER : UI_VIEW_STATUS));
+                    UiGrid middle = grid;
+                    if (row != 1) ui_grid_move(&middle, 0, row == 0 ? 1 : -1);
+                    assert(middle.row == 1 && middle.column == expected);
+                    assert(ui_grid_view(middle) == middle_views[expected]);
+                }
+                assert(grid.row == row && grid.column == column);
+            }
+        }
+    }
     return 0;
 }
