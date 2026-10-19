@@ -322,6 +322,21 @@ static void format_local(char *out, size_t size, UtcInstant instant)
              t.year, t.hour, t.minute, t.daylight_saving ? "CEST" : "CET");
 }
 
+static void format_hours(char *out, size_t size, uint32_t seconds)
+{
+    /* Six decimal places round-trip every whole second through app_parse_hours.
+     * Integer arithmetic also keeps the firmware independent of float printf. */
+    const unsigned long hours = seconds / 3600u;
+    const unsigned long fraction =
+        ((uint64_t)(seconds % 3600u) * 1000000u + 1800u) / 3600u;
+    if (!fraction) snprintf(out, size, "%lu", hours);
+    else {
+        snprintf(out, size, "%lu.%06lu", hours, fraction);
+        size_t length = strlen(out);
+        while (length && out[length - 1] == '0') out[--length] = '\0';
+    }
+}
+
 static bool parse_hhmm(const char *text, unsigned *hour, unsigned *minute)
 {
     if (strlen(text) != 5 || text[2] != ':') return false;
@@ -457,6 +472,14 @@ static void open_edit(EditKind edit)
     destroy_settings();
     ui.edit = edit;
     ui.entry[0] = '\0';
+    if (edit == EDIT_IMAGE)
+        format_hours(ui.entry, sizeof(ui.entry), ui.state.settings.image_seconds);
+    else if (edit == EDIT_NEXT_TIME) {
+        LocalDateTime current;
+        if (ui.state.deadline.effective_utc.valid &&
+            app_berlin_local_time(ui.state.deadline.effective_utc.ms, &current) == APP_OK)
+            snprintf(ui.entry, sizeof(ui.entry), "%02u:%02u", current.hour, current.minute);
+    }
     ui.preview_valid = false;
     bool landscape = ui.width > ui.height;
     ui.keypad = lv_obj_create(ui.screen);
@@ -502,12 +525,16 @@ static void open_edit(EditKind edit)
     lv_obj_set_pos(heading, info_x, landscape ? 8 : round ? 36 : 8);
     if (round) lv_obj_set_width(heading, 76);
     ui.entry_label = label(ui.keypad, "_", info_w);
-    if (round) lv_obj_set_width(ui.entry_label, 64);
+    if (round) {
+        lv_obj_set_width(ui.entry_label, 64);
+        /* Keep long configured hour values on one readable line, above preview. */
+        lv_label_set_long_mode(ui.entry_label, LV_LABEL_LONG_SCROLL_CIRCULAR);
+    }
     lv_obj_set_pos(ui.entry_label, round ? info_x + 76 : info_x,
                    landscape ? 38 : round ? 36 : 27);
     ui.preview_label = label(ui.keypad, "", info_w);
     lv_obj_set_style_text_font(ui.preview_label, &katmed_font_10, 0);
-    lv_obj_set_pos(ui.preview_label, info_x, landscape ? 62 : round ? 56 : 43);
+    lv_obj_set_pos(ui.preview_label, info_x, landscape ? 62 : round ? 56 : 47);
     int action_y = landscape ? ui.height - 40 : round ? 188 : ui.height - 35;
     int action_w = landscape || round ? (info_w - 4) / 2 : (ui.width - 44) / 2;
     lv_obj_t *save = button(ui.keypad, "Speichern", action_w, 30, save_edit, NULL);
@@ -781,6 +808,11 @@ static void update_status(void)
     else snprintf(date, sizeof(date), "nicht bekannt");
     snprintf(line, sizeof(line), "Letzte Gabe: %s", date);
     lv_obj_t *item = status_label(&next, line, text_w);
+    if (ui.height < 200) lv_obj_set_style_text_font(item, &katmed_font_12, 0);
+    char hours[32];
+    format_hours(hours, sizeof(hours), ui.state.settings.image_seconds);
+    snprintf(line, sizeof(line), "Bilderabstand: %s Stunden", hours);
+    item = status_label(&next, line, text_w);
     if (ui.height < 200) lv_obj_set_style_text_font(item, &katmed_font_12, 0);
     format_local(date, sizeof(date), ui.state.deadline.effective_utc);
     snprintf(line, sizeof(line), "Nächster Alarm: %s", date);

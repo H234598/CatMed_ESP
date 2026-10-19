@@ -275,6 +275,8 @@ static void cycle_views(lv_obj_t *screen)
 
 static void enter_keys(lv_obj_t *screen, const char *text)
 {
+    /* Replace the actual configured value now shown on opening the dialog. */
+    for (unsigned i = 0; i < 32; ++i) click_label(screen, "<");
     for (const char *cursor = text; *cursor; ++cursor) {
         char key[] = {*cursor, '\0'};
         click_label(screen, key);
