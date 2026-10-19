@@ -103,6 +103,33 @@
         </form>
       </section>
 
+      <section class="panel" aria-labelledby="wifi-title">
+        <h2 id="wifi-title">WLAN-Verbindung</h2>
+        <p id="wifi-state" class="help" role="status">WLAN-Status wird geladen.</p>
+        <form id="wifi-form">
+          <label for="wifi-ssid">Neue WLAN-SSID</label>
+          <input id="wifi-ssid" name="ssid" type="text" maxlength="32" autocomplete="off" required>
+          <label for="wifi-password">WLAN-Schlüssel</label>
+          <input id="wifi-password" name="password" type="password" maxlength="64" autocomplete="new-password" required>
+          <label class="check-row"><input id="wifi-open" type="checkbox"> Dieses WLAN benötigt keinen Schlüssel</label>
+          <p class="help">Der Schlüssel wird nicht erneut angezeigt.</p>
+          <button type="submit">WLAN-Daten sicher speichern</button>
+        </form>
+        <button id="wifi-reconnect" class="secondary" type="button" disabled>Gespeichertes WLAN jetzt verwenden</button>
+        <p class="help">Nach dem Wechsel kann sich die Geräteadresse ändern. Bei einem Tippfehler nutze den lokalen Wiederherstellungsweg des Geräts.</p>
+      </section>
+
+      <section class="panel" aria-labelledby="media-title">
+        <h2 id="media-title">Eigene Bilder</h2>
+        <p id="media-usage" class="help" role="status">Bildspeicher wird geladen.</p>
+        <form id="image-upload-form">
+          <label for="image-upload">JPEG bis 128 KiB</label>
+          <input id="image-upload" name="image" type="file" accept="image/jpeg,.jpg,.jpeg" required>
+          <button type="submit">Bild hochladen</button>
+        </form>
+        <ul id="image-list" class="image-list" aria-label="Hochgeladene Bilder"></ul>
+      </section>
+
       <section class="panel" aria-labelledby="cert-title">
         <h2 id="cert-title">Clientzertifikat</h2>
         <p class="help">Das Serverzertifikat schützt die Verbindung. Ein freigegebenes Clientzertifikat ist ein zusätzlicher Anmeldeweg; der private Clientschlüssel bleibt auf deinem Gerät.</p>
@@ -125,7 +152,7 @@
       <section class="panel muted" aria-labelledby="display-only-title">
         <h2 id="display-only-title">Weitere Displayeinträge</h2>
         <p>„Seltsam“ und „Morsecode“ sind Bedienaktionen am Display und speichern keine Einstellung.</p>
-        <p><button type="button" disabled>Bilder von URL/GitHub laden · später verfügbar</button></p>
+        <p class="help">GitHub-Bildabruf bleibt beim vorhandenen Gerätefluss; diese Seite verwaltet eigene Uploads.</p>
       </section>
     </div>
   </main>

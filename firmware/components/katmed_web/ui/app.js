@@ -45,12 +45,13 @@
 
   async function api(path, method = "GET", body = null) {
     const headers = { Accept: "application/json" };
-    if (body !== null) headers["Content-Type"] = "application/json";
+    const rawBody = typeof Blob !== "undefined" && body instanceof Blob;
+    if (body !== null) headers["Content-Type"] = rawBody ? body.type : "application/json";
     if (method !== "GET" && state.bootstrap?.csrf_token)
       headers["X-Katmed-CSRF"] = state.bootstrap.csrf_token;
     const response = await fetch(path, {
       method, headers, credentials: "same-origin", cache: "no-store",
-      redirect: "error", body: body === null ? undefined : JSON.stringify(body)
+      redirect: "error", body: body === null ? undefined : rawBody ? body : JSON.stringify(body)
     });
     const contentType = response.headers.get("Content-Type") || "";
     const data = contentType.includes("application/json") ? await response.json() : null;
@@ -120,6 +121,60 @@
     renderCertificate(await api("/api/client-cert"));
   }
 
+  async function loadWifi() {
+    const wifi = await api("/api/wifi");
+    if (!wifi || typeof wifi.configured !== "boolean" ||
+        typeof wifi.recovery_available !== "boolean")
+      throw new Error("Invalid WLAN status response");
+    $("wifi-state").textContent = wifi.configured ?
+      ("WLAN-Daten gespeichert. Wiederherstellungsweg " +
+       (wifi.recovery_available ? "verfügbar." : "nicht verfügbar.")) :
+      "Noch keine gespeicherten WLAN-Daten. Firmware-Standardwerte können weiter gelten.";
+    $("wifi-reconnect").disabled = !wifi.configured;
+  }
+
+  function renderImages(page, append = false) {
+    if (!page || !Array.isArray(page.images) ||
+        !Number.isSafeInteger(page.used_bytes) || !Number.isSafeInteger(page.free_bytes) ||
+        !Number.isSafeInteger(page.image_count) || typeof page.next_offset !== "boolean" ||
+        page.images.some((image) => !image || !Number.isSafeInteger(image.id) ||
+          !Number.isSafeInteger(image.bytes) || !Number.isSafeInteger(image.width) ||
+          !Number.isSafeInteger(image.height)))
+      throw new Error("Invalid image list response");
+    const list = $("image-list");
+    if (!append) list.replaceChildren();
+    $("media-usage").textContent =
+      page.image_count + " Bilder · " + page.used_bytes + " von " +
+      (page.used_bytes + page.free_bytes) + " Byte belegt";
+    for (const image of page.images) {
+      const item = document.createElement("li");
+      const description = document.createElement("span");
+      description.className = "help";
+      description.textContent = "JPEG " + image.width + " × " + image.height +
+        " · " + image.bytes + " Byte";
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "danger";
+      remove.textContent = "Entfernen";
+      remove.dataset.imageId = String(image.id);
+      item.append(description, remove);
+      list.append(item);
+    }
+  }
+
+  async function loadImages() {
+    let offset = 0;
+    let append = false;
+    let page;
+    do {
+      page = await api("/api/images?offset=" + offset);
+      renderImages(page, append);
+      append = true;
+      offset += page.images.length;
+      if (page.images.length === 0) break;
+    } while (page.next_offset);
+  }
+
   async function applyBootstrap(bootstrap) {
     if (!bootstrap || typeof bootstrap.setup_required !== "boolean" ||
         typeof bootstrap.authenticated !== "boolean")
@@ -138,7 +193,7 @@
     }
     show("private-view");
     $("save-status").textContent = "Aktuelle Werte werden geladen.";
-    await Promise.all([loadConfig(), loadCertificate()]);
+    await Promise.all([loadConfig(), loadCertificate(), loadWifi(), loadImages()]);
     $("save-status").textContent = "Aktuelle Werte geladen.";
   }
 
@@ -347,6 +402,83 @@
       else await handleFailure(error);
     }
     finally { setBusy(form, false); }
+  });
+
+  $("wifi-open").addEventListener("change", () => {
+    const password = $("wifi-password");
+    password.disabled = $("wifi-open").checked;
+    password.required = !$("wifi-open").checked;
+    if (password.disabled) password.value = "";
+  });
+
+  $("wifi-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const ssid = $("wifi-ssid").value;
+    const password = $("wifi-open").checked ? "" : $("wifi-password").value;
+    const encoder = new TextEncoder();
+    const ssidBytes = encoder.encode(ssid);
+    const passwordBytes = encoder.encode(password);
+    if (!ssidBytes.length || ssidBytes.length > 32 ||
+        passwordBytes.length > 64 ||
+        (passwordBytes.length > 0 && passwordBytes.length < 8) ||
+        (passwordBytes.length === 64 && !/^[0-9a-fA-F]{64}$/.test(password))) {
+      notice("SSID oder WLAN-Schlüssel hat eine ungültige Länge.", true);
+      return;
+    }
+    setBusy(form, true);
+    try {
+      await api("/api/wifi", "POST", { ssid, password });
+      form.reset();
+      $("wifi-password").disabled = false;
+      $("wifi-password").required = true;
+      await loadWifi();
+      $("wifi-reconnect").disabled = false;
+      notice("WLAN-Daten dauerhaft gespeichert. Die Neuverbindung kann die Geräteadresse ändern.");
+    } catch (error) { await handleFailure(error); }
+    finally { setBusy(form, false); }
+  });
+
+  $("wifi-reconnect").addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    try {
+      await api("/api/wifi/reconnect", "POST", {});
+      notice("Neuverbindung geplant. Die Geräteadresse kann sich ändern.");
+    } catch (error) {
+      await handleFailure(error);
+      button.disabled = false;
+    }
+  });
+
+  $("image-upload-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const file = $("image-upload").files[0];
+    if (!file || file.type !== "image/jpeg" || file.size === 0 || file.size > 131072) {
+      notice("Bitte eine JPEG-Datei bis 128 KiB auswählen.", true);
+      return;
+    }
+    setBusy(form, true);
+    try {
+      await api("/api/images", "POST", file);
+      form.reset();
+      await loadImages();
+      notice("Bild geprüft und gespeichert.");
+    } catch (error) { await handleFailure(error); }
+    finally { setBusy(form, false); }
+  });
+
+  $("image-list").addEventListener("click", async (event) => {
+    const button = event.target.closest("button[data-image-id]");
+    if (!button) return;
+    button.disabled = true;
+    try {
+      await api("/api/images?id=" + encodeURIComponent(button.dataset.imageId), "DELETE");
+      await loadImages();
+      notice("Bild entfernt.");
+    } catch (error) { await handleFailure(error); }
+    finally { button.disabled = false; }
   });
 
   const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(location.hostname);
