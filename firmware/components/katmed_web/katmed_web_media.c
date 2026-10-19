@@ -179,6 +179,7 @@ static esp_err_t image_upload(httpd_req_t *req)
         }
         status = katmed_image_store_upload_write(upload, buffer, (size_t)received);
         if (status != KATMED_IMAGE_OK) {
+            (void)httpd_resp_set_hdr(req, "Connection", "close");
             (void)katmed_image_store_upload_abort(upload);
             return store_error(req, status);
         }

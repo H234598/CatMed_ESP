@@ -24,6 +24,7 @@ static struct {
     uint32_t image_count;
     uint32_t next_id;
     bool full;
+    bool write_fail;
     bool pending;
     char pending_bytes[64];
     size_t pending_size;
@@ -157,7 +158,9 @@ KatmedImageStatus katmed_image_store_upload_write(KatmedImageUpload upload,
                                                    size_t length)
 {
     (void)upload;
-    assert(store.pending && store.pending_size + length <= sizeof(store.pending_bytes));
+    assert(store.pending);
+    if (store.write_fail) return KATMED_IMAGE_NO_SPACE;
+    assert(store.pending_size + length <= sizeof(store.pending_bytes));
     memcpy(store.pending_bytes + store.pending_size, bytes, length);
     store.pending_size += length;
     store.write_count++;
@@ -289,10 +292,25 @@ int main(void)
     assert(store.abort_count == 1);
     assert_old_image_preserved(&server);
 
+    char large_body[2048];
+    memset(large_body, 'x', sizeof(large_body));
+    large_body[0] = 'O';
+    large_body[1] = 'K';
+    req = request(HTTP_POST, "image/jpeg", NULL, large_body, SIZE_MAX);
+    req.body_size = sizeof(large_body);
+    req.content_len = (int)sizeof(large_body);
+    store.write_fail = true;
+    assert(route(&server, HTTP_POST)(&req) == ESP_OK);
+    assert(strcmp(req.response_status, "507 Insufficient Storage") == 0);
+    assert(req.connection_close && req.body_offset < req.body_size);
+    assert(store.abort_count == 2);
+    assert_old_image_preserved(&server);
+    store.write_fail = false;
+
     req = request(HTTP_POST, "image/jpeg", NULL, "NO-new", SIZE_MAX);
     assert(route(&server, HTTP_POST)(&req) == ESP_OK);
     assert(strcmp(req.response_status, "422 Unprocessable Content") == 0);
-    assert(store.abort_count == 2);
+    assert(store.abort_count == 3);
     assert_old_image_preserved(&server);
 
     store.full = true;
