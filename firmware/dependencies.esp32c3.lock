@@ -1,4 +1,28 @@
 dependencies:
+  bblanchon/arduinojson:
+    component_hash: 5e6aff2bc5bc988b36c8e90c01e637495ee895ad3af93911860c21ec6da79b6a
+    dependencies: []
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 7.4.3
+  dannybackx/acmeclient:
+    component_hash: 6dbb094091e454ffef65b718be6008a6166f12ac15a950c15cd63dcd4b91df74
+    dependencies: []
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.1.1
+  espressif/cjson:
+    component_hash: 9372811fb197926f522c467627cf4a8e72b681e0366e17879631da801103aef3
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.7.19
   espressif/cmake_utilities:
     component_hash: 351350613ceafba240b761b4ea991e0f231ac7a9f59a9ee901f751bddc0bb18f
     dependencies:
@@ -113,30 +137,72 @@ dependencies:
       type: service
     version: 1.0.2
   espressif/qrcode:
-    component_hash: 3b493771bc5d6ad30cbf87c25bf784aada8a08c941504355b55d6b75518ed7bc
-    dependencies: []
-    source:
-      registry_url: https://components.espressif.com
-      type: service
-    version: 0.1.0~2
-  idf:
-    source:
-      type: idf
-    version: 5.5.5
-  lvgl/lvgl:
-    component_hash: 17e68bfd21f0edf4c3ee838e2273da840bf3930e5dbc3bfa6c1190c3aed41f9f
-    dependencies: []
+    component_hash: e07c05f9129250d79c62957c02e2f67d3485e917e6953cbc6637324b3a47ea7f
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=4.3'
     source:
       registry_url: https://components.espressif.com/
       type: service
-    version: 9.4.0
+    version: 0.1.0
+  idf:
+    source:
+      type: idf
+    version: 6.1.0
+  joltwallet/littlefs:
+    component_hash: f65ef32c718e87638ee966b9b02f21639c45bed59c8d0126fd03e9c1f3275a92
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.23.0
+  lvgl/lvgl:
+    component_hash: d5e723db3a3feca71e34e333a6598b7624e3822577d374e1d44f0e18374952e1
+    dependencies:
+    - name: espressif/freetype
+      registry_url: https://components.espressif.com
+      require: private
+      rules:
+      - if: idf_version >=5.5 && $CONFIG{LV_USE_FREETYPE} == True
+      version: ^2.14.3
+    - name: espressif/libjpeg-turbo
+      registry_url: https://components.espressif.com
+      require: private
+      rules:
+      - if: idf_version >=5.5 && $CONFIG{LV_USE_LIBJPEG_TURBO} == True
+      version: ^3.1.1
+    - name: espressif/libpng
+      registry_url: https://components.espressif.com
+      require: private
+      rules:
+      - if: idf_version >=5.5 && $CONFIG{LV_USE_LIBPNG} == True
+      version: ^1.6.58
+    - name: espressif/lz4
+      registry_url: https://components.espressif.com
+      require: private
+      rules:
+      - if: idf_version >=5.5 && $CONFIG{LV_USE_LZ4} == True && $CONFIG{LV_USE_LZ4_INTERNAL} == False
+      version: ^1.10.0
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 9.6.0
 direct_dependencies:
+- bblanchon/arduinojson
+- dannybackx/acmeclient
+- espressif/cjson
 - espressif/esp_lcd_gc9a01
 - espressif/esp_lcd_touch
 - espressif/esp_lvgl_port
 - espressif/mesh_lite
+- espressif/qrcode
 - idf
+- joltwallet/littlefs
 - lvgl/lvgl
-manifest_hash: f6c65227c2c8425e92a17907dd9f5749872d9ead68143e761d207282d1f68433
+manifest_hash: ee1d07294580abb71acea9116cc4b90f21bcff9d4fb85e2cfdb9bc226e827d88
 target: esp32c3
-version: 2.0.0
+version: 3.0.0

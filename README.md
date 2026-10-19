@@ -21,7 +21,7 @@ Morse display. Reception works outside the communication menu. A confirmed new
 Mesh member triggers a locally dismissible, non-blinking welcome lasting at most
 30 minutes. History is bounded to 256 unique device identities; this does not
 mean 256 simultaneous connections. You can do much more.
-Personal documentation text removed from public history.
+A custom image of the device.
 
 ## Build and tests
 

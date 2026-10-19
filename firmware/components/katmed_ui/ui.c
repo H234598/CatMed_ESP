@@ -7,6 +7,10 @@
 #include "katmed_font.h"
 #include "katmed_images.h"
 #include "katmed_morse.h"
+#ifdef ESP_PLATFORM
+#include "katmed_private_ui_profile.h"
+#endif
+#include "katmed_ui_defaults.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -52,7 +56,7 @@ typedef struct {
     uint64_t down_ms;
     lv_obj_t *screen, *background, *fallback;
     lv_obj_t *clock_view, *alarm_bar, *alarm_strips[ALARM_STRIPS], *alarm_text;
-    lv_obj_t *settings, *status, *keypad, *feedback, *morse_layer;
+    lv_obj_t *settings, *status, *keypad, *feedback, *morse_layer, *reset_dialog;
     lv_obj_t *pairing_label;
     char pairing_code[7];
     lv_obj_t *entry_label, *preview_label;
@@ -65,6 +69,10 @@ typedef struct {
     ClockStyle pending_style;
     char entry[24];
     bool preview_valid;
+    bool advanced_open;
+    bool reset_dialog_pressed;
+    char reset_token[33];
+    size_t reset_token_length;
     bool shared_pending;
     int8_t shared_result_status; /* 0 unknown, 1 accepted, -1 rejected. */
     ManualTimePreview preview;
@@ -85,7 +93,7 @@ typedef struct {
     bool morse_alarm_confirmed;
     bool morse_color_valid;
     bool morse_shown_white;
-    int32_t scroll_y[9]; /* Bounded transient position for every raster tile. */
+    int32_t scroll_y[10]; /* Tile positions plus the Advanced subpage. */
     uint8_t status_scroll_slot;
 } UiContext;
 
@@ -189,6 +197,11 @@ static void change_page(int horizontal, int vertical, uint64_t now);
 static void update_status(void);
 static void build_settings(void);
 static void status_button(lv_event_t *event);
+static void advanced_button(lv_event_t *event);
+static void reset_open(lv_event_t *event);
+static void reset_cancel(lv_event_t *event);
+static void reset_execute(lv_event_t *event);
+static void reset_dialog_press(lv_event_t *event);
 static void build_page(void);
 static void return_to_settings(uint64_t now);
 
@@ -206,7 +219,7 @@ static void retire_clock_for_menu(void)
 
 static void remember_scroll(lv_obj_t *panel, unsigned slot)
 {
-    if (panel && lv_obj_is_valid(panel) && slot < 9)
+    if (panel && lv_obj_is_valid(panel) && slot < 10)
         ui.scroll_y[slot] = lv_obj_get_scroll_y(panel);
 }
 
@@ -225,7 +238,7 @@ static void restore_scroll(lv_obj_t *panel, unsigned slot)
 
 static void destroy_menu(void)
 {
-    remember_scroll(ui.settings, 5);
+    remember_scroll(ui.settings, ui.advanced_open ? 9u : 5u);
     if (ui.settings) lv_obj_delete(ui.settings);
     ui.settings = NULL;
     ui.pairing_label = NULL;
@@ -822,6 +835,19 @@ static void build_settings(void)
     lv_obj_set_flex_flow(ui.settings, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_style_pad_row(ui.settings, 5, 0);
     int row_w = ui.width - (ui.width == 240 ? 100 : 18) - 4;
+    if (ui.advanced_open) {
+        label(ui.settings, "Advanced", row_w);
+        button(ui.settings, "Medikamente: Stunden", row_w, 34, edit_button,
+               (void *)(intptr_t)EDIT_MEDICATION);
+        button(ui.settings, "Bilder: Stunden", row_w, 34, edit_button,
+               (void *)(intptr_t)EDIT_IMAGE);
+        button(ui.settings, "Nächste Fälligkeit HH:MM", row_w, 40, edit_button,
+               (void *)(intptr_t)EDIT_NEXT_TIME);
+        restore_scroll(ui.settings, 9);
+        if (ui.feedback && !lv_obj_has_flag(ui.feedback, LV_OBJ_FLAG_HIDDEN))
+            lv_obj_move_foreground(ui.feedback);
+        return;
+    }
     label(ui.settings, "Einstellungen", row_w);
     ui.pairing_label = label(ui.settings, "", row_w);
     if (ui.pairing_code[0])
@@ -829,12 +855,8 @@ static void build_settings(void)
     else lv_obj_add_flag(ui.pairing_label, LV_OBJ_FLAG_HIDDEN);
     button(ui.settings, "Seltsam", row_w, 34, morse_open, NULL);
     button(ui.settings, "Morsecode", row_w, 34, interaction_open, NULL);
-    button(ui.settings, "Medikamente: Stunden", row_w, 34, edit_button,
-           (void *)(intptr_t)EDIT_MEDICATION);
-    button(ui.settings, "Bilder: Stunden", row_w, 34, edit_button,
-           (void *)(intptr_t)EDIT_IMAGE);
-    button(ui.settings, "Nächste Fälligkeit HH:MM", row_w, 40, edit_button,
-           (void *)(intptr_t)EDIT_NEXT_TIME);
+    label(ui.settings, "Zeiten", row_w);
+    button(ui.settings, "Advanced", row_w, 34, advanced_button, NULL);
     button(ui.settings, "Uhrdesign", row_w, 34, style_open, NULL);
     label(ui.settings, "Ausrichtung", row_w);
     static const char *angle_map[] = {"0°", "\n", "90°", "\n",
@@ -847,9 +869,108 @@ static void build_settings(void)
     lv_obj_t *import = button(ui.settings, "Lade Bilder von URL/Github\nSpäter verfügbar",
                               row_w, 48, NULL, NULL);
     lv_obj_add_state(import, LV_STATE_DISABLED);
+    button(ui.settings, "Werkseinstellungen zurücksetzen", row_w, 42,
+           reset_open, NULL);
     restore_scroll(ui.settings, 5);
     if (ui.feedback && !lv_obj_has_flag(ui.feedback, LV_OBJ_FLAG_HIDDEN))
         lv_obj_move_foreground(ui.feedback);
+}
+
+static void advanced_button(lv_event_t *event)
+{
+    (void)event;
+    remember_scroll(ui.settings, ui.advanced_open ? 9u : 5u);
+    destroy_menu();
+    ui.advanced_open = !ui.advanced_open;
+    build_settings();
+}
+
+static void reset_dialog_press(lv_event_t *event)
+{
+    if (lv_event_get_code(event) == LV_EVENT_PRESSED)
+        ui.reset_dialog_pressed = true;
+}
+
+static void reset_dialog_close(void)
+{
+    if (ui.reset_dialog) lv_obj_delete(ui.reset_dialog);
+    ui.reset_dialog = NULL;
+    ui.reset_dialog_pressed = false;
+    volatile char *token = ui.reset_token;
+    for (size_t i = 0; i < sizeof(ui.reset_token); ++i) token[i] = '\0';
+    ui.reset_token_length = 0;
+}
+
+static void reset_cancel(lv_event_t *event)
+{
+    (void)event;
+    if (!ui.reset_dialog_pressed) return;
+    reset_dialog_close();
+}
+
+static void reset_execute(lv_event_t *event)
+{
+    (void)event;
+    if (!ui.reset_dialog_pressed) return;
+    const int result = ui.services.reset_confirm
+        ? ui.services.reset_confirm(ui.services.context, ui.reset_token,
+                                    ui.reset_token_length) : 2;
+    reset_dialog_close();
+    show_feedback(result == 0 ? "Reset vorgemerkt" :
+                  result == 1 ? "Bestätigung abgelaufen; bitte neu starten" :
+                                "Reset nicht verfügbar");
+}
+
+static void reset_open(lv_event_t *event)
+{
+    (void)event;
+    if (!ui.screen || ui.reset_dialog || !ui.services.reset_prepare ||
+        !ui.services.reset_confirm) {
+        show_feedback("Reset nicht verfügbar");
+        return;
+    }
+    size_t token_length = 0;
+    if (!ui.services.reset_prepare(ui.services.context, ui.reset_token,
+                                   sizeof(ui.reset_token), &token_length) ||
+        token_length == 0 || token_length >= sizeof(ui.reset_token)) {
+        reset_dialog_close();
+        show_feedback("Resetbestätigung konnte nicht vorbereitet werden");
+        return;
+    }
+    ui.reset_token_length = token_length;
+    ui.reset_dialog = lv_obj_create(ui.screen);
+    lv_obj_set_size(ui.reset_dialog, ui.width - 16, ui.height - 24);
+    lv_obj_center(ui.reset_dialog);
+    lv_obj_set_style_bg_color(ui.reset_dialog, lv_color_hex(0x5b1a00), 0);
+    lv_obj_set_style_bg_opa(ui.reset_dialog, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(ui.reset_dialog, lv_color_hex(0xff3d00), 0);
+    lv_obj_set_style_border_width(ui.reset_dialog, 4, 0);
+    lv_obj_set_style_radius(ui.reset_dialog, 8, 0);
+    lv_obj_set_style_pad_all(ui.reset_dialog, 8, 0);
+    lv_obj_remove_flag(ui.reset_dialog, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(ui.reset_dialog, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(ui.reset_dialog, 5, 0);
+    lv_obj_t *warning = label(ui.reset_dialog,
+        "WARNUNG: Firmwaredaten werden zurückgesetzt. Hochgeladene Bilder, WLAN-, Alarm-, Mesh-, Auth- und Zertifikatsdaten werden gelöscht. Firmware und unveränderliche Bilder bleiben erhalten.",
+        ui.width - 40);
+    lv_obj_set_style_text_color(warning, lv_color_white(), 0);
+    lv_obj_set_style_text_font(warning, &katmed_font_12, 0);
+    int action_width = (ui.width - 44) / 2;
+    int action_height = (ui.height - 24 - 30) / 3;
+    if (action_height > 46) action_height = 46;
+    if (action_height < 28) action_height = 28;
+    lv_obj_t *yes = button(ui.reset_dialog, "Ja, zurücksetzen",
+                           action_width, action_height, reset_execute, NULL);
+    lv_obj_t *no = button(ui.reset_dialog, "Nein",
+                          action_width, action_height, reset_cancel, NULL);
+    lv_obj_set_width(yes, (lv_obj_get_width(no) * 7) / 10);
+    lv_obj_set_height(yes, (lv_obj_get_height(no) * 7) / 10);
+    lv_obj_set_style_bg_color(yes, lv_color_hex(0xff3d00), LV_PART_MAIN);
+    lv_obj_set_style_text_color(yes, lv_color_white(), LV_PART_MAIN);
+    lv_obj_add_state(no, LV_STATE_FOCUSED);
+    lv_obj_add_event_cb(yes, reset_dialog_press, LV_EVENT_PRESSED, NULL);
+    lv_obj_add_event_cb(no, reset_dialog_press, LV_EVENT_PRESSED, NULL);
+    lv_obj_move_foreground(ui.reset_dialog);
 }
 
 /* Stable status rows avoid deleting/reallocating every label each second. */
@@ -1049,7 +1170,7 @@ void ui_set_pairing_code(const char code[7])
 
 static void build_screen(int16_t width, int16_t height)
 {
-    remember_scroll(ui.settings, 5);
+    remember_scroll(ui.settings, ui.advanced_open ? 9u : 5u);
     remember_scroll(ui.status, ui.status_scroll_slot);
     ui.page = ui.interaction_title = ui.send_button = NULL;
     ui.rx_layer = ui.notice = NULL;
@@ -1119,7 +1240,7 @@ static void build_screen(int16_t width, int16_t height)
         lv_obj_set_style_pad_all(strip, 0, 0);
         lv_obj_add_flag(strip, LV_OBJ_FLAG_HIDDEN);
     }
-    ui.alarm_text = label(ui.screen, "Please customize me! This is Alarm!", width == 240 ? 170 : width - 24);
+    ui.alarm_text = label(ui.screen, KATMED_DEFAULT_ALARM_TEXT, width == 240 ? 170 : width - 24);
     lv_obj_set_style_bg_color(ui.alarm_text, lv_color_black(), 0);
     lv_obj_set_style_bg_opa(ui.alarm_text, LV_OPA_70, 0);
     lv_obj_set_style_text_align(ui.alarm_text, LV_TEXT_ALIGN_CENTER, 0);
@@ -1654,6 +1775,14 @@ void ui_touch_sample(bool touched, int16_t x, int16_t y,
                 request_action(&request);
             }
             ui.reject_confirm_motion = false;
+            return;
+        }
+        if (ui.view == SETTINGS && ui.advanced_open && dx >= 40 &&
+            dx >= 2 * abs(dy)) {
+            remember_scroll(ui.settings, 9);
+            destroy_menu();
+            ui.advanced_open = false;
+            build_settings();
             return;
         }
         bool scrollable = ui.view == SETTINGS || ui.view == UI_VIEW_STATUS || ui.keypad || ui.style_dialog;

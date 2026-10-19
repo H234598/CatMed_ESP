@@ -4,18 +4,11 @@
 #include <string.h>
 #include "esp_mac.h"
 #include "esp_random.h"
-#include "mbedtls/ecdsa.h"
 #include "mbedtls/pk.h"
 #include "mbedtls/x509_crt.h"
+#include "psa/crypto.h"
 
 #define IDENTITY_MAGIC 0x4b574931u /* KWI1 */
-
-static int random_bytes(void *ctx, unsigned char *out, size_t len)
-{
-    (void)ctx;
-    esp_fill_random(out, len);
-    return 0;
-}
 
 static void wipe(void *ptr, size_t len)
 {
@@ -33,14 +26,41 @@ static bool identity_valid(const KatmedWebIdentity *identity)
     mbedtls_x509_crt cert;
     mbedtls_pk_init(&key);
     mbedtls_x509_crt_init(&cert);
-    int key_result = mbedtls_pk_parse_key(&key, identity->key, identity->key_len,
-                                          NULL, 0, random_bytes, NULL);
+    mbedtls_svc_key_id_t psa_key = 0;
+    int key_result = -1;
+    bool imported = false;
+    if (psa_crypto_init() == PSA_SUCCESS) {
+        if (identity->key_len == 32) {
+            psa_key_attributes_t attributes = PSA_KEY_ATTRIBUTES_INIT;
+            psa_set_key_type(&attributes,
+                             PSA_KEY_TYPE_ECC_KEY_PAIR(PSA_ECC_FAMILY_SECP_R1));
+            psa_set_key_bits(&attributes, 256);
+            psa_set_key_usage_flags(&attributes,
+                                    PSA_KEY_USAGE_SIGN_HASH | PSA_KEY_USAGE_EXPORT);
+            psa_set_key_algorithm(&attributes,
+                                  PSA_ALG_ECDSA(PSA_ALG_SHA_256));
+            if (psa_import_key(&attributes, identity->key, identity->key_len,
+                               &psa_key) == PSA_SUCCESS) {
+                imported = true;
+                if (mbedtls_pk_wrap_psa(&key, psa_key) == 0) key_result = 0;
+            }
+            psa_reset_key_attributes(&attributes);
+        } else {
+            /* Keep existing NVS identities created by the former DER API. */
+            key_result = mbedtls_pk_parse_key(&key, identity->key,
+                                              identity->key_len, NULL, 0);
+        }
+    }
     int cert_result = mbedtls_x509_crt_parse_der(&cert, identity->cert,
                                                  identity->cert_len);
-    int pair_result = key_result == 0 && cert_result == 0 ?
-        mbedtls_pk_check_pair(&cert.pk, &key, random_bytes, NULL) : -1;
+    int pair_result = key_result == 0 && cert_result == 0 &&
+        mbedtls_pk_can_do_psa(&cert.pk, PSA_ALG_ECDSA(PSA_ALG_SHA_256),
+                              PSA_KEY_USAGE_VERIFY_HASH) &&
+        mbedtls_pk_get_bitlen(&cert.pk) == 256 ?
+        mbedtls_pk_check_pair(&cert.pk, &key) : -1;
     mbedtls_x509_crt_free(&cert);
     mbedtls_pk_free(&key);
+    if (imported) (void)psa_destroy_key(psa_key);
     return pair_result == 0;
 }
 
@@ -49,22 +69,33 @@ static bool identity_create(KatmedWebIdentity *out)
     bool ok = false;
     mbedtls_pk_context key;
     mbedtls_x509write_cert cert;
-    uint8_t key_buf[KATMED_WEB_KEY_MAX] = {0};
+    uint8_t raw_key[32] = {0};
     uint8_t cert_buf[KATMED_WEB_SERVER_CERT_MAX] = {0};
     uint8_t serial[16];
     uint8_t mac[6];
     char name[48];
     char dn[64];
+    mbedtls_svc_key_id_t psa_key = 0;
+    bool wrapped = false;
     mbedtls_pk_init(&key);
     mbedtls_x509write_crt_init(&cert);
+    if (psa_crypto_init() != PSA_SUCCESS) goto done;
     if (esp_read_mac(mac, ESP_MAC_WIFI_STA) != ESP_OK) goto done;
     snprintf(name, sizeof(name), "katmed-%02x%02x%02x.local", mac[3], mac[4], mac[5]);
     snprintf(dn, sizeof(dn), "CN=%s", name);
-    if (mbedtls_pk_setup(&key, mbedtls_pk_info_from_type(MBEDTLS_PK_ECKEY)) != 0 ||
-        mbedtls_ecp_gen_key(MBEDTLS_ECP_DP_SECP256R1, mbedtls_pk_ec(key),
-                            random_bytes, NULL) != 0) goto done;
-    int key_len = mbedtls_pk_write_key_der(&key, key_buf, sizeof(key_buf));
-    if (key_len <= 0 || key_len > KATMED_WEB_KEY_MAX) goto done;
+    psa_key_attributes_t attributes = PSA_KEY_ATTRIBUTES_INIT;
+    psa_set_key_type(&attributes, PSA_KEY_TYPE_ECC_KEY_PAIR(PSA_ECC_FAMILY_SECP_R1));
+    psa_set_key_bits(&attributes, 256);
+    psa_set_key_usage_flags(&attributes,
+                            PSA_KEY_USAGE_SIGN_HASH | PSA_KEY_USAGE_EXPORT);
+    psa_set_key_algorithm(&attributes, PSA_ALG_ECDSA(PSA_ALG_SHA_256));
+    psa_status_t key_status = psa_generate_key(&attributes, &psa_key);
+    psa_reset_key_attributes(&attributes);
+    size_t raw_key_len = 0;
+    if (key_status != PSA_SUCCESS ||
+        psa_export_key(psa_key, raw_key, sizeof(raw_key), &raw_key_len) != PSA_SUCCESS ||
+        raw_key_len != 32 || mbedtls_pk_wrap_psa(&key, psa_key) != 0) goto done;
+    wrapped = true;
     mbedtls_x509write_crt_set_version(&cert, MBEDTLS_X509_CRT_VERSION_3);
     mbedtls_x509write_crt_set_subject_key(&cert, &key);
     mbedtls_x509write_crt_set_issuer_key(&cert, &key);
@@ -84,23 +115,24 @@ static bool identity_create(KatmedWebIdentity *out)
     san.node.san.unstructured_name.len = strlen(name);
     if (mbedtls_x509write_crt_set_subject_alternative_name(&cert, &san) != 0)
         goto done;
-    int cert_len = mbedtls_x509write_crt_der(&cert, cert_buf, sizeof(cert_buf),
-                                             random_bytes, NULL);
+    int cert_len = mbedtls_x509write_crt_der(&cert, cert_buf, sizeof(cert_buf));
     if (cert_len <= 0 || cert_len > KATMED_WEB_SERVER_CERT_MAX) goto done;
     memset(out, 0, sizeof(*out));
     out->magic = IDENTITY_MAGIC;
-    out->key_len = (uint16_t)key_len;
+    out->key_len = (uint16_t)raw_key_len;
     out->cert_len = (uint16_t)cert_len;
-    memcpy(out->key, key_buf + sizeof(key_buf) - key_len, key_len);
+    memcpy(out->key, raw_key, raw_key_len);
     memcpy(out->cert, cert_buf + sizeof(cert_buf) - cert_len, cert_len);
     ok = identity_valid(out);
 done:
     if (!ok) wipe(out, sizeof(*out));
-    wipe(key_buf, sizeof(key_buf));
+    wipe(raw_key, sizeof(raw_key));
     wipe(cert_buf, sizeof(cert_buf));
     wipe(serial, sizeof(serial));
     mbedtls_x509write_crt_free(&cert);
     mbedtls_pk_free(&key);
+    if (wrapped) (void)psa_destroy_key(psa_key);
+    else if (psa_key != 0) (void)psa_destroy_key(psa_key);
     return ok;
 }
 

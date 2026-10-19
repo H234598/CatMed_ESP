@@ -61,7 +61,7 @@ def check_layout(repo: Path, board: str, build: Path) -> dict:
         actual[name] = (offset, size, kind, subtype, flags)
     expected_binary = {}
     for name, (offset, size, kind, subtype, flags) in partitions.items():
-        subtype_id = {"nvs": 2, "phy": 1, "factory": 0}.get(subtype)
+        subtype_id = {"nvs": 2, "phy": 1, "factory": 0, "littlefs": 0x83}.get(subtype)
         if subtype_id is None:
             subtype_id = int(subtype, 0)
         expected_binary[name] = (offset, size, {"app": 0, "data": 1}[kind], subtype_id,

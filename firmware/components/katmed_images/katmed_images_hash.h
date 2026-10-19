@@ -1,7 +1,7 @@
 #ifndef KATMED_IMAGES_HASH_H
 #define KATMED_IMAGES_HASH_H
 
-#include "mbedtls/sha256.h"
+#include "mbedtls/md.h"
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -14,7 +14,7 @@ extern "C" {
  * Start a fresh/released context; finish and free are both terminal operations.
  * Each error after start releases the SDK context, including invalid input. */
 typedef struct {
-    mbedtls_sha256_context sdk;
+    mbedtls_md_context_t sdk;
     bool active;
 } KatmedImageHash;
 

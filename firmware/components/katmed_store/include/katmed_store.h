@@ -13,6 +13,7 @@ extern "C" {
 #define KATMED_STORE_PENDING_MAX 8u
 #define KATMED_STORE_CONFLICT_MAX 8u
 #define KATMED_STORE_BLOB_MAX 4096u
+#define KATMED_STORE_WIFI_PROFILE_MAX 8u
 #define KATMED_STORE_USB_LINE_MAX 512u
 #define KATMED_STORE_USB_REPLY_MAX 256u
 #define KATMED_DEVICE_NAME_MAX 17u
@@ -84,6 +85,32 @@ typedef struct {
 } StoreProvision;
 
 typedef enum {
+    STORE_WIFI_CREDENTIAL_KEEP = 0,
+    STORE_WIFI_CREDENTIAL_REPLACE,
+    STORE_WIFI_CREDENTIAL_OPEN,
+} StoreWifiCredentialAction;
+
+typedef struct {
+    uint32_t id;
+    uint32_t priority;
+    uint8_t ssid[32];
+    uint8_t ssid_length;
+    uint8_t password[63];
+    uint8_t password_length;
+    bool secured;
+} StoreWifiProfile;
+
+typedef struct {
+    uint32_t id; /* zero allocates a new stable ID */
+    uint32_t priority;
+    uint8_t ssid[32];
+    uint8_t ssid_length;
+    StoreWifiCredentialAction credential_action;
+    uint8_t password[63];
+    uint8_t password_length;
+} StoreWifiProfileUpdate;
+
+typedef enum {
     STORE_GROUP_ORIGIN_UNKNOWN = 0, /* Existing v1-v5 records have no proof. */
     STORE_GROUP_ORIGIN_FRESH_UNBOUND = 1, /* Only a newly created empty backend. */
     STORE_GROUP_ORIGIN_FIRST_BOUND = 2 /* First binding has committed. */
@@ -115,6 +142,9 @@ typedef struct {
     StoreMeshNameEntry mesh_names[KATMED_MESH_NAME_MAX_ENTRIES];
     uint8_t mesh_name_count;
     uint32_t mesh_name_next_index; /* 65536 is the durable exhausted sentinel. */
+    StoreWifiProfile wifi_profiles[KATMED_STORE_WIFI_PROFILE_MAX];
+    uint8_t wifi_profile_count;
+    uint32_t next_wifi_profile_id;
 } StoreRecord;
 
 typedef struct {
@@ -217,6 +247,13 @@ StoreResult store_usb_handle_line_with_wifi_defaults(
     const uint8_t *default_ssid, size_t default_ssid_length,
     const uint8_t *default_password, size_t default_password_length,
     char *reply, size_t reply_capacity);
+StoreResult store_wifi_profiles_load(const Store *store, StoreWifiProfile *out,
+                                     size_t capacity, size_t *count);
+StoreResult store_wifi_profiles_save_atomic(Store *store,
+                                            const StoreWifiProfileUpdate *profiles,
+                                            size_t count);
+StoreResult store_wifi_profile_delete_atomic(Store *store, uint32_t id);
+size_t store_wifi_profile_limit(void);
 
 #ifdef __cplusplus
 }

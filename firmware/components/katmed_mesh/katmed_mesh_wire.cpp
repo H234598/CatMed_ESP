@@ -11,7 +11,7 @@ unsigned char *HMAC(const evp_md_st *, const void *, int,
                     const unsigned char *, size_t, unsigned char *, unsigned int *);
 }
 #else
-#include "mbedtls/md.h"
+#include <psa/crypto.h>
 #endif
 
 namespace {
@@ -44,8 +44,21 @@ bool tag(const uint8_t key[32], const uint8_t *message, size_t n,
     unsigned length=0;
     return HMAC(EVP_sha256(),key,32,message,n,out,&length)!=nullptr && length==32;
 #else
-    const mbedtls_md_info_t *md=mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
-    return md!=nullptr && mbedtls_md_hmac(md,key,32,message,n,out)==0;
+    if (psa_crypto_init() != PSA_SUCCESS) return false;
+    psa_key_attributes_t attributes = PSA_KEY_ATTRIBUTES_INIT;
+    psa_set_key_type(&attributes, PSA_KEY_TYPE_HMAC);
+    psa_set_key_bits(&attributes, 256);
+    psa_set_key_usage_flags(&attributes, PSA_KEY_USAGE_SIGN_MESSAGE);
+    psa_set_key_algorithm(&attributes, PSA_ALG_HMAC(PSA_ALG_SHA_256));
+    psa_key_id_t key_id = 0;
+    psa_status_t status = psa_import_key(&attributes, key, 32, &key_id);
+    psa_reset_key_attributes(&attributes);
+    if (status != PSA_SUCCESS) return false;
+    size_t output_length = 0;
+    status = psa_mac_compute(key_id, PSA_ALG_HMAC(PSA_ALG_SHA_256),
+                             message, n, out, 32, &output_length);
+    const psa_status_t destroy_status = psa_destroy_key(key_id);
+    return status == PSA_SUCCESS && destroy_status == PSA_SUCCESS && output_length == 32;
 #endif
 }
 bool equal_const(const uint8_t *a, const uint8_t *b, size_t n) {

@@ -39,6 +39,8 @@ KatmedMeshResult katmed_mesh_start(const StoreProvision *provision,
 /* Stop logical message processing immediately. A provisioning change requires
  * a controlled reboot if the bound SDK cannot safely reinitialize in place. */
 void katmed_mesh_stop(void);
+/* Explicit user action; attempts priority 1 without disturbing a live link. */
+bool katmed_mesh_schedule_reconnect(void);
 /* Separate history backend; bind before start, on the serial main loop. */
 void katmed_mesh_history_backend(StoreBackend backend);
 typedef struct {

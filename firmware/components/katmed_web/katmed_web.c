@@ -18,11 +18,11 @@
 #include "katmed_web_auth.h"
 #include "katmed_web_identity.h"
 #include "katmed_web_policy.h"
-#include "mbedtls/pkcs5.h"
-#include "mbedtls/sha256.h"
+#include "mbedtls/md.h"
 #include "mbedtls/ssl.h"
 #include "mbedtls/x509_crt.h"
 #include "mbedtls/oid.h"
+#include "psa/crypto.h"
 #include "nvs.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -89,9 +89,31 @@ static bool derive_password(void *context, const char *password,
                             const uint8_t salt[16], uint8_t out[32])
 {
     (void)context;
-    return mbedtls_pkcs5_pbkdf2_hmac_ext(MBEDTLS_MD_SHA256,
-        (const unsigned char *)password, strlen(password), salt, 16,
-        KATMED_WEB_PBKDF2_ROUNDS, 32, out) == 0;
+    if (password == NULL || salt == NULL || out == NULL || psa_crypto_init() != PSA_SUCCESS)
+        return false;
+    psa_key_derivation_operation_t operation = PSA_KEY_DERIVATION_OPERATION_INIT;
+    psa_status_t status = psa_key_derivation_setup(
+        &operation, PSA_ALG_PBKDF2_HMAC(PSA_ALG_SHA_256));
+    if (status == PSA_SUCCESS)
+        status = psa_key_derivation_input_integer(
+            &operation, PSA_KEY_DERIVATION_INPUT_COST, KATMED_WEB_PBKDF2_ROUNDS);
+    if (status == PSA_SUCCESS)
+        status = psa_key_derivation_input_bytes(
+            &operation, PSA_KEY_DERIVATION_INPUT_SALT, salt, 16);
+    if (status == PSA_SUCCESS)
+        status = psa_key_derivation_input_bytes(
+            &operation, PSA_KEY_DERIVATION_INPUT_PASSWORD,
+            (const uint8_t *)password, strlen(password));
+    if (status == PSA_SUCCESS)
+        status = psa_key_derivation_output_bytes(&operation, out, 32);
+    psa_status_t abort_status = psa_key_derivation_abort(&operation);
+    return status == PSA_SUCCESS && abort_status == PSA_SUCCESS;
+}
+
+static int sha256_bytes(const uint8_t *input, size_t length, uint8_t output[32])
+{
+    const mbedtls_md_info_t *info = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
+    return info == NULL ? -1 : mbedtls_md(info, input, length, output);
 }
 
 static bool commit_auth(void *context, const KatmedWebAuthRecord *record)
@@ -179,8 +201,8 @@ static void tls_session_callback(esp_https_server_user_cb_arg_t *arg)
     if (!ssl || mbedtls_ssl_get_verify_result(ssl) != 0) return;
     const mbedtls_x509_crt *peer = mbedtls_ssl_get_peer_cert(ssl);
     if (!peer || peer->next || !certificate_time_valid(peer)) return;
-    if (mbedtls_sha256(peer->raw.p, peer->raw.len,
-                           web.certificate_fingerprint, 0) != 0) return;
+    if (sha256_bytes(peer->raw.p, peer->raw.len,
+                     web.certificate_fingerprint) != 0) return;
     web.certificate_verified = katmed_web_auth_equal(
         web.certificate_fingerprint, web.auth.record.client_fingerprint, 32);
 }
@@ -605,7 +627,8 @@ static bool parse_client_certificate(const char *pem, uint8_t out[KATMED_WEB_CER
     int result = mbedtls_x509_crt_parse(&cert, (const uint8_t *)pem, strlen(pem) + 1);
     if (result != 0 || cert.next || cert.raw.len == 0 ||
         cert.raw.len > KATMED_WEB_CERT_MAX ||
-        mbedtls_pk_get_type(&cert.pk) != MBEDTLS_PK_ECKEY ||
+        !mbedtls_pk_can_do_psa(&cert.pk, PSA_ALG_ECDSA(PSA_ALG_SHA_256),
+                               PSA_KEY_USAGE_VERIFY_HASH) ||
         mbedtls_pk_get_bitlen(&cert.pk) != 256 ||
         !cert.ext_key_usage.buf.p ||
         mbedtls_x509_crt_check_key_usage(&cert, MBEDTLS_X509_KU_DIGITAL_SIGNATURE) != 0 ||
@@ -613,7 +636,7 @@ static bool parse_client_certificate(const char *pem, uint8_t out[KATMED_WEB_CER
                                                   MBEDTLS_OID_SIZE(MBEDTLS_OID_CLIENT_AUTH)) != 0 ||
         mbedtls_x509_crt_verify(&cert, &cert, NULL, NULL, &flags, NULL, NULL) != 0 ||
         flags != 0 ||
-        mbedtls_sha256(cert.raw.p, cert.raw.len, fingerprint, 0) != 0)
+        sha256_bytes(cert.raw.p, cert.raw.len, fingerprint) != 0)
         goto done;
     memcpy(out, cert.raw.p, cert.raw.len);
     *out_len = cert.raw.len;
@@ -1101,4 +1124,9 @@ void katmed_web_stop(void)
     wipe(&web.auth, sizeof(web.auth));
     wipe(&web.identity, sizeof(web.identity));
     web.restart_pending = false;
+}
+
+httpd_handle_t katmed_web_acme_http_server(void)
+{
+    return web.started ? web.redirect : NULL;
 }

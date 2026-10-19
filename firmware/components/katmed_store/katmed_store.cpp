@@ -12,7 +12,9 @@
 
 namespace {
 constexpr uint8_t kMagic[4] = {'K', 'M', 'S', 'T'};
-constexpr uint16_t kCurrentVersion = 9;
+/* v10 combines the independently developed v9 mesh-name registry and the
+ * v8 Wi-Fi profile list. Versions 8 and 9 were never an on-device release. */
+constexpr uint16_t kCurrentVersion = 10;
 constexpr size_t kHeaderSize = 12;
 
 uint32_t checksum(const uint8_t *data, size_t length) {
@@ -196,7 +198,6 @@ bool valid_manual_intent(const StoreManualIntent &v, const StoreRecord &record) 
         app_berlin_local_time(v.effective_utc.ms,&local)==APP_OK &&
         std::memcmp(v.bound_group,record.bound_group,sizeof(v.bound_group))==0;
 }
-
 bool mesh_name_text(uint16_t index, char out[KATMED_DEVICE_NAME_MAX]) {
     if (!out || index == 0) return false;
     const int length = std::snprintf(out, KATMED_DEVICE_NAME_MAX,
@@ -241,6 +242,43 @@ bool valid_mesh_names(const StoreRecord &record) {
             if (record.mesh_names[i].device == record.device &&
                 record.mesh_names[i].index == record.mesh_name_index) own = true;
         if (!own) return false;
+    }
+    return true;
+}
+
+bool valid_utf8_text(const uint8_t *bytes, size_t length);
+void secure_zero(void *buffer, size_t length) {
+    volatile uint8_t *p=static_cast<volatile uint8_t *>(buffer);
+    while (length--) *p++=0;
+}
+struct StoreSecretGuard {
+    StoreRecord *record;
+    ~StoreSecretGuard() {
+        if (!record) return;
+        for (auto &profile : record->wifi_profiles)
+            secure_zero(profile.password,sizeof(profile.password));
+        secure_zero(record->provision.secret,sizeof(record->provision.secret));
+        secure_zero(record->provision.password,sizeof(record->provision.password));
+    }
+};
+bool valid_wifi_profiles(const StoreRecord &record) {
+    if (record.wifi_profile_count > KATMED_STORE_WIFI_PROFILE_MAX ||
+        (record.wifi_profile_count && record.next_wifi_profile_id == 0)) return false;
+    for (size_t i = 0; i < record.wifi_profile_count; ++i) {
+        const StoreWifiProfile &p = record.wifi_profiles[i];
+        if (!p.id || !p.priority || p.priority > record.wifi_profile_count ||
+            !p.ssid_length || p.ssid_length > sizeof(p.ssid) ||
+            !valid_utf8_text(p.ssid, p.ssid_length) ||
+            (p.secured ? (p.password_length < 8 || p.password_length > sizeof(p.password))
+                       : p.password_length != 0)) return false;
+        for (size_t j = p.ssid_length; j < sizeof(p.ssid); ++j)
+            if (p.ssid[j]) return false;
+        for (size_t j = p.password_length; j < sizeof(p.password); ++j)
+            if (p.password[j]) return false;
+        for (size_t j = 0; j < i; ++j) {
+            if (record.wifi_profiles[j].id == p.id ||
+                record.wifi_profiles[j].priority == p.priority) return false;
+        }
     }
     return true;
 }
@@ -334,7 +372,7 @@ bool valid_record(const StoreRecord &v) {
         !valid_local(v.local,v.device) || v.pending_count > KATMED_STORE_PENDING_MAX ||
         v.conflict_count > KATMED_STORE_CONFLICT_MAX ||
         !valid_provision(v.provision) || !valid_manual_intent(v.manual_intent,v) ||
-        !valid_mesh_names(v)) return false;
+        !valid_mesh_names(v) || !valid_wifi_profiles(v)) return false;
     if (v.group_origin!=STORE_GROUP_ORIGIN_UNKNOWN &&
         v.group_origin!=STORE_GROUP_ORIGIN_FRESH_UNBOUND &&
         v.group_origin!=STORE_GROUP_ORIGIN_FIRST_BOUND) return false;
@@ -427,6 +465,15 @@ StoreResult encode_record(const StoreRecord &v, uint8_t *bytes, size_t *length, 
         if (version>=9) w.u32(v.mesh_name_next_index);
         else w.u16(static_cast<uint16_t>(v.mesh_name_next_index));
     }
+    if (version>=10) {
+        w.u8(v.wifi_profile_count); w.u32(v.next_wifi_profile_id);
+        for (unsigned i=0;i<v.wifi_profile_count;++i) {
+            const StoreWifiProfile &p=v.wifi_profiles[i];
+            w.u32(p.id); w.u8(static_cast<uint8_t>(p.priority));
+            w.u8(p.ssid_length); w.bytes(p.ssid,sizeof(p.ssid));
+            w.boolean(p.secured); w.u8(p.password_length); w.bytes(p.password,sizeof(p.password));
+        }
+    }
     if (!w.good || w.position > UINT16_MAX) return STORE_FULL;
     const uint16_t n=static_cast<uint16_t>(w.position);
     bytes[6]=static_cast<uint8_t>(n); bytes[7]=static_cast<uint8_t>(n>>8);
@@ -500,6 +547,23 @@ StoreResult decode_record(const uint8_t *bytes, size_t length, StoreRecord *out)
         for (unsigned i=0;i<entry_slots;++i)
             v.mesh_names[i]={r.u64(),r.u16()};
         v.mesh_name_next_index=version>=9 ? r.u32() : r.u16();
+    }
+    if (version>=10) {
+        v.wifi_profile_count=r.u8(); v.next_wifi_profile_id=r.u32();
+        if (v.wifi_profile_count>KATMED_STORE_WIFI_PROFILE_MAX) return corrupt();
+        for (unsigned i=0;i<v.wifi_profile_count;++i) {
+            StoreWifiProfile &p=v.wifi_profiles[i];
+            p.id=r.u32(); p.priority=r.u8(); p.ssid_length=r.u8();
+            r.bytes(p.ssid,sizeof(p.ssid)); p.secured=r.boolean();
+            p.password_length=r.u8(); r.bytes(p.password,sizeof(p.password));
+        }
+    } else if (v.provision.configured) {
+        StoreWifiProfile &p=v.wifi_profiles[0];
+        p.id=1; p.priority=1; p.ssid_length=v.provision.ssid_length;
+        std::memcpy(p.ssid,v.provision.ssid,sizeof(p.ssid));
+        p.password_length=v.provision.password_length;
+        std::memcpy(p.password,v.provision.password,sizeof(p.password));
+        p.secured=p.password_length!=0; v.wifi_profile_count=1; v.next_wifi_profile_id=2;
     }
     if (!r.good || r.position!=length || !valid_record(v)) return corrupt();
     return STORE_OK;
@@ -1188,6 +1252,18 @@ StoreResult store_usb_handle_line_with_wifi_defaults(
         }
         store->staged=store->record;
         store->staged.provision=p;
+        /* The legacy setup protocol remains supported. Mirror its SSID into
+         * priority 1 once, so the multi-profile runtime has a durable source. */
+        if (store->staged.wifi_profile_count==0) {
+            StoreWifiProfile &profile=store->staged.wifi_profiles[0];
+            profile.id=1; profile.priority=1;
+            profile.ssid_length=p.ssid_length;
+            std::memcpy(profile.ssid,p.ssid,sizeof(profile.ssid));
+            profile.password_length=p.password_length; profile.secured=true;
+            std::memcpy(profile.password,p.password,sizeof(profile.password));
+            store->staged.wifi_profile_count=1;
+            store->staged.next_wifi_profile_id=2;
+        }
         std::memcpy(store->staged.bound_group,p.group,sizeof(p.group));
         if (first_binding) store->staged.group_origin=STORE_GROUP_ORIGIN_FIRST_BOUND;
         std::memset(&p,0,sizeof(p));
@@ -1205,6 +1281,96 @@ StoreResult store_usb_handle_line(Store *store, const char *line, size_t length,
                                   char *reply, size_t reply_capacity) {
     return store_usb_handle_line_with_wifi_defaults(store,line,length,status,
         nullptr,0,nullptr,0,reply,reply_capacity);
+}
+
+size_t store_wifi_profile_limit(void) { return KATMED_STORE_WIFI_PROFILE_MAX; }
+
+StoreResult store_wifi_profiles_load(const Store *store, StoreWifiProfile *out,
+                                     size_t capacity, size_t *count) {
+    if (!ready(store) || !count || (!out && capacity)) return STORE_INVALID;
+    *count=store->record.wifi_profile_count;
+    if (capacity<*count) return STORE_FULL;
+    if (*count) std::memcpy(out,store->record.wifi_profiles,
+                            *count*sizeof(StoreWifiProfile));
+    return STORE_OK;
+}
+
+StoreResult store_wifi_profiles_save_atomic(Store *store,
+                                            const StoreWifiProfileUpdate *profiles,
+                                            size_t count) {
+    if (!ready(store) || count>KATMED_STORE_WIFI_PROFILE_MAX || (count && !profiles))
+        return STORE_INVALID;
+    StoreRecord candidate=store->record;
+    StoreSecretGuard wipe_candidate{&candidate};
+    std::memset(candidate.wifi_profiles,0,sizeof(candidate.wifi_profiles));
+    candidate.wifi_profile_count=static_cast<uint8_t>(count);
+    if (count && !candidate.next_wifi_profile_id) candidate.next_wifi_profile_id=1;
+    for (size_t i=0;i<count;++i) {
+        const StoreWifiProfileUpdate &input=profiles[i];
+        if (!input.priority || input.priority>count ||
+            input.ssid_length==0 || input.ssid_length>sizeof(input.ssid) ||
+            !valid_utf8_text(input.ssid,input.ssid_length)) return STORE_INVALID;
+        StoreWifiProfile &target=candidate.wifi_profiles[i];
+        target.id=input.id;
+        if (!target.id) {
+            if (!candidate.next_wifi_profile_id ||
+                candidate.next_wifi_profile_id==UINT32_MAX) return STORE_FULL;
+            target.id=candidate.next_wifi_profile_id++;
+        }
+        target.priority=input.priority;
+        target.ssid_length=input.ssid_length;
+        std::memcpy(target.ssid,input.ssid,input.ssid_length);
+        const StoreWifiProfile *previous=nullptr;
+        for (size_t j=0;j<store->record.wifi_profile_count;++j)
+            if (store->record.wifi_profiles[j].id==target.id) {
+                previous=&store->record.wifi_profiles[j]; break;
+            }
+        switch (input.credential_action) {
+        case STORE_WIFI_CREDENTIAL_KEEP:
+            if (!previous) return STORE_INVALID;
+            target.secured=previous->secured;
+            target.password_length=previous->password_length;
+            std::memcpy(target.password,previous->password,sizeof(target.password));
+            break;
+        case STORE_WIFI_CREDENTIAL_REPLACE:
+            if (input.password_length<8 || input.password_length>sizeof(input.password) ||
+                !valid_utf8_text(input.password,input.password_length)) return STORE_INVALID;
+            target.secured=true; target.password_length=input.password_length;
+            std::memcpy(target.password,input.password,input.password_length);
+            break;
+        case STORE_WIFI_CREDENTIAL_OPEN:
+            if (input.password_length) return STORE_INVALID;
+            target.secured=false; target.password_length=0;
+            break;
+        default:
+            return STORE_INVALID;
+        }
+    }
+    if (!valid_wifi_profiles(candidate)) return STORE_INVALID;
+    return write_record(store,candidate);
+}
+
+StoreResult store_wifi_profile_delete_atomic(Store *store, uint32_t id) {
+    if (!ready(store) || !id) return STORE_INVALID;
+    StoreRecord candidate=store->record;
+    StoreSecretGuard wipe_candidate{&candidate};
+    size_t index=candidate.wifi_profile_count;
+    uint32_t removed_priority=0;
+    for (size_t i=0;i<candidate.wifi_profile_count;++i)
+        if (candidate.wifi_profiles[i].id==id) {
+            index=i; removed_priority=candidate.wifi_profiles[i].priority; break;
+        }
+    if (index==candidate.wifi_profile_count) return STORE_NOT_FOUND;
+    for (size_t i=index+1;i<candidate.wifi_profile_count;++i)
+        candidate.wifi_profiles[i-1]=candidate.wifi_profiles[i];
+    --candidate.wifi_profile_count;
+    std::memset(&candidate.wifi_profiles[candidate.wifi_profile_count],0,
+                sizeof(candidate.wifi_profiles[0]));
+    for (size_t i=0;i<candidate.wifi_profile_count;++i)
+        if (candidate.wifi_profiles[i].priority>removed_priority)
+            --candidate.wifi_profiles[i].priority;
+    if (!valid_wifi_profiles(candidate)) return STORE_CORRUPT;
+    return write_record(store,candidate);
 }
 
 } // extern "C"

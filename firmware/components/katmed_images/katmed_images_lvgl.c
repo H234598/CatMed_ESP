@@ -2,7 +2,11 @@
 #define _POSIX_C_SOURCE 200809L
 #endif
 #include "katmed_images_internal.h"
-#include "src/draw/lv_image_decoder_private.h"
+#include "katmed_image_store.h"
+#ifdef ESP_PLATFORM
+#include <inttypes.h>
+#endif
+#include "src/image/lv_image_decoder_private.h"
 #include <string.h>
 #include <stdint.h>
 #ifdef ESP_PLATFORM
@@ -15,7 +19,10 @@ typedef struct {
     uint8_t index;
     uint8_t profile;
     uint32_t position;
+    uint32_t length;
+    KatmedImageReader reader;
     KatmedImageStatus sticky;
+    bool user_image;
     bool used;
 } ImageFile;
 
@@ -102,12 +109,38 @@ static bool parse_path(const char *path, uint32_t *index, uint32_t *profile)
     return katmed_images_variant(*index, *profile) != NULL;
 }
 
+#ifdef ESP_PLATFORM
+static bool parse_user_path(const char *path, uint32_t *id)
+{
+    if (path == NULL || id == NULL || strlen(path) != 14u || path[0] != '/' ||
+        path[1] != 'u' || strcmp(path + 10, ".jpg") != 0) return false;
+    uint32_t value = 0;
+    for (size_t i = 2u; i < 10u; ++i) {
+        unsigned char c = (unsigned char)path[i];
+        uint32_t digit;
+        if (c >= '0' && c <= '9') digit = (uint32_t)(c - '0');
+        else if (c >= 'a' && c <= 'f') digit = (uint32_t)(c - 'a' + 10);
+        else return false;
+        value = (value << 4u) | digit;
+    }
+    if (value == 0u) return false;
+    *id = value;
+    return true;
+}
+#endif
+
 static void *fs_open(lv_fs_drv_t *driver, const char *path, lv_fs_mode_t mode)
 {
     LV_UNUSED(driver);
     if(mode != LV_FS_MODE_RD) return NULL;
-    uint32_t index, profile;
+    uint32_t index = 0, profile = 0;
+#ifdef ESP_PLATFORM
+    uint32_t user_id = 0;
+    bool user_image = parse_user_path(path, &user_id);
+    if(!user_image && !parse_path(path, &index, &profile)) return NULL;
+#else
     if(!parse_path(path, &index, &profile)) return NULL;
+#endif
     ImageFile *file = NULL;
     for(unsigned i = 0; i < KATMED_IMAGE_MAX_OPEN_FILES; ++i) {
         if(!file_pool[i].used) {
@@ -119,9 +152,22 @@ static void *fs_open(lv_fs_drv_t *driver, const char *path, lv_fs_mode_t mode)
         katmed_images_record_error(KATMED_IMAGE_UNAVAILABLE);
         return NULL;
     }
-    if(katmed_images_validate_variant(index, profile) != KATMED_IMAGE_OK) return NULL;
-    *file = (ImageFile){.index = (uint8_t)index, .profile = (uint8_t)profile,
-                        .position = 0u, .sticky = KATMED_IMAGE_OK, .used = true};
+#ifdef ESP_PLATFORM
+    if (user_image) {
+        KatmedUserImageInfo info;
+        KatmedImageReader reader;
+        if (katmed_image_store_open_read(user_id, &reader, &info) != KATMED_IMAGE_OK) return NULL;
+        *file = (ImageFile){.position=0u, .length=info.bytes, .reader=reader,
+                            .sticky=KATMED_IMAGE_OK, .user_image=true, .used=true};
+    } else
+#endif
+    {
+        if(katmed_images_validate_variant(index, profile) != KATMED_IMAGE_OK) return NULL;
+        const KatmedImageVariant *variant = katmed_images_variant(index, profile);
+        *file = (ImageFile){.index = (uint8_t)index, .profile = (uint8_t)profile,
+                            .position = 0u, .length=variant->length,
+                            .sticky = KATMED_IMAGE_OK, .used = true};
+    }
     ++open_files;
     return file;
 }
@@ -131,6 +177,11 @@ static lv_fs_res_t fs_close(lv_fs_drv_t *driver, void *opaque)
     LV_UNUSED(driver);
     for(unsigned i = 0; i < KATMED_IMAGE_MAX_OPEN_FILES; ++i) {
         if(opaque == &file_pool[i] && file_pool[i].used) {
+#ifdef ESP_PLATFORM
+            if (file_pool[i].user_image &&
+                katmed_image_store_close_read(file_pool[i].reader) != KATMED_IMAGE_OK)
+                katmed_images_record_error(KATMED_IMAGE_IO_ERROR);
+#endif
             file_pool[i].used = false;
             --open_files;
             return LV_FS_RES_OK;
@@ -147,6 +198,21 @@ static lv_fs_res_t fs_read(lv_fs_drv_t *driver, void *opaque, void *buffer,
     if(opaque == NULL || (wanted && buffer == NULL)) return LV_FS_RES_INV_PARAM;
     ImageFile *file = (ImageFile *)opaque;
     if(file->sticky != KATMED_IMAGE_OK) return LV_FS_RES_FS_ERR;
+#ifdef ESP_PLATFORM
+    if (file->user_image) {
+        size_t read_count = 0;
+        KatmedImageStatus status = katmed_image_store_read(
+            file->reader, (uint8_t *)buffer, wanted, &read_count);
+        if (status != KATMED_IMAGE_OK) {
+            file->sticky = status;
+            katmed_images_record_error(status);
+            return LV_FS_RES_FS_ERR;
+        }
+        file->position += (uint32_t)read_count;
+        if (actual) *actual = (uint32_t)read_count;
+        return LV_FS_RES_OK;
+    }
+#endif
     const KatmedImageVariant *variant = katmed_images_variant(file->index, file->profile);
     if(variant == NULL || file->position > variant->length) {
         file->sticky = KATMED_IMAGE_BAD_RANGE;
@@ -175,18 +241,32 @@ static lv_fs_res_t fs_seek(lv_fs_drv_t *driver, void *opaque, uint32_t position,
     if(opaque == NULL) return LV_FS_RES_INV_PARAM;
     ImageFile *file = (ImageFile *)opaque;
     if(file->sticky != KATMED_IMAGE_OK) return LV_FS_RES_FS_ERR;
-    const KatmedImageVariant *variant = katmed_images_variant(file->index, file->profile);
-    if(variant == NULL) return LV_FS_RES_FS_ERR;
+    const KatmedImageVariant *variant = file->user_image ? NULL :
+        katmed_images_variant(file->index, file->profile);
+    if(!file->user_image && variant == NULL) return LV_FS_RES_FS_ERR;
+    uint32_t length = file->length;
     uint64_t next;
     if(whence == LV_FS_SEEK_SET) next = position;
     else if(whence == LV_FS_SEEK_CUR) next = (uint64_t)file->position + position;
-    else if(whence == LV_FS_SEEK_END) next = (uint64_t)variant->length + position;
+    else if(whence == LV_FS_SEEK_END) next = (uint64_t)length + position;
     else next = UINT64_MAX;
-    if(next > variant->length) {
+    if(next > length) {
         file->sticky = KATMED_IMAGE_BAD_RANGE;
         katmed_images_record_error(file->sticky);
         return LV_FS_RES_INV_PARAM;
     }
+#ifdef ESP_PLATFORM
+    if (file->user_image) {
+        KatmedImageStoreWhence store_whence = whence == LV_FS_SEEK_SET ? KATMED_IMAGE_STORE_SEEK_SET :
+            whence == LV_FS_SEEK_CUR ? KATMED_IMAGE_STORE_SEEK_CUR : KATMED_IMAGE_STORE_SEEK_END;
+        KatmedImageStatus status = katmed_image_store_seek(file->reader, position, store_whence);
+        if (status != KATMED_IMAGE_OK) {
+            file->sticky = status;
+            katmed_images_record_error(status);
+            return LV_FS_RES_INV_PARAM;
+        }
+    }
+#endif
     file->position = (uint32_t)next;
     return LV_FS_RES_OK;
 }

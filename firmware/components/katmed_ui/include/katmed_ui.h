@@ -84,6 +84,11 @@ typedef struct {
     bool (*durable_divergence)(void *context);
     uint8_t (*conflict_count)(void *context);
     bool (*conflict_at)(void *context, size_t index, UiConflict *conflict);
+    /* UI reset is a separate confirmation action. Prepare only creates a
+     * short-lived one-use token; confirm queues the reset for the main loop. */
+    bool (*reset_prepare)(void *context, char *token, size_t capacity,
+                          size_t *length);
+    int (*reset_confirm)(void *context, const char *token, size_t length);
 } UiServices;
 
 /* A display render cycle caused by a change of the alarm bar's visibility.

@@ -3,6 +3,10 @@
 #endif
 #include "katmed_images_internal.h"
 #include "katmed_images_hash.h"
+#include <inttypes.h>
+#ifdef ESP_PLATFORM
+#include "katmed_image_store.h"
+#endif
 #include <stdio.h>
 #include <string.h>
 #ifdef ESP_PLATFORM
@@ -48,10 +52,22 @@ void katmed_images_clear_error(void) { last_error = KATMED_IMAGE_OK; }
 
 KatmedImageStatus katmed_images_last_error(void) { return last_error; }
 const uint8_t *katmed_images_catalog_sha256(void) { return katmed_generated_catalog.catalog_sha256; }
-uint32_t katmed_images_count(void) { return KATMED_IMAGE_COUNT; }
+uint32_t katmed_images_count(void)
+{
+    uint32_t count = KATMED_IMAGE_COUNT;
+#ifdef ESP_PLATFORM
+    KatmedImageStoreStats stats;
+    if (katmed_image_store_stats(&stats) == KATMED_IMAGE_OK &&
+        UINT32_MAX - count >= stats.image_count) count += stats.image_count;
+#endif
+    return count;
+}
 
 void katmed_images_unmount(void)
 {
+#ifdef ESP_PLATFORM
+    katmed_image_store_unmount();
+#endif
     memset(&mounted_storage, 0, sizeof(mounted_storage));
     mounted = false;
     last_error = KATMED_IMAGE_UNAVAILABLE;
@@ -211,9 +227,35 @@ KatmedImageStatus katmed_images_select(uint32_t logical_index, Orientation orien
     memset(out, 0, sizeof(*out));
     out->show_neutral_fallback = true;
     uint32_t profile = katmed_images_profile_for_orientation(orientation);
-    if(logical_index >= KATMED_IMAGE_COUNT || profile == UINT32_MAX) {
+    if(profile == UINT32_MAX) {
         out->status = KATMED_IMAGE_BAD_ID;
         return out->status;
+    }
+    if(logical_index >= KATMED_IMAGE_COUNT) {
+#ifdef ESP_PLATFORM
+        KatmedUserImageInfo info;
+        KatmedImageStatus status = katmed_image_store_list(
+            logical_index - KATMED_IMAGE_COUNT, &info);
+        if(status != KATMED_IMAGE_OK) {
+            out->status = status;
+            return status;
+        }
+        out->logical_id = (UINT64_C(1) << 63u) | info.id;
+        out->width = info.width;
+        out->height = info.height;
+        int n = snprintf(out->lvgl_path, sizeof(out->lvgl_path), "K:/u%08" PRIx32 ".jpg",
+                         info.id);
+        if(n < 0 || (size_t)n >= sizeof(out->lvgl_path)) {
+            out->status = KATMED_IMAGE_BAD_CATALOG;
+            return out->status;
+        }
+        out->status = KATMED_IMAGE_OK;
+        out->show_neutral_fallback = false;
+        return KATMED_IMAGE_OK;
+#else
+        out->status = KATMED_IMAGE_BAD_ID;
+        return out->status;
+#endif
     }
     KatmedImageStatus status = katmed_images_validate_variant(logical_index, profile);
     out->status = status;

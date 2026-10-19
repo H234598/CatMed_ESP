@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Apply three source-bound LVGL 9.4.0 image allocation fixes locally.
+"""Apply narrowly source-pinned allocation guards to LVGL 9.6.0.
 
 The managed component is downloaded by ESP-IDF and excluded from Katmed Git.
-Unexpected LVGL source bytes are rejected so these narrow fixes cannot drift.
+Unexpected upstream source changes fail closed rather than receiving a fuzzy
+patch.
 """
 
 import argparse
@@ -12,80 +13,59 @@ from pathlib import Path
 
 PATCHES = (
     (
-        "src/libs/tjpgd/lv_tjpgd.c",
-        "e86658188441209ca9512c1025080e18dc7c4556a5a2e825ecf5878e2ec0c1f6",
-        "48350d9e338c8ad547712a612198749485fcb55977c6c64797838030b255f143",
+        "src/image/lv_tjpgd.c",
+        "3b346915201651112782c966e8bf63aff847bb31b3d7f22e076b24005ee4a7a6",
+        "4a23bd84c5ea8382bb5793166a320d2b67a99ab21ca72bac45a8b4067410b23f",
         b"""        if(decoded == NULL) {
             decoded = lv_malloc_zeroed(sizeof(lv_draw_buf_t));
             dsc->decoded = decoded;
-        }
-""",
+        }""",
         b"""        if(decoded == NULL) {
             decoded = lv_malloc_zeroed(sizeof(lv_draw_buf_t));
             if(decoded == NULL) return LV_RESULT_INVALID;
             dsc->decoded = decoded;
-        }
-""",
-    ),
-    (
-        "src/libs/tjpgd/lv_tjpgd.c",
-        "48350d9e338c8ad547712a612198749485fcb55977c6c64797838030b255f143",
-        "1f58363ef5eb864724f284fd439043356a4e590a09b701a0a51a2e2b96ba32aa",
-        b"""            uint8_t workb[TJPGD_WORKBUFF_SIZE];
-            JDEC jd;
-            JRESULT rc = jd_prepare(&jd, input_func, workb, TJPGD_WORKBUFF_SIZE, &dsc->file);
-""",
-        b"""            uint8_t * workb = lv_malloc(TJPGD_WORKBUFF_SIZE);
-            if(workb == NULL) return LV_RESULT_INVALID;
-            JDEC jd;
-            JRESULT rc = jd_prepare(&jd, input_func, workb, TJPGD_WORKBUFF_SIZE, &dsc->file);
-            lv_free(workb);
-""",
+        }""",
     ),
     (
         "src/widgets/image/lv_image.c",
-        "b8fa1ff90d3199c417d4b3e1ae474ce0100d2b7df265c8fca83c7de658657c54",
-        "fc8476ab6d503942a3b2d758eee688424f9f10f7dbb358ceeb8db87e6d596914",
+        "53df2b6128f69a7c53b3741594b953623bfcd648332dd95026b6987e27167608",
+        "afe9365bcf71c35666b2b15f283d13345c5bbf37d798b91ea21b4dc6cf619c97",
         b"""            char * new_str = lv_strdup(src);
             LV_ASSERT_MALLOC(new_str);
-            if(new_str == NULL) return;
-""",
+            if(new_str == NULL) return;""",
         b"""            char * new_str = lv_strdup(src);
-            if(new_str == NULL) return;
-""",
+            if(new_str == NULL) return;""",
     ),
 )
 
 
 def prepare(lvgl_root: Path, check_only: bool = False) -> str:
-    version = (lvgl_root / "lv_version.h").read_text()
-    for name, value in (("MAJOR", 9), ("MINOR", 4), ("PATCH", 0)):
+    version = (lvgl_root / "include/lvgl/lv_version.h").read_text()
+    for name, value in (("MAJOR", 9), ("MINOR", 6), ("PATCH", 0)):
         if f"#define LVGL_VERSION_{name} {value}" not in version:
-            raise ValueError("LVGL version differs from pinned 9.4.0")
-    pending = {}
-    for index, (relative, original_hash, patched_hash, old, new) in enumerate(PATCHES):
+            raise ValueError("LVGL version differs from pinned 9.6.0")
+
+    pending = []
+    for relative, original_hash, patched_hash, old, new in PATCHES:
         source = lvgl_root / relative
-        data = pending.get(source, source.read_bytes())
+        data = source.read_bytes()
         digest = hashlib.sha256(data).hexdigest()
-        later_hashes = {step[2] for step in PATCHES[index + 1:] if step[0] == relative}
-        if digest in later_hashes and data.count(new) == 1:
-            continue
         if digest == patched_hash and data.count(new) == 1:
             continue
-        if digest == original_hash and data.count(old) == 1:
-            patched = data.replace(old, new, 1)
-            if hashlib.sha256(patched).hexdigest() != patched_hash:
-                raise ValueError(f"LVGL patch result differs for {relative}")
-            pending[source] = patched
-            continue
-        raise ValueError(f"Unexpected LVGL 9.4.0 source SHA-256 for {relative}: {digest}")
+        if digest != original_hash or data.count(old) != 1:
+            raise ValueError(f"Unexpected LVGL 9.6.0 source SHA-256 for {relative}: {digest}")
+        patched = data.replace(old, new, 1)
+        if hashlib.sha256(patched).hexdigest() != patched_hash:
+            raise ValueError(f"LVGL allocation patch result differs for {relative}")
+        pending.append((source, patched))
+
     if check_only:
-        return f"verified LVGL 9.4.0 sources; {len(pending)} local fixes required"
-    for source, patched in pending.items():
+        return f"verified LVGL 9.6.0 source pins; {len(pending)} local allocation guards required"
+    for source, patched in pending:
         source.write_bytes(patched)
         if hashlib.sha256(source.read_bytes()).hexdigest() != hashlib.sha256(patched).hexdigest():
-            raise ValueError(f"LVGL image fix verification failed: {source}")
-    return f"verified LVGL 9.4.0 image fixes; {len(pending)} newly applied"
+            raise ValueError(f"LVGL allocation guard verification failed: {source}")
+    return f"verified LVGL 9.6.0 allocation guards; {len(pending)} newly applied"
 
 
 if __name__ == "__main__":

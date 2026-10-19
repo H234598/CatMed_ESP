@@ -16,16 +16,20 @@
 #include "esp_netif.h"
 #include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "katmed_board.h"
 #include "katmed_core.h"
 #include "katmed_config_bridge.h"
 #include "katmed_web.h"
 #include "katmed_images.h"
+#include "katmed_image_store.h"
 #include "katmed_mesh.h"
 #include "katmed_dhcp_diag.h"
 #include "katmed_store.h"
 #include "katmed_store_idf.h"
+#include "katmed_reset_idf.h"
+#include "katmed_acme.h"
 #include <private_wifi_defaults.h>
 #include "katmed_time.h"
 #include "katmed_time_idf.h"
@@ -62,9 +66,113 @@ typedef struct {
     bool manual_restore_retry;
     EventId manual_restore_event_id;
     KatmedRestoreStatus manual_restore_status;
+    KatmedResetConfirmation reset_confirmation;
+    bool reset_requested;
+    bool reset_active;
+    uint64_t reset_retry_due_ms;
 } Runtime;
 
 static Runtime runtime;
+static StaticSemaphore_t reset_mutex_storage;
+static SemaphoreHandle_t reset_mutex;
+static KatmedResetJournalBackend reset_backend(void)
+{
+    return katmed_reset_idf_backend();
+}
+
+static bool reset_random_bytes(void *context,uint8_t *out,size_t length)
+{
+    (void)context;
+    if (!out) return false;
+    esp_fill_random(out,length);
+    return true;
+}
+
+/* Injected into KatmedWebResetServices by the separate web integration. */
+bool katmed_runtime_reset_prepare(void *context,char *out,size_t capacity,size_t *length)
+{
+    Runtime *rt=context;
+    if (!rt || !reset_mutex || xSemaphoreTake(reset_mutex,pdMS_TO_TICKS(1000))!=pdTRUE)
+        return false;
+    const bool ok=!rt->reset_active && !rt->reset_requested &&
+        katmed_reset_confirmation_prepare(&rt->reset_confirmation,reset_random_bytes,NULL,
+            monotonic_ms(),90000u,out,capacity,length);
+    xSemaphoreGive(reset_mutex);
+    return ok;
+}
+
+/* Result values intentionally match KatmedWebResetResult: 0 accepted,
+ * 1 stale/consumed, 2 failed. This callback queues only RAM state. */
+int katmed_runtime_reset_confirm(void *context,const char *token,size_t length)
+{
+    Runtime *rt=context;
+    if (!rt || !reset_mutex || xSemaphoreTake(reset_mutex,pdMS_TO_TICKS(1000))!=pdTRUE)
+        return 2;
+    const bool valid=katmed_reset_confirmation_consume(&rt->reset_confirmation,
+        token,length,monotonic_ms());
+    if (valid) rt->reset_requested=true;
+    xSemaphoreGive(reset_mutex);
+    return valid ? 0 : 1;
+}
+
+static bool reset_runtime_step(Runtime *rt,uint64_t now_ms)
+{
+    if (!rt || !reset_mutex) return false;
+    if (xSemaphoreTake(reset_mutex,pdMS_TO_TICKS(100))!=pdTRUE) return rt->reset_active;
+    const bool requested=rt->reset_requested;
+    rt->reset_requested=false;
+    const bool active=rt->reset_active;
+    if (requested && !active) rt->reset_active=true;
+    xSemaphoreGive(reset_mutex);
+    if (requested && !active) {
+        KatmedResetJournalBackend backend=reset_backend();
+        if (!katmed_reset_begin(backend)) {
+            ESP_LOGE("katmed_reset","could not commit reset intent; user data is unchanged");
+            if (xSemaphoreTake(reset_mutex,pdMS_TO_TICKS(100))==pdTRUE) {
+                rt->reset_active=false;
+                xSemaphoreGive(reset_mutex);
+            }
+            return false;
+        }
+        katmed_web_stop();
+        katmed_mesh_stop();
+        katmed_acme_stop();
+        store_idf_close_backend(&rt->nvs);
+        rt->store_ready=false;
+        rt->reset_retry_due_ms=0;
+    }
+    if (!rt->reset_active) return false;
+    if (now_ms<rt->reset_retry_due_ms) return true;
+    bool pending=true;
+    if (katmed_reset_resume(reset_backend(),&pending) && !pending) {
+        ESP_LOGI("katmed_reset","journaled user-data reset complete; restarting");
+        esp_restart();
+    }
+    rt->reset_retry_due_ms=now_ms+5000u;
+    ESP_LOGE("katmed_reset","reset stage remains pending; recovery will retry");
+    return true;
+}
+
+static bool resume_reset_at_startup(void)
+{
+    KatmedResetJournalBackend backend=reset_backend();
+    KatmedResetJournal journal={0};
+    if (!backend.load(backend.context,&journal)) return false;
+    if (!journal.pending) return true;
+    ESP_LOGW("katmed_reset","resuming durable reset journal before normal startup");
+    for (;;) {
+        if (katmed_image_store_mount()!=KATMED_IMAGE_OK) {
+            vTaskDelay(pdMS_TO_TICKS(5000));
+            continue;
+        }
+        bool pending=true;
+        if (katmed_reset_resume(backend,&pending) && !pending) {
+            esp_restart();
+            return false;
+        }
+        vTaskDelay(pdMS_TO_TICKS(5000));
+    }
+}
 /* LVGL callbacks enqueue bounded transient inputs. Only the application loop
  * invokes Mesh, including the final ALARM input before any queued old Down. */
 #define INTERACTION_QUEUE_CAPACITY 32u
@@ -1189,6 +1297,12 @@ void app_main(void)
     ESP_LOGI(tag, "Board/UI runtime with durable store and bounded group services");
     ESP_LOGI(tag, "free heap at entry: %" PRIu32, esp_get_free_heap_size());
 
+    reset_mutex=xSemaphoreCreateMutexStatic(&reset_mutex_storage);
+    if (!reset_mutex) {
+        ESP_LOGE(tag,"reset confirmation lock unavailable");
+        return;
+    }
+
     if (!boot_identity(&runtime.boot)) {
         ESP_LOGE(tag, "read-only device identity unavailable");
         return;
@@ -1211,6 +1325,12 @@ void app_main(void)
     lvgl_port_unlock();
     const KatmedImageStatus image_status = katmed_images_mount_partition();
     ESP_LOGI(tag, "read-only image partition status=%d", image_status);
+    const KatmedImageStatus user_image_status = katmed_image_store_mount();
+    ESP_LOGI(tag, "writable user image filesystem status=%d", user_image_status);
+    if (!resume_reset_at_startup()) {
+        ESP_LOGE(tag,"reset journal unavailable; normal startup is held");
+        return;
+    }
 
     SharedSettings settings = app_default_settings();
     const uint32_t image_count = image_status == KATMED_IMAGE_OK ? katmed_images_count() : 0;
@@ -1278,6 +1398,8 @@ void app_main(void)
         .durable_divergence = durable_divergence,
         .conflict_count = conflict_count,
         .conflict_at = conflict_at,
+        .reset_prepare = katmed_runtime_reset_prepare,
+        .reset_confirm = katmed_runtime_reset_confirm,
     };
     ui_set_services(&services);
     board_set_touch_filter(ui_lvgl_touch_allowed);
@@ -1329,6 +1451,10 @@ void app_main(void)
     KatmedRuntimeMetricsGate metrics_gate = {0};
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(25));
+        if (reset_runtime_step(&runtime,monotonic_ms())) {
+            vTaskDelay(pdMS_TO_TICKS(100));
+            continue;
+        }
         reboot_if_due(&runtime, monotonic_ms());
         now = clock_sample(runtime.boot_domain);
         if (runtime.mesh_started && !runtime.reboot_required)

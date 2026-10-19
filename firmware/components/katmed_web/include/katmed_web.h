@@ -3,6 +3,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include "esp_http_server.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -30,6 +31,10 @@ void katmed_web_poll(uint64_t monotonic_ms);
  * The six digits must never be included in HTTP replies or logs. */
 bool katmed_web_pairing_code(char out[7]);
 void katmed_web_stop(void);
+
+/* ACME-only hand-off to the existing plain HTTP listener. The caller never
+ * starts a second server; NULL means the listener is not ready. */
+httpd_handle_t katmed_web_acme_http_server(void);
 
 #ifdef __cplusplus
 }

@@ -1,13 +1,15 @@
 #include "katmed_morse.h"
+#ifdef ESP_PLATFORM
+#include "katmed_private_ui_profile.h"
+#endif
+#include "katmed_ui_defaults.h"
 
 #include <string.h>
 
 #define MORSE_UNIT_MS 180u
 #define MORSE_PAUSE_MS 45000u
 
-/* User-supplied output data. Its contents are never interpreted as commands. */
-static const char message[] =
-    "Please customize the Morse text in your private profile.";
+static const char message[] = KATMED_DEFAULT_SELTSAM_MORSE_TEXT;
 
 /* ITU-R M.1677-1 Annex 1 for A-Z, 0-9, . , ? / and the 1/3/7 gaps.
  * The common six-element ! (-.-.--) is an explicit extension. Umlauts are

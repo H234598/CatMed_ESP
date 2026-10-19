@@ -4,6 +4,7 @@
 #include "katmed_mesh_session.h"
 #include "katmed_mesh_status.h"
 #include "katmed_mesh_interaction.hpp"
+#include "katmed_wifi_profile_policy.h"
 
 #include <atomic>
 #include <cstring>
@@ -52,6 +53,10 @@ struct Context {
     QueueHandle_t queue=nullptr;
     bool started=false, active=false, dirty=false;
     std::atomic<bool> has_ip{false};
+    std::atomic<bool> wifi_retry_pending{false};
+    std::atomic<bool> wifi_reconnect_requested{false};
+    std::atomic<bool> wifi_switch_disconnect{false};
+    uint8_t wifi_profile_index=0;
     bool shared_waiting=false, shared_acked=false;
     uint64_t coordinator_device=0;
     uint64_t tx_counter=0;
@@ -92,6 +97,35 @@ bool linked();
 void apply_hostname();
 bool send_name_map(uint64_t destination);
 void ensure_root_name();
+const StoreWifiProfile *wifi_profile_by_priority(uint32_t priority) {
+    if (!ctx.services.store) return nullptr;
+    const StoreRecord &record=ctx.services.store->record;
+    for (unsigned i=0;i<record.wifi_profile_count;++i)
+        if (record.wifi_profiles[i].priority==priority) return &record.wifi_profiles[i];
+    return nullptr;
+}
+bool set_router_profile(uint32_t priority) {
+    const StoreWifiProfile *profile=wifi_profile_by_priority(priority);
+    if (!profile) return false;
+    mesh_lite_sta_config_t router{};
+    std::memcpy(router.ssid,profile->ssid,profile->ssid_length);
+    if (profile->secured)
+        std::memcpy(router.password,profile->password,profile->password_length);
+    if (esp_mesh_lite_set_router_config(&router)!=ESP_OK) return false;
+    ctx.wifi_profile_index=static_cast<uint8_t>(priority-1);
+    return true;
+}
+bool reconnect_router_profile(uint32_t priority, bool disconnect_first) {
+    /* Mesh-Lite's connect API owns STA reconnect and parent selection. */
+    if (disconnect_first) {
+        ctx.wifi_switch_disconnect.store(true,std::memory_order_release);
+        if (esp_mesh_lite_disconnect()!=ESP_OK)
+            ctx.wifi_switch_disconnect.store(false,std::memory_order_release);
+    }
+    if (!set_router_profile(priority)) return false;
+    esp_mesh_lite_connect();
+    return true;
+}
 void bind_interaction(uint64_t now){
     const uint64_t self=ctx.services.store?ctx.services.store->record.device:0;
     const bool r=root();uint64_t authority=r?self:ctx.coordinator_device,epoch=0;
@@ -795,6 +829,12 @@ void ip_event(void *,esp_event_base_t base,int32_t id,void *){
         }
     }
 }
+void wifi_event(void *,esp_event_base_t,int32_t id,void *) {
+    if (id==WIFI_EVENT_STA_DISCONNECTED && ctx.started) {
+        if (ctx.wifi_switch_disconnect.exchange(false,std::memory_order_acq_rel)) return;
+        ctx.wifi_retry_pending.store(true,std::memory_order_release);
+    }
+}
 void hex(char *out,const uint8_t *bytes,size_t n){
     const char alphabet[]="0123456789abcdef";
     for(size_t i=0;i<n;++i){out[2*i]=alphabet[bytes[i]>>4];out[2*i+1]=alphabet[bytes[i]&15];}
@@ -859,7 +899,9 @@ extern "C" KatmedMeshResult katmed_mesh_start(const StoreProvision *provision,
         (uint32_t(provision->group[4])<<16)|(uint32_t(provision->group[5])<<8)|
         provision->group[6]);
     (void)esp_mesh_lite_set_softap_info(ctx.ap_ssid,ctx.ap_password);
-    if(provision->ssid_length){
+    if (services->store->record.wifi_profile_count) {
+        if(!set_router_profile(1))return MESH_UNAVAILABLE;
+    } else if(provision->ssid_length){
         mesh_lite_sta_config_t router{};
         std::memcpy(router.ssid,provision->ssid,provision->ssid_length);
         std::memcpy(router.password,provision->password,provision->password_length);
@@ -870,7 +912,8 @@ extern "C" KatmedMeshResult katmed_mesh_start(const StoreProvision *provision,
     };
     if(esp_mesh_lite_raw_msg_action_list_register(actions)!=ESP_OK)return MESH_UNAVAILABLE;
     if(esp_event_handler_register(IP_EVENT,IP_EVENT_STA_GOT_IP,ip_event,nullptr)!=ESP_OK||
-       esp_event_handler_register(IP_EVENT,IP_EVENT_STA_LOST_IP,ip_event,nullptr)!=ESP_OK)
+       esp_event_handler_register(IP_EVENT,IP_EVENT_STA_LOST_IP,ip_event,nullptr)!=ESP_OK||
+       esp_event_handler_register(WIFI_EVENT,WIFI_EVENT_STA_DISCONNECTED,wifi_event,nullptr)!=ESP_OK)
         return MESH_UNAVAILABLE;
     ctx.started=true;ctx.active=true;ctx.dirty=true;
     esp_mesh_lite_start();
@@ -885,6 +928,12 @@ extern "C" void katmed_mesh_stop(void){
     note_session_transition();
     if(ctx.queue)xQueueReset(ctx.queue);
     (void)esp_mesh_lite_disconnect();
+}
+extern "C" bool katmed_mesh_schedule_reconnect(void) {
+    if (!ctx.started || !ctx.services.store ||
+        ctx.services.store->record.wifi_profile_count==0) return false;
+    ctx.wifi_reconnect_requested.store(true,std::memory_order_release);
+    return true;
 }
 extern "C" bool katmed_mesh_radio_channel(uint8_t *channel){
     if(!channel)return false;
@@ -975,6 +1024,15 @@ extern "C" KatmedMeshResult katmed_mesh_submit_shared(const AppEvent *event,
 }
 extern "C" void katmed_mesh_poll(const ClockSample *now){
     if(!now||!current_group())return;
+    const uint8_t profile_count=ctx.services.store->record.wifi_profile_count;
+    const bool explicit_reconnect=
+        ctx.wifi_reconnect_requested.exchange(false,std::memory_order_acq_rel);
+    const bool disconnected=ctx.wifi_retry_pending.exchange(false,std::memory_order_acq_rel);
+    const uint8_t next_priority=katmed_wifi_profile_reselect(
+        disconnected,explicit_reconnect,static_cast<uint8_t>(ctx.wifi_profile_index+1u),
+        profile_count);
+    if (next_priority)
+        (void)reconnect_router_profile(next_priority,explicit_reconnect);
     if(!ctx.status.clock_valid){ctx.status.clock_valid=true;ctx.status.started_ms=now->monotonic_ms;}
     ctx.status.now_ms=now->monotonic_ms;
     const uint32_t drops=ctx.diagnostics.rx_queue_drops.load(std::memory_order_relaxed);
