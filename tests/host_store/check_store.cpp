@@ -38,15 +38,27 @@ void repair_crc(Fake &f) {
     uint32_t crc=static_cast<uint32_t>(crc32(0,f.bytes+12,f.length-12));
     for (unsigned i=0;i<4;++i) f.bytes[8+i]=static_cast<uint8_t>(crc>>(8*i));
 }
-void remove_v8_names(Fake &f) {
-    constexpr size_t mesh_name_suffix=1+17+2+1+9*10+2;
-    assert(f.bytes[4]==8 && f.length>mesh_name_suffix);
-    f.length-=mesh_name_suffix; // v8 appends the bounded Mesh-name registry.
+void remove_v9_names(Fake &f) {
+    constexpr size_t mesh_name_suffix=1+17+2+1+KATMED_MESH_NAME_MAX_ENTRIES*10+4;
+    assert(f.bytes[4]==9 && f.length>mesh_name_suffix);
+    f.length-=mesh_name_suffix; // v9 widens the bounded registry and exhaustion cursor.
     f.bytes[4]=7;
     repair_crc(f);
 }
+void downgrade_names_to_v8(Fake &f) {
+    constexpr size_t v9_suffix=1+17+2+1+KATMED_MESH_NAME_MAX_ENTRIES*10+4;
+    constexpr size_t v8_suffix=1+17+2+1+9*10+2;
+    assert(f.bytes[4]==9 && f.length>v9_suffix);
+    const size_t suffix=f.length-v9_suffix;
+    const size_t old_cursor=suffix+1+17+2+1+9*10;
+    const size_t current_cursor=f.length-4;
+    std::memmove(f.bytes+old_cursor,f.bytes+current_cursor,2);
+    f.length=suffix+v8_suffix;
+    f.bytes[4]=8;
+    repair_crc(f);
+}
 void remove_v7_manual(Fake &f) {
-    remove_v8_names(f);
+    remove_v9_names(f);
     assert(f.bytes[4]==7 && f.length>77);
     f.length-=77; // v7 appends one bounded manual-deadline projection.
     f.bytes[4]=6;
@@ -101,6 +113,21 @@ void test_missing_and_local() {
     AppState boot=boot_state(reboot);
     assert(boot.alarm_active);
 }
+void test_v8_mesh_name_migration_past_999() {
+    Fake fixture;
+    Store initial{}; StoreRecovery recovery{};
+    assert(store_open(&initial,backend(fixture),kDevice,catalog,75,&recovery)==STORE_OK);
+    assert(store_mesh_name_assign(&initial,kDevice,999)==STORE_OK);
+    assert(store_mesh_name_next_index(&initial)==1000);
+    downgrade_names_to_v8(fixture);
+    assert(fixture.bytes[4]==8);
+    Store migrated{};
+    assert(store_open(&migrated,backend(fixture),kDevice,catalog,75,&recovery)==STORE_OK);
+    assert(std::strcmp(store_mesh_name(&migrated),"KatmedESP-999")==0);
+    assert(store_mesh_name_next_index(&migrated)==1000);
+    assert(store_mesh_name_assign(&migrated,UINT64_C(0xAC276E46BC2D),1000)==STORE_OK);
+    assert(fixture.bytes[4]==9 && store_mesh_name_next_index(&migrated)==1001);
+}
 void test_corrupt_legacy_future() {
     Fake original{}; Store *s=fresh_store(); StoreRecovery r=open(original,s);
     AppState state=boot_state(r);
@@ -129,7 +156,7 @@ void test_corrupt_legacy_future() {
     }
     {
         Fake f=original;
-        remove_v8_names(f);
+        remove_v9_names(f);
         f.bytes[f.length-78]=3; // v6 origin before the v7 manual projection.
         repair_crc(f);
         StoreRecovery x{}; const unsigned before=f.writes;
@@ -454,8 +481,8 @@ void test_usb() {
     assert(std::strcmp(reply,"KM1 OK PROVISION\n")==0 && f.writes==before+1);
     {
         Fake forged=f;
-        constexpr size_t mesh_name_suffix=1+17+2+1+9*10+2;
-        forged.bytes[forged.length-mesh_name_suffix]=9; // Invalid v8 name state.
+        constexpr size_t mesh_name_suffix=1+17+2+1+KATMED_MESH_NAME_MAX_ENTRIES*10+4;
+        forged.bytes[forged.length-mesh_name_suffix]=9; // Invalid v9 name state.
         repair_crc(forged);
         StoreRecovery x{}; const unsigned before_forged=forged.writes;
         assert(store_open(fresh_store(),backend(forged),kDevice,catalog,75,&x)==STORE_CORRUPT);
@@ -494,6 +521,7 @@ void test_usb() {
 int main() {
     for (unsigned i=0;i<sizeof(catalog);++i) catalog[i]=static_cast<uint8_t>(i+1);
     test_missing_and_local();
+    test_v8_mesh_name_migration_past_999();
     test_corrupt_legacy_future();
     test_commit_matrix();
     test_history_survives_later_boot_state_commit();

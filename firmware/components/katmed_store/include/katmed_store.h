@@ -16,8 +16,8 @@ extern "C" {
 #define KATMED_STORE_USB_LINE_MAX 512u
 #define KATMED_STORE_USB_REPLY_MAX 256u
 #define KATMED_DEVICE_NAME_MAX 17u
-#define KATMED_MESH_NAME_MAX_ENTRIES 9u
-#define KATMED_MESH_NAME_MAX_INDEX 999u
+#define KATMED_MESH_NAME_MAX_ENTRIES 64u /* Bounded durable lifetime registry. */
+#define KATMED_MESH_NAME_MAX_INDEX UINT16_MAX /* Exhaustion is explicit; indexes never wrap. */
 
 #define KATMED_DEFAULT_DEVICE_NAME "KatmedESP"
 
@@ -114,7 +114,7 @@ typedef struct {
     uint16_t mesh_name_index;
     StoreMeshNameEntry mesh_names[KATMED_MESH_NAME_MAX_ENTRIES];
     uint8_t mesh_name_count;
-    uint16_t mesh_name_next_index;
+    uint32_t mesh_name_next_index; /* 65536 is the durable exhausted sentinel. */
 } StoreRecord;
 
 typedef struct {
@@ -196,10 +196,14 @@ StoreResult store_conflict_at(const Store *store, size_t index,
 bool store_durable_divergent(const Store *store);
 const char *store_mesh_name(const Store *store);
 uint16_t store_mesh_name_index(const Store *store);
-uint16_t store_mesh_name_next_index(const Store *store);
+uint32_t store_mesh_name_next_index(const Store *store);
 bool store_mesh_name_has_device(const Store *store, uint64_t device);
 StoreResult store_mesh_name_assign(Store *store, uint64_t device, uint16_t index);
 StoreResult store_mesh_name_merge(Store *store, AppState *active,
+                                  const StoreMeshNameEntry *entries,
+                                  uint8_t count);
+/* Authenticated current-coordinator snapshot replaces a leaf's stale view. */
+StoreResult store_mesh_name_adopt(Store *store,
                                   const StoreMeshNameEntry *entries,
                                   uint8_t count);
 StoreResult store_get_status(const Store *store, bool *configured,

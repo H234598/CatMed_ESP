@@ -152,8 +152,7 @@ extern "C" bool katmed_mesh_encode_name_map(const StoreMeshNameEntry *entries,
         return false;
     out[0]=count;
     for (unsigned i=0;i<count;++i) {
-        if (!entries[i].device || entries[i].index == 0 ||
-            entries[i].index > KATMED_MESH_NAME_MAX_INDEX) return false;
+        if (!entries[i].device || entries[i].index == 0) return false;
         for (unsigned j=0;j<i;++j)
             if (entries[j].device == entries[i].device ||
                 entries[j].index == entries[i].index) return false;
@@ -178,7 +177,7 @@ extern "C" bool katmed_mesh_decode_name_map(const uint8_t *bytes, size_t length,
         uint64_t device=0;
         for (unsigned j=0;j<8;++j) device=(device<<8)|bytes[1+10*i+j];
         const uint16_t index=uint16_t(bytes[1+10*i+8]<<8)|bytes[1+10*i+9];
-        if (!device || index == 0 || index > KATMED_MESH_NAME_MAX_INDEX) return false;
+        if (!device || index == 0) return false;
         for (unsigned j=0;j<i;++j)
             if (decoded[j].device == device || decoded[j].index == index) return false;
         decoded[i]={device,index};

@@ -12,7 +12,7 @@
 
 namespace {
 constexpr uint8_t kMagic[4] = {'K', 'M', 'S', 'T'};
-constexpr uint16_t kCurrentVersion = 8;
+constexpr uint16_t kCurrentVersion = 9;
 constexpr size_t kHeaderSize = 12;
 
 uint32_t checksum(const uint8_t *data, size_t length) {
@@ -198,15 +198,14 @@ bool valid_manual_intent(const StoreManualIntent &v, const StoreRecord &record) 
 }
 
 bool mesh_name_text(uint16_t index, char out[KATMED_DEVICE_NAME_MAX]) {
-    if (!out || index == 0 || index > KATMED_MESH_NAME_MAX_INDEX) return false;
+    if (!out || index == 0) return false;
     const int length = std::snprintf(out, KATMED_DEVICE_NAME_MAX,
                                      "KatmedESP-%03u", static_cast<unsigned>(index));
     return length > 0 && static_cast<size_t>(length) < KATMED_DEVICE_NAME_MAX;
 }
 
 bool valid_mesh_name_entry(StoreMeshNameEntry entry) {
-    return entry.device != 0 && entry.index > 0 &&
-           entry.index <= KATMED_MESH_NAME_MAX_INDEX;
+    return entry.device != 0 && entry.index > 0;
 }
 
 bool same_mesh_name_entry(StoreMeshNameEntry a, StoreMeshNameEntry b) {
@@ -218,7 +217,7 @@ bool valid_mesh_names(const StoreRecord &record) {
         record.mesh_name_state != STORE_MESH_NAME_ASSIGNED) return false;
     if (record.mesh_name_count > KATMED_MESH_NAME_MAX_ENTRIES ||
         record.mesh_name_next_index == 0 ||
-        record.mesh_name_next_index > KATMED_MESH_NAME_MAX_INDEX + 1u)
+        record.mesh_name_next_index > uint32_t(KATMED_MESH_NAME_MAX_INDEX) + 1u)
         return false;
     if (record.mesh_name_state == STORE_MESH_NAME_INITIAL &&
         (record.mesh_name_index != 0 ||
@@ -423,9 +422,10 @@ StoreResult encode_record(const StoreRecord &v, uint8_t *bytes, size_t *length, 
         w.bytes(reinterpret_cast<const uint8_t *>(v.mesh_name), sizeof(v.mesh_name));
         w.u16(v.mesh_name_index);
         w.u8(v.mesh_name_count);
-        for (unsigned i=0;i<KATMED_MESH_NAME_MAX_ENTRIES;++i)
-            put_mesh_name_entry(w,v.mesh_names[i]);
-        w.u16(v.mesh_name_next_index);
+        const unsigned entry_slots=version>=9 ? KATMED_MESH_NAME_MAX_ENTRIES : 9u;
+        for (unsigned i=0;i<entry_slots;++i) put_mesh_name_entry(w,v.mesh_names[i]);
+        if (version>=9) w.u32(v.mesh_name_next_index);
+        else w.u16(static_cast<uint16_t>(v.mesh_name_next_index));
     }
     if (!w.good || w.position > UINT16_MAX) return STORE_FULL;
     const uint16_t n=static_cast<uint16_t>(w.position);
@@ -496,9 +496,10 @@ StoreResult decode_record(const uint8_t *bytes, size_t length, StoreRecord *out)
         r.bytes(reinterpret_cast<uint8_t *>(v.mesh_name), sizeof(v.mesh_name));
         v.mesh_name_index=r.u16();
         v.mesh_name_count=r.u8();
-        for (unsigned i=0;i<KATMED_MESH_NAME_MAX_ENTRIES;++i)
+        const unsigned entry_slots=version>=9 ? KATMED_MESH_NAME_MAX_ENTRIES : 9u;
+        for (unsigned i=0;i<entry_slots;++i)
             v.mesh_names[i]={r.u64(),r.u16()};
-        v.mesh_name_next_index=r.u16();
+        v.mesh_name_next_index=version>=9 ? r.u32() : r.u16();
     }
     if (!r.good || r.position!=length || !valid_record(v)) return corrupt();
     return STORE_OK;
@@ -917,7 +918,7 @@ uint16_t store_mesh_name_index(const Store *store) {
     return store ? store->record.mesh_name_index : 0;
 }
 
-uint16_t store_mesh_name_next_index(const Store *store) {
+uint32_t store_mesh_name_next_index(const Store *store) {
     if (!store || !store->open || store->record.mesh_name_next_index == 0)
         return 1;
     return store->record.mesh_name_next_index;
@@ -931,8 +932,7 @@ bool store_mesh_name_has_device(const Store *store, uint64_t device) {
 }
 
 StoreResult store_mesh_name_assign(Store *store, uint64_t device, uint16_t index) {
-    if (!ready(store) || device == 0 || index == 0 ||
-        index > KATMED_MESH_NAME_MAX_INDEX)
+    if (!ready(store) || device == 0 || index == 0)
         return store ? store->last_error=STORE_INVALID : STORE_UNAVAILABLE;
     for (unsigned i=0; i<store->record.mesh_name_count; ++i) {
         const StoreMeshNameEntry entry=store->record.mesh_names[i];
@@ -946,7 +946,7 @@ StoreResult store_mesh_name_assign(Store *store, uint64_t device, uint16_t index
     next.mesh_names[next.mesh_name_count++]={device,index};
     if (index >= next.mesh_name_next_index)
         next.mesh_name_next_index=index == KATMED_MESH_NAME_MAX_INDEX
-            ? KATMED_MESH_NAME_MAX_INDEX + 1u : static_cast<uint16_t>(index + 1u);
+            ? uint32_t(KATMED_MESH_NAME_MAX_INDEX) + 1u : uint32_t(index + 1u);
     if (device == next.device) {
         char name[KATMED_DEVICE_NAME_MAX] = {0};
         if (!mesh_name_text(index,name)) return store->last_error=STORE_INVALID;
@@ -960,6 +960,7 @@ StoreResult store_mesh_name_assign(Store *store, uint64_t device, uint16_t index
 StoreResult store_mesh_name_merge(Store *store, AppState *active,
                                   const StoreMeshNameEntry *entries,
                                   uint8_t count) {
+    (void)active; /* Name reconciliation is a Store-only durable projection. */
     if (!ready(store) || !entries || count == 0 ||
         count > KATMED_MESH_NAME_MAX_ENTRIES)
         return store ? store->last_error=STORE_INVALID : STORE_UNAVAILABLE;
@@ -970,57 +971,87 @@ StoreResult store_mesh_name_merge(Store *store, AppState *active,
                 entries[j].index == entries[i].index)
                 return store->last_error=STORE_INVALID;
     }
-    bool collision=false;
-    for (unsigned i=0; i<count && !collision; ++i) {
-        for (unsigned j=0; j<store->record.mesh_name_count; ++j) {
-            const StoreMeshNameEntry current=store->record.mesh_names[j];
-            if ((current.device == entries[i].device && current.index != entries[i].index) ||
-                (current.index == entries[i].index && current.device != entries[i].device)) {
-                collision=true;
-                break;
-            }
-        }
-    }
-    if (collision) {
-        if (!store->record.group_divergent) {
-            StoreRecord next=store->record;
-            next.group_divergent=true;
-            if (next.has_history) next.history.divergent=true;
-            AppState candidate=active ? *active : AppState{};
-            candidate.divergent=true;
-            const StoreResult committed=write_record(store,next);
-            if (committed != STORE_OK) return committed;
-            if (active) *active=candidate;
-        } else if (active) {
-            active->divergent=true;
-        }
-        return store->last_error=STORE_STALE;
-    }
     StoreRecord next=store->record;
     bool changed=false;
     for (unsigned i=0; i<count; ++i) {
         bool known=false;
+        bool device_known=false;
         for (unsigned j=0; j<next.mesh_name_count; ++j)
-            if (same_mesh_name_entry(next.mesh_names[j],entries[i])) known=true;
+            if (next.mesh_names[j].device==entries[i].device) {
+                device_known=true;
+                known=same_mesh_name_entry(next.mesh_names[j],entries[i]);
+                break;
+            }
         if (known) continue;
+        /* This store is the current coordinator's canonical view. Keep its
+         * existing assignment for a returning device; a newly seen device
+         * whose old partition index is occupied is reallocated below. */
+        if (device_known) continue;
         if (next.mesh_name_count == KATMED_MESH_NAME_MAX_ENTRIES)
             return store->last_error=STORE_FULL;
-        next.mesh_names[next.mesh_name_count++]=entries[i];
-        if (entries[i].index >= next.mesh_name_next_index)
-            next.mesh_name_next_index=entries[i].index == KATMED_MESH_NAME_MAX_INDEX
-                ? KATMED_MESH_NAME_MAX_INDEX + 1u
-                : static_cast<uint16_t>(entries[i].index + 1u);
-        changed=true;
-        if (entries[i].device == next.device) {
-            char name[KATMED_DEVICE_NAME_MAX] = {0};
-            if (!mesh_name_text(entries[i].index,name))
-                return store->last_error=STORE_INVALID;
-            next.mesh_name_state=STORE_MESH_NAME_ASSIGNED;
-            next.mesh_name_index=entries[i].index;
-            std::memcpy(next.mesh_name,name,sizeof(next.mesh_name));
+        StoreMeshNameEntry assigned=entries[i];
+        bool index_used=false;
+        for (unsigned j=0;j<next.mesh_name_count;++j)
+            if (next.mesh_names[j].index==assigned.index) index_used=true;
+        if (index_used) {
+            if (next.mesh_name_next_index>KATMED_MESH_NAME_MAX_INDEX)
+                return store->last_error=STORE_FULL;
+            assigned.index=static_cast<uint16_t>(next.mesh_name_next_index++);
+        } else if (assigned.index>=next.mesh_name_next_index) {
+            next.mesh_name_next_index=assigned.index==KATMED_MESH_NAME_MAX_INDEX
+                ? uint32_t(KATMED_MESH_NAME_MAX_INDEX)+1u
+                : uint32_t(assigned.index)+1u;
         }
+        next.mesh_names[next.mesh_name_count++]=assigned;
+        changed=true;
     }
     if (!changed) return store->last_error=STORE_DUPLICATE;
+    return write_record(store,next);
+}
+
+StoreResult store_mesh_name_adopt(Store *store,
+                                  const StoreMeshNameEntry *entries,
+                                  uint8_t count) {
+    if (!ready(store) || !entries || count==0 ||
+        count>KATMED_MESH_NAME_MAX_ENTRIES)
+        return store ? store->last_error=STORE_INVALID : STORE_UNAVAILABLE;
+    StoreRecord next=store->record;
+    StoreMeshNameEntry canonical[KATMED_MESH_NAME_MAX_ENTRIES]{};
+    uint16_t own_index=0;
+    uint32_t next_index=next.mesh_name_next_index;
+    for (unsigned i=0;i<count;++i) {
+        if (!valid_mesh_name_entry(entries[i]))
+            return store->last_error=STORE_INVALID;
+        for (unsigned j=0;j<i;++j)
+            if (entries[j].device==entries[i].device ||
+                entries[j].index==entries[i].index)
+                return store->last_error=STORE_INVALID;
+        canonical[i]=entries[i];
+        if (entries[i].device==next.device) own_index=entries[i].index;
+        const uint32_t after=entries[i].index==KATMED_MESH_NAME_MAX_INDEX
+            ?uint32_t(KATMED_MESH_NAME_MAX_INDEX)+1u
+            :uint32_t(entries[i].index)+1u;
+        if (after>next_index) next_index=after;
+    }
+    if (!own_index) return store->last_error=STORE_NOT_FOUND;
+    bool same=next.mesh_name_count==count &&
+              next.mesh_name_next_index==next_index;
+    if (same) for (unsigned i=0;i<count;++i) {
+        bool found=false;
+        for (unsigned j=0;j<next.mesh_name_count;++j)
+            if (same_mesh_name_entry(next.mesh_names[j],canonical[i])) found=true;
+        if (!found) { same=false; break; }
+    }
+    if (same) return store->last_error=STORE_DUPLICATE;
+    std::memset(next.mesh_names,0,sizeof(next.mesh_names));
+    std::memcpy(next.mesh_names,canonical,count*sizeof(canonical[0]));
+    next.mesh_name_count=count;
+    next.mesh_name_next_index=next_index;
+    char name[KATMED_DEVICE_NAME_MAX]{};
+    if (!mesh_name_text(own_index,name)) return store->last_error=STORE_INVALID;
+    next.mesh_name_state=STORE_MESH_NAME_ASSIGNED;
+    next.mesh_name_index=own_index;
+    std::memcpy(next.mesh_name,name,sizeof(next.mesh_name));
     return write_record(store,next);
 }
 

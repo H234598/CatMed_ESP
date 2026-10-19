@@ -648,10 +648,14 @@ void receive(const KatmedMeshFrame &f,const ClockSample *now){
         if(root()){
             if(!store_mesh_name_has_device(ctx.services.store,f.sender) &&
                !store_durable_divergent(ctx.services.store)){
-                const uint16_t next=store_mesh_name_next_index(ctx.services.store);
-                if(next<=KATMED_MESH_NAME_MAX_INDEX &&
-                   store_mesh_name_assign(ctx.services.store,f.sender,next)==STORE_OK)
-                    ctx.dirty=true;
+                const uint32_t next=store_mesh_name_next_index(ctx.services.store);
+                const StoreResult assigned=next<=KATMED_MESH_NAME_MAX_INDEX
+                    ?store_mesh_name_assign(ctx.services.store,f.sender,
+                                            static_cast<uint16_t>(next))
+                    :STORE_FULL;
+                if(assigned==STORE_OK)ctx.dirty=true;
+                else if(assigned==STORE_FULL)
+                    ctx.status.warning_until_ms=now->monotonic_ms+MESH_STATUS_FRESH_MS;
             }
             (void)send_name_map(f.sender);
         }else if(ctx.coordinator_device){
@@ -685,8 +689,9 @@ void receive(const KatmedMeshFrame &f,const ClockSample *now){
         uint8_t count=0;
         if(!katmed_mesh_decode_name_map(f.payload,f.payload_length,entries,&count))return;
         if(!root()&&f.sender!=ctx.coordinator_device)return;
-        const StoreResult result=store_mesh_name_merge(ctx.services.store,ctx.services.state,
-                                                       entries,count);
+        const StoreResult result=root()
+            ?store_mesh_name_merge(ctx.services.store,ctx.services.state,entries,count)
+            :store_mesh_name_adopt(ctx.services.store,entries,count);
         if(result==STORE_OK)apply_hostname();
         if(root()&&(result==STORE_OK||result==STORE_DUPLICATE))
             (void)send_name_map(f.sender);
@@ -806,10 +811,15 @@ void apply_hostname(){
 void ensure_root_name(){
     if(!root()||store_durable_divergent(ctx.services.store) ||
        store_mesh_name_has_device(ctx.services.store,ctx.services.store->record.device))return;
-    const uint16_t next=store_mesh_name_next_index(ctx.services.store);
-    if(next<=KATMED_MESH_NAME_MAX_INDEX &&
-       store_mesh_name_assign(ctx.services.store,ctx.services.store->record.device,next)==STORE_OK)
+    const uint32_t next=store_mesh_name_next_index(ctx.services.store);
+    const StoreResult assigned=next<=KATMED_MESH_NAME_MAX_INDEX
+        ?store_mesh_name_assign(ctx.services.store,ctx.services.store->record.device,
+                                static_cast<uint16_t>(next))
+        :STORE_FULL;
+    if(assigned==STORE_OK)
         apply_hostname();
+    else if(assigned==STORE_FULL)
+        ctx.status.warning_until_ms=ctx.status.now_ms+MESH_STATUS_FRESH_MS;
 }
 }
 
