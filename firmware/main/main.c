@@ -50,7 +50,7 @@ typedef struct {
     bool mesh_started;
     bool reboot_required;
     bool shared_pending;
-    int8_t shared_feedback; /* 0 none, 1 accepted, -1 rejected. */
+    int8_t shared_feedback; /* 0 none, 1 accepted, -1 rejected, -2 timeout. */
     bool store_ready;
     uint8_t utc_source; /* 0 unknown, 1 local SNTP, 2 authenticated Mesh. */
     uint64_t evidence_sequence;
@@ -59,6 +59,8 @@ typedef struct {
     bool manual_restore_attempted;
     bool manual_restore_waiting;
     bool manual_restore_rejected;
+    bool manual_restore_retry;
+    EventId manual_restore_event_id;
     KatmedRestoreStatus manual_restore_status;
 } Runtime;
 
@@ -304,19 +306,29 @@ static void mesh_utc_received(void *context, uint64_t observed_mono_ms,
     else rt->utc_source=2;
 }
 
-static void mesh_shared_result(void *context, EventId id, bool accepted)
+static void mesh_shared_result(void *context, EventId id, KatmedMeshSharedOutcome outcome)
 {
     Runtime *rt = (Runtime *)context;
     if (!rt || !rt->shared_pending || !same_id(id, rt->shared_id)) return;
     rt->shared_pending = false;
-    rt->shared_feedback = accepted ? 1 : -1;
+    rt->shared_feedback = outcome==MESH_SHARED_ACCEPTED ? 1 :
+        outcome==MESH_SHARED_REJECTED ? -1 : -2;
     if (rt->manual_restore_waiting) {
         rt->manual_restore_waiting = false;
-        if (!accepted) rt->manual_restore_rejected = true;
+        if (outcome==MESH_SHARED_REJECTED) {
+            rt->manual_restore_rejected = true;
+            rt->manual_restore_retry = false;
+        } else if (outcome==MESH_SHARED_TIMEOUT) {
+            rt->manual_restore_attempted = false;
+            rt->manual_restore_retry = true;
+        } else {
+            rt->manual_restore_retry = false;
+        }
     }
 }
 
-static UiSubmitResult submit_ui(void *context, const UiRequest *request)
+static UiSubmitResult submit_ui_with_id(void *context, const UiRequest *request,
+                                       const EventId *retry_id)
 {
     Runtime *rt = (Runtime *)context;
     if (rt == NULL || request == NULL || !rt->store_ready || rt->reboot_required)
@@ -398,7 +410,8 @@ static UiSubmitResult submit_ui(void *context, const UiRequest *request)
     default: return UI_SUBMIT_REJECTED;
     }
     EventId id;
-    if (store_next_event_id(&rt->store, &id) != STORE_OK)
+    if (retry_id) id=*retry_id;
+    else if (store_next_event_id(&rt->store, &id) != STORE_OK)
         return UI_SUBMIT_UNAVAILABLE;
     const ClockSample now = clock_sample(rt->boot_domain);
     AppEvent event = {
@@ -430,6 +443,11 @@ static UiSubmitResult submit_ui(void *context, const UiRequest *request)
     }
     if (result == MESH_REJECTED) return UI_SUBMIT_REJECTED;
     return UI_SUBMIT_UNAVAILABLE;
+}
+
+static UiSubmitResult submit_ui(void *context, const UiRequest *request)
+{
+    return submit_ui_with_id(context,request,NULL);
 }
 
 static uint64_t config_mix(uint64_t hash, uint64_t value)
@@ -668,6 +686,16 @@ static void restore_manual_if_ready(Runtime *rt, const ClockSample *now)
     if (!rt->store_ready || rt->manual_restore_attempted || rt->reboot_required ||
         !rt->store.record.manual_intent.pending || !now->utc_valid) return;
     const StoreManualIntent intent=rt->store.record.manual_intent;
+    /* A coordinator may have committed our timed-out request while its ACK
+     * was lost. A matching durable snapshot proves adoption without another
+     * event; otherwise retries use the same EventId for deduplication. */
+    if (rt->state.start_reason==START_MANUAL &&
+        rt->state.deadline.regular_utc.ms==intent.regular_utc.ms &&
+        rt->state.deadline.effective_utc.ms==intent.effective_utc.ms) {
+        rt->manual_restore_attempted=true;
+        rt->manual_restore_retry=false;
+        return;
+    }
     if (memcmp(intent.bound_group,rt->store.record.bound_group,
                sizeof(intent.bound_group))!=0 ||
         intent.revision.number!=rt->state.settings.revision.number ||
@@ -704,16 +732,21 @@ static void restore_manual_if_ready(Runtime *rt, const ClockSample *now)
         .kind=UI_REQUEST_SET_NEXT_LOCAL_TIME,
         .value.local_time={.hour=intent.hour,.minute=intent.minute,.preview=preview},
     };
-    const UiSubmitResult result=submit_ui(rt,&request);
+    const UiSubmitResult result=submit_ui_with_id(rt,&request,
+        rt->manual_restore_retry ? &rt->manual_restore_event_id : NULL);
     if (result==UI_SUBMIT_REJECTED || result==UI_SUBMIT_STALE) {
         /* A definitive rejection cannot leave the old intent advertised as
          * paused across this boot or the next one. Retry a failed clear. */
         if (store_clear_manual_intent(&rt->store)==STORE_OK) {
             rt->manual_restore_status=KATMED_RESTORE_CONFLICT;
             rt->manual_restore_attempted=true;
+            rt->manual_restore_retry=false;
         }
     } else if (result!=UI_SUBMIT_UNAVAILABLE) {
-        if (result==UI_SUBMIT_PENDING_SHARED) rt->manual_restore_waiting=true;
+        if (result==UI_SUBMIT_PENDING_SHARED) {
+            rt->manual_restore_waiting=true;
+            rt->manual_restore_event_id=rt->shared_id;
+        } else rt->manual_restore_retry=false;
         rt->manual_restore_attempted=true;
     }
 }
@@ -1312,7 +1345,8 @@ void app_main(void)
             interaction_drain(now.monotonic_ms);
         const bool render_due = now.monotonic_ms - last_render_ms >= 50;
         if (runtime.shared_feedback != 0 && lvgl_port_lock(100)) {
-            ui_shared_result(runtime.shared_feedback > 0);
+            if (runtime.shared_feedback==-2) ui_shared_timeout();
+            else ui_shared_result(runtime.shared_feedback > 0);
             runtime.shared_feedback = 0;
             lvgl_port_unlock();
         }

@@ -32,6 +32,8 @@ g++ -std=c++17 -Wall -Wextra -Werror -DKATMED_MESH_HOST \
 "$out" cold_consume "$fixture"
 "$out" leaf_distinct
 "$out" leaf
+"$out" leaf_shared_negative
+"$out" leaf_shared_timeout
 "$out" order
 "$out" hello_replay
 "$out" incomplete

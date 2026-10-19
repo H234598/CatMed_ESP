@@ -82,7 +82,20 @@ def run(info):
     setup = {"password": PASSWORD, "setup_nonce": bootstrap["setup_nonce"]}
     expect(401, request(info, "/api/setup", "POST", {**setup, "setup_code": "000000"}))
     assert json_body(expect(200, request(info, "/api/bootstrap")))["setup_required"]
-    expect(200, request(info, "/api/setup", "POST", {**setup, "setup_code": "314159"}))
+    fixed_cookie = "katmed_session=attacker-fixed-session"
+    assert not json_body(expect(200, request(info, "/api/bootstrap", cookie=fixed_cookie)))["authenticated"]
+    setup_reply = expect(200, request(info, "/api/setup", "POST",
+                                      {**setup, "setup_code": "314159"}, cookie=fixed_cookie))
+    setup_body = json_body(setup_reply)
+    assert not setup_body["setup_required"] and setup_body["authenticated"]
+    assert setup_body["auth_method"] == "password" and setup_body["csrf_token"]
+    setup_cookie = setup_reply[1]["Set-Cookie"]
+    assert setup_cookie.startswith("katmed_session=")
+    assert all(part in setup_cookie for part in ("Secure", "HttpOnly", "SameSite=Strict"))
+    assert setup_cookie.split(";", 1)[0] != fixed_cookie
+    assert json_body(expect(200, request(info, "/api/bootstrap",
+                                      cookie=setup_cookie.split(";", 1)[0])))["authenticated"]
+    expect(401, request(info, "/api/config", cookie=fixed_cookie))
     expect(409, request(info, "/api/setup", "POST", {**setup, "setup_code": "314159"}))
     expect(401, request(info, "/api/login", "POST", {"method": "password", "password": "wrong"}))
     login = expect(200, request(info, "/api/login", "POST", {"method": "password", "password": PASSWORD}))

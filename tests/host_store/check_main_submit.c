@@ -271,13 +271,76 @@ int main(void)
     restore_manual_if_ready(&runtime,&delayed_now);
     assert(runtime.manual_restore_waiting && runtime.shared_pending &&
            runtime.store.record.manual_intent.pending);
-    mesh_shared_result(&runtime,fake_shared_event.id,false);
+    mesh_shared_result(&runtime,fake_shared_event.id,MESH_SHARED_REJECTED);
     restore_manual_if_ready(&runtime,&delayed_now);
     assert(!runtime.manual_restore_waiting && !runtime.manual_restore_rejected &&
            runtime.manual_restore_status==KATMED_RESTORE_CONFLICT &&
            !runtime.store.record.manual_intent.pending);
     initialize_runtime();
     assert(!runtime.store.record.manual_intent.pending); /* Delayed rejection durable. */
+    memcpy(committed,saved_before_expiry,saved_before_expiry_length);
+    committed_length=saved_before_expiry_length;
+    initialize_runtime();
+    runtime.mesh_started=true;
+    katmed_time_init(&runtime.time,runtime.boot_domain);
+    assert(katmed_time_accept_utc(&runtime.time,(uint64_t)(fake_microseconds/1000),
+                                  earlier,CLOCK_SYNCHRONIZED));
+    ClockSample timeout_now=clock_sample(runtime.boot_domain);
+    assert(apply_time_sample(&runtime,&timeout_now));
+    fake_mesh_result=MESH_PENDING;
+    fake_microseconds+=1000000;
+    assert(submit_ui(&runtime,&confirm)==UI_SUBMIT_PENDING);
+    timeout_now=clock_sample(runtime.boot_domain);
+    restore_manual_if_ready(&runtime,&timeout_now);
+    const EventId timed_out_id=runtime.shared_id;
+    const uint64_t reserved_sequence=runtime.store.record.next_sequence;
+    mesh_shared_result(&runtime,timed_out_id,MESH_SHARED_TIMEOUT);
+    assert(!runtime.shared_pending && runtime.manual_restore_retry &&
+           !runtime.manual_restore_attempted &&
+           runtime.store.record.manual_intent.pending &&
+           runtime.manual_restore_status==KATMED_RESTORE_NONE);
+    fake_mesh_result=MESH_UNAVAILABLE;
+    restore_manual_if_ready(&runtime,&timeout_now);
+    assert(runtime.manual_restore_retry && runtime.store.record.manual_intent.pending);
+    fake_mesh_result=MESH_PENDING;
+    restore_manual_if_ready(&runtime,&timeout_now);
+    assert(runtime.shared_pending && runtime.manual_restore_waiting &&
+           runtime.shared_id.sequence==timed_out_id.sequence &&
+           runtime.store.record.next_sequence==reserved_sequence &&
+           runtime.store.record.manual_intent.pending);
+    /* Lost ACK: the coordinator state arrives durably after the timeout.
+     * Main must recognize it before issuing a second request. */
+    mesh_shared_result(&runtime,timed_out_id,MESH_SHARED_TIMEOUT);
+    Store reopened_timeout={0};StoreRecovery timeout_recovery={0};
+    const StoreBackend timeout_backend={NULL,test_read,test_write};
+    uint8_t timeout_catalog[KATMED_CATALOG_BYTES]={1,2,3};
+    assert(store_open(&reopened_timeout,timeout_backend,UINT64_C(0xAC276E46BC2C),
+                      timeout_catalog,75,&timeout_recovery)==STORE_OK);
+    assert(reopened_timeout.record.manual_intent.pending);
+    AppEvent adopted=fake_shared_event;adopted.coordinator_accepted=true;
+    AppEffects adopted_effects={0};AppResult adopted_result;
+    assert(store_apply_event(&runtime.store,&runtime.state,&adopted,&timeout_now,
+                            false,&adopted_effects,&adopted_result)==STORE_OK);
+    const unsigned calls_before_adopted=fake_shared_calls;
+    restore_manual_if_ready(&runtime,&timeout_now);
+    assert(runtime.manual_restore_attempted && !runtime.manual_restore_retry &&
+           fake_shared_calls==calls_before_adopted && runtime.state.start_reason==START_MANUAL);
+    /* An unrelated or late callback cannot turn an adopted result into conflict. */
+    mesh_shared_result(&runtime,timed_out_id,MESH_SHARED_REJECTED);
+    restore_manual_if_ready(&runtime,&timeout_now);
+    assert(!runtime.manual_restore_rejected && runtime.state.start_reason==START_MANUAL);
+    initialize_runtime();
+    assert(runtime.store.record.manual_intent.pending);
+    /* Restore the original boot image for definitive retry rejection. */
+    memcpy(committed,saved_before_expiry,saved_before_expiry_length);
+    committed_length=saved_before_expiry_length;
+    initialize_runtime();
+    runtime.manual_restore_rejected=true;
+    restore_manual_if_ready(&runtime,&timeout_now);
+    assert(!runtime.store.record.manual_intent.pending &&
+           runtime.manual_restore_status==KATMED_RESTORE_CONFLICT);
+    initialize_runtime();
+    assert(!runtime.store.record.manual_intent.pending);
     fake_mesh_coordinator=true;
     fake_mesh_result=MESH_ACCEPTED;
     memcpy(committed,saved_before_expiry,saved_before_expiry_length);

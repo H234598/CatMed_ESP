@@ -110,6 +110,7 @@ void ui_set_services(const UiServices *services);
 /* Called under the LVGL lock after the pending shared request's authenticated
  * coordinator result is known. Only accepted may show shared-save success. */
 void ui_shared_result(bool accepted);
+void ui_shared_timeout(void);
 void ui_touch_sample(bool touched, int16_t x, int16_t y,
                      bool valid, uint64_t monotonic_ms);
 UiView ui_current_view(void);

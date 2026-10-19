@@ -154,7 +154,11 @@ class Handler(BaseHTTPRequestHandler):
                     self.send_json(422, {"error": "invalid"})
                 else:
                     STATE.password = data["password"]
-                    self.send_json(200, self.bootstrap(False))
+                    STATE.session = secrets.token_hex(16)
+                    STATE.csrf = secrets.token_hex(16)
+                    STATE.auth_method = "password"
+                    self.send_json(200, self.bootstrap(True),
+                                   f"katmed_session={STATE.session}; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=3600")
                 return
             if self.path == "/api/login" and method == "POST":
                 cert = self.connection.getpeercert(binary_form=True)

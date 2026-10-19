@@ -19,11 +19,17 @@ typedef enum {
     MESH_STORE_ERROR
 } KatmedMeshResult;
 
+typedef enum {
+    MESH_SHARED_ACCEPTED,
+    MESH_SHARED_REJECTED,
+    MESH_SHARED_TIMEOUT
+} KatmedMeshSharedOutcome;
+
 typedef struct {
     Store *store;
     AppState *state;
     void *context;
-    void (*shared_result)(void *context, EventId id, bool accepted);
+    void (*shared_result)(void *context, EventId id, KatmedMeshSharedOutcome outcome);
     void (*utc_received)(void *context, uint64_t observed_mono_ms,
                          int64_t utc_ms, ClockQuality source_quality);
 } KatmedMeshServices;

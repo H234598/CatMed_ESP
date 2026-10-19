@@ -126,9 +126,9 @@ int main(void)
     assert(writes==before_peer+1); /* Durable ID reservation, no settings commit. */
     assert(submit_ui(&runtime,&shared)==UI_SUBMIT_UNAVAILABLE);
     EventId wrong=runtime.shared_id; ++wrong.sequence;
-    mesh_shared_result(&runtime,wrong,true);
+    mesh_shared_result(&runtime,wrong,MESH_SHARED_ACCEPTED);
     assert(runtime.shared_pending && runtime.shared_feedback==0);
-    mesh_shared_result(&runtime,runtime.shared_id,false);
+    mesh_shared_result(&runtime,runtime.shared_id,MESH_SHARED_REJECTED);
     assert(!runtime.shared_pending && runtime.shared_feedback==-1);
     assert(runtime.state.settings.image_seconds==old_seconds);
     runtime.shared_feedback=0;

@@ -334,6 +334,16 @@ void ui_shared_result(bool accepted)
     if (ui.status) update_status();
 }
 
+void ui_shared_timeout(void)
+{
+    if (!ui.shared_pending) return;
+    ui.shared_pending = false;
+    ui.shared_result_status = -2;
+    if (ui.view != ALARM && !ui.state.alarm_active)
+        show_feedback("Bestätigung ausgeblieben; erneuter Versuch möglich");
+    if (ui.status) update_status();
+}
+
 static lv_obj_t *label(lv_obj_t *parent, const char *text, int width)
 {
     lv_obj_t *obj = lv_label_create(parent);
@@ -954,6 +964,8 @@ static void update_status(void)
     if (ui.shared_result_status != 0) {
         item = status_label(&next, ui.shared_result_status > 0 ?
                      "Letzte gemeinsame Änderung übernommen" :
+                     ui.shared_result_status == -2 ?
+                     "Letzte gemeinsame Änderung unbestätigt" :
                      "Letzte gemeinsame Änderung abgelehnt", text_w);
         if (ui.height < 200) lv_obj_set_style_text_font(item, &katmed_font_12, 0);
     }
