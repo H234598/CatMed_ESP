@@ -921,6 +921,122 @@ static void network_status(void *context, UiNetworkStatus *out)
         snprintf(out->ap_ip, sizeof(out->ap_ip), IPSTR, IP2STR(&ip.ip));
 }
 
+static void web_wipe(void *buffer, size_t length)
+{
+    volatile uint8_t *p = (volatile uint8_t *)buffer;
+    while (length--) *p++ = 0;
+}
+
+static bool web_wifi_ready(Runtime *rt)
+{
+    return rt != NULL && rt->store_ready &&
+        store_get_status(&rt->store, NULL, NULL, NULL) == STORE_OK;
+}
+
+static bool web_wifi_configured(void *context, bool *out)
+{
+    Runtime *rt = context;
+    if (!out || !web_wifi_ready(rt)) return false;
+    *out = rt->store.record.provision.configured;
+    return true;
+}
+
+static bool web_wifi_recovery_available(void *context, bool *out)
+{
+    Runtime *rt = context;
+    if (!out) return false;
+    *out = web_wifi_ready(rt) && !rt->store.uncertain;
+    return true;
+}
+
+static bool web_wifi_profile_limit(void *context, size_t *out)
+{
+    if (!out || !web_wifi_ready((Runtime *)context)) return false;
+    *out = store_wifi_profile_limit();
+    return true;
+}
+
+static bool web_wifi_list_profiles(void *context, KatmedWebWifiProfileView *out,
+                                   size_t capacity, size_t *count)
+{
+    Runtime *rt = context;
+    StoreWifiProfile profiles[KATMED_STORE_WIFI_PROFILE_MAX] = {0};
+    size_t loaded = 0;
+    bool ok = false;
+    if (!count || (!out && capacity) || !web_wifi_ready(rt)) goto done;
+    if (store_wifi_profiles_load(&rt->store, profiles,
+                                 KATMED_STORE_WIFI_PROFILE_MAX, &loaded) != STORE_OK ||
+        capacity < loaded) goto done;
+    for (size_t i = 0; i < loaded; ++i) {
+        memset(&out[i], 0, sizeof(out[i]));
+        out[i].id = profiles[i].id;
+        out[i].priority = profiles[i].priority;
+        out[i].secured = profiles[i].secured;
+        memcpy(out[i].ssid, profiles[i].ssid, profiles[i].ssid_length);
+    }
+    *count = loaded;
+    ok = true;
+done:
+    web_wipe(profiles, sizeof(profiles));
+    return ok;
+}
+
+static bool web_wifi_save_profiles(void *context,
+                                   const KatmedWebWifiProfileUpdate *input,
+                                   size_t count)
+{
+    Runtime *rt = context;
+    StoreWifiProfileUpdate updates[KATMED_STORE_WIFI_PROFILE_MAX] = {0};
+    bool ok = false;
+    if (!web_wifi_ready(rt) || count > KATMED_STORE_WIFI_PROFILE_MAX ||
+        (count && !input)) goto done;
+    for (size_t i = 0; i < count; ++i) {
+        size_t ssid_len = 0, password_len = 0;
+        while (ssid_len < sizeof(input[i].ssid) && input[i].ssid[ssid_len]) ++ssid_len;
+        while (password_len < sizeof(input[i].password) && input[i].password[password_len])
+            ++password_len;
+        updates[i].id = input[i].id;
+        updates[i].priority = input[i].priority;
+        updates[i].ssid_length = (uint8_t)ssid_len;
+        memcpy(updates[i].ssid, input[i].ssid, ssid_len);
+        if (input[i].credential_action == KATMED_WEB_WIFI_CREDENTIAL_KEEP)
+            updates[i].credential_action = STORE_WIFI_CREDENTIAL_KEEP;
+        else if (input[i].credential_action == KATMED_WEB_WIFI_CREDENTIAL_REPLACE) {
+            updates[i].credential_action = STORE_WIFI_CREDENTIAL_REPLACE;
+            updates[i].password_length = (uint8_t)password_len;
+            memcpy(updates[i].password, input[i].password, password_len);
+        } else if (input[i].credential_action == KATMED_WEB_WIFI_CREDENTIAL_OPEN)
+            updates[i].credential_action = STORE_WIFI_CREDENTIAL_OPEN;
+        else goto done;
+    }
+    ok = store_wifi_profiles_save_atomic(&rt->store, updates, count) == STORE_OK;
+done:
+    web_wipe(updates, sizeof(updates));
+    return ok;
+}
+
+static bool web_wifi_delete_profile(void *context, uint32_t id)
+{
+    Runtime *rt = context;
+    return web_wifi_ready(rt) &&
+        store_wifi_profile_delete_atomic(&rt->store, id) == STORE_OK;
+}
+
+static bool web_wifi_schedule_reconnect(void *context)
+{
+    Runtime *rt = context;
+    return rt && rt->mesh_started && katmed_mesh_schedule_reconnect();
+}
+
+static KatmedWebResetResult web_reset_confirm(void *context, const char *token,
+                                               size_t length)
+{
+    const int result = katmed_runtime_reset_confirm(context, token, length);
+    if (result == KATMED_WEB_RESET_ACCEPTED) return KATMED_WEB_RESET_ACCEPTED;
+    if (result == KATMED_WEB_RESET_STALE) return KATMED_WEB_RESET_STALE;
+    return KATMED_WEB_RESET_FAILED;
+}
+
 static bool web_device_info(void *context, KatmedWebDeviceInfo *out)
 {
     Runtime *rt = context;
@@ -1442,6 +1558,19 @@ void app_main(void)
         const KatmedWebServices web_services = {
             .context = &runtime,
             .device_info = web_device_info,
+            .wifi = {
+                .configured = web_wifi_configured,
+                .recovery_available = web_wifi_recovery_available,
+                .profile_limit = web_wifi_profile_limit,
+                .list_profiles = web_wifi_list_profiles,
+                .save_profiles_atomic = web_wifi_save_profiles,
+                .delete_profile_atomic = web_wifi_delete_profile,
+                .schedule_reconnect = web_wifi_schedule_reconnect,
+            },
+            .reset = {
+                .prepare_confirmation = katmed_runtime_reset_prepare,
+                .confirm_and_reset = web_reset_confirm,
+            },
         };
         if (!katmed_web_start(&web_services))
             ESP_LOGE(tag, "HTTPS configuration listener unavailable");

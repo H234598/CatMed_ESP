@@ -62,7 +62,11 @@ def expect(status, result):
 
 def run(info):
     files = {name: (ASSETS / name).read_bytes() for name in ("index.html", "style.css", "app.js")}
-    assert sum(map(len, files.values())) < 32768
+    # These raw bytes are embedded in flash (served from the linked image),
+    # not copied into the measured HTTPS runtime heap. The Web upload, multi-
+    # profile Wi-Fi and reset/Advanced controls raise the raw bundle to 44.5 KiB;
+    # retain a 48 KiB product bound, independently covered by target app layout.
+    assert sum(map(len, files.values())) < 48 * 1024
     links = Links()
     links.feed(files["index.html"].decode())
     assert links.resources == ["/style.css", "/app.js"]

@@ -6,7 +6,7 @@ import tempfile
 
 root = Path(__file__).resolve().parents[2]
 main = (root / 'firmware/main/main.c').read_text()
-callback = (main[main.index('static void network_status('):main.index('static bool web_device_info(')] +
+callback = (main[main.index('static void network_status('):main.index('static void web_wipe(')] +
             main[main.index('static bool web_device_info('):main.index('static bool group_connected(')])
 stubs = r'''
 #include <assert.h>

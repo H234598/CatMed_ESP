@@ -4,6 +4,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include "esp_http_server.h"
+#include "katmed_web_wifi.h"
+#include "katmed_web_reset.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -20,6 +22,10 @@ typedef struct {
 typedef struct {
     void *context;
     bool (*device_info)(void *context, KatmedWebDeviceInfo *out);
+    /* Runtime data adapters. katmed_web_start supplies the shared HTTPS
+     * session/CSRF authorize callback before registering these routes. */
+    KatmedWebWifiServices wifi;
+    KatmedWebResetServices reset;
 } KatmedWebServices;
 
 /* Called once after board, store and mesh initialization. Failure is closed:

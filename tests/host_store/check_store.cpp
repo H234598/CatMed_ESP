@@ -45,9 +45,11 @@ void remove_v9_names(Fake &f) {
     f.bytes[4]=7;
     repair_crc(f);
 }
+void remove_v10_wifi_profiles(Fake &f);
 void downgrade_names_to_v8(Fake &f) {
     constexpr size_t v9_suffix=1+17+2+1+KATMED_MESH_NAME_MAX_ENTRIES*10+4;
     constexpr size_t v8_suffix=1+17+2+1+9*10+2;
+    if (f.bytes[4]==10) remove_v10_wifi_profiles(f);
     assert(f.bytes[4]==9 && f.length>v9_suffix);
     const size_t suffix=f.length-v9_suffix;
     const size_t old_cursor=suffix+1+17+2+1+9*10;
@@ -140,7 +142,7 @@ void test_v8_mesh_name_migration_past_999() {
     assert(std::strcmp(store_mesh_name(&migrated),"KatmedESP-999")==0);
     assert(store_mesh_name_next_index(&migrated)==1000);
     assert(store_mesh_name_assign(&migrated,UINT64_C(0xAC276E46BC2D),1000)==STORE_OK);
-    assert(fixture.bytes[4]==9 && store_mesh_name_next_index(&migrated)==1001);
+    assert(fixture.bytes[4]==10 && store_mesh_name_next_index(&migrated)==1001);
 }
 void test_corrupt_legacy_future() {
     Fake original{}; Store *s=fresh_store(); StoreRecovery r=open(original,s);

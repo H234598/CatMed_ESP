@@ -17,6 +17,7 @@
 #include "katmed_config_bridge.h"
 #include "katmed_web_auth.h"
 #include "katmed_web_identity.h"
+#include "katmed_web_media.h"
 #include "katmed_web_policy.h"
 #include "mbedtls/md.h"
 #include "mbedtls/ssl.h"
@@ -334,6 +335,13 @@ static KatmedWebSession *require_session(httpd_req_t *req, bool mutate,
         }
     }
     return session;
+}
+
+static bool module_authorize(httpd_req_t *req, bool mutate, void *context)
+{
+    char token[KATMED_WEB_TOKEN_HEX + 1];
+    (void)context;
+    return require_session(req, mutate, token) != NULL;
 }
 
 static void wipe_json(cJSON *node)
@@ -978,7 +986,19 @@ static bool register_routes(httpd_handle_t server)
                            .handler = routes[i].handler, .user_ctx = NULL};
         if (httpd_register_uri_handler(server, &uri) != ESP_OK) return false;
     }
-    return true;
+    KatmedWebWifiServices wifi = web.services.wifi;
+    wifi.context = web.services.context;
+    wifi.authorize = module_authorize;
+    KatmedWebResetServices reset = web.services.reset;
+    reset.context = web.services.context;
+    reset.authorize = module_authorize;
+    const KatmedWebMediaServices media = {
+        .context = web.services.context,
+        .authorize = module_authorize,
+    };
+    return katmed_web_wifi_register(server, &wifi) &&
+           katmed_web_reset_register(server, &reset) &&
+           katmed_web_media_register(server, &media);
 }
 
 static bool start_listeners(void)
@@ -989,7 +1009,7 @@ static bool start_listeners(void)
     }
     httpd_ssl_config_t tls = HTTPD_SSL_CONFIG_DEFAULT();
     tls.httpd.max_open_sockets = 1;
-    tls.httpd.max_uri_handlers = 15;
+    tls.httpd.max_uri_handlers = 32;
     tls.httpd.backlog_conn = 1;
     tls.httpd.lru_purge_enable = true;
     tls.httpd.recv_wait_timeout = 2;

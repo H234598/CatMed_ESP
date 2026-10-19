@@ -45,7 +45,7 @@ class RouteContractTests(unittest.TestCase):
 
     def test_wifi_profiles_are_bounded_atomic_and_secrets_are_not_returned(self):
         source = WIFI_C.read_text(encoding="utf-8")
-        header = (ROOT / "firmware/components/katmed_web/katmed_web_wifi.h").read_text(encoding="utf-8")
+        header = (ROOT / "firmware/components/katmed_web/include/katmed_web_wifi.h").read_text(encoding="utf-8")
         self.assertIn("profile_limit", header)
         self.assertIn("save_profiles_atomic", header)
         self.assertIn("KATMED_WEB_WIFI_CREDENTIAL_KEEP", header)

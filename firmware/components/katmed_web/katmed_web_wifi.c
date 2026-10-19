@@ -1,6 +1,7 @@
 #include "katmed_web_wifi.h"
 
 #include "esp_err.h"
+#include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -141,10 +142,10 @@ static esp_err_t wifi_get(httpd_req_t *req)
     for (size_t i = 0; i < count; ++i) {
         if (i) *cursor++ = ',';
         cursor += (size_t)snprintf(cursor, body_capacity - (size_t)(cursor - body),
-                                   "{\"id\":%u,\"ssid\":\"", profiles[i].id);
+                                   "{\"id\":%" PRIu32 ",\"ssid\":\"", profiles[i].id);
         cursor = append_escaped(cursor, profiles[i].ssid);
         cursor += (size_t)snprintf(cursor, body_capacity - (size_t)(cursor - body),
-            "\",\"priority\":%u,\"secured\":%s}", profiles[i].priority,
+            "\",\"priority\":%" PRIu32 ",\"secured\":%s}", profiles[i].priority,
             profiles[i].secured ? "true" : "false");
     }
     (void)snprintf(cursor, body_capacity - (size_t)(cursor - body), "]}");

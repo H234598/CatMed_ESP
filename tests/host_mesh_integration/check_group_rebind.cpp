@@ -53,13 +53,17 @@ static StoreResult provision(Store &store,unsigned char group,unsigned char secr
 static ClockSample sample(uint64_t domain,uint64_t ms) {
     return ClockSample{ms,domain,0,false,CLOCK_UNAVAILABLE};
 }
-static void downgrade_to_v5(Backend &backend) {
+static void downgrade_to_v5(Backend &backend, unsigned wifi_profile_count) {
     constexpr size_t v7_manual_suffix=77;
     constexpr size_t v9_mesh_name_suffix=1+17+2+1+KATMED_MESH_NAME_MAX_ENTRIES*10+4;
-    assert(backend.length>99 && backend.bytes[4]==9);
-    /* The current v9 fixture appends the Mesh-name registry after the v7
-     * manual projection; remove both additions before applying the legacy
-     * v6 -> v5 downgrade below. */
+    assert(backend.length>99 && backend.bytes[4]==10);
+    /* The serializer appends the count and bounded profile rows after mesh. */
+    assert(wifi_profile_count<=KATMED_STORE_WIFI_PROFILE_MAX);
+    const size_t wifi_suffix=5u+static_cast<size_t>(wifi_profile_count)*103u;
+    assert(backend.length>wifi_suffix &&
+           backend.bytes[backend.length-wifi_suffix]==wifi_profile_count);
+    backend.length-=wifi_suffix;
+    backend.bytes[4]=9;
     backend.length-=v9_mesh_name_suffix+v7_manual_suffix;
     assert(backend.length>99 && backend.bytes[4]==9);
     --backend.length; /* v6 appends the durable group-origin byte. */
@@ -69,8 +73,8 @@ static void downgrade_to_v5(Backend &backend) {
     const uint32_t crc=static_cast<uint32_t>(crc32(0,backend.bytes+12,backend.length-12));
     for(unsigned i=0;i<4;++i) backend.bytes[8+i]=static_cast<uint8_t>(crc>>(8*i));
 }
-static void downgrade_to_v4(Backend &backend) {
-    downgrade_to_v5(backend);
+static void downgrade_to_v4(Backend &backend,unsigned wifi_profile_count) {
+    downgrade_to_v5(backend,wifi_profile_count);
     /* v5 inserts a zero conflict count and divergence flag before provision. */
     constexpr size_t provision_size=210;
     const size_t count_at=backend.length-83-16-provision_size-2;
@@ -84,8 +88,8 @@ static void downgrade_to_v4(Backend &backend) {
     const uint32_t v4_crc=static_cast<uint32_t>(crc32(0,backend.bytes+12,backend.length-12));
     for(unsigned i=0;i<4;++i)backend.bytes[8+i]=static_cast<uint8_t>(v4_crc>>(8*i));
 }
-static void downgrade_to_v3(Backend &backend) {
-    downgrade_to_v4(backend);
+static void downgrade_to_v3(Backend &backend,unsigned wifi_profile_count) {
+    downgrade_to_v4(backend,wifi_profile_count);
     const size_t bound_at=backend.length-83-16;
     std::memmove(backend.bytes+bound_at,backend.bytes+bound_at+16,83);
     backend.length-=16;
@@ -116,7 +120,7 @@ static void check_fresh_current_offline_first_provision() {
     uint8_t catalog[KATMED_CATALOG_BYTES]={1,2,3};
     const StoreBackend io{&backend,read_record,write_record};
     assert(store_open(&store,io,device,catalog,75,&recovery)==STORE_OK);
-    assert(backend.bytes[4]==9 && backend.commits==1 && !recovery.configured &&
+    assert(backend.bytes[4]==10 && backend.commits==1 && !recovery.configured &&
            recovery.pending_count==0 && bound_to(store,0) &&
            store.record.group_origin==STORE_GROUP_ORIGIN_FRESH_UNBOUND);
 
@@ -138,7 +142,7 @@ static void check_fresh_current_offline_first_provision() {
 
     Store durable{}; StoreRecovery durable_recovery{};
     assert(store_open(&durable,io,device,catalog,75,&durable_recovery)==STORE_OK);
-    assert(backend.bytes[4]==9 && durable_recovery.pending_count==1 &&
+    assert(backend.bytes[4]==10 && durable_recovery.pending_count==1 &&
            durable_recovery.has_last_confirmation && bound_to(durable,0) &&
            durable.record.group_origin==STORE_GROUP_ORIGIN_FRESH_UNBOUND);
     const StorePendingConfirm pending=durable.record.pending[0];
@@ -151,7 +155,7 @@ static void check_fresh_current_offline_first_provision() {
            durable_recovery.last_confirmation_id.sequence==original.sequence);
 
     Backend old_v5=backend;
-    downgrade_to_v5(old_v5);
+    downgrade_to_v5(old_v5,0);
     Store old_v5_store{}; StoreRecovery old_v5_recovery{};
     assert(store_open(&old_v5_store,{&old_v5,read_record,write_record},device,
                       catalog,75,&old_v5_recovery)==STORE_OK);
@@ -209,7 +213,7 @@ static void check_fresh_current_offline_first_provision() {
            after_attempt.record.pending[0].id.epoch==original.epoch &&
            after_attempt.record.pending[0].id.sequence==original.sequence);
     std::fprintf(stderr,
-                 "fresh v9 offline first PROVISION: result=%d reply=%s"
+                 "fresh v10 offline first PROVISION: result=%d reply=%s"
                  "commits_before=%u commits_after=%u commits_after_reopen=%u "
                  "commits_during_provision=%u pending=%u id=%llx/%llu/%llu "
                  "bound_before=zero bound_after_zero=%d bound_after_requested=%d "
@@ -312,7 +316,7 @@ int main() {
     assert(store_open(&reopened,io,device,catalog,75,&after_uncertain)==STORE_OK);
 
     Backend v4_configured=backend;
-    downgrade_to_v4(v4_configured);
+    downgrade_to_v4(v4_configured,1);
     Store v4_migrated{};StoreRecovery v4_recovery{};
     assert(store_open(&v4_migrated,{&v4_configured,read_record,write_record},device,
                       catalog,75,&v4_recovery)==STORE_OK);
@@ -321,7 +325,7 @@ int main() {
 
     /* A configured v3 record identifies its real group during v4 migration. */
     Backend v3_configured=backend;
-    downgrade_to_v3(v3_configured);
+    downgrade_to_v3(v3_configured,1);
     Store migrated{};StoreRecovery migrated_recovery{};
     assert(store_open(&migrated,{&v3_configured,read_record,write_record},device,
                       catalog,75,&migrated_recovery)==STORE_OK);
@@ -340,7 +344,7 @@ int main() {
            reopened.record.local.orientation==ORIENTATION_270 &&
            reopened.record.local.clock_style==ANALOG);
     Backend v3_after_reset=backend;
-    downgrade_to_v3(v3_after_reset);
+    downgrade_to_v3(v3_after_reset,1);
     Store legacy_unknown{};StoreRecovery legacy_recovery{};
     assert(store_open(&legacy_unknown,{&v3_after_reset,read_record,write_record},device,
                       catalog,75,&legacy_recovery)==STORE_OK);
@@ -363,8 +367,8 @@ int main() {
     assert(app_init(&active,&fresh.shared,&now,fresh.boot_identity,75,catalog)==APP_OK);
     assert(active.alarm_active && active.start_reason==START_BOOT);
 
-    /* All fixed-size fields are present here; the v9 Mesh-name suffix is
-     * included in the bounded-size regression. */
+    /* All fixed-size fields are present here; the v10 mesh registry plus
+     * bounded Wi-Fi profile header are included in the storage regression. */
     Backend maximal=backend;
     Store max_store{};StoreRecovery max_recovery{};
     assert(store_open(&max_store,{&maximal,read_record,write_record},device,
@@ -376,7 +380,7 @@ int main() {
     max_store.record.pending_count=KATMED_STORE_PENDING_MAX;
     EventId max_id{};
     assert(store_next_event_id(&max_store,&max_id)==STORE_OK);
-    assert(maximal.length<=KATMED_STORE_BLOB_MAX && maximal.length==2799);
+    assert(maximal.length<=KATMED_STORE_BLOB_MAX && maximal.length==2907);
     max_store.record.history.divergent=true;
     max_store.record.group_divergent=true;
     for(unsigned i=0;i<KATMED_STORE_CONFLICT_MAX;++i) {
@@ -386,7 +390,7 @@ int main() {
     }
     max_store.record.conflict_count=KATMED_STORE_CONFLICT_MAX;
     assert(store_next_event_id(&max_store,&max_id)==STORE_OK);
-    assert(maximal.length==3647 && maximal.length<KATMED_STORE_BLOB_MAX);
+    assert(maximal.length==3755 && maximal.length<KATMED_STORE_BLOB_MAX);
     Store full_restart{};StoreRecovery full_recovery{};
     assert(store_open(&full_restart,{&maximal,read_record,write_record},device,
                       catalog,75,&full_recovery)==STORE_OK);
@@ -538,7 +542,7 @@ int main() {
            empty_reply=="KM1 ERR CONFIG\n" && empty.commits==empty_writes);
     assert(provision(empty_reopened,0x33,0x77,"Same",&empty_reply)==STORE_OK);
     check_fresh_current_offline_first_provision();
-    std::printf("v9 pending-and-conflict-max encoded blob: %zu / %u bytes\n",
+    std::printf("v10 pending-and-conflict-max encoded blob: %zu / %u bytes\n",
                 maximal.length,KATMED_STORE_BLOB_MAX);
     std::puts("group rebind durability matrix passed");
 }
