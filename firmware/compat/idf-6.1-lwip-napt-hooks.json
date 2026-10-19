@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "idf_commit": "fff9895c82d744c7237be8847347bdd1b07c6643",
+  "lwip_commit": "c6f2f878e7b0f86033214b85547d579be43351e3",
+  "source": "src/core/ipv4/ip4_napt.c",
+  "source_sha256_before": "35662ff7531d0a93b0609495a9452c40ba375cd26cc9427ec233a57d16716f33",
+  "source_sha256_after": "ac8022b28c7135eacf96cb0addbbba99e331d4e2355402369863b186226c8829",
+  "patch": "idf-6.1-lwip-napt-hooks.patch",
+  "patch_sha256": "0c18c889fffc998b277c157736d7af7eda838f0211b809ff9ef2c9c5ec898d42"
+}
