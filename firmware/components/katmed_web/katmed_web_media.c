@@ -1,6 +1,7 @@
 #include "katmed_web_media.h"
 
 #include "katmed_image_store.h"
+#include "katmed_images.h"
 #include "esp_err.h"
 #include <inttypes.h>
 #include <stdio.h>
@@ -86,6 +87,52 @@ static bool query_uint32(httpd_req_t *req, const char *key, uint32_t *out,
     return true;
 }
 
+static bool query_has_key(httpd_req_t *req, const char *key)
+{
+    char query[48];
+    if (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK) return false;
+    const size_t key_length = strlen(key);
+    const char *part = query;
+    while (*part != '\0') {
+        const char *end = strchr(part, '&');
+        const size_t length = end ? (size_t)(end - part) : strlen(part);
+        if (length >= key_length && memcmp(part, key, key_length) == 0 &&
+            part[key_length] == '=') return true;
+        if (end == NULL) break;
+        part = end + 1;
+    }
+    return false;
+}
+
+static esp_err_t image_bytes(httpd_req_t *req, uint32_t id)
+{
+    KatmedImageReader reader = {0};
+    KatmedUserImageInfo info = {0};
+    KatmedImageStatus status = katmed_image_store_open_read(id, &reader, &info);
+    if (status != KATMED_IMAGE_OK) return store_error(req, status);
+
+    httpd_resp_set_type(req, "image/jpeg");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    httpd_resp_set_hdr(req, "X-Content-Type-Options", "nosniff");
+    uint8_t buffer[MEDIA_CHUNK_BYTES];
+    uint32_t remaining = info.bytes;
+    KatmedImageStatus read_status = KATMED_IMAGE_OK;
+    while (remaining > 0u) {
+        size_t actual = 0;
+        size_t wanted = remaining < sizeof(buffer) ? remaining : sizeof(buffer);
+        read_status = katmed_image_store_read(reader, buffer, wanted, &actual);
+        if (read_status != KATMED_IMAGE_OK || actual != wanted ||
+            httpd_resp_send_chunk(req, (const char *)buffer, (ssize_t)actual) != ESP_OK) {
+            if (read_status == KATMED_IMAGE_OK) read_status = KATMED_IMAGE_IO_ERROR;
+            break;
+        }
+        remaining -= (uint32_t)actual;
+    }
+    KatmedImageStatus close_status = katmed_image_store_close_read(reader);
+    if (read_status != KATMED_IMAGE_OK || close_status != KATMED_IMAGE_OK) return ESP_FAIL;
+    return httpd_resp_send_chunk(req, NULL, 0);
+}
+
 static esp_err_t images_list(httpd_req_t *req)
 {
     uint32_t offset = 0;
@@ -96,6 +143,13 @@ static esp_err_t images_list(httpd_req_t *req)
     uint32_t end;
 
     if (!authorize(req, false)) return ESP_OK;
+    if (query_has_key(req, "id")) {
+        uint32_t id = 0;
+        if (!query_uint32(req, "id", &id, true) || id == 0u)
+            return media_error(req, "400 Bad Request", "invalid_id",
+                               "Die Bildkennung ist ungültig.");
+        return image_bytes(req, id);
+    }
     if (!query_uint32(req, "offset", &offset, false))
         return media_error(req, "400 Bad Request", "invalid_offset",
                            "Die Bildliste konnte nicht geladen werden.");
@@ -137,6 +191,73 @@ static esp_err_t images_list(httpd_req_t *req)
     if (httpd_resp_send_chunk(req, item, HTTPD_RESP_USE_STRLEN) != ESP_OK)
         return ESP_FAIL;
     return httpd_resp_send_chunk(req, NULL, 0);
+}
+
+static esp_err_t catalog_list(httpd_req_t *req)
+{
+    uint32_t offset = 0;
+    const uint32_t count = katmed_images_builtin_count();
+    const uint32_t profiles = katmed_images_builtin_profile_count();
+    if (!authorize(req, false)) return ESP_OK;
+    if (!query_uint32(req, "offset", &offset, false))
+        return media_error(req, "400 Bad Request", "invalid_offset",
+                           "Der Bildkatalog konnte nicht geladen werden.");
+    if (offset > count) offset = count;
+    uint32_t end = offset + MEDIA_PAGE_SIZE;
+    if (end > count) end = count;
+
+    httpd_resp_set_type(req, "application/json; charset=utf-8");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    httpd_resp_set_hdr(req, "X-Content-Type-Options", "nosniff");
+    char item[256];
+    (void)snprintf(item, sizeof(item), "{\"catalog_count\":%" PRIu32
+                   ",\"offset\":%" PRIu32 ",\"images\":[", count, offset);
+    if (httpd_resp_send_chunk(req, item, HTTPD_RESP_USE_STRLEN) != ESP_OK) return ESP_FAIL;
+    bool first = true;
+    for (uint32_t index = offset; index < end; ++index) {
+        int n = snprintf(item, sizeof(item), "%s{\"id\":%" PRIu32 ",\"variants\":[",
+                         first ? "" : ",", index);
+        if (n <= 0 || (size_t)n >= sizeof(item)) return ESP_FAIL;
+        for (uint32_t profile = 0; profile < profiles; ++profile) {
+            KatmedImageVariantInfo info = {0};
+            if (katmed_images_builtin_variant_info(index, profile, &info) != KATMED_IMAGE_OK)
+                return ESP_FAIL;
+            size_t used = (size_t)n;
+            n += snprintf(item + used, sizeof(item) - used,
+                          "%s{\"profile\":%" PRIu32 ",\"bytes\":%" PRIu32
+                          ",\"width\":%u,\"height\":%u}",
+                          profile == 0u ? "" : ",", profile, info.bytes,
+                          (unsigned)info.width, (unsigned)info.height);
+            if (n <= 0 || (size_t)n >= sizeof(item)) return ESP_FAIL;
+        }
+        if ((size_t)n + 2u >= sizeof(item)) return ESP_FAIL;
+        item[n++] = ']';
+        item[n++] = '}';
+        item[n] = '\0';
+        if (httpd_resp_send_chunk(req, item, HTTPD_RESP_USE_STRLEN) != ESP_OK) return ESP_FAIL;
+        first = false;
+    }
+    (void)snprintf(item, sizeof(item), "]}");
+    if (httpd_resp_send_chunk(req, item, HTTPD_RESP_USE_STRLEN) != ESP_OK) return ESP_FAIL;
+    return httpd_resp_send_chunk(req, NULL, 0);
+}
+
+static esp_err_t catalog_import(httpd_req_t *req)
+{
+    uint32_t index = 0, profile = 0;
+    KatmedUserImageInfo info = {0};
+    if (!authorize(req, true)) return ESP_OK;
+    if (!query_uint32(req, "id", &index, true) ||
+        !query_uint32(req, "profile", &profile, true))
+        return media_error(req, "400 Bad Request", "invalid_catalog_image",
+                           "Das Katalogbild konnte nicht übernommen werden.");
+    KatmedImageStatus status = katmed_image_store_import_catalog(index, profile, &info);
+    if (status != KATMED_IMAGE_OK) return store_error(req, status);
+    char body[128];
+    (void)snprintf(body, sizeof(body), "{\"id\":%" PRIu32 ",\"bytes\":%" PRIu32
+                   ",\"width\":%u,\"height\":%u}", info.id, info.bytes,
+                   (unsigned)info.width, (unsigned)info.height);
+    return media_reply(req, "200 OK", body);
 }
 
 static esp_err_t image_upload(httpd_req_t *req)
@@ -219,7 +340,11 @@ bool katmed_web_media_register(httpd_handle_t server,
     const httpd_uri_t routes[] = {
         {.uri = "/api/images", .method = HTTP_GET, .handler = images_list,
          .user_ctx = NULL},
+        {.uri = "/api/catalog/images", .method = HTTP_GET, .handler = catalog_list,
+         .user_ctx = NULL},
         {.uri = "/api/images", .method = HTTP_POST, .handler = image_upload,
+         .user_ctx = NULL},
+        {.uri = "/api/images/import", .method = HTTP_POST, .handler = catalog_import,
          .user_ctx = NULL},
         {.uri = "/api/images", .method = HTTP_DELETE, .handler = image_remove,
          .user_ctx = NULL},

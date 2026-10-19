@@ -951,7 +951,7 @@ static void reset_open(lv_event_t *event)
     lv_obj_set_flex_flow(ui.reset_dialog, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_style_pad_row(ui.reset_dialog, 5, 0);
     lv_obj_t *warning = label(ui.reset_dialog,
-        "WARNUNG: Firmwaredaten werden zurückgesetzt. Hochgeladene Bilder, WLAN-, Alarm-, Mesh-, Auth- und Zertifikatsdaten werden gelöscht. Firmware und unveränderliche Bilder bleiben erhalten.",
+        "WARNUNG: Löscht WLAN, Laufzeittexte, Mesh, Alarm/Verlauf, Webzugang, Zertifikate/ACME, Uploads und Cache. Firmware und Standardbilder bleiben. In einem privaten Build bleiben einkompilierte private Vorgaben erhalten.",
         ui.width - 40);
     lv_obj_set_style_text_color(warning, lv_color_white(), 0);
     lv_obj_set_style_text_font(warning, &katmed_font_12, 0);

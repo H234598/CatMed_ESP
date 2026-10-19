@@ -63,6 +63,25 @@ uint32_t katmed_images_count(void)
     return count;
 }
 
+uint32_t katmed_images_builtin_count(void) { return KATMED_IMAGE_COUNT; }
+uint32_t katmed_images_builtin_profile_count(void)
+{
+    return katmed_generated_catalog.profile_count;
+}
+
+KatmedImageStatus katmed_images_builtin_variant_info(uint32_t index,
+                                                      uint32_t profile,
+                                                      KatmedImageVariantInfo *out)
+{
+    if (out == NULL) return KATMED_IMAGE_BAD_ID;
+    const KatmedImageVariant *variant = katmed_images_variant(index, profile);
+    if (variant == NULL) return KATMED_IMAGE_BAD_ID;
+    *out = (KatmedImageVariantInfo){.bytes=variant->length,
+                                    .width=variant->width,
+                                    .height=variant->height};
+    return KATMED_IMAGE_OK;
+}
+
 void katmed_images_unmount(void)
 {
 #ifdef ESP_PLATFORM

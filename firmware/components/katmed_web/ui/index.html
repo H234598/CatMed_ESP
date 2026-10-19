@@ -109,14 +109,22 @@
       </section>
 
       <section class="panel" aria-labelledby="media-title" data-main-panel>
-        <h2 id="media-title">Eigene Bilder</h2>
+        <h2 id="media-title">Bilder im Gerätespeicher</h2>
         <p id="media-usage" class="help" role="status">Bildspeicher wird geladen.</p>
+        <p class="help">Hochgeladene Bilder und übernommene Katalogbilder liegen im beschreibbaren Speicher und werden gemeinsam in der Diashow verwendet.</p>
         <form id="image-upload-form">
           <label for="image-upload">JPEG bis 128 KiB</label>
           <input id="image-upload" name="image" type="file" accept="image/jpeg,.jpg,.jpeg" required>
           <button type="submit">Bild hochladen</button>
         </form>
-        <ul id="image-list" class="image-list" aria-label="Hochgeladene Bilder"></ul>
+        <ul id="image-list" class="image-list" aria-label="Gespeicherte Bilder"></ul>
+      </section>
+
+      <section class="panel" aria-labelledby="catalog-title" data-main-panel>
+        <h2 id="catalog-title">Katalogbilder</h2>
+        <p class="help">Die bereits in dieser Firmware geprüften Katalogbilder können einzeln in den beschreibbaren Speicher übernommen werden. Dieser Vorgang lädt nichts aus dem Internet; er kopiert die mitgelieferte Variante atomar und lässt das Original erhalten.</p>
+        <ul id="catalog-image-list" class="image-list" aria-label="Mitgelieferte Katalogbilder"></ul>
+        <button id="catalog-more" class="secondary" type="button">Weitere Katalogbilder</button>
       </section>
 
       <section class="panel" aria-labelledby="cert-title" data-main-panel>
@@ -141,12 +149,13 @@
       <section class="panel muted" aria-labelledby="display-only-title" data-main-panel>
         <h2 id="display-only-title">Weitere Displayeinträge</h2>
         <p>„Seltsam“ und „Morsecode“ sind Bedienaktionen am Display und speichern keine Einstellung.</p>
-        <p class="help">GitHub-Bildabruf bleibt beim vorhandenen Gerätefluss; diese Seite verwaltet eigene Uploads.</p>
+        <p class="help">Der geschützte Bildbereich kann eigene Uploads und einzelne Kopien des mitgelieferten Katalogs verwalten.</p>
       </section>
 
       <section class="panel" aria-labelledby="reset-title" data-main-panel>
         <h2 id="reset-title">Factory-Reset</h2>
         <p>Setzt veränderbare Einstellungen und Benutzerdaten auf den Auslieferungszustand zurück.</p>
+        <p class="help">In einem ausdrücklich gewählten privaten Build bleiben einkompilierte private Vorgaben nach dem Datenreset erhalten.</p>
         <button id="factory-reset-start" class="danger" type="button">Factory-Reset vorbereiten</button>
       </section>
       </section>
@@ -177,7 +186,7 @@
         <h2 id="factory-reset-heading">Factory-Reset bestätigen?</h2>
         <div class="reset-warning">
           <p>Dieser Vorgang löscht WLAN-Profile, persönliche Laufzeittexte und Einstellungen, gespeicherte Mesh-Bindungen, Alarm- und Bestätigungszustände samt Historie, Webanmeldung und Sitzungen, private Zertifikats-/ACME-Zustände, eigene Uploads und veränderbare Caches.</p>
-          <p>Die Firmware und unveränderliche Standardbilder bleiben erhalten. In einem ausdrücklich privaten Build bleiben einkompilierte private Vorgaben Teil der Firmware und werden durch den Datenreset nicht entfernt.</p>
+          <p>Die Firmware und unveränderliche Standardbilder bleiben erhalten. In einem ausdrücklich gewählten privaten Build bleiben einkompilierte private Vorgaben Teil der Firmware; der Datenreset entfernt sie nicht.</p>
         </div>
         <p id="reset-status" role="status" aria-live="polite"></p>
         <div class="reset-actions">

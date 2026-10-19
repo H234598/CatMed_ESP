@@ -25,6 +25,7 @@ typedef enum {
 } KatmedImageStatus;
 
 typedef struct { uint32_t token; } KatmedImageUpload;
+typedef struct { uint32_t token; } KatmedImageReader;
 typedef struct {
     uint32_t id;
     uint32_t bytes;
@@ -46,6 +47,13 @@ KatmedImageStatus katmed_image_store_upload_write(KatmedImageUpload upload,
 KatmedImageStatus katmed_image_store_upload_commit(KatmedImageUpload upload,
                                                     KatmedUserImageInfo *out);
 KatmedImageStatus katmed_image_store_upload_abort(KatmedImageUpload upload);
+KatmedImageStatus katmed_image_store_import_catalog(uint32_t index, uint32_t profile,
+                                                     KatmedUserImageInfo *out);
+KatmedImageStatus katmed_image_store_open_read(uint32_t id, KatmedImageReader *out,
+                                                KatmedUserImageInfo *info);
+KatmedImageStatus katmed_image_store_read(KatmedImageReader reader, uint8_t *buffer,
+                                           size_t wanted, size_t *actual);
+KatmedImageStatus katmed_image_store_close_read(KatmedImageReader reader);
 KatmedImageStatus katmed_image_store_list(uint32_t index,
                                           KatmedUserImageInfo *out);
 KatmedImageStatus katmed_image_store_remove(uint32_t id);

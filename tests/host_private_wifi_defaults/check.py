@@ -204,7 +204,7 @@ static Store open_store(Fake &f) {
     return s;
 }
 int main() {
-    assert(store_wifi_profile_limit()==8);
+    assert(store_wifi_profile_limit()==4);
     Fake disk{}; Store s=open_store(disk);
     StoreWifiProfileUpdate input[KATMED_STORE_WIFI_PROFILE_MAX]{};
     for (unsigned i=0;i<KATMED_STORE_WIFI_PROFILE_MAX;++i) {
@@ -215,22 +215,22 @@ int main() {
         input[i].password_length=9;
         std::memcpy(input[i].password,"pass1234x",9);
     }
-    assert(store_wifi_profiles_save_atomic(&s,input,8)==STORE_OK);
-    assert(store_wifi_profiles_save_atomic(&s,input,9)==STORE_INVALID);
+    assert(store_wifi_profiles_save_atomic(&s,input,KATMED_STORE_WIFI_PROFILE_MAX)==STORE_OK);
+    assert(store_wifi_profiles_save_atomic(&s,input,KATMED_STORE_WIFI_PROFILE_MAX+1)==STORE_INVALID);
     StoreWifiProfile loaded[8]{}; size_t count=0;
-    assert(store_wifi_profiles_load(&s,loaded,8,&count)==STORE_OK && count==8);
-    assert(loaded[0].priority==1 && loaded[7].priority==8 && loaded[0].secured);
+    assert(store_wifi_profiles_load(&s,loaded,KATMED_STORE_WIFI_PROFILE_MAX,&count)==STORE_OK && count==4);
+    assert(loaded[0].priority==1 && loaded[3].priority==4 && loaded[0].secured);
     Fake fail_disk{}; Store fail_store=open_store(fail_disk);
-    assert(store_wifi_profiles_save_atomic(&fail_store,input,8)==STORE_OK);
-    assert(store_wifi_profiles_load(&fail_store,loaded,8,&count)==STORE_OK && count==8);
+    assert(store_wifi_profiles_save_atomic(&fail_store,input,KATMED_STORE_WIFI_PROFILE_MAX)==STORE_OK);
+    assert(store_wifi_profiles_load(&fail_store,loaded,KATMED_STORE_WIFI_PROFILE_MAX,&count)==STORE_OK && count==4);
     input[0].id=loaded[0].id; input[0].credential_action=STORE_WIFI_CREDENTIAL_KEEP;
     fail_disk.fail=true;
-    assert(store_wifi_profiles_save_atomic(&fail_store,input,8)==STORE_IO);
-    assert(fail_store.record.wifi_profile_count==8);
+    assert(store_wifi_profiles_save_atomic(&fail_store,input,KATMED_STORE_WIFI_PROFILE_MAX)==STORE_IO);
+    assert(fail_store.record.wifi_profile_count==4);
     Store reopened=open_store(fail_disk);
-    assert(store_wifi_profiles_load(&reopened,loaded,8,&count)==STORE_OK && count==8);
+    assert(store_wifi_profiles_load(&reopened,loaded,KATMED_STORE_WIFI_PROFILE_MAX,&count)==STORE_OK && count==4);
     assert(store_wifi_profile_delete_atomic(&reopened,loaded[3].id)==STORE_OK);
-    assert(store_wifi_profiles_load(&reopened,loaded,8,&count)==STORE_OK && count==7);
+    assert(store_wifi_profiles_load(&reopened,loaded,KATMED_STORE_WIFI_PROFILE_MAX,&count)==STORE_OK && count==3);
     for (size_t i=0;i<count;++i) assert(loaded[i].priority==i+1);
     return 0;
 }

@@ -37,6 +37,8 @@ form:not(.setting-row)>input{margin-bottom:16px}
 .image-list{list-style:none;padding:0;margin:14px 0 0}
 .image-list li{display:flex;align-items:center;justify-content:space-between;gap:12px;border-top:1px solid #335061;padding:12px 0}
 .image-list .help{margin:0}
+.image-list .actions{flex-wrap:wrap;justify-content:flex-end}
+.image-preview{display:block;width:64px;height:64px;object-fit:cover;border-radius:8px;margin-bottom:6px;background:#0e1b25}
 .profile-list{list-style:none;padding:0;margin:14px 0 22px}
 .profile-list li{display:flex;align-items:center;justify-content:space-between;gap:12px;border-top:1px solid #335061;padding:12px 0}
 .profile-list .actions{flex-wrap:wrap;justify-content:flex-end}

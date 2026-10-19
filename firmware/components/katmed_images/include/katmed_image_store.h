@@ -60,6 +60,13 @@ KatmedImageStatus katmed_image_store_upload_commit(KatmedImageUpload upload,
                                                      KatmedUserImageInfo *out);
 KatmedImageStatus katmed_image_store_upload_abort(KatmedImageUpload upload);
 
+/* Copies one target-supported image from the already verified immutable
+ * firmware catalogue into the writable user-image filesystem. Repeating the
+ * same import refreshes that generated cache entry atomically. */
+KatmedImageStatus katmed_image_store_import_catalog(uint32_t index,
+                                                      uint32_t profile,
+                                                      KatmedUserImageInfo *out);
+
 /* The image/slide-show layer reads by generated ID. It never receives a path
  * from the web UI and does not duplicate filesystem access or validation. */
 KatmedImageStatus katmed_image_store_open_read(uint32_t id,

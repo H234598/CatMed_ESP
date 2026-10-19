@@ -40,7 +40,10 @@ class RouteContractTests(unittest.TestCase):
         self.assertIn("authorize(req, true)", source)
         self.assertIn("katmed_image_store_list", source)
         self.assertIn("katmed_image_store_remove(id)", source)
-        self.assertNotIn("open_read", source)
+        self.assertIn("katmed_image_store_open_read", source)
+        self.assertIn("katmed_image_store_read", source)
+        self.assertIn("katmed_image_store_import_catalog", source)
+        self.assertIn('"/api/catalog/images"', source)
         self.assertNotIn("fopen(", source)
 
     def test_wifi_profiles_are_bounded_atomic_and_secrets_are_not_returned(self):
@@ -90,6 +93,8 @@ class RouteContractTests(unittest.TestCase):
         self.assertIn('id="factory-reset-yes"', html)
         self.assertIn("Mesh-Bindungen", html)
         self.assertIn("privaten Build", html)
+        self.assertIn("einkompilierte private Vorgaben", html)
+        self.assertIn("einkompilierte private Vorgaben erhalten", (ROOT / "firmware/components/katmed_ui/ui.c").read_text(encoding="utf-8"))
         css = CSS.read_text(encoding="utf-8")
         self.assertIn(".reset-no{width:100%;height:72px", css)
         self.assertIn(".reset-yes{width:70%;height:50.4px;min-height:50.4px", css)
@@ -100,6 +105,9 @@ class RouteContractTests(unittest.TestCase):
     def test_ui_wires_upload_wifi_and_csrf(self):
         source = APP_JS.read_text(encoding="utf-8")
         self.assertIn('api("/api/images", "POST", file)', source)
+        self.assertIn('"/api/catalog/images?offset="', source)
+        self.assertIn('api("/api/images/import" + query, "POST")', source)
+        self.assertIn('"/api/images?id=" + encodeURIComponent(image.id)', source)
         self.assertIn('api("/api/wifi/profiles", "PUT", {profiles})', source)
         self.assertIn('"/api/wifi/reconnect", "POST"', source)
         self.assertIn('api("/api/factory-reset/prepare", "POST", {})', source)
