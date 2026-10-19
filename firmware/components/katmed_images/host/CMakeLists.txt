@@ -5,7 +5,8 @@ set(KATMED_ROOT "${CMAKE_CURRENT_LIST_DIR}/../../../../")
 set(KATMED_COMPONENT "${CMAKE_CURRENT_LIST_DIR}/..")
 set(KATMED_MBEDTLS_SOURCE "$ENV{IDF_PATH}/components/mbedtls/mbedtls" CACHE PATH
     "Pinned ESP-IDF mbedTLS source used by both host and target")
-if(NOT EXISTS "${KATMED_MBEDTLS_SOURCE}/include/mbedtls/sha256.h")
+if(NOT EXISTS "${KATMED_MBEDTLS_SOURCE}/include/mbedtls/ssl.h" OR
+   NOT EXISTS "${KATMED_MBEDTLS_SOURCE}/tf-psa-crypto/include/mbedtls/md.h")
     message(FATAL_ERROR "Set IDF_PATH or KATMED_MBEDTLS_SOURCE to the pinned ESP-IDF mbedTLS source")
 endif()
 set(ENABLE_PROGRAMS OFF CACHE BOOL "" FORCE)

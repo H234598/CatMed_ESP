@@ -18,7 +18,8 @@ set(KATMED_IMAGE_ASSETS "${CMAKE_CURRENT_SOURCE_DIR}/assets/generated")
 set(KATMED_CATALOG_PYTHON "/usr/bin/python3")
 set(KATMED_MBEDTLS_SOURCE "$ENV{IDF_PATH}/components/mbedtls/mbedtls" CACHE PATH
     "Pinned ESP-IDF mbedTLS source used by host and firmware")
-if(NOT EXISTS "${KATMED_MBEDTLS_SOURCE}/include/mbedtls/sha256.h")
+if(NOT EXISTS "${KATMED_MBEDTLS_SOURCE}/include/mbedtls/ssl.h" OR
+   NOT EXISTS "${KATMED_MBEDTLS_SOURCE}/tf-psa-crypto/include/mbedtls/md.h")
     message(FATAL_ERROR "Set IDF_PATH or KATMED_MBEDTLS_SOURCE to the pinned ESP-IDF mbedTLS source")
 endif()
 set(ENABLE_PROGRAMS OFF CACHE BOOL "" FORCE)

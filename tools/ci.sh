@@ -28,8 +28,9 @@ if [[ "$mode" == dependencies || "$mode" == firmware ]]; then
 elif [[ "$mode" == host ]]; then
     : "${IDF_PATH:?Use the ESP-IDF 6.1 runner environment}"
     mbedtls_source="${IDF_PATH}/components/mbedtls/mbedtls"
-    if [[ ! -f "${mbedtls_source}/include/mbedtls/sha256.h" ]]; then
-        echo 'Pinned ESP-IDF mbedTLS source is missing from IDF_PATH.' >&2
+    if [[ ! -f "${mbedtls_source}/include/mbedtls/ssl.h" ||
+          ! -f "${mbedtls_source}/tf-psa-crypto/include/mbedtls/md.h" ]]; then
+        echo 'Pinned ESP-IDF mbedTLS 4.1.0 public headers are missing from IDF_PATH.' >&2
         exit 1
     fi
     python3 tests/check_crop_geometry.py
