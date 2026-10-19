@@ -159,6 +159,10 @@ int main(int argc, char **argv) {
             d.provision.ssid_length != r.provision.ssid_length ||
             d.provision.password_length != r.provision.password_length ||
             d.provision.time_source_length != r.provision.time_source_length ||
+            d.provision.configured != r.provision.configured ||
+            std::memcmp(d.provision.group, r.provision.group, sizeof(r.provision.group)) != 0 ||
+            std::memcmp(d.provision.secret, r.provision.secret, sizeof(r.provision.secret)) != 0 ||
+            std::memcmp(d.bound_group, r.bound_group, sizeof(r.bound_group)) != 0 ||
             std::memcmp(d.provision.ssid, r.provision.ssid, sizeof(r.provision.ssid)) != 0 ||
             std::memcmp(d.provision.password, r.provision.password, sizeof(r.provision.password)) != 0 ||
             std::memcmp(d.provision.time_source, r.provision.time_source,
