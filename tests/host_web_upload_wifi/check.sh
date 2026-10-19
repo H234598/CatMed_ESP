@@ -18,7 +18,7 @@ gcc -std=c11 -Wall -Wextra -Werror \
   -o "$tmp_dir/check_media_routes"
 "$tmp_dir/check_media_routes"
 
-gcc -std=c11 -Wall -Wextra -Werror \
+gcc -std=c11 -Wall -Wextra -Werror -DKATMED_WEB_WIFI_TEST_WIPE_OBSERVER \
   -I"$test_dir/stubs" -I"$test_dir/../../firmware/components/katmed_web" \
   "$test_dir/check_wifi_reset_routes.c" "$test_dir/stubs/cJSON.c" \
   "$test_dir/../../firmware/components/katmed_web/katmed_web_wifi.c" \

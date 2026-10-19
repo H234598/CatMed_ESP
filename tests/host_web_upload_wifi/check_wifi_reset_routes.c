@@ -1,6 +1,5 @@
 #include "katmed_web_wifi.h"
 #include "katmed_web_reset.h"
-#include "cJSON.h"
 #include "esp_err.h"
 #include <assert.h>
 #include <stdio.h>
@@ -10,6 +9,13 @@
 #define ROUTE_CAP 16
 static httpd_uri_t routes[ROUTE_CAP];
 static size_t route_count;
+static unsigned wipe_calls;
+static bool wipe_nonzero;
+static size_t wipe_lengths[64];
+static size_t wipe_length_count;
+void katmed_web_wifi_test_wipe_observer(const void *memory,size_t length){const unsigned char*p=memory;wipe_calls++;if(wipe_length_count<64)wipe_lengths[wipe_length_count++]=length;for(size_t i=0;i<length;i++)if(p[i]!=0)wipe_nonzero=true;}
+static bool saw_wipe_length(size_t length){for(size_t i=0;i<wipe_length_count;i++)if(wipe_lengths[i]==length)return true;return false;}
+static void assert_wiped_body(size_t body_length){assert(wipe_calls>=2);assert(!wipe_nonzero);assert(saw_wipe_length(body_length));assert(saw_wipe_length(8*sizeof(KatmedWebWifiProfileUpdate)));}
 
 typedef struct {
     KatmedWebWifiProfileView view[8];
@@ -65,8 +71,14 @@ int main(void){
  req_init(&req,NULL);assert(route("/api/wifi",HTTP_GET)(&req)==ESP_OK);assert(strstr(req.response,"\"profile_limit\":8"));assert(strstr(req.response,"existing"));assert(!strstr(req.response,"synthetic-secret-never-return"));assert(!strstr(req.response,"password"));
  char body[4096];fill_profiles(body,sizeof(body),8);req_init(&req,body);assert(route("/api/wifi/profiles",HTTP_PUT)(&req)==ESP_OK);assert(!strcmp(req.response_status,"200 OK"));assert(wifi.count==8);for(size_t i=0;i<8;i++)assert(wifi.view[i].priority==1&&wifi.view[i].id==100+i); /* ties preserve supplied order */
  const unsigned before=wifi.save_calls;fill_profiles(body,sizeof(body),9);req_init(&req,body);assert(route("/api/wifi/profiles",HTTP_PUT)(&req)==ESP_OK);assert(!strcmp(req.response_status,"422 Unprocessable Content"));assert(wifi.save_calls==before&&wifi.count==8);
- req_init(&req,"{\"profiles\":[{\"id\":100,\"ssid\":\"changed\",\"priority\":2,\"credential\":\"keep\",\"password\":\"\"}]}");wifi.fail_save=true;assert(route("/api/wifi/profiles",HTTP_PUT)(&req)==ESP_OK);assert(!strcmp(req.response_status,"503 Service Unavailable"));assert(!strcmp(wifi.view[0].ssid,"network-0"));assert(!strstr(req.response,"synthetic-secret-never-return"));wifi.fail_save=false;
- req_init(&req,"{\"profiles\":[{\"ssid\":\"bad\",\"priority\":1,\"credential\":\"replace\",\"password\":\"short\"}]}");assert(route("/api/wifi/profiles",HTTP_PUT)(&req)==ESP_OK);assert(!strcmp(req.response_status,"422 Unprocessable Content"));assert(!strstr(req.response,"short"));
+ const char secret_body[]="{\"profiles\":[{\"ssid\":\"changed\",\"priority\":2,\"credential\":\"replace\",\"password\":\"synthetic-route-secret\"}]}";
+ wipe_calls=wipe_length_count=0;wipe_nonzero=false;req_init(&req,secret_body);assert(route("/api/wifi/profiles",HTTP_PUT)(&req)==ESP_OK);assert(!strcmp(req.response_status,"200 OK"));assert_wiped_body(strlen(secret_body));assert(!strstr(req.response,"synthetic-route-secret"));
+ const char old_ssid[]="changed";const unsigned saves_before_failure=wifi.save_calls;
+ wipe_calls=wipe_length_count=0;wipe_nonzero=false;wifi.fail_save=true;req_init(&req,secret_body);assert(route("/api/wifi/profiles",HTTP_PUT)(&req)==ESP_OK);assert(!strcmp(req.response_status,"503 Service Unavailable"));assert_wiped_body(strlen(secret_body));assert(wifi.save_calls==saves_before_failure+1);assert(!strcmp(wifi.view[0].ssid,old_ssid));assert(!strstr(req.response,"synthetic-route-secret"));wifi.fail_save=false;
+ const char semantic_bad[]="{\"profiles\":[{\"ssid\":\"bad\",\"priority\":0,\"credential\":\"replace\",\"password\":\"synthetic-parse-secret\"}]}";
+ wipe_calls=wipe_length_count=0;wipe_nonzero=false;req_init(&req,semantic_bad);assert(route("/api/wifi/profiles",HTTP_PUT)(&req)==ESP_OK);assert(!strcmp(req.response_status,"422 Unprocessable Content"));assert_wiped_body(strlen(semantic_bad));assert(!strstr(req.response,"synthetic-parse-secret"));
+ const char syntax_bad[]="{\"profiles\":[{\"ssid\":\"bad\",\"priority\":1,\"credential\":\"replace\",\"password\":\"synthetic-syntax-secret\"}]}!";
+ wipe_calls=wipe_length_count=0;wipe_nonzero=false;req_init(&req,syntax_bad);assert(route("/api/wifi/profiles",HTTP_PUT)(&req)==ESP_OK);assert(!strcmp(req.response_status,"422 Unprocessable Content"));assert_wiped_body(strlen(syntax_bad));assert(!strstr(req.response,"synthetic-syntax-secret"));
  req_init(&req,NULL);req.csrf_ok=false;assert(route("/api/wifi/reconnect",HTTP_POST)(&req)==ESP_OK);assert(!strcmp(req.response_status,"403 Forbidden"));assert(wifi.reconnect_calls==0);
  req_init(&req,NULL);assert(route("/api/wifi/reconnect",HTTP_POST)(&req)==ESP_OK);assert(strstr(req.response,"reevaluate_priority"));assert(wifi.reconnect_calls==1);
 

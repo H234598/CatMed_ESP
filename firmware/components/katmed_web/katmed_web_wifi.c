@@ -1,6 +1,5 @@
 #include "katmed_web_wifi.h"
 
-#include "cJSON.h"
 #include "esp_err.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -10,6 +9,21 @@
 #define WIFI_QUERY_MAX 48u
 
 static KatmedWebWifiServices wifi_services;
+#ifdef KATMED_WEB_WIFI_TEST_WIPE_OBSERVER
+extern void katmed_web_wifi_test_wipe_observer(const void *memory, size_t length);
+#endif
+
+static void secure_wipe(void *memory, size_t length)
+{
+    const size_t original_length = length;
+    volatile unsigned char *bytes = memory;
+    while (length--) *bytes++ = 0;
+#ifdef KATMED_WEB_WIFI_TEST_WIPE_OBSERVER
+    katmed_web_wifi_test_wipe_observer(memory, original_length);
+#else
+    (void)original_length;
+#endif
+}
 
 bool katmed_web_wifi_credentials_valid(const char *ssid, size_t ssid_length,
                                       const char *password, size_t password_length,
@@ -150,7 +164,7 @@ static bool read_body(httpd_req_t *req, char **out, size_t *length)
     while (received < (size_t)req->content_len) {
         const int count = httpd_req_recv(req, body + received,
                                          (size_t)req->content_len - received);
-        if (count <= 0) { free(body); return false; }
+        if (count <= 0) { secure_wipe(body, (size_t)req->content_len + 1u); free(body); return false; }
         received += (size_t)count;
     }
     body[received] = '\0';
@@ -159,70 +173,225 @@ static bool read_body(httpd_req_t *req, char **out, size_t *length)
     return true;
 }
 
-static const cJSON *field(const cJSON *object, const char *name)
+typedef struct {
+    const char *input;
+    size_t length;
+    size_t offset;
+} JsonCursor;
+
+static void json_skip_space(JsonCursor *cursor)
 {
-    return cJSON_GetObjectItemCaseSensitive(object, name);
+    while (cursor->offset < cursor->length) {
+        const char c = cursor->input[cursor->offset];
+        if (c != ' ' && c != '\t' && c != '\r' && c != '\n') break;
+        ++cursor->offset;
+    }
 }
 
-static bool parse_uint(const cJSON *node, uint32_t *value)
+static bool json_expect(JsonCursor *cursor, char expected)
 {
-    if (!cJSON_IsNumber(node) || node->valuedouble < 0 ||
-        node->valuedouble > UINT32_MAX || node->valuedouble != (double)(uint32_t)node->valuedouble)
+    json_skip_space(cursor);
+    if (cursor->offset >= cursor->length || cursor->input[cursor->offset] != expected)
         return false;
-    *value = (uint32_t)node->valuedouble;
+    ++cursor->offset;
     return true;
 }
 
-static bool parse_profiles(const cJSON *root, size_t limit,
-                           KatmedWebWifiProfileUpdate **out, size_t *count_out)
+static bool json_append_codepoint(char *output, size_t capacity, size_t *length,
+                                  uint32_t codepoint)
 {
-    const cJSON *array = field(root, "profiles");
-    if (!cJSON_IsArray(array)) return false;
-    const int count = cJSON_GetArraySize(array);
-    if (count < 0 || (size_t)count > limit) return false;
-    KatmedWebWifiProfileUpdate *profiles = count ? calloc((size_t)count, sizeof(*profiles)) : NULL;
-    if (count && !profiles) return false;
-    for (int i = 0; i < count; ++i) {
-        const cJSON *entry = cJSON_GetArrayItem(array, i);
-        const cJSON *id_node = field(entry, "id");
-        const cJSON *ssid_node = field(entry, "ssid");
-        const cJSON *priority_node = field(entry, "priority");
-        const cJSON *credential_node = field(entry, "credential");
-        const cJSON *password_node = field(entry, "password");
-        const char *ssid, *credential, *password;
-        uint32_t id = 0, priority = 0;
-        if (!cJSON_IsObject(entry) || !cJSON_IsString(ssid_node) ||
-            !cJSON_IsString(credential_node) || !cJSON_IsString(password_node) ||
-            !parse_uint(priority_node, &priority) || priority == 0 ||
-            (id_node && !parse_uint(id_node, &id))) goto bad;
-        ssid = cJSON_GetStringValue(ssid_node);
-        credential = cJSON_GetStringValue(credential_node);
-        password = cJSON_GetStringValue(password_node);
-        const size_t ssid_length = strlen(ssid), password_length = strlen(password);
-        KatmedWebWifiCredentialAction action;
-        if (strcmp(credential, "keep") == 0) action = KATMED_WEB_WIFI_CREDENTIAL_KEEP;
-        else if (strcmp(credential, "replace") == 0) action = KATMED_WEB_WIFI_CREDENTIAL_REPLACE;
-        else if (strcmp(credential, "open") == 0) action = KATMED_WEB_WIFI_CREDENTIAL_OPEN;
-        else goto bad;
-        if (!katmed_web_wifi_credentials_valid(ssid, ssid_length, password,
-                                                password_length, action)) goto bad;
-        profiles[i].id = id;
-        profiles[i].priority = priority;
-        profiles[i].credential_action = action;
-        memcpy(profiles[i].ssid, ssid, ssid_length);
-        if (action == KATMED_WEB_WIFI_CREDENTIAL_REPLACE)
-            memcpy(profiles[i].password, password, password_length);
-        for (int j = 0; j < i; ++j) {
-            if ((id && profiles[j].id == id) || strcmp(profiles[j].ssid, ssid) == 0)
-                goto bad;
+    unsigned char bytes[4];
+    size_t count;
+    if (codepoint == 0 || codepoint > 0x10ffff ||
+        (codepoint >= 0xd800 && codepoint <= 0xdfff)) return false;
+    if (codepoint <= 0x7f) { bytes[0] = (unsigned char)codepoint; count = 1; }
+    else if (codepoint <= 0x7ff) {
+        bytes[0] = (unsigned char)(0xc0 | (codepoint >> 6));
+        bytes[1] = (unsigned char)(0x80 | (codepoint & 0x3f)); count = 2;
+    } else if (codepoint <= 0xffff) {
+        bytes[0] = (unsigned char)(0xe0 | (codepoint >> 12));
+        bytes[1] = (unsigned char)(0x80 | ((codepoint >> 6) & 0x3f));
+        bytes[2] = (unsigned char)(0x80 | (codepoint & 0x3f)); count = 3;
+    } else {
+        bytes[0] = (unsigned char)(0xf0 | (codepoint >> 18));
+        bytes[1] = (unsigned char)(0x80 | ((codepoint >> 12) & 0x3f));
+        bytes[2] = (unsigned char)(0x80 | ((codepoint >> 6) & 0x3f));
+        bytes[3] = (unsigned char)(0x80 | (codepoint & 0x3f)); count = 4;
+    }
+    if (count >= capacity - *length) return false;
+    memcpy(output + *length, bytes, count);
+    *length += count;
+    return true;
+}
+
+static bool json_hex4(JsonCursor *cursor, uint32_t *value)
+{
+    uint32_t result = 0;
+    if (cursor->length - cursor->offset < 4) return false;
+    for (size_t i = 0; i < 4; ++i) {
+        const char c = cursor->input[cursor->offset++];
+        uint32_t digit;
+        if (c >= '0' && c <= '9') digit = (uint32_t)(c - '0');
+        else if (c >= 'a' && c <= 'f') digit = (uint32_t)(c - 'a' + 10);
+        else if (c >= 'A' && c <= 'F') digit = (uint32_t)(c - 'A' + 10);
+        else return false;
+        result = (result << 4) | digit;
+    }
+    *value = result;
+    return true;
+}
+
+static bool json_string(JsonCursor *cursor, char *output, size_t capacity,
+                        size_t *length_out)
+{
+    size_t length = 0;
+    if (!output || capacity == 0 || !json_expect(cursor, '"')) return false;
+    while (cursor->offset < cursor->length) {
+        const unsigned char c = (unsigned char)cursor->input[cursor->offset++];
+        if (c == '"') {
+            output[length] = '\0';
+            if (length_out) *length_out = length;
+            return true;
+        }
+        if (c < 0x20) return false;
+        if (c != '\\') {
+            if (length + 1 >= capacity) return false;
+            output[length++] = (char)c;
+            continue;
+        }
+        if (cursor->offset >= cursor->length) return false;
+        const char escape = cursor->input[cursor->offset++];
+        switch (escape) {
+        case '"': case '\\': case '/':
+            if (length + 1 >= capacity) return false;
+            output[length++] = escape;
+            break;
+        case 'b': case 'f': case 'n': case 'r': case 't':
+            /* Control characters are not valid SSID/password bytes here. */
+            return false;
+        case 'u': {
+            uint32_t codepoint;
+            if (!json_hex4(cursor, &codepoint)) return false;
+            if (codepoint >= 0xd800 && codepoint <= 0xdbff) {
+                if (cursor->length - cursor->offset < 6 ||
+                    cursor->input[cursor->offset] != '\\' ||
+                    cursor->input[cursor->offset + 1] != 'u') return false;
+                cursor->offset += 2;
+                uint32_t low;
+                if (!json_hex4(cursor, &low) || low < 0xdc00 || low > 0xdfff) return false;
+                codepoint = 0x10000 + ((codepoint - 0xd800) << 10) + (low - 0xdc00);
+            }
+            if (!json_append_codepoint(output, capacity, &length, codepoint)) return false;
+            break;
+        }
+        default: return false;
         }
     }
-    *out = profiles;
-    *count_out = (size_t)count;
-    return true;
-bad:
-    if (profiles) { memset(profiles, 0, (size_t)count * sizeof(*profiles)); free(profiles); }
     return false;
+}
+
+static bool json_uint32(JsonCursor *cursor, uint32_t *out)
+{
+    uint32_t value = 0;
+    json_skip_space(cursor);
+    if (cursor->offset >= cursor->length || cursor->input[cursor->offset] < '0' ||
+        cursor->input[cursor->offset] > '9') return false;
+    if (cursor->input[cursor->offset] == '0' && cursor->offset + 1 < cursor->length &&
+        cursor->input[cursor->offset + 1] >= '0' && cursor->input[cursor->offset + 1] <= '9')
+        return false;
+    do {
+        const uint32_t digit = (uint32_t)(cursor->input[cursor->offset++] - '0');
+        if (value > (UINT32_MAX - digit) / 10u) return false;
+        value = value * 10u + digit;
+    } while (cursor->offset < cursor->length && cursor->input[cursor->offset] >= '0' &&
+             cursor->input[cursor->offset] <= '9');
+    *out = value;
+    return true;
+}
+
+static bool parse_profile(JsonCursor *cursor, KatmedWebWifiProfileUpdate *profile)
+{
+    enum { SEEN_ID=1u, SEEN_SSID=2u, SEEN_PRIORITY=4u, SEEN_CREDENTIAL=8u, SEEN_PASSWORD=16u };
+    unsigned seen = 0;
+    size_t ssid_length = 0, password_length = 0;
+    char key[16], credential[9];
+    if (!json_expect(cursor, '{')) return false;
+    json_skip_space(cursor);
+    if (cursor->offset < cursor->length && cursor->input[cursor->offset] == '}') return false;
+    for (;;) {
+        size_t key_length = 0;
+        if (!json_string(cursor, key, sizeof(key), &key_length) || !json_expect(cursor, ':')) return false;
+        if (strcmp(key, "id") == 0) {
+            if ((seen & SEEN_ID) || !json_uint32(cursor, &profile->id)) return false;
+            seen |= SEEN_ID;
+        } else if (strcmp(key, "ssid") == 0) {
+            if ((seen & SEEN_SSID) || !json_string(cursor, profile->ssid,
+                    sizeof(profile->ssid), &ssid_length)) return false;
+            seen |= SEEN_SSID;
+        } else if (strcmp(key, "priority") == 0) {
+            if ((seen & SEEN_PRIORITY) || !json_uint32(cursor, &profile->priority)) return false;
+            seen |= SEEN_PRIORITY;
+        } else if (strcmp(key, "credential") == 0) {
+            if ((seen & SEEN_CREDENTIAL) || !json_string(cursor, credential,
+                    sizeof(credential), NULL)) return false;
+            if (strcmp(credential, "keep") == 0)
+                profile->credential_action = KATMED_WEB_WIFI_CREDENTIAL_KEEP;
+            else if (strcmp(credential, "replace") == 0)
+                profile->credential_action = KATMED_WEB_WIFI_CREDENTIAL_REPLACE;
+            else if (strcmp(credential, "open") == 0)
+                profile->credential_action = KATMED_WEB_WIFI_CREDENTIAL_OPEN;
+            else return false;
+            seen |= SEEN_CREDENTIAL;
+        } else if (strcmp(key, "password") == 0) {
+            if ((seen & SEEN_PASSWORD) || !json_string(cursor, profile->password,
+                    sizeof(profile->password), &password_length)) return false;
+            seen |= SEEN_PASSWORD;
+        } else {
+            return false;
+        }
+        json_skip_space(cursor);
+        if (cursor->offset < cursor->length && cursor->input[cursor->offset] == '}') {
+            ++cursor->offset;
+            break;
+        }
+        if (!json_expect(cursor, ',')) return false;
+    }
+    if ((seen & (SEEN_SSID|SEEN_PRIORITY|SEEN_CREDENTIAL|SEEN_PASSWORD)) !=
+        (SEEN_SSID|SEEN_PRIORITY|SEEN_CREDENTIAL|SEEN_PASSWORD) || profile->priority == 0 ||
+        !katmed_web_wifi_credentials_valid(profile->ssid, ssid_length, profile->password,
+                                            password_length, profile->credential_action))
+        return false;
+    return true;
+}
+
+static bool parse_profiles(const char *body, size_t body_length, size_t limit,
+                           KatmedWebWifiProfileUpdate *profiles, size_t *count_out)
+{
+    JsonCursor cursor = {.input = body, .length = body_length, .offset = 0};
+    char key[16];
+    size_t count = 0;
+    if (!json_expect(&cursor, '{') || !json_string(&cursor, key, sizeof(key), NULL) ||
+        strcmp(key, "profiles") != 0 || !json_expect(&cursor, ':') ||
+        !json_expect(&cursor, '[')) return false;
+    json_skip_space(&cursor);
+    if (cursor.offset < cursor.length && cursor.input[cursor.offset] != ']') {
+        for (;;) {
+            if (count >= limit || !parse_profile(&cursor, &profiles[count])) return false;
+            for (size_t j = 0; j < count; ++j) {
+                if ((profiles[count].id && profiles[j].id == profiles[count].id) ||
+                    strcmp(profiles[j].ssid, profiles[count].ssid) == 0) return false;
+            }
+            ++count;
+            json_skip_space(&cursor);
+            if (cursor.offset < cursor.length && cursor.input[cursor.offset] == ']') break;
+            if (!json_expect(&cursor, ',')) return false;
+        }
+    }
+    if (!json_expect(&cursor, ']') || !json_expect(&cursor, '}')) return false;
+    json_skip_space(&cursor);
+    if (cursor.offset != cursor.length) return false;
+    *count_out = count;
+    return true;
 }
 
 static esp_err_t wifi_profiles_save(httpd_req_t *req)
@@ -231,7 +400,6 @@ static esp_err_t wifi_profiles_save(httpd_req_t *req)
     char *body = NULL;
     size_t body_length = 0, limit = 0, count = 0;
     KatmedWebWifiProfileUpdate *profiles = NULL;
-    cJSON *root = NULL;
     if (!authorize(req, true)) return ESP_OK;
     if (httpd_req_get_hdr_value_str(req, "Content-Type", content_type,
                                     sizeof(content_type)) != ESP_OK ||
@@ -245,20 +413,27 @@ static esp_err_t wifi_profiles_save(httpd_req_t *req)
         return wifi_error(req, "413 Content Too Large", "wifi_input_size",
                           "Die WLAN-Profileingabe ist zu groß oder unvollständig.");
     }
-    if (strstr(body, "\\u0000") != NULL) goto invalid;
-    root = cJSON_ParseWithLength(body, body_length);
-    if (!cJSON_IsObject(root) || !parse_profiles(root, limit, &profiles, &count)) goto invalid;
+    if (limit > SIZE_MAX / sizeof(*profiles)) {
+        secure_wipe(body, body_length); free(body);
+        return wifi_error(req, "503 Service Unavailable", "wifi_unavailable",
+                          "Der WLAN-Speicher ist derzeit nicht verfügbar.");
+    }
+    if (limit) profiles = calloc(limit, sizeof(*profiles));
+    if ((limit && !profiles) || !parse_profiles(body, body_length, limit, profiles, &count)) {
+        if (profiles) { secure_wipe(profiles, limit * sizeof(*profiles)); free(profiles); }
+        secure_wipe(body, body_length); free(body);
+        return wifi_error(req, "422 Unprocessable Content", "wifi_input",
+                          "WLAN-Profile, Priorität oder Schlüssel haben ein ungültiges Format.");
+    }
     if (!wifi_services.save_profiles_atomic(wifi_services.context, profiles, count)) {
-        cJSON_Delete(root); free(body); if (profiles) { memset(profiles, 0, count * sizeof(*profiles)); free(profiles); }
+        if (profiles) { secure_wipe(profiles, limit * sizeof(*profiles)); free(profiles); }
+        secure_wipe(body, body_length); free(body);
         return wifi_error(req, "503 Service Unavailable", "wifi_save_failed",
                           "Die WLAN-Profile konnten nicht dauerhaft gespeichert werden.");
     }
-    cJSON_Delete(root); free(body); if (profiles) { memset(profiles, 0, count * sizeof(*profiles)); free(profiles); }
+    if (profiles) { secure_wipe(profiles, limit * sizeof(*profiles)); free(profiles); }
+    secure_wipe(body, body_length); free(body);
     return wifi_reply(req, "200 OK", "{\"saved\":true,\"reconnect_required\":true}");
-invalid:
-    cJSON_Delete(root); free(body); if (profiles) { memset(profiles, 0, count * sizeof(*profiles)); free(profiles); }
-    return wifi_error(req, "422 Unprocessable Content", "wifi_input",
-                      "WLAN-Profile, Priorität oder Schlüssel haben ein ungültiges Format.");
 }
 
 static esp_err_t wifi_profile_delete(httpd_req_t *req)
