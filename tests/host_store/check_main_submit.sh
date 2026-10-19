@@ -25,6 +25,7 @@ flags=(-std=c11 -Wall -Wextra -Werror -Wno-unused-variable -ffunction-sections -
     "-I${repo_root}/firmware/components/katmed_ui/include"
     "-I${repo_root}/firmware/components/katmed_core/include"
     "-I${repo_root}/firmware/components/katmed_config_bridge/include"
+    "-I${repo_root}/firmware/components/katmed_web/include"
     "-I${repo_root}/firmware/components/katmed_images/include"
     "-I${repo_root}/firmware/components/katmed_store/include"
     "-I${repo_root}/firmware/components/katmed_mesh/include"

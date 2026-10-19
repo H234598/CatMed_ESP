@@ -97,6 +97,11 @@ typedef struct {
 
 UiBlinkRenderMetrics ui_blink_render_metrics(void);
 
+/* Only the physical Settings/Status views show this one-time setup code.
+ * Main calls these functions under its existing LVGL lock, never from HTTP. */
+void ui_set_pairing_code(const char code[7]);
+void ui_clear_pairing_code(void);
+
 /* The caller serializes touch samples and renders. An invalid sample (for
  * example an I/O error) cannot release or confirm a gesture. */
 /* Called by the board before LVGL evaluates pointer buttons or scrolling. */

@@ -20,6 +20,7 @@
 #include "katmed_board.h"
 #include "katmed_core.h"
 #include "katmed_config_bridge.h"
+#include "katmed_web.h"
 #include "katmed_images.h"
 #include "katmed_mesh.h"
 #include "katmed_dhcp_diag.h"
@@ -1236,6 +1237,8 @@ void app_main(void)
 
     if (!katmed_config_bridge_start())
         ESP_LOGE(tag,"web configuration bridge unavailable");
+    else if (!katmed_web_start())
+        ESP_LOGE(tag, "HTTPS configuration listener unavailable");
 
     uint64_t last_render_ms = now.monotonic_ms;
     KatmedRuntimeMetricsGate metrics_gate = {0};
@@ -1271,6 +1274,15 @@ void app_main(void)
         now = clock_sample(runtime.boot_domain);
         restore_manual_if_ready(&runtime,&now);
         katmed_config_poll(config_execute,&runtime);
+        katmed_web_poll(now.monotonic_ms);
+        char pairing_code[7] = {0};
+        bool pairing_visible = katmed_web_pairing_code(pairing_code);
+        if (lvgl_port_lock(10)) {
+            if (pairing_visible) ui_set_pairing_code(pairing_code);
+            else ui_clear_pairing_code();
+            lvgl_port_unlock();
+        }
+        memset(pairing_code, 0, sizeof(pairing_code));
         if (runtime.mesh_started && !runtime.reboot_required)
             interaction_drain(now.monotonic_ms);
         const bool render_due = now.monotonic_ms - last_render_ms >= 50;

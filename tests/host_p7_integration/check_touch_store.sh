@@ -16,6 +16,8 @@ flags=(-std=c11 -Wall -Wextra -Werror -Wno-unused-variable
     "-I$repo/tests/host_store/stubs" "-I$repo/tests/host_main/stubs"
     "-I$repo/firmware/components/board/include"
     "-I$repo/firmware/components/katmed_ui/include"
+    "-I$repo/firmware/components/katmed_config_bridge/include"
+    "-I$repo/firmware/components/katmed_web/include"
     "-I$repo/firmware/components/katmed_core/include"
     "-I$repo/firmware/components/katmed_store/include"
     "-I$repo/firmware/components/katmed_mesh/include"
