@@ -18,7 +18,7 @@ jobs:
           target: esp32c3
           extra_docker_args: -e CI=true
           command: >-
-            apt-get update && apt-get install -y libssl-dev zlib1g-dev python3-pil &&
+            apt-get update && apt-get install -y libssl-dev zlib1g-dev python3-pil nodejs &&
             python -m pip install Pillow==11.3.0 &&
             tools/ci.sh dependencies c3 && tools/ci.sh host
   firmware:
