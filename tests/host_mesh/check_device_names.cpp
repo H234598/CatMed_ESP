@@ -171,7 +171,8 @@ void test_index_1000_and_resource_exhaustion()
 {
     Memory memory;
     Store root=open(memory,1);
-    assert(store_mesh_name_assign(&root,1,999)==STORE_OK);
+    const StoreMeshNameEntry near_boundary[]={{1,999}};
+    assert(store_mesh_name_merge(&root,nullptr,near_boundary,1)==STORE_OK);
     assert(store_mesh_name_next_index(&root)==1000);
     assert(store_mesh_name_assign(&root,2,1000)==STORE_OK);
     assert(std::strcmp(store_mesh_name(&root),"KatmedESP-999")==0);
@@ -183,6 +184,15 @@ void test_index_1000_and_resource_exhaustion()
     Store reopened=open(memory,1);
     assert(store_mesh_name_next_index(&reopened)==1001);
     assert(store_mesh_name_assign(&reopened,4,1001)==STORE_OK);
+
+    Memory exhausted_memory;
+    Store exhausted=open(exhausted_memory,55);
+    const StoreMeshNameEntry last_index[]={{55,65535}};
+    assert(store_mesh_name_merge(&exhausted,nullptr,last_index,1)==STORE_OK);
+    assert(store_mesh_name_next_index(&exhausted)==65536);
+    assert(store_mesh_name_assign(&exhausted,56,1)==STORE_STALE);
+    Store exhausted_reopened=open(exhausted_memory,55);
+    assert(store_mesh_name_next_index(&exhausted_reopened)==65536);
 
     Memory bounded_memory;
     Store bounded=open(bounded_memory,1000);

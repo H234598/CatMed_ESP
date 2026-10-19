@@ -117,7 +117,8 @@ void test_v8_mesh_name_migration_past_999() {
     Fake fixture;
     Store initial{}; StoreRecovery recovery{};
     assert(store_open(&initial,backend(fixture),kDevice,catalog,75,&recovery)==STORE_OK);
-    assert(store_mesh_name_assign(&initial,kDevice,999)==STORE_OK);
+    const StoreMeshNameEntry legacy_last[]={{kDevice,999}};
+    assert(store_mesh_name_merge(&initial,nullptr,legacy_last,1)==STORE_OK);
     assert(store_mesh_name_next_index(&initial)==1000);
     downgrade_names_to_v8(fixture);
     assert(fixture.bytes[4]==8);

@@ -940,6 +940,8 @@ StoreResult store_mesh_name_assign(Store *store, uint64_t device, uint16_t index
             return store->last_error=entry.index == index ? STORE_DUPLICATE : STORE_STALE;
         if (entry.index == index) return store->last_error=STORE_STALE;
     }
+    if (index < store->record.mesh_name_next_index)
+        return store->last_error=STORE_STALE;
     if (store->record.mesh_name_count == KATMED_MESH_NAME_MAX_ENTRIES)
         return store->last_error=STORE_FULL;
     StoreRecord next=store->record;
@@ -993,7 +995,7 @@ StoreResult store_mesh_name_merge(Store *store, AppState *active,
         bool index_used=false;
         for (unsigned j=0;j<next.mesh_name_count;++j)
             if (next.mesh_names[j].index==assigned.index) index_used=true;
-        if (index_used) {
+        if (index_used || assigned.index<next.mesh_name_next_index) {
             if (next.mesh_name_next_index>KATMED_MESH_NAME_MAX_INDEX)
                 return store->last_error=STORE_FULL;
             assigned.index=static_cast<uint16_t>(next.mesh_name_next_index++);
@@ -1003,6 +1005,14 @@ StoreResult store_mesh_name_merge(Store *store, AppState *active,
                 : uint32_t(assigned.index)+1u;
         }
         next.mesh_names[next.mesh_name_count++]=assigned;
+        if (assigned.device==next.device) {
+            char name[KATMED_DEVICE_NAME_MAX]{};
+            if (!mesh_name_text(assigned.index,name))
+                return store->last_error=STORE_INVALID;
+            next.mesh_name_state=STORE_MESH_NAME_ASSIGNED;
+            next.mesh_name_index=assigned.index;
+            std::memcpy(next.mesh_name,name,sizeof(next.mesh_name));
+        }
         changed=true;
     }
     if (!changed) return store->last_error=STORE_DUPLICATE;
