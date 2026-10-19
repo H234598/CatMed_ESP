@@ -15,7 +15,7 @@ static size_t wipe_lengths[64];
 static size_t wipe_length_count;
 void katmed_web_wifi_test_wipe_observer(const void *memory,size_t length){const unsigned char*p=memory;wipe_calls++;if(wipe_length_count<64)wipe_lengths[wipe_length_count++]=length;for(size_t i=0;i<length;i++)if(p[i]!=0)wipe_nonzero=true;}
 static bool saw_wipe_length(size_t length){for(size_t i=0;i<wipe_length_count;i++)if(wipe_lengths[i]==length)return true;return false;}
-static void assert_wiped_body(size_t body_length){assert(wipe_calls>=2);assert(!wipe_nonzero);assert(saw_wipe_length(body_length));assert(saw_wipe_length(8*sizeof(KatmedWebWifiProfileUpdate)));}
+static void assert_wiped_body(size_t body_length){assert(wipe_calls>=2);assert(!wipe_nonzero);assert(saw_wipe_length(body_length));assert(saw_wipe_length(4*sizeof(KatmedWebWifiProfileUpdate)));}
 
 typedef struct {
     KatmedWebWifiProfileView view[8];
@@ -51,7 +51,7 @@ static void req_init(httpd_req_t *r,const char *body){memset(r,0,sizeof(*r));r->
 static bool auth(httpd_req_t *req,bool mutate,void *ctx){(void)ctx;if(!req->authenticated){httpd_resp_set_status(req,"401 Unauthorized");return false;}if(mutate&&!req->csrf_ok){httpd_resp_set_status(req,"403 Forbidden");return false;}return true;}
 static bool configured(void *ctx,bool*out){(void)ctx;*out=true;return true;}
 static bool recovery(void *ctx,bool*out){(void)ctx;*out=true;return true;}
-static bool limit(void *ctx,size_t*out){(void)ctx;*out=8;return true;}
+static bool limit(void *ctx,size_t*out){(void)ctx;*out=4;return true;}
 static bool list_profiles(void *ctx,KatmedWebWifiProfileView*out,size_t cap,size_t*count){FakeWifi*f=ctx;f->list_calls++;if(f->count>cap)return false;memcpy(out,f->view,f->count*sizeof(*out));*count=f->count;return true;}
 static bool save_profiles(void *ctx,const KatmedWebWifiProfileUpdate*updates,size_t count){FakeWifi*f=ctx;f->save_calls++;if(f->fail_save||count>8)return false;KatmedWebWifiProfileView next[8]={0};char passwords[8][65]={{0}};for(size_t i=0;i<count;i++){const KatmedWebWifiProfileUpdate*u=&updates[i];next[i].id=u->id?u->id:(uint32_t)(100+i);snprintf(next[i].ssid,sizeof(next[i].ssid),"%s",u->ssid);next[i].priority=u->priority;const char*old=NULL;for(size_t j=0;j<f->count;j++)if(f->view[j].id==u->id)old=f->passwords[j];if(u->credential_action==KATMED_WEB_WIFI_CREDENTIAL_KEEP){if(!old&&u->id)return false;if(old)snprintf(passwords[i],sizeof(passwords[i]),"%s",old);}else if(u->credential_action==KATMED_WEB_WIFI_CREDENTIAL_REPLACE)snprintf(passwords[i],sizeof(passwords[i]),"%s",u->password);next[i].secured=passwords[i][0]!=0;}
  memcpy(f->view,next,sizeof(next));memcpy(f->passwords,passwords,sizeof(passwords));f->count=count;return true;}
@@ -68,9 +68,9 @@ int main(void){
  KatmedWebResetServices rs={.context=&reset,.authorize=auth,.prepare_confirmation=prepare,.confirm_and_reset=confirm_reset};
  assert(katmed_web_wifi_register((httpd_handle_t)1,&ws));assert(katmed_web_reset_register((httpd_handle_t)1,&rs));
  httpd_req_t req;req_init(&req,NULL);req.authenticated=false;assert(route("/api/wifi",HTTP_GET)(&req)==ESP_OK);assert(!strcmp(req.response_status,"401 Unauthorized"));assert(wifi.list_calls==0);
- req_init(&req,NULL);assert(route("/api/wifi",HTTP_GET)(&req)==ESP_OK);assert(strstr(req.response,"\"profile_limit\":8"));assert(strstr(req.response,"existing"));assert(!strstr(req.response,"synthetic-secret-never-return"));assert(!strstr(req.response,"password"));
- char body[4096];fill_profiles(body,sizeof(body),8);req_init(&req,body);assert(route("/api/wifi/profiles",HTTP_PUT)(&req)==ESP_OK);assert(!strcmp(req.response_status,"200 OK"));assert(wifi.count==8);for(size_t i=0;i<8;i++)assert(wifi.view[i].priority==1&&wifi.view[i].id==100+i); /* ties preserve supplied order */
- const unsigned before=wifi.save_calls;fill_profiles(body,sizeof(body),9);req_init(&req,body);assert(route("/api/wifi/profiles",HTTP_PUT)(&req)==ESP_OK);assert(!strcmp(req.response_status,"422 Unprocessable Content"));assert(wifi.save_calls==before&&wifi.count==8);
+ req_init(&req,NULL);assert(route("/api/wifi",HTTP_GET)(&req)==ESP_OK);assert(strstr(req.response,"\"profile_limit\":4"));assert(strstr(req.response,"existing"));assert(!strstr(req.response,"synthetic-secret-never-return"));assert(!strstr(req.response,"password"));
+ char body[4096];fill_profiles(body,sizeof(body),4);req_init(&req,body);assert(route("/api/wifi/profiles",HTTP_PUT)(&req)==ESP_OK);assert(!strcmp(req.response_status,"200 OK"));assert(wifi.count==4);for(size_t i=0;i<4;i++)assert(wifi.view[i].priority==1&&wifi.view[i].id==100+i); /* ties preserve supplied order */
+ const unsigned before=wifi.save_calls;fill_profiles(body,sizeof(body),5);req_init(&req,body);assert(route("/api/wifi/profiles",HTTP_PUT)(&req)==ESP_OK);assert(!strcmp(req.response_status,"422 Unprocessable Content"));assert(wifi.save_calls==before&&wifi.count==4);
  const char secret_body[]="{\"profiles\":[{\"ssid\":\"changed\",\"priority\":2,\"credential\":\"replace\",\"password\":\"synthetic-route-secret\"}]}";
  wipe_calls=wipe_length_count=0;wipe_nonzero=false;req_init(&req,secret_body);assert(route("/api/wifi/profiles",HTTP_PUT)(&req)==ESP_OK);assert(!strcmp(req.response_status,"200 OK"));assert_wiped_body(strlen(secret_body));assert(!strstr(req.response,"synthetic-route-secret"));
  const char old_ssid[]="changed";const unsigned saves_before_failure=wifi.save_calls;
