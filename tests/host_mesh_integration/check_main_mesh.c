@@ -13,6 +13,10 @@ static unsigned mesh_stops;
 static unsigned restarts;
 static const esp_app_desc_t app_desc={"testbuild"};
 
+KatmedResetJournalBackend katmed_reset_idf_backend(void) {
+    return (KatmedResetJournalBackend){0};
+}
+
 const esp_app_desc_t *esp_app_get_description(void) { return &app_desc; }
 int esp_app_get_elf_sha256(char *out,size_t capacity) {
     if (capacity<9) return -1;
@@ -58,7 +62,7 @@ static void queue_provision(unsigned char group,unsigned char secret)
     line_ready=true;
 }
 
-static void reset_backend(void)
+static void reset_test_backend(void)
 {
     committed_length=0;
     writes=0;
@@ -75,7 +79,7 @@ static void reset_backend(void)
 
 int main(void)
 {
-    reset_backend();
+    reset_test_backend();
     const uint64_t first_boot_domain=runtime.boot_domain;
     assert(first_boot_domain!=0 && first_boot_domain!=runtime.boot.epoch);
     initialize_runtime();
@@ -87,7 +91,7 @@ int main(void)
     const uint64_t device99_domain=new_boot_domain((EventId){99,1,1});
     fake_random_counter=saved_rng;
     assert(device11_domain!=device99_domain);
-    reset_backend();
+    reset_test_backend();
     /* A foreign device can have the same persisted boot epoch number. Its
      * milliseconds are not this device's monotonic clock. */
     fake_microseconds=2000000;
@@ -153,7 +157,7 @@ int main(void)
     assert(runtime.time_sequence_end-runtime.time_sequence==1023);
     (void)prior;
 
-    reset_backend();
+    reset_test_backend();
     fake_microseconds=2000000;
     assert(submit_ui(&runtime,&confirm)==UI_SUBMIT_PENDING);
     assert(runtime.store.record.pending_count==1);
@@ -177,7 +181,7 @@ int main(void)
                local_event.occurred_at.domain &&
            runtime.state.alarm_active && runtime.state.start_reason==START_BOOT);
 
-    reset_backend();
+    reset_test_backend();
     queue_provision(0x33,0x44);
     const ClockSample first_setup=clock_sample(runtime.boot_domain);
     process_usb(&runtime,&first_setup);
@@ -231,7 +235,7 @@ int main(void)
            runtime.store.record.pending_count==1 &&
            runtime.store.record.last_confirmation.valid);
 
-    reset_backend();
+    reset_test_backend();
     queue_provision(0x33,0x44);
     const ClockSample empty_first=clock_sample(runtime.boot_domain);
     process_usb(&runtime,&empty_first);
@@ -245,7 +249,7 @@ int main(void)
            runtime.state.alarm_active && runtime.state.start_reason==START_BOOT &&
            runtime.store.record.pending_count==0);
 
-    reset_backend();
+    reset_test_backend();
     const AlarmRoundId old_round=runtime.state.round;
     const StateRevision root_revision=runtime.state.revision;
     fake_microseconds=2000000;

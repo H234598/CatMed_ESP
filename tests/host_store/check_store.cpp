@@ -57,8 +57,21 @@ void downgrade_names_to_v8(Fake &f) {
     f.bytes[4]=8;
     repair_crc(f);
 }
+void remove_v10_wifi_profiles(Fake &f) {
+    assert(f.bytes[4]==10 && f.length>=17);
+    size_t suffix=0; unsigned matches=0;
+    for (unsigned count=0;count<=KATMED_STORE_WIFI_PROFILE_MAX;++count) {
+        const size_t candidate=5u+static_cast<size_t>(count)*103u;
+        if (f.length>candidate && f.bytes[f.length-candidate]==count) {
+            suffix=candidate; ++matches;
+        }
+    }
+    assert(matches==1 && f.length>suffix);
+    f.length-=suffix; f.bytes[4]=9; repair_crc(f);
+}
 void remove_v7_manual(Fake &f) {
-    remove_v9_names(f);
+    if (f.bytes[4]==10) remove_v10_wifi_profiles(f);
+    if (f.bytes[4]==9) remove_v9_names(f);
     assert(f.bytes[4]==7 && f.length>77);
     f.length-=77; // v7 appends one bounded manual-deadline projection.
     f.bytes[4]=6;
@@ -157,7 +170,7 @@ void test_corrupt_legacy_future() {
     }
     {
         Fake f=original;
-        remove_v9_names(f);
+        remove_v7_manual(f);
         f.bytes[f.length-78]=3; // v6 origin before the v7 manual projection.
         repair_crc(f);
         StoreRecovery x{}; const unsigned before=f.writes;
@@ -480,13 +493,31 @@ void test_usb() {
     const unsigned before=f.writes;
     assert(store_usb_handle_line(s,cmd.data(),cmd.size(),&info,reply,sizeof(reply))==STORE_OK);
     assert(std::strcmp(reply,"KM1 OK PROVISION\n")==0 && f.writes==before+1);
+    Fake legacy_v7=f; remove_v7_manual(legacy_v7);
+    Store migrated_v7_storage{}; Store *migrated_v7=&migrated_v7_storage;
+    StoreRecovery migrated_recovery{};
+    assert(store_open(migrated_v7,backend(legacy_v7),kDevice,catalog,75,
+                      &migrated_recovery)==STORE_OK);
+    StoreWifiProfile migrated_profiles[KATMED_STORE_WIFI_PROFILE_MAX]{};
+    size_t migrated_count=0;
+    assert(store_wifi_profiles_load(migrated_v7,migrated_profiles,
+                                    KATMED_STORE_WIFI_PROFILE_MAX,
+                                    &migrated_count)==STORE_OK);
+    assert(migrated_count==1 && migrated_profiles[0].id==1 &&
+           migrated_profiles[0].priority==1 &&
+           migrated_profiles[0].ssid_length==sizeof(ssid) &&
+           std::memcmp(migrated_profiles[0].ssid,ssid,sizeof(ssid))==0 &&
+           migrated_profiles[0].password_length==sizeof(pw) &&
+           std::memcmp(migrated_profiles[0].password,pw,sizeof(pw))==0);
     {
         Fake forged=f;
         constexpr size_t mesh_name_suffix=1+17+2+1+KATMED_MESH_NAME_MAX_ENTRIES*10+4;
-        forged.bytes[forged.length-mesh_name_suffix]=9; // Invalid v9 name state.
+        constexpr size_t wifi_suffix=5u+103u;
+        forged.bytes[forged.length-wifi_suffix-mesh_name_suffix]=9; // Invalid mesh-name state.
         repair_crc(forged);
         StoreRecovery x{}; const unsigned before_forged=forged.writes;
-        assert(store_open(fresh_store(),backend(forged),kDevice,catalog,75,&x)==STORE_CORRUPT);
+        Store forged_store{};
+        assert(store_open(&forged_store,backend(forged),kDevice,catalog,75,&x)==STORE_CORRUPT);
         assert(forged.writes==before_forged);
     }
     assert(store_usb_handle_line(s,status,sizeof(status)-1,&info,reply,sizeof(reply))==STORE_OK);

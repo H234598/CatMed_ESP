@@ -121,6 +121,7 @@ void esp_fill_random(void *out,size_t n){auto *p=static_cast<uint8_t *>(out);for
 const esp_app_desc_t *esp_app_get_description(){static esp_app_desc_t app{{'d','9','4','1','f','a','e',0}};return &app;}
 void esp_mesh_lite_init(esp_mesh_lite_config_t *){}
 void esp_mesh_lite_start(){}
+esp_err_t esp_mesh_lite_connect(){return ESP_OK;}
 uint8_t esp_mesh_lite_get_level(){return level;}
 esp_err_t esp_mesh_lite_disconnect(){level=0;return ESP_OK;}
 esp_err_t esp_mesh_lite_set_argot(uint32_t){return ESP_OK;}

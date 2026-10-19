@@ -3,7 +3,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 out="$(mktemp -d -p /tmp katmed-main-mesh-XXXXXX)"
 trap 'python3 -c "import shutil,sys; shutil.rmtree(sys.argv[1])" "$out"' EXIT
-flags=(-std=c11 -Wall -Wextra -Werror -Wno-unused-variable -ffunction-sections -fdata-sections
+flags=(-std=c11 -Wall -Wextra -Werror -Wno-error=cpp -Wno-unused-variable -ffunction-sections -fdata-sections
     -DKATMED_FULL_STACK=1 -DKATMED_WITH_CORE=1
     "-DLV_CONF_PATH=\"${repo_root}/firmware/components/katmed_images/host/lv_conf.h\""
     -DLV_KCONFIG_IGNORE -DLV_LVGL_H_INCLUDE_SIMPLE
@@ -14,6 +14,10 @@ flags=(-std=c11 -Wall -Wextra -Werror -Wno-unused-variable -ffunction-sections -
     "-I${repo_root}/firmware/components/katmed_core/include"
     "-I${repo_root}/firmware/components/katmed_images/include"
     "-I${repo_root}/firmware/components/katmed_store/include"
+    "-I${repo_root}/firmware/components/katmed_config_bridge/include"
+    "-I${repo_root}/firmware/components/katmed_reset/include"
+    "-I${repo_root}/firmware/components/katmed_web/include"
+    "-I${repo_root}/firmware/components/katmed_acme/include"
     "-I${repo_root}/firmware/components/katmed_mesh/include"
     "-I${repo_root}/firmware/components/katmed_time/include"
     "-I${repo_root}/firmware/main"

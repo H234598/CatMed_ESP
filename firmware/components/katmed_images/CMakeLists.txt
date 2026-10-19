@@ -28,7 +28,8 @@ endif()
 
 idf_component_register(
     SRCS "katmed_images_hash.c" "katmed_images_reader.c" "katmed_images_lvgl.c"
-         "katmed_images_idf.c" "katmed_image_store_idf.c" "${KATMED_CATALOG_SOURCE}"
+         "katmed_images_idf.c" "katmed_image_store_idf.c"
+         "katmed_image_store_cleanup.c" "${KATMED_CATALOG_SOURCE}"
     INCLUDE_DIRS "include"
     PRIV_INCLUDE_DIRS "."
     REQUIRES katmed_core lvgl esp_partition

@@ -1,5 +1,6 @@
 #include "katmed_image_store.h"
 #include "katmed_images_internal.h"
+#include "katmed_image_store_cleanup.h"
 
 #include "esp_err.h"
 #include "esp_littlefs.h"
@@ -205,6 +206,10 @@ KatmedImageStatus katmed_image_store_mount(void)
     } else if (!S_ISDIR(info.st_mode)) {
         (void)esp_vfs_littlefs_unregister(STORE_PARTITION);
         return KATMED_IMAGE_BAD_CATALOG;
+    }
+    if (!katmed_image_store_cleanup_orphan_uploads(STORE_DIRECTORY)) {
+        (void)esp_vfs_littlefs_unregister(STORE_PARTITION);
+        return KATMED_IMAGE_IO_ERROR;
     }
     mounted = true;
     return KATMED_IMAGE_OK;
@@ -469,16 +474,6 @@ KatmedImageStatus katmed_image_store_stats(KatmedImageStoreStats *out)
     return KATMED_IMAGE_OK;
 }
 
-static bool temporary_name(const char *name)
-{
-    if (strlen(name)!=20u || memcmp(name,".upload-",8u)!=0 ||
-        memcmp(name+16u,".tmp",4u)!=0) return false;
-    for (size_t i=8u;i<16u;++i)
-        if (!((name[i]>='0'&&name[i]<='9') || (name[i]>='a'&&name[i]<='f') ||
-              (name[i]>='A'&&name[i]<='F'))) return false;
-    return true;
-}
-
 KatmedImageStatus katmed_image_store_clear_user_data(void)
 {
     if (!enter_store()) return KATMED_IMAGE_UNAVAILABLE;
@@ -497,7 +492,8 @@ KatmedImageStatus katmed_image_store_clear_user_data(void)
     while ((entry=readdir(directory))!=NULL) {
         if (strcmp(entry->d_name,".")==0 || strcmp(entry->d_name,"..")==0) continue;
         uint32_t id=0;
-        if (!parse_image_name(entry->d_name,&id) && !temporary_name(entry->d_name)) {
+        if (!parse_image_name(entry->d_name,&id) &&
+            !katmed_image_store_temporary_name(entry->d_name)) {
             result=KATMED_IMAGE_IO_ERROR; break;
         }
         char path[56];

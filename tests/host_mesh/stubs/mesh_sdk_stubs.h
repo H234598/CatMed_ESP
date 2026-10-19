@@ -8,8 +8,11 @@ constexpr esp_err_t ESP_ERR_INVALID_STATE=0x103;
 using esp_event_base_t=const char *;
 inline constexpr char kHostIpEvent[]="IP_EVENT";
 #define IP_EVENT kHostIpEvent
+inline constexpr char kHostWifiEvent[]="WIFI_EVENT";
+#define WIFI_EVENT kHostWifiEvent
 constexpr int32_t IP_EVENT_STA_GOT_IP=1;
 constexpr int32_t IP_EVENT_STA_LOST_IP=2;
+constexpr int32_t WIFI_EVENT_STA_DISCONNECTED=3;
 using esp_event_handler_t=void (*)(void *,esp_event_base_t,int32_t,void *);
 esp_err_t esp_event_loop_create_default();
 esp_err_t esp_event_handler_register(esp_event_base_t,int32_t,esp_event_handler_t,void *);
@@ -61,6 +64,7 @@ struct esp_mesh_lite_msg_config_t {
 constexpr int ESP_MESH_LITE_RAW_MSG=1;
 void esp_mesh_lite_init(esp_mesh_lite_config_t *);
 void esp_mesh_lite_start();
+esp_err_t esp_mesh_lite_connect();
 uint8_t esp_mesh_lite_get_level();
 esp_err_t esp_mesh_lite_disconnect();
 esp_err_t esp_mesh_lite_set_argot(uint32_t);
