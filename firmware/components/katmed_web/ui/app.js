@@ -244,7 +244,9 @@
       notice("Passwort eingerichtet. Bitte anmelden.");
       await refreshBootstrap();
     } catch (error) {
-      await handleFailure(error);
+      if (error.status === 401 && error.code === "denied")
+        notice("Einmalcode ungültig oder abgelaufen. Bitte Code am Display prüfen.", true);
+      else await handleFailure(error);
     } finally { setBusy(form, false); }
   });
 
@@ -264,16 +266,18 @@
   });
 
   $("cert-login").addEventListener("click", async (event) => {
-    event.currentTarget.disabled = true;
+    const button = event.currentTarget;
+    button.disabled = true;
     try {
       notice("");
       await applyBootstrap(await api("/api/login", "POST", { method: "certificate" }));
     } catch (error) { await handleLoginFailure(error); }
-    finally { event.currentTarget.disabled = false; }
+    finally { button.disabled = false; }
   });
 
   $("logout").addEventListener("click", async (event) => {
-    event.currentTarget.disabled = true;
+    const button = event.currentTarget;
+    button.disabled = true;
     try {
       await api("/api/logout", "POST", {});
       state.bootstrap = null;
@@ -283,7 +287,7 @@
       await refreshBootstrap();
       notice("Abgemeldet.");
     } catch (error) { await handleFailure(error); }
-    finally { event.currentTarget.disabled = false; }
+    finally { button.disabled = false; }
   });
 
   for (const form of document.querySelectorAll("form[data-field]")) {
@@ -314,7 +318,11 @@
       form.reset();
       await loadCertificate();
       notice("Clientzertifikat freigegeben.");
-    } catch (error) { await handleFailure(error); }
+    } catch (error) {
+      if (error.status === 401 && error.code === "denied")
+        notice("Passwort zur Zertifikatsfreigabe ist falsch.", true);
+      else await handleFailure(error);
+    }
     finally { setBusy(form, false); }
   });
 
@@ -327,7 +335,11 @@
       form.reset();
       await loadCertificate();
       notice("Clientzertifikat-Freigabe entfernt.");
-    } catch (error) { await handleFailure(error); }
+    } catch (error) {
+      if (error.status === 401 && error.code === "denied")
+        notice("Passwort zum Entfernen der Zertifikatsfreigabe ist falsch.", true);
+      else await handleFailure(error);
+    }
     finally { setBusy(form, false); }
   });
 

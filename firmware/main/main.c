@@ -57,6 +57,8 @@ typedef struct {
     char witness_nonce[33]; /* One request, one boot, never persisted. */
     bool witness_armed;
     bool manual_restore_attempted;
+    bool manual_restore_waiting;
+    bool manual_restore_rejected;
     KatmedRestoreStatus manual_restore_status;
 } Runtime;
 
@@ -308,6 +310,10 @@ static void mesh_shared_result(void *context, EventId id, bool accepted)
     if (!rt || !rt->shared_pending || !same_id(id, rt->shared_id)) return;
     rt->shared_pending = false;
     rt->shared_feedback = accepted ? 1 : -1;
+    if (rt->manual_restore_waiting) {
+        rt->manual_restore_waiting = false;
+        if (!accepted) rt->manual_restore_rejected = true;
+    }
 }
 
 static UiSubmitResult submit_ui(void *context, const UiRequest *request)
@@ -650,6 +656,15 @@ static void config_execute(void *context, const KatmedConfigRequest *request,
 
 static void restore_manual_if_ready(Runtime *rt, const ClockSample *now)
 {
+    if (rt->manual_restore_rejected) {
+        if (rt->store_ready && !rt->reboot_required &&
+            store_clear_manual_intent(&rt->store)==STORE_OK) {
+            rt->manual_restore_status=KATMED_RESTORE_CONFLICT;
+            rt->manual_restore_rejected=false;
+            rt->manual_restore_attempted=true;
+        }
+        return;
+    }
     if (!rt->store_ready || rt->manual_restore_attempted || rt->reboot_required ||
         !rt->store.record.manual_intent.pending || !now->utc_valid) return;
     const StoreManualIntent intent=rt->store.record.manual_intent;
@@ -690,7 +705,17 @@ static void restore_manual_if_ready(Runtime *rt, const ClockSample *now)
         .value.local_time={.hour=intent.hour,.minute=intent.minute,.preview=preview},
     };
     const UiSubmitResult result=submit_ui(rt,&request);
-    if (result!=UI_SUBMIT_UNAVAILABLE) rt->manual_restore_attempted=true;
+    if (result==UI_SUBMIT_REJECTED || result==UI_SUBMIT_STALE) {
+        /* A definitive rejection cannot leave the old intent advertised as
+         * paused across this boot or the next one. Retry a failed clear. */
+        if (store_clear_manual_intent(&rt->store)==STORE_OK) {
+            rt->manual_restore_status=KATMED_RESTORE_CONFLICT;
+            rt->manual_restore_attempted=true;
+        }
+    } else if (result!=UI_SUBMIT_UNAVAILABLE) {
+        if (result==UI_SUBMIT_PENDING_SHARED) rt->manual_restore_waiting=true;
+        rt->manual_restore_attempted=true;
+    }
 }
 
 /* Read current SDK interfaces, never stored provisioning addresses. A cached

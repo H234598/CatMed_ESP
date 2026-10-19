@@ -80,13 +80,14 @@ def run(info):
     assert "setup_code" not in bootstrap and "pairing_code" not in bootstrap
     expect(401, request(info, "/api/config"))
     setup = {"password": PASSWORD, "setup_nonce": bootstrap["setup_nonce"]}
-    expect(422, request(info, "/api/setup", "POST", {**setup, "setup_code": "000000"}))
+    expect(401, request(info, "/api/setup", "POST", {**setup, "setup_code": "000000"}))
     assert json_body(expect(200, request(info, "/api/bootstrap")))["setup_required"]
     expect(200, request(info, "/api/setup", "POST", {**setup, "setup_code": "314159"}))
     expect(409, request(info, "/api/setup", "POST", {**setup, "setup_code": "314159"}))
     expect(401, request(info, "/api/login", "POST", {"method": "password", "password": "wrong"}))
     login = expect(200, request(info, "/api/login", "POST", {"method": "password", "password": PASSWORD}))
     cookie_header = login[1]["Set-Cookie"]
+    assert cookie_header.startswith("katmed_session=")
     assert all(part in cookie_header for part in ("Secure", "HttpOnly", "SameSite=Strict"))
     cookie = cookie_header.split(";", 1)[0]
     csrf = json_body(login)["csrf_token"]
@@ -108,7 +109,7 @@ def run(info):
     assert json_body(expect(200, request(info, "/api/config", cookie=cookie)))["next_due_hhmm"] == "09:45"
 
     pem = Path(info["client_cert"]).read_text()
-    expect(403, request(info, "/api/client-cert", "POST", {"certificate_pem": pem, "password": "wrong"}, cookie, csrf))
+    expect(401, request(info, "/api/client-cert", "POST", {"certificate_pem": pem, "password": "wrong"}, cookie, csrf))
     expect(200, request(info, "/api/client-cert", "POST", {"certificate_pem": pem, "password": PASSWORD}, cookie, csrf))
     assert json_body(expect(200, request(info, "/api/client-cert", cookie=cookie)))["enrolled"]
     expect(401, request(info, "/api/login", "POST", {"method": "certificate"}))
@@ -116,7 +117,7 @@ def run(info):
     assert json_body(cert_login)["auth_method"] == "certificate"
     cookie = cert_login[1]["Set-Cookie"].split(";", 1)[0]
     csrf = json_body(cert_login)["csrf_token"]
-    expect(403, request(info, "/api/client-cert", "DELETE", {"password": "wrong"}, cookie, csrf))
+    expect(401, request(info, "/api/client-cert", "DELETE", {"password": "wrong"}, cookie, csrf))
     expect(200, request(info, "/api/client-cert", "DELETE", {"password": PASSWORD}, cookie, csrf))
     expect(401, request(info, "/api/login", "POST", {"method": "certificate"}, client=True))
     expect(200, request(info, "/api/logout", "POST", {}, cookie, csrf))

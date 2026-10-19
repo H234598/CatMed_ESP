@@ -84,7 +84,7 @@ class Handler(BaseHTTPRequestHandler):
             cookie.load(self.headers.get("Cookie", ""))
         except Exception:
             return False
-        return STATE.password is not None and STATE.session is not None and cookie.get("km_fixture") is not None and cookie["km_fixture"].value == STATE.session
+        return STATE.password is not None and STATE.session is not None and cookie.get("katmed_session") is not None and cookie["katmed_session"].value == STATE.session
 
     def csrf_ok(self):
         return self.headers.get("X-Katmed-CSRF") == STATE.csrf
@@ -148,7 +148,9 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == "/api/setup" and method == "POST":
                 if STATE.password is not None:
                     self.send_json(409, {"error": "already_setup"})
-                elif data.get("setup_nonce") != STATE.nonce or data.get("setup_code") != STATE.setup_code or not isinstance(data.get("password"), str) or len(data["password"]) < 12:
+                elif data.get("setup_nonce") != STATE.nonce or data.get("setup_code") != STATE.setup_code:
+                    self.send_json(401, {"error": "denied"})
+                elif not isinstance(data.get("password"), str) or len(data["password"]) < 12:
                     self.send_json(422, {"error": "invalid"})
                 else:
                     STATE.password = data["password"]
@@ -163,7 +165,7 @@ class Handler(BaseHTTPRequestHandler):
                     STATE.csrf = secrets.token_hex(16)
                     STATE.auth_method = data["method"]
                     self.send_json(200, self.bootstrap(True),
-                                   f"km_fixture={STATE.session}; Path=/; Secure; HttpOnly; SameSite=Strict")
+                                   f"katmed_session={STATE.session}; Path=/; Secure; HttpOnly; SameSite=Strict")
                 else:
                     self.send_json(401, {"error": "unauthorized"})
                 return
@@ -177,7 +179,7 @@ class Handler(BaseHTTPRequestHandler):
                 STATE.session = None
                 STATE.csrf = None
                 STATE.auth_method = None
-                self.send_json(200, {}, "km_fixture=; Path=/; Max-Age=0; Secure; HttpOnly; SameSite=Strict")
+                self.send_json(200, {}, "katmed_session=; Path=/; Max-Age=0; Secure; HttpOnly; SameSite=Strict")
             elif self.path == "/api/config/preview-time" and method == "POST":
                 time = data.get("time")
                 if data.get("revision") != f"r{STATE.revision}":
@@ -213,7 +215,7 @@ class Handler(BaseHTTPRequestHandler):
             elif self.path == "/api/client-cert" and method == "POST":
                 pem = data.get("certificate_pem")
                 if data.get("password") != STATE.password or not isinstance(pem, str):
-                    self.send_json(403, {"error": "unauthorized"})
+                    self.send_json(401, {"error": "denied"})
                 else:
                     try:
                         der = ssl.PEM_cert_to_DER_cert(pem)
@@ -223,7 +225,7 @@ class Handler(BaseHTTPRequestHandler):
                         self.send_json(422, {"error": "invalid"})
             elif self.path == "/api/client-cert" and method == "DELETE":
                 if data.get("password") != STATE.password:
-                    self.send_json(403, {"error": "unauthorized"})
+                    self.send_json(401, {"error": "denied"})
                 else:
                     STATE.enrolled_der = None
                     self.send_json(200, {"enrolled": False})

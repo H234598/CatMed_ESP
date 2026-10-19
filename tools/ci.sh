@@ -59,6 +59,7 @@ elif [[ "$mode" == host ]]; then
     bash tests/host_store/check_store.sh
     bash tests/host_config_bridge/check_bridge.sh
     bash tests/host_web_auth/check_web_auth.sh
+    node tests/host_web_ui/check_async_buttons.js
     python3 tests/host_web_ui/check_contract.py
     bash tests/host_store/check_main_submit.sh
     bash tests/host_mesh/check_engine.sh

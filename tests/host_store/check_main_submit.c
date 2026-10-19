@@ -231,6 +231,58 @@ int main(void)
     const size_t saved_before_expiry_length=committed_length;
     memcpy(saved_before_expiry,committed,committed_length);
     initialize_runtime();
+    runtime.mesh_started=true;
+    katmed_time_init(&runtime.time,runtime.boot_domain);
+    assert(katmed_time_accept_utc(&runtime.time,(uint64_t)(fake_microseconds/1000),
+                                  earlier,CLOCK_SYNCHRONIZED));
+    ClockSample rejected_now=clock_sample(runtime.boot_domain);
+    assert(apply_time_sample(&runtime,&rejected_now));
+    assert(runtime.state.alarm_active && runtime.store.record.manual_intent.pending);
+    fake_microseconds+=1000000;
+    assert(submit_ui(&runtime,&confirm)==UI_SUBMIT_COMMITTED);
+    fake_mesh_result=MESH_REJECTED;
+    rejected_now=clock_sample(runtime.boot_domain);
+    restore_manual_if_ready(&runtime,&rejected_now);
+    assert(runtime.manual_restore_attempted &&
+           runtime.manual_restore_status==KATMED_RESTORE_CONFLICT &&
+           !runtime.store.record.manual_intent.pending);
+    web=(KatmedConfigRequest){.operation=KATMED_CONFIG_GET};
+    config_execute(&runtime,&web,&web_reply);
+    assert(web_reply.status==KATMED_CONFIG_OK &&
+           web_reply.snapshot.next_due_state!=KATMED_DUE_PAUSED_BOOT &&
+           web_reply.snapshot.restore_status==KATMED_RESTORE_CONFLICT);
+    initialize_runtime();
+    assert(!runtime.store.record.manual_intent.pending); /* Durable rejection. */
+    memcpy(committed,saved_before_expiry,saved_before_expiry_length);
+    committed_length=saved_before_expiry_length;
+    initialize_runtime();
+    runtime.mesh_started=true;
+    katmed_time_init(&runtime.time,runtime.boot_domain);
+    assert(katmed_time_accept_utc(&runtime.time,(uint64_t)(fake_microseconds/1000),
+                                  earlier,CLOCK_SYNCHRONIZED));
+    ClockSample delayed_now=clock_sample(runtime.boot_domain);
+    assert(apply_time_sample(&runtime,&delayed_now));
+    fake_mesh_coordinator=false;
+    fake_mesh_connected=true;
+    fake_mesh_result=MESH_PENDING;
+    fake_microseconds+=1000000;
+    assert(submit_ui(&runtime,&confirm)==UI_SUBMIT_PENDING);
+    delayed_now=clock_sample(runtime.boot_domain);
+    restore_manual_if_ready(&runtime,&delayed_now);
+    assert(runtime.manual_restore_waiting && runtime.shared_pending &&
+           runtime.store.record.manual_intent.pending);
+    mesh_shared_result(&runtime,fake_shared_event.id,false);
+    restore_manual_if_ready(&runtime,&delayed_now);
+    assert(!runtime.manual_restore_waiting && !runtime.manual_restore_rejected &&
+           runtime.manual_restore_status==KATMED_RESTORE_CONFLICT &&
+           !runtime.store.record.manual_intent.pending);
+    initialize_runtime();
+    assert(!runtime.store.record.manual_intent.pending); /* Delayed rejection durable. */
+    fake_mesh_coordinator=true;
+    fake_mesh_result=MESH_ACCEPTED;
+    memcpy(committed,saved_before_expiry,saved_before_expiry_length);
+    committed_length=saved_before_expiry_length;
+    initialize_runtime();
     katmed_time_init(&runtime.time,runtime.boot_domain);
     assert(katmed_time_accept_utc(&runtime.time,(uint64_t)(fake_microseconds/1000),
         preview.regular_utc.ms+600000,CLOCK_SYNCHRONIZED));
