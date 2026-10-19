@@ -2,7 +2,8 @@
 
 (() => {
   const $ = (id) => document.getElementById(id);
-  const state = { bootstrap: null, config: null, preview: null };
+  const state = { bootstrap: null, config: null, preview: null, wifiProfiles: [],
+    wifiLimit: 0, advancedScrollY: 0, resetToken: null };
   const views = ["setup-view", "login-view", "private-view"];
   const fields = ["medication_hours", "image_hours", "next_due_hhmm", "clock_style", "orientation", "rotation"];
   const controls = {
@@ -10,6 +11,7 @@
     next_due_hhmm: "due-time", clock_style: "clock-style",
     orientation: "orientation", rotation: "rotation"
   };
+  let advancedTouchStart = null;
 
   function notice(message, error = false) {
     const node = $("notice");
@@ -45,12 +47,13 @@
 
   async function api(path, method = "GET", body = null) {
     const headers = { Accept: "application/json" };
-    if (body !== null) headers["Content-Type"] = "application/json";
+    const rawBody = typeof Blob !== "undefined" && body instanceof Blob;
+    if (body !== null) headers["Content-Type"] = rawBody ? body.type : "application/json";
     if (method !== "GET" && state.bootstrap?.csrf_token)
       headers["X-Katmed-CSRF"] = state.bootstrap.csrf_token;
     const response = await fetch(path, {
       method, headers, credentials: "same-origin", cache: "no-store",
-      redirect: "error", body: body === null ? undefined : JSON.stringify(body)
+      redirect: "error", body: body === null ? undefined : rawBody ? body : JSON.stringify(body)
     });
     const contentType = response.headers.get("Content-Type") || "";
     const data = contentType.includes("application/json") ? await response.json() : null;
@@ -120,6 +123,116 @@
     renderCertificate(await api("/api/client-cert"));
   }
 
+  async function loadWifi() {
+    const wifi = await api("/api/wifi");
+    if (!wifi || typeof wifi.configured !== "boolean" ||
+        typeof wifi.recovery_available !== "boolean" ||
+        !Number.isSafeInteger(wifi.profile_limit) || wifi.profile_limit < 0 ||
+        !Array.isArray(wifi.profiles) || wifi.profiles.length > wifi.profile_limit ||
+        wifi.profiles.some((p) => !p || !Number.isSafeInteger(p.id) ||
+          typeof p.ssid !== "string" || !p.ssid || !Number.isSafeInteger(p.priority) ||
+          p.priority < 1 || typeof p.secured !== "boolean"))
+      throw new Error("Invalid WLAN status response");
+    state.wifiProfiles = wifi.profiles.map((p) => ({...p}));
+    state.wifiLimit = wifi.profile_limit;
+    $("wifi-state").textContent = wifi.configured ?
+      ("WLAN-Daten gespeichert. Wiederherstellungsweg " +
+       (wifi.recovery_available ? "verfügbar." : "nicht verfügbar.")) :
+      "Noch keine gespeicherten WLAN-Daten. Firmware-Standardwerte können weiter gelten.";
+    $("wifi-limit").textContent = `${wifi.profiles.length} von ${wifi.profile_limit} WLAN-Profilen belegt. Priorität 1 ist die höchste.`;
+    $("wifi-reconnect").disabled = wifi.profiles.length === 0;
+    renderWifiProfiles();
+  }
+
+  function renderWifiProfiles() {
+    const list = $("wifi-profile-list");
+    list.replaceChildren();
+    const ordered = state.wifiProfiles.map((profile, index) => ({profile, index}))
+      .sort((a, b) => a.profile.priority - b.profile.priority || a.index - b.index);
+    for (const {profile, index} of ordered) {
+      const item = document.createElement("li");
+      const summary = document.createElement("span");
+      summary.textContent = `Priorität ${profile.priority} · ${profile.ssid} · ${profile.secured ? "Schlüssel gespeichert" : "offenes WLAN"}`;
+      const actions = document.createElement("span");
+      actions.className = "actions";
+      const edit = document.createElement("button");
+      edit.type = "button";
+      edit.className = "secondary";
+      edit.textContent = "Bearbeiten";
+      edit.dataset.profileEdit = String(index);
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "danger";
+      remove.textContent = "Entfernen";
+      remove.dataset.profileDelete = String(profile.id);
+      actions.append(edit, remove);
+      item.append(summary, actions);
+      list.append(item);
+    }
+    $("wifi-profile-save").textContent = $("wifi-profile-form").dataset.editId ?
+      "Profiländerung speichern" : "Profil zur Liste hinzufügen";
+    $("wifi-profile-save").disabled = state.wifiProfiles.length >= state.wifiLimit &&
+      !$("wifi-profile-form").dataset.editId;
+  }
+
+  function openAdvanced() {
+    state.advancedScrollY = window.scrollY;
+    $("main-settings").hidden = true;
+    $("advanced-view").hidden = false;
+    window.scrollTo(0, 0);
+    history.pushState({katmedAdvanced: true}, "", "#advanced");
+    $("advanced-view").focus({preventScroll: true});
+  }
+
+  function closeAdvanced(restore = true) {
+    $("advanced-view").hidden = true;
+    $("main-settings").hidden = false;
+    if (location.hash === "#advanced") history.replaceState({}, "", location.pathname + location.search);
+    if (restore) window.scrollTo(0, state.advancedScrollY);
+  }
+
+  function renderImages(page, append = false) {
+    if (!page || !Array.isArray(page.images) ||
+        !Number.isSafeInteger(page.used_bytes) || !Number.isSafeInteger(page.free_bytes) ||
+        !Number.isSafeInteger(page.image_count) || typeof page.next_offset !== "boolean" ||
+        page.images.some((image) => !image || !Number.isSafeInteger(image.id) ||
+          !Number.isSafeInteger(image.bytes) || !Number.isSafeInteger(image.width) ||
+          !Number.isSafeInteger(image.height)))
+      throw new Error("Invalid image list response");
+    const list = $("image-list");
+    if (!append) list.replaceChildren();
+    $("media-usage").textContent =
+      page.image_count + " Bilder · " + page.used_bytes + " von " +
+      (page.used_bytes + page.free_bytes) + " Byte belegt";
+    for (const image of page.images) {
+      const item = document.createElement("li");
+      const description = document.createElement("span");
+      description.className = "help";
+      description.textContent = "JPEG " + image.width + " × " + image.height +
+        " · " + image.bytes + " Byte";
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "danger";
+      remove.textContent = "Entfernen";
+      remove.dataset.imageId = String(image.id);
+      item.append(description, remove);
+      list.append(item);
+    }
+  }
+
+  async function loadImages() {
+    let offset = 0;
+    let append = false;
+    let page;
+    do {
+      page = await api("/api/images?offset=" + offset);
+      renderImages(page, append);
+      append = true;
+      offset += page.images.length;
+      if (page.images.length === 0) break;
+    } while (page.next_offset);
+  }
+
   async function applyBootstrap(bootstrap) {
     if (!bootstrap || typeof bootstrap.setup_required !== "boolean" ||
         typeof bootstrap.authenticated !== "boolean")
@@ -138,7 +251,7 @@
     }
     show("private-view");
     $("save-status").textContent = "Aktuelle Werte werden geladen.";
-    await Promise.all([loadConfig(), loadCertificate()]);
+    await Promise.all([loadConfig(), loadCertificate(), loadWifi(), loadImages()]);
     $("save-status").textContent = "Aktuelle Werte geladen.";
   }
 
@@ -347,6 +460,203 @@
       else await handleFailure(error);
     }
     finally { setBusy(form, false); }
+  });
+
+  $("open-advanced").addEventListener("click", openAdvanced);
+  $("advanced-back").addEventListener("click", () => closeAdvanced());
+  window.addEventListener("popstate", (event) => {
+    if (!event.state?.katmedAdvanced && !$("advanced-view").hidden) closeAdvanced();
+  });
+  window.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !$("advanced-view").hidden) closeAdvanced();
+  });
+  $("advanced-view").addEventListener("touchstart", (event) => {
+    if (event.touches.length !== 1) { advancedTouchStart = null; return; }
+    advancedTouchStart = {x: event.touches[0].clientX, y: event.touches[0].clientY};
+  }, {passive: true});
+  $("advanced-view").addEventListener("touchend", (event) => {
+    if (!advancedTouchStart || event.changedTouches.length !== 1) return;
+    const dx = event.changedTouches[0].clientX - advancedTouchStart.x;
+    const dy = event.changedTouches[0].clientY - advancedTouchStart.y;
+    advancedTouchStart = null;
+    if (dx > 64 && Math.abs(dx) > Math.abs(dy) * 1.4) closeAdvanced();
+  }, {passive: true});
+
+  $("wifi-open").addEventListener("change", () => {
+    const password = $("wifi-password");
+    password.disabled = $("wifi-open").checked;
+    password.required = false;
+    if (password.disabled) password.value = "";
+  });
+
+  $("wifi-profile-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const ssid = $("wifi-ssid").value;
+    const password = $("wifi-password").value;
+    const isOpen = $("wifi-open").checked;
+    const editId = form.dataset.editId ? Number(form.dataset.editId) : null;
+    const previous = editId === null ? null : state.wifiProfiles.find((p) => p.id === editId);
+    const encoder = new TextEncoder();
+    const ssidBytes = encoder.encode(ssid);
+    const passwordBytes = encoder.encode(password);
+    if (!ssidBytes.length || ssidBytes.length > 32 || passwordBytes.length > 64 ||
+        (!isOpen && !password.length && !previous?.secured) ||
+        (!isOpen && passwordBytes.length > 0 && passwordBytes.length < 8) ||
+        (passwordBytes.length === 64 && !/^[0-9a-fA-F]{64}$/.test(password))) {
+      notice("SSID oder WLAN-Schlüssel hat eine ungültige Länge.", true);
+      return;
+    }
+    if (!editId && state.wifiProfiles.length >= state.wifiLimit) {
+      notice("Der vom Gerätespeicher erlaubte Profilplatz ist ausgeschöpft.", true);
+      return;
+    }
+    const priority = Number($("wifi-priority").value);
+    if (!Number.isSafeInteger(priority) || priority < 1) {
+      notice("Die Priorität muss eine positive ganze Zahl sein.", true);
+      return;
+    }
+    setBusy(form, true);
+    try {
+      let profiles = state.wifiProfiles.map((profile) => ({
+        id: profile.id, ssid: profile.ssid, priority: profile.priority,
+        credential: "keep", password: ""
+      }));
+      const candidate = {
+        ...(editId ? {id: editId} : {}), ssid, priority,
+        credential: isOpen ? "open" : password ? "replace" : "keep", password
+      };
+      if (editId) profiles = profiles.map((profile) => profile.id === editId ? candidate : profile);
+      else profiles.push(candidate);
+      await api("/api/wifi/profiles", "PUT", {profiles});
+      form.reset();
+      delete form.dataset.editId;
+      $("wifi-password").disabled = false;
+      $("wifi-priority").value = "1";
+      await loadWifi();
+      notice("WLAN-Profile dauerhaft gespeichert. Zum Anwenden die Prioritäten bewusst neu bewerten lassen.");
+    } catch (error) { await handleFailure(error); }
+    finally { setBusy(form, false); }
+  });
+
+  $("wifi-profile-list").addEventListener("click", async (event) => {
+    const edit = event.target.closest("button[data-profile-edit]");
+    if (edit) {
+      const profile = state.wifiProfiles[Number(edit.dataset.profileEdit)];
+      if (!profile) return;
+      const form = $("wifi-profile-form");
+      form.dataset.editId = String(profile.id);
+      $("wifi-ssid").value = profile.ssid;
+      $("wifi-password").value = "";
+      $("wifi-password").disabled = !profile.secured;
+      $("wifi-open").checked = !profile.secured;
+      $("wifi-priority").value = String(profile.priority);
+      $("wifi-profile-save").textContent = "Profiländerung speichern";
+      $("wifi-ssid").focus();
+      return;
+    }
+    const remove = event.target.closest("button[data-profile-delete]");
+    if (!remove) return;
+    remove.disabled = true;
+    try {
+      await api("/api/wifi/profiles?id=" + encodeURIComponent(remove.dataset.profileDelete), "DELETE");
+      await loadWifi();
+      notice("WLAN-Profil entfernt. Die aktive Verbindung wird dadurch nicht automatisch gewechselt.");
+    } catch (error) { await handleFailure(error); }
+    finally { remove.disabled = false; }
+  });
+
+  $("wifi-reconnect").addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    try {
+      await api("/api/wifi/reconnect", "POST", {});
+      notice("Prioritäten werden bei der bewussten Neuverbindung neu bewertet. Die Geräteadresse kann sich ändern.");
+    } catch (error) {
+      await handleFailure(error);
+      button.disabled = false;
+    }
+  });
+
+  $("factory-reset-start").addEventListener("click", async () => {
+    const dialog = $("factory-reset-dialog");
+    const status = $("reset-status");
+    const confirm = $("factory-reset-yes");
+    confirm.disabled = true;
+    state.resetToken = null;
+    status.textContent = "Bestätigung wird vorbereitet; es werden noch keine Daten gelöscht.";
+    try {
+      const prepared = await api("/api/factory-reset/prepare", "POST", {});
+      if (!prepared || typeof prepared.confirmation !== "string" || !prepared.confirmation)
+        throw new Error("Invalid reset confirmation");
+      state.resetToken = prepared.confirmation;
+      status.textContent = "Dies ist nur die Warnung. Zum Abbrechen Nein wählen; Ja erfordert danach eine getrennte Bestätigung.";
+    } catch (error) {
+      status.textContent = errorText(error);
+      notice(errorText(error), true);
+      return;
+    }
+    dialog.showModal();
+    $("factory-reset-no").focus();
+    confirm.disabled = false;
+  });
+
+  $("factory-reset-no").addEventListener("click", () => {
+    state.resetToken = null;
+    $("factory-reset-dialog").close();
+    $("reset-status").textContent = "Abgebrochen. Es wurden keine Daten geändert.";
+  });
+
+  $("factory-reset-dialog").addEventListener("cancel", (event) => {
+    event.preventDefault();
+    $("factory-reset-no").click();
+  });
+
+  $("factory-reset-yes").addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    if (!state.resetToken || button.disabled) return;
+    button.disabled = true;
+    $("factory-reset-no").disabled = true;
+    $("reset-status").textContent = "Getrennte Bestätigung wird verarbeitet …";
+    try {
+      await api("/api/factory-reset/confirm", "POST", {confirmation: state.resetToken});
+      state.resetToken = null;
+      $("reset-status").textContent = "Reset angenommen. Der Webdienst kann neu starten.";
+    } catch (error) {
+      state.resetToken = null;
+      $("reset-status").textContent = errorText(error) + " Vor einem erneuten Versuch muss die Warnung neu geöffnet werden.";
+      $("factory-reset-no").disabled = false;
+    }
+  });
+
+  $("image-upload-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const file = $("image-upload").files[0];
+    if (!file || file.type !== "image/jpeg" || file.size === 0 || file.size > 131072) {
+      notice("Bitte eine JPEG-Datei bis 128 KiB auswählen.", true);
+      return;
+    }
+    setBusy(form, true);
+    try {
+      await api("/api/images", "POST", file);
+      form.reset();
+      await loadImages();
+      notice("Bild geprüft und gespeichert.");
+    } catch (error) { await handleFailure(error); }
+    finally { setBusy(form, false); }
+  });
+
+  $("image-list").addEventListener("click", async (event) => {
+    const button = event.target.closest("button[data-image-id]");
+    if (!button) return;
+    button.disabled = true;
+    try {
+      await api("/api/images?id=" + encodeURIComponent(button.dataset.imageId), "DELETE");
+      await loadImages();
+      notice("Bild entfernt.");
+    } catch (error) { await handleFailure(error); }
+    finally { button.disabled = false; }
   });
 
   const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(location.hostname);

@@ -32,6 +32,26 @@ form:not(.setting-row)>input{margin-bottom:16px}
 .preview{grid-column:1/-1;color:#a9dbe5;min-height:1.4em;margin:0}
 .restore{color:#ffd6aa;font-size:.87rem;line-height:1.4;margin:6px 0 0}
 #setup-form,#login-form,#cert-form{max-width:460px}
+#wifi-form,#image-upload-form{max-width:460px}
+#wifi-reconnect{margin-top:16px}
+.image-list{list-style:none;padding:0;margin:14px 0 0}
+.image-list li{display:flex;align-items:center;justify-content:space-between;gap:12px;border-top:1px solid #335061;padding:12px 0}
+.image-list .help{margin:0}
+.profile-list{list-style:none;padding:0;margin:14px 0 22px}
+.profile-list li{display:flex;align-items:center;justify-content:space-between;gap:12px;border-top:1px solid #335061;padding:12px 0}
+.profile-list .actions{flex-wrap:wrap;justify-content:flex-end}
+#advanced-view{outline:none}
+#advanced-back{margin-top:18px}
+dialog{width:min(720px,calc(100vw - 24px));max-height:90vh;overflow:auto;border:3px solid #ffe45c;border-radius:14px;background:#111b24;color:#fff;padding:clamp(18px,4vw,30px);box-shadow:0 0 0 100vmax #000a}
+dialog::backdrop{background:#000a}
+.reset-warning{background:#ffec73;color:#241800;border:4px solid #f5b900;border-radius:10px;padding:16px;font-weight:700;line-height:1.45}
+.reset-warning p:last-child{margin-bottom:0}
+.reset-actions{display:flex;flex-direction:column;align-items:center;gap:14px;margin-top:22px}
+.reset-no{width:100%;height:72px;min-height:72px;font-size:1.15rem}
+.reset-yes{width:70%;height:50.4px;min-height:50.4px;margin:0!important}
+.reset-actions button{max-width:100%}
+.check-row{display:flex;align-items:center;gap:10px;margin:10px 0}
+.check-row input{width:auto;min-height:auto}
 #cert-login{margin-top:16px}
 [hidden]{display:none!important}
 @media(max-width:690px){.setting-row{grid-template-columns:1fr auto}.setting-row>div:first-child,.setting-row>label{grid-column:1/-1}.setting-row>input,.setting-row>select{grid-column:1;min-width:0}.setting-row>button,.setting-row>.actions{grid-column:2}.masthead{align-items:flex-start;flex-direction:column}.toolbar{align-items:flex-start;flex-direction:column-reverse}}
