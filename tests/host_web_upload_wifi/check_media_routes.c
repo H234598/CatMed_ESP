@@ -1,12 +1,13 @@
 #include "katmed_web_media.h"
 #include "katmed_image_store.h"
+#include "katmed_images.h"
 #include "esp_err.h"
 #include <assert.h>
 #include <inttypes.h>
 #include <stdio.h>
 #include <string.h>
 
-#define ROUTE_CAPACITY 4u
+#define ROUTE_CAPACITY 8u
 #define IMAGE_CAPACITY 8u
 
 typedef struct {
@@ -33,6 +34,9 @@ static struct {
     unsigned write_count;
     unsigned commit_count;
     unsigned abort_count;
+    unsigned import_count;
+    bool import_fail;
+    bool read_fail;
 } store;
 
 static void response_append(httpd_req_t *req, const char *data, ssize_t length)
@@ -50,11 +54,13 @@ esp_err_t httpd_resp_set_status(httpd_req_t *req, const char *status)
     return ESP_OK;
 }
 esp_err_t httpd_resp_set_type(httpd_req_t *req, const char *type)
-{ (void)req; (void)type; return ESP_OK; }
+{ (void)snprintf(req->response_type, sizeof(req->response_type), "%s", type); return ESP_OK; }
 esp_err_t httpd_resp_set_hdr(httpd_req_t *req, const char *name, const char *value)
 {
     if (strcmp(name, "Connection") == 0 && strcmp(value, "close") == 0)
         req->connection_close = true;
+    if (strcmp(name, "Content-Length") == 0)
+        (void)snprintf(req->content_length, sizeof(req->content_length), "%s", value);
     return ESP_OK;
 }
 esp_err_t httpd_resp_send(httpd_req_t *req, const char *data, ssize_t length)
@@ -136,6 +142,15 @@ KatmedImageStatus katmed_image_store_stats(KatmedImageStoreStats *out)
     out->image_count = store.image_count;
     return KATMED_IMAGE_OK;
 }
+uint32_t katmed_images_builtin_count(void) { return 72; }
+uint32_t katmed_images_builtin_profile_count(void) { return 1; }
+KatmedImageStatus katmed_images_builtin_variant_info(uint32_t index, uint32_t profile,
+                                                     KatmedImageVariantInfo *out)
+{
+    if (index >= 72 || profile != 0) return KATMED_IMAGE_BAD_ID;
+    *out = (KatmedImageVariantInfo){.bytes = 42, .width = 240, .height = 240};
+    return KATMED_IMAGE_OK;
+}
 KatmedImageStatus katmed_image_store_list(uint32_t index, KatmedUserImageInfo *out)
 {
     if (index >= store.image_count) return KATMED_IMAGE_NOT_FOUND;
@@ -203,6 +218,49 @@ KatmedImageStatus katmed_image_store_remove(uint32_t id)
     }
     return KATMED_IMAGE_NOT_FOUND;
 }
+KatmedImageStatus katmed_image_store_import_catalog(uint32_t index, uint32_t profile,
+                                                     KatmedUserImageInfo *out)
+{
+    store.import_count++;
+    if (store.import_fail || index >= 72 || profile != 0) return KATMED_IMAGE_NO_SPACE;
+    *out = (KatmedUserImageInfo){.id = UINT32_C(0x80000000) | (index << 1),
+                                 .bytes = 3, .width = 10, .height = 10};
+    if (store.image_count < IMAGE_CAPACITY) {
+        FakeImage *image = &store.images[store.image_count++];
+        image->info = *out;
+        memcpy(image->bytes, "CAT", 4);
+    }
+    return KATMED_IMAGE_OK;
+}
+KatmedImageStatus katmed_image_store_open_read(uint32_t id, KatmedImageReader *out,
+                                                KatmedUserImageInfo *info)
+{
+    for (uint32_t i = 0; i < store.image_count; ++i) {
+        if (store.images[i].info.id == id) {
+            out->token = id;
+            *info = store.images[i].info;
+            return KATMED_IMAGE_OK;
+        }
+    }
+    return KATMED_IMAGE_NOT_FOUND;
+}
+KatmedImageStatus katmed_image_store_read(KatmedImageReader reader, uint8_t *buffer,
+                                           size_t wanted, size_t *actual)
+{
+    if (store.read_fail) return KATMED_IMAGE_IO_ERROR;
+    for (uint32_t i = 0; i < store.image_count; ++i) {
+        FakeImage *image = &store.images[i];
+        if (image->info.id == reader.token) {
+            size_t take = wanted < image->info.bytes ? wanted : image->info.bytes;
+            memcpy(buffer, image->bytes, take);
+            *actual = take;
+            return KATMED_IMAGE_OK;
+        }
+    }
+    return KATMED_IMAGE_NOT_FOUND;
+}
+KatmedImageStatus katmed_image_store_close_read(KatmedImageReader reader)
+{ (void)reader; return KATMED_IMAGE_OK; }
 
 static bool authorize(httpd_req_t *req, bool mutate, void *context)
 {
@@ -220,10 +278,11 @@ static bool authorize(httpd_req_t *req, bool mutate, void *context)
     return true;
 }
 
-static httpd_uri_func route(FakeServer *server, httpd_method_t method)
+static httpd_uri_func route(FakeServer *server, const char *uri, httpd_method_t method)
 {
     for (size_t i = 0; i < server->count; ++i)
-        if (server->routes[i].method == method) return server->routes[i].handler;
+        if (server->routes[i].method == method && strcmp(server->routes[i].uri, uri) == 0)
+            return server->routes[i].handler;
     assert(false);
     return NULL;
 }
@@ -247,7 +306,7 @@ static httpd_req_t request(httpd_method_t method, const char *content_type,
 static void assert_old_image_preserved(FakeServer *server)
 {
     httpd_req_t req = request(HTTP_GET, NULL, NULL, NULL, SIZE_MAX);
-    assert(route(server, HTTP_GET)(&req) == ESP_OK);
+    assert(route(server, "/api/images", HTTP_GET)(&req) == ESP_OK);
     assert(strstr(req.response, "\"image_count\":1") != NULL);
     assert(strstr(req.response, "\"id\":1") != NULL);
     assert(store.image_count == 1 && strcmp(store.images[0].bytes, "OLD") == 0);
@@ -263,31 +322,31 @@ int main(void)
     store.next_id = 1;
     KatmedWebMediaServices services = {.authorize = authorize};
     assert(katmed_web_media_register(&server, &services));
-    assert(server.count == 3);
+    assert(server.count == 5);
 
     httpd_req_t req = request(HTTP_POST, "image/jpeg", NULL, "OK-new", SIZE_MAX);
     req.authenticated = false;
-    assert(route(&server, HTTP_POST)(&req) == ESP_OK);
+    assert(route(&server, "/api/images", HTTP_POST)(&req) == ESP_OK);
     assert(strcmp(req.response_status, "401 Unauthorized") == 0);
     assert(store.begin_count == 0);
     req = request(HTTP_POST, "image/jpeg", NULL, "OK-new", SIZE_MAX);
     req.csrf_ok = false;
-    assert(route(&server, HTTP_POST)(&req) == ESP_OK);
+    assert(route(&server, "/api/images", HTTP_POST)(&req) == ESP_OK);
     assert(strcmp(req.response_status, "403 Forbidden") == 0);
     assert(store.begin_count == 0);
 
     req = request(HTTP_POST, "application/octet-stream", NULL, "OK-new", SIZE_MAX);
-    assert(route(&server, HTTP_POST)(&req) == ESP_OK);
+    assert(route(&server, "/api/images", HTTP_POST)(&req) == ESP_OK);
     assert(strcmp(req.response_status, "415 Unsupported Media Type") == 0);
     assert(req.connection_close && store.begin_count == 0);
     req = request(HTTP_POST, "image/jpeg", NULL, "x", SIZE_MAX);
     req.content_len = 131073;
-    assert(route(&server, HTTP_POST)(&req) == ESP_OK);
+    assert(route(&server, "/api/images", HTTP_POST)(&req) == ESP_OK);
     assert(strcmp(req.response_status, "413 Content Too Large") == 0);
     assert(req.connection_close && store.begin_count == 0);
 
     req = request(HTTP_POST, "image/jpeg", NULL, "OK-new", 2);
-    assert(route(&server, HTTP_POST)(&req) == ESP_OK);
+    assert(route(&server, "/api/images", HTTP_POST)(&req) == ESP_OK);
     assert(strcmp(req.response_status, "400 Bad Request") == 0);
     assert(store.abort_count == 1);
     assert_old_image_preserved(&server);
@@ -301,7 +360,7 @@ int main(void)
     req.body_size = sizeof(large_body) - 1u;
     req.content_len = (int)(sizeof(large_body) - 1u);
     store.write_fail = true;
-    assert(route(&server, HTTP_POST)(&req) == ESP_OK);
+    assert(route(&server, "/api/images", HTTP_POST)(&req) == ESP_OK);
     assert(strcmp(req.response_status, "507 Insufficient Storage") == 0);
     assert(req.connection_close && req.body_offset < req.body_size);
     assert(store.abort_count == 2);
@@ -309,33 +368,82 @@ int main(void)
     store.write_fail = false;
 
     req = request(HTTP_POST, "image/jpeg", NULL, "NO-new", SIZE_MAX);
-    assert(route(&server, HTTP_POST)(&req) == ESP_OK);
+    assert(route(&server, "/api/images", HTTP_POST)(&req) == ESP_OK);
     assert(strcmp(req.response_status, "422 Unprocessable Content") == 0);
     assert(store.abort_count == 3);
     assert_old_image_preserved(&server);
 
     store.full = true;
     req = request(HTTP_POST, "image/jpeg", NULL, "OK-new", SIZE_MAX);
-    assert(route(&server, HTTP_POST)(&req) == ESP_OK);
+    assert(route(&server, "/api/images", HTTP_POST)(&req) == ESP_OK);
     assert(strcmp(req.response_status, "507 Insufficient Storage") == 0);
     assert(req.connection_close);
     assert_old_image_preserved(&server);
     store.full = false;
 
     req = request(HTTP_POST, "image/jpeg", NULL, "OK-new", SIZE_MAX);
-    assert(route(&server, HTTP_POST)(&req) == ESP_OK);
+    assert(route(&server, "/api/images", HTTP_POST)(&req) == ESP_OK);
     assert(strcmp(req.response_status, "201 Created") == 0);
     assert(strstr(req.response, "\"id\":2") != NULL);
     assert(store.image_count == 2);
 
+    req = request(HTTP_GET, NULL, "id=1", NULL, SIZE_MAX);
+    assert(route(&server, "/api/images", HTTP_GET)(&req) == ESP_OK);
+    assert(strcmp(req.response_type, "image/jpeg") == 0);
+    assert(req.content_length[0] == '\0'); /* Chunked response carries no conflicting length. */
+    assert(req.response_size == 3 && memcmp(req.response, "OLD", 3) == 0);
+    assert(req.response_complete);
+
+    req = request(HTTP_GET, NULL, "id=1", NULL, SIZE_MAX);
+    store.read_fail = true;
+    assert(route(&server, "/api/images", HTTP_GET)(&req) == ESP_FAIL);
+    store.read_fail = false;
+
+    req = request(HTTP_GET, NULL, "id=../secret", NULL, SIZE_MAX);
+    assert(route(&server, "/api/images", HTTP_GET)(&req) == ESP_OK);
+    assert(strcmp(req.response_status, "400 Bad Request") == 0);
+
+    req = request(HTTP_GET, NULL, "offset=0", NULL, SIZE_MAX);
+    assert(route(&server, "/api/catalog/images", HTTP_GET)(&req) == ESP_OK);
+    assert(strstr(req.response, "\"catalog_count\":72") != NULL);
+    assert(strstr(req.response, "\"width\":240") != NULL);
+
+    req = request(HTTP_POST, NULL, "id=0&profile=0", NULL, SIZE_MAX);
+    req.authenticated = false;
+    assert(route(&server, "/api/images/import", HTTP_POST)(&req) == ESP_OK);
+    assert(strcmp(req.response_status, "401 Unauthorized") == 0);
+    assert(store.import_count == 0);
+    req = request(HTTP_POST, NULL, "id=0&profile=0", NULL, SIZE_MAX);
+    req.csrf_ok = false;
+    assert(route(&server, "/api/images/import", HTTP_POST)(&req) == ESP_OK);
+    assert(strcmp(req.response_status, "403 Forbidden") == 0);
+    assert(store.import_count == 0);
+    req = request(HTTP_POST, NULL, "id=0&profile=0", NULL, SIZE_MAX);
+    store.import_fail = true;
+    assert(route(&server, "/api/images/import", HTTP_POST)(&req) == ESP_OK);
+    assert(strcmp(req.response_status, "507 Insufficient Storage") == 0);
+    assert(store.image_count == 2 && strcmp(store.images[0].bytes, "OLD") == 0 &&
+           strcmp(store.images[1].bytes, "OK-new") == 0);
+    store.import_fail = false;
+    req = request(HTTP_POST, NULL, "id=0&profile=0", NULL, SIZE_MAX);
+    assert(route(&server, "/api/images/import", HTTP_POST)(&req) == ESP_OK);
+    assert(strcmp(req.response_status, "200 OK") == 0);
+    assert(strstr(req.response, "\"id\":2147483648") != NULL);
+
+    req = request(HTTP_DELETE, NULL, "id=2147483648", NULL, SIZE_MAX);
+    assert(route(&server, "/api/images", HTTP_DELETE)(&req) == ESP_OK);
+    assert(strcmp(req.response_status, "200 OK") == 0);
+    assert(store.image_count == 2 && strcmp(store.images[0].bytes, "OLD") == 0 &&
+           strcmp(store.images[1].bytes, "OK-new") == 0);
+
     req = request(HTTP_DELETE, NULL, "id=4294967296", NULL, SIZE_MAX);
-    assert(route(&server, HTTP_DELETE)(&req) == ESP_OK);
+    assert(route(&server, "/api/images", HTTP_DELETE)(&req) == ESP_OK);
     assert(strcmp(req.response_status, "400 Bad Request") == 0);
     req = request(HTTP_DELETE, NULL, "id=../secret", NULL, SIZE_MAX);
-    assert(route(&server, HTTP_DELETE)(&req) == ESP_OK);
+    assert(route(&server, "/api/images", HTTP_DELETE)(&req) == ESP_OK);
     assert(strcmp(req.response_status, "400 Bad Request") == 0);
     req = request(HTTP_DELETE, NULL, "id=2", NULL, SIZE_MAX);
-    assert(route(&server, HTTP_DELETE)(&req) == ESP_OK);
+    assert(route(&server, "/api/images", HTTP_DELETE)(&req) == ESP_OK);
     assert(strcmp(req.response_status, "200 OK") == 0);
     assert(store.image_count == 1 && strcmp(store.images[0].bytes, "OLD") == 0);
 

@@ -34,6 +34,12 @@ typedef struct {
     char lvgl_path[24];
 } KatmedImageSelection;
 
+typedef struct {
+    uint32_t bytes;
+    uint16_t width;
+    uint16_t height;
+} KatmedImageVariantInfo;
+
 /* Snapshot of one completed operation on the serialized UI thread. A failed
  * operation is measured too; measured=false means it has not run yet. Values
  * are elapsed microseconds, not a wall-clock timestamp or a device benchmark. */
@@ -51,6 +57,12 @@ KatmedImageStatus katmed_images_select(uint32_t logical_index, Orientation orien
                                        KatmedImageSelection *out);
 const uint8_t *katmed_images_catalog_sha256(void);
 uint32_t katmed_images_count(void);
+/* Number of immutable, build-validated catalogue entries and target variants. */
+uint32_t katmed_images_builtin_count(void);
+uint32_t katmed_images_builtin_profile_count(void);
+KatmedImageStatus katmed_images_builtin_variant_info(uint32_t index,
+                                                      uint32_t profile,
+                                                      KatmedImageVariantInfo *out);
 KatmedImageStatus katmed_images_last_error(void);
 KatmedImageTimingSample katmed_images_pack_hash_timing(void);
 KatmedImageTimingSample katmed_images_variant_hash_timing(void);

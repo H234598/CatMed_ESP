@@ -92,6 +92,27 @@ static void create_file(lfs_t *fs, const char *path)
     assert(lfs_file_close(fs, &file) == 0);
 }
 
+static void create_bytes(lfs_t *fs, const char *path, const char *bytes)
+{
+    lfs_file_t file;
+    size_t length = strlen(bytes);
+    assert(lfs_file_open(fs, &file, path, LFS_O_WRONLY | LFS_O_CREAT | LFS_O_TRUNC) == 0);
+    assert(lfs_file_write(fs, &file, bytes, length) == (lfs_ssize_t)length);
+    assert(lfs_file_close(fs, &file) == 0);
+}
+
+static void assert_bytes(lfs_t *fs, const char *path, const char *expected)
+{
+    char actual[32] = {0};
+    lfs_file_t file;
+    size_t length = strlen(expected);
+    assert(length < sizeof(actual));
+    assert(lfs_file_open(fs, &file, path, LFS_O_RDONLY) == 0);
+    assert(lfs_file_read(fs, &file, actual, sizeof(actual)) == (lfs_ssize_t)length);
+    assert(memcmp(actual, expected, length) == 0);
+    assert(lfs_file_close(fs, &file) == 0);
+}
+
 static bool exists(lfs_t *fs, const char *path)
 {
     struct lfs_info info;
@@ -127,6 +148,10 @@ int main(void)
     assert(lfs_mkdir(&fs, "/user-images") == 0);
     create_file(&fs, "/user-images/.upload-0123abcd.tmp");
     create_file(&fs, "/user-images/img-00000001.jpg");
+    create_bytes(&fs, "/user-images/.upload-12345678.tmp", "replacement");
+    assert(lfs_rename(&fs, "/user-images/.upload-12345678.tmp",
+                      "/user-images/img-00000001.jpg") == 0);
+    assert_bytes(&fs, "/user-images/img-00000001.jpg", "replacement");
     create_file(&fs, "/user-images/readme.txt");
     assert(lfs_unmount(&fs) == 0); /* Simulated abrupt power loss. */
 

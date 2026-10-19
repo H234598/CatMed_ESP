@@ -32,6 +32,8 @@ struct httpd_req {
     size_t response_size;
     bool response_complete;
     bool connection_close;
+    char response_type[64];
+    char content_length[16];
 };
 
 #define HTTPD_RESP_USE_STRLEN -1

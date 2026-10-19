@@ -3,7 +3,8 @@
 (() => {
   const $ = (id) => document.getElementById(id);
   const state = { bootstrap: null, config: null, preview: null, wifiProfiles: [],
-    wifiLimit: 0, advancedScrollY: 0, resetToken: null };
+    wifiLimit: 0, advancedScrollY: 0, resetToken: null,
+    catalogOffset: 0, catalogCount: 0 };
   const views = ["setup-view", "login-view", "private-view"];
   const fields = ["medication_hours", "image_hours", "next_due_hhmm", "clock_style", "orientation", "rotation"];
   const controls = {
@@ -42,6 +43,7 @@
     if (error.status === 422) return "Ungültige Eingabe. Bitte Wert und Format prüfen.";
     if (error.status === 429) return "Zu viele Versuche. Bitte später erneut versuchen.";
     if (error.status === 503) return "Speichern derzeit nicht verfügbar. Bitte später erneut versuchen.";
+    if (error.status === 507) return "Der Bildspeicher ist voll oder derzeit nicht verfügbar.";
     return "Anfrage fehlgeschlagen. Bitte erneut versuchen.";
   }
 
@@ -206,16 +208,25 @@
       (page.used_bytes + page.free_bytes) + " Byte belegt";
     for (const image of page.images) {
       const item = document.createElement("li");
+      const details = document.createElement("div");
+      const preview = document.createElement("img");
+      preview.className = "image-preview";
+      preview.loading = "lazy";
+      preview.alt = "Gespeichertes Bild";
+      preview.referrerPolicy = "no-referrer";
+      preview.src = "/api/images?id=" + encodeURIComponent(image.id);
       const description = document.createElement("span");
       description.className = "help";
-      description.textContent = "JPEG " + image.width + " × " + image.height +
+      description.textContent = ((image.id >>> 31) ? "Katalogkopie · " : "Eigenes Bild · ") +
+        "JPEG " + image.width + " × " + image.height +
         " · " + image.bytes + " Byte";
+      details.append(preview, description);
       const remove = document.createElement("button");
       remove.type = "button";
       remove.className = "danger";
       remove.textContent = "Entfernen";
       remove.dataset.imageId = String(image.id);
-      item.append(description, remove);
+      item.append(details, remove);
       list.append(item);
     }
   }
@@ -231,6 +242,48 @@
       offset += page.images.length;
       if (page.images.length === 0) break;
     } while (page.next_offset);
+  }
+
+  function renderCatalog(page, append = false) {
+    if (!page || !Array.isArray(page.images) || !Number.isSafeInteger(page.catalog_count) ||
+        !Number.isSafeInteger(page.offset) ||
+        page.images.some((image) => !image || !Number.isSafeInteger(image.id) ||
+          !Array.isArray(image.variants) || image.variants.length < 1 ||
+          image.variants.some((variant) => !variant || !Number.isSafeInteger(variant.profile) ||
+            !Number.isSafeInteger(variant.bytes) || !Number.isSafeInteger(variant.width) ||
+            !Number.isSafeInteger(variant.height))))
+      throw new Error("Invalid catalog response");
+    const list = $("catalog-image-list");
+    if (!append) list.replaceChildren();
+    state.catalogCount = page.catalog_count;
+    for (const image of page.images) {
+      const item = document.createElement("li");
+      const details = document.createElement("span");
+      details.className = "help";
+      details.textContent = "GitHub-Katalogbild " + (image.id + 1);
+      const variants = document.createElement("span");
+      variants.className = "actions";
+      for (const variant of image.variants) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "secondary";
+        button.textContent = "Kopie übernehmen · " + variant.width + " × " +
+          variant.height;
+        button.dataset.catalogId = String(image.id);
+        button.dataset.catalogProfile = String(variant.profile);
+        variants.append(button);
+      }
+      item.append(details, variants);
+      list.append(item);
+    }
+    state.catalogOffset = page.offset + page.images.length;
+    $("catalog-more").hidden = state.catalogOffset >= state.catalogCount;
+  }
+
+  async function loadCatalog(append = false) {
+    const offset = append ? state.catalogOffset : 0;
+    const page = await api("/api/catalog/images?offset=" + offset);
+    renderCatalog(page, append);
   }
 
   async function applyBootstrap(bootstrap) {
@@ -251,7 +304,7 @@
     }
     show("private-view");
     $("save-status").textContent = "Aktuelle Werte werden geladen.";
-    await Promise.all([loadConfig(), loadCertificate(), loadWifi(), loadImages()]);
+    await Promise.all([loadConfig(), loadCertificate(), loadWifi(), loadImages(), loadCatalog()]);
     $("save-status").textContent = "Aktuelle Werte geladen.";
   }
 
@@ -656,6 +709,28 @@
       await loadImages();
       notice("Bild entfernt.");
     } catch (error) { await handleFailure(error); }
+    finally { button.disabled = false; }
+  });
+
+  $("catalog-image-list").addEventListener("click", async (event) => {
+    const button = event.target.closest("button[data-catalog-id]");
+    if (!button) return;
+    button.disabled = true;
+    try {
+      const query = "?id=" + encodeURIComponent(button.dataset.catalogId) +
+        "&profile=" + encodeURIComponent(button.dataset.catalogProfile);
+      await api("/api/images/import" + query, "POST");
+      await loadImages();
+      notice("Katalogbild atomar in den beschreibbaren Speicher übernommen.");
+    } catch (error) { await handleFailure(error); }
+    finally { button.disabled = false; }
+  });
+
+  $("catalog-more").addEventListener("click", async () => {
+    const button = $("catalog-more");
+    button.disabled = true;
+    try { await loadCatalog(true); }
+    catch (error) { await handleFailure(error); }
     finally { button.disabled = false; }
   });
 
