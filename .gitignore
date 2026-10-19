@@ -8,6 +8,8 @@ __pycache__/
 *.pyc
 # Backups may contain Wi-Fi credentials and are deliberately never versioned.
 /private-backups/
+# Local Vault reports are never part of the public repository.
+/Reports/
 /.local/
 .env
 .env.*
