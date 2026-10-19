@@ -42,7 +42,7 @@ else:
         for entry in manifest["images"]
     ]
 focus = images.load_focus(root / "assets/crop_focus.json", entries)
-assert len(entries) == 75
+assert len(entries) == 72
 assert {entry["relative_path"] for entry in entries} == set(focus)
 for entry in entries:
     for profile in images.PROFILES.values():
@@ -62,4 +62,4 @@ with tempfile.TemporaryDirectory() as temporary:
         else:
             raise AssertionError(f"Invalid focus accepted: {point}")
 
-print("PASS: book-stack regression, centred crop, edge clamping, 75 complete focus entries, 225 bounded crops, invalid-input rejection")
+print("PASS: book-stack regression, centred crop, edge clamping, 72 complete focus entries, 216 bounded crops, invalid-input rejection")

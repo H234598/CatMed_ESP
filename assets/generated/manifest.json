@@ -3,7 +3,7 @@
   "source_root": null,
   "image_count": 72,
   "catalogue_sha256": "eebcf4e8051e1ef0e5d5aaaa8f2c234443105aba79938568f97f19954a8afb79",
-  "crop_config_sha256": "01635eec03bd67fc72022836c2b46d6391120a834f494de93f9482006814bf52",
+  "crop_config_sha256": "2949b37f57bfc3744a3f1217750058e59e8e6dcce51c4149d28a7e9d5ca1bf11",
   "encoder": "Version: ImageMagick 7.1.2-27 (Beta) Q16-HDRI x86_64 24344 https://imagemagick.org",
   "resize": "Lanczos cover, per-image focal point, bounded crop; proportional with pixel rounding",
   "jpeg": "baseline, sRGB, 4:2:0, no metadata",
