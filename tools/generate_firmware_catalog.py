@@ -38,16 +38,16 @@ def parse_and_verify(manifest_path, target):
     manifest = json.loads(manifest_path.read_text())
     require(manifest.get("schema_version") == 2, "Unsupported manifest schema")
     images = manifest.get("images")
-    require(isinstance(images, list) and len(images) == 75 and manifest.get("image_count") == 75,
-            "The current catalogue must contain exactly 75 images")
-    require(len({x["source"] for x in images}) == 75 and
+    require(isinstance(images, list) and len(images) == 72 and manifest.get("image_count") == 72,
+            "The current catalogue must contain exactly 72 images")
+    require(len({x["source"] for x in images}) == 72 and
             [x["source"] for x in images] == sorted((x["source"] for x in images), key=image_sort_key),
             "Image ordering or source uniqueness differs from the host catalogue")
-    require([x["sort_index"] for x in images] == list(range(75)), "Sort indexes are not canonical")
+    require([x["sort_index"] for x in images] == list(range(72)), "Sort indexes are not canonical")
     logical = [(x["source"], x["source_sha256"]) for x in images]
     catalogue_sha = digest(json.dumps(logical, ensure_ascii=False, separators=(",", ":")).encode())
     require(catalogue_sha == manifest.get("catalogue_sha256"), "Logical catalogue hash mismatch")
-    require(len({x["id"] for x in images}) == 75, "Logical image ID collision")
+    require(len({x["id"] for x in images}) == 72, "Logical image ID collision")
     for entry in images:
         require(entry["id"] == entry["source_sha256"][:16] and len(entry["id"]) == 16,
                 "Logical image ID does not match the original")

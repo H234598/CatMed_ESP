@@ -186,7 +186,8 @@ static lv_obj_t *find_clock_view(lv_obj_t *screen)
     for (uint32_t i = 0; i < lv_obj_get_child_count(screen); ++i) {
         lv_obj_t *child = lv_obj_get_child(screen, i);
         if (find_label(child, "12:30") || find_label(child, "00:00") ||
-            find_label(child, "--:--")) return child;
+            find_label(child, "--:--") || find_label(child,"12:\n30") ||
+            find_label(child,"00:\n00") || find_label(child,"--:\n--")) return child;
     }
     return NULL;
 }
@@ -234,6 +235,19 @@ static void pointer_read(lv_indev_t *indev, lv_indev_data_t *data)
 
 static void click_label(lv_obj_t *screen, const char *text)
 {
+    if ((strcmp(text, "Status") == 0 && ui_current_view() == SETTINGS && !find_label(screen, text)) ||
+        (strcmp(text, "Zurück") == 0 && ui_current_view() == UI_VIEW_STATUS)) {
+        /* These navigation buttons were removed: exercise the actual edge swipe. */
+        static uint64_t nav_time = UINT64_C(10000000);
+        nav_time += 1000;
+        int height=lv_display_get_vertical_resolution(lv_display_get_default());
+        bool down=ui_current_view()==UI_VIEW_STATUS;
+        ui_touch_sample(false,0,0,true,nav_time);
+        ui_touch_sample(true,100,down?1:height-2,true,nav_time+30);
+        ui_touch_sample(true,100,down?100:height-100,true,nav_time+130);
+        ui_touch_sample(false,0,0,true,nav_time+230);
+        return;
+    }
     if (strlen(text) == 1 && strchr("0123456789.,:<", text[0]) &&
         click_matrix_button(screen, text)) return;
     lv_obj_t *caption = find_label(screen, text);
@@ -772,7 +786,7 @@ int main(int argc, char **argv)
     clock.quality = CLOCK_UNAVAILABLE;
     ui_render(&state, &local, CLOCK, &clock);
     draw();
-    assert(find_label(screen, "--:--"));
+    assert(find_label(screen, "--:--") || find_label(screen,"--:\n--"));
     assert(find_label(screen, "Uhrzeit nicht verfügbar"));
     assert(lv_obj_get_style_bg_opa(plate, 0) == LV_OPA_TRANSP);
     assert(lv_obj_get_style_border_width(dial, 0) == 0);
@@ -913,9 +927,8 @@ int main(int argc, char **argv)
     snprintf(name, sizeof(name), "%s_status", prefix);
     snapshot(&host, dir, name);
     lv_obj_t *status_panel = lv_obj_get_parent(find_label_prefix(screen, "Letzte Gabe:"));
-    lv_obj_t *status_back = find_label(status_panel, "Zurück");
-    assert(status_back);
-    lv_obj_send_event(lv_obj_get_parent(status_back), LV_EVENT_CLICKED, NULL);
+    assert(!find_label(status_panel, "Zurück"));
+    click_label(screen, "Zurück");
     click_label(screen, "Bilder: Stunden");
     assert(find_label(screen, "Positive Stundenzahl eingeben"));
     local.orientation = (Orientation)((orientation_index + 2) % 4);

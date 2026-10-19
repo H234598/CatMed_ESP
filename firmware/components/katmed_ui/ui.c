@@ -83,6 +83,8 @@ typedef struct {
     bool morse_alarm_confirmed;
     bool morse_color_valid;
     bool morse_shown_white;
+    int32_t scroll_y[9]; /* Bounded transient position for every raster tile. */
+    uint8_t status_scroll_slot;
 } UiContext;
 
 static UiContext ui = {.view = BACKGROUND, .grid = {1, 1}, .shown_clock_tick = INT64_MIN};
@@ -184,16 +186,51 @@ static void update_interaction(uint64_t now);
 static void change_page(int horizontal, int vertical, uint64_t now);
 static void update_status(void);
 static void build_settings(void);
-static void close_status(lv_event_t *event);
+static void status_button(lv_event_t *event);
+static void build_page(void);
+static void return_to_settings(uint64_t now);
+
+static void retire_clock_for_menu(void)
+{
+    if (!ui.clock_view) return;
+    /* Immediate swipe navigation must retain the old render ordering: free
+     * the outgoing clock before allocating a full menu in the 34 KiB pool. */
+    lv_anim_delete(ui.clock_view, NULL);
+    lv_obj_delete(ui.clock_view);
+    ui.clock_view = NULL;
+    ui.clock_initialized = false;
+    ui.shown_clock_tick = INT64_MIN;
+}
+
+static void remember_scroll(lv_obj_t *panel, unsigned slot)
+{
+    if (panel && lv_obj_is_valid(panel) && slot < 9)
+        ui.scroll_y[slot] = lv_obj_get_scroll_y(panel);
+}
+
+static void restore_scroll(lv_obj_t *panel, unsigned slot)
+{
+    lv_obj_remove_flag(panel, LV_OBJ_FLAG_SCROLL_MOMENTUM | LV_OBJ_FLAG_SCROLL_ELASTIC);
+    lv_obj_set_scroll_dir(panel, LV_DIR_VER);
+    lv_obj_update_layout(panel);
+    int32_t maximum = lv_obj_get_scroll_bottom(panel) + lv_obj_get_scroll_y(panel);
+    if (maximum < 0) maximum = 0;
+    int32_t wanted = ui.scroll_y[slot];
+    if (wanted < 0) wanted = 0;
+    if (wanted > maximum) wanted = maximum;
+    lv_obj_scroll_to_y(panel, wanted, LV_ANIM_OFF);
+}
 
 static void destroy_menu(void)
 {
+    remember_scroll(ui.settings, 5);
     if (ui.settings) lv_obj_delete(ui.settings);
     ui.settings = NULL;
 }
 
 static void destroy_settings(void)
 {
+    remember_scroll(ui.status, ui.status_scroll_slot);
     if (ui.status) lv_obj_delete(ui.status);
     ui.status = NULL;
     ui.status_from_home = false;
@@ -245,6 +282,12 @@ static UiSubmitResult request_action(const UiRequest *request)
         ui.confirmed_id = ui.state.round;
         if (ui.morse_alarm_paused) ui.morse_alarm_confirmed = true;
     }
+    if (result == UI_SUBMIT_COMMITTED && ui.services.read_model) {
+        /* Copy only a successful durable model; never re-enter rendering from
+         * the live button callback or predict state from the request. */
+        ui.services.read_model(ui.services.context, &ui.state, &ui.local, &ui.clock);
+        if (ui.status) update_status();
+    }
     show_feedback(result_text(result));
     if (result == UI_SUBMIT_PENDING_SHARED) {
         ui.shared_pending = true;
@@ -269,6 +312,8 @@ void ui_shared_result(bool accepted)
     ui.shared_pending = false;
     ui.shared_result_status = accepted ? 1 : -1;
     if (accepted) {
+        if (ui.services.read_model)
+            ui.services.read_model(ui.services.context, &ui.state, &ui.local, &ui.clock);
         if (ui.view != ALARM && !ui.state.alarm_active)
             show_feedback("Gemeinsame Änderung gespeichert");
         if (ui.keypad) {
@@ -672,14 +717,6 @@ static void style_open(lv_event_t *event)
     lv_obj_set_style_text_font(lv_obj_get_child(cancel, 0), &katmed_font_12, 0);
 }
 
-static void close_settings(lv_event_t *event)
-{
-    (void)event;
-    ui.view = BACKGROUND;
-    ui.grid = (UiGrid){1, 1};
-    destroy_settings();
-}
-
 static void morse_open(lv_event_t *event)
 {
     (void)event;
@@ -706,15 +743,18 @@ static void morse_open(lv_event_t *event)
 static void status_button(lv_event_t *event)
 {
     (void)event;
+    retire_clock_for_menu();
     if (ui.feedback) lv_obj_add_flag(ui.feedback, LV_OBJ_FLAG_HIDDEN);
     ui.grid.row = 2;
     ui.view = UI_VIEW_STATUS;
     destroy_menu();
     ui.status = lv_obj_create(ui.screen);
+    ui.status_scroll_slot = ui.grid.row * 3 + ui.grid.column;
     lv_obj_set_size(ui.status, ui.width, ui.height);
     lv_obj_set_pos(ui.status, 0, 0);
     lv_obj_set_style_bg_color(ui.status, lv_color_hex(0x12212c), 0);
-    lv_obj_set_style_bg_opa(ui.status, LV_OPA_90, 0);
+    lv_obj_set_style_bg_opa(ui.status, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(ui.status, 0, 0);
     lv_obj_set_style_pad_all(ui.status, ui.width == 240 ? 50 :
                             ui.height < 200 ? 6 : 10, 0);
     lv_obj_set_flex_flow(ui.status, LV_FLEX_FLOW_COLUMN);
@@ -723,31 +763,24 @@ static void status_button(lv_event_t *event)
     lv_obj_t *title = label(ui.status, "Status", row_w);
     if (ui.height < 200)
         lv_obj_set_style_text_font(title, &katmed_font_12, 0);
-    button(ui.status, "Zurück", row_w, ui.height < 200 ? 26 : 34,
-           close_status, NULL);
     update_status();
-}
-
-static void close_status(lv_event_t *event)
-{
-    (void)event;
-    if (ui.status) lv_obj_delete(ui.status);
-    ui.status = NULL;
-    ui.status_from_home = false;
-    ui.grid.row = 1;
-    ui.view = ui_grid_view(ui.grid);
-    if (ui.view == SETTINGS) build_settings();
+    restore_scroll(ui.status, ui.status_scroll_slot);
 }
 
 static void build_settings(void)
 {
-    if (ui.settings) return;
+    retire_clock_for_menu();
+    if (ui.settings) {
+        lv_obj_remove_flag(ui.settings, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
     ui.settings = lv_obj_create(ui.screen);
     lv_obj_remove_flag(ui.settings, LV_OBJ_FLAG_SCROLL_MOMENTUM);
     lv_obj_set_size(ui.settings, ui.width, ui.height);
     lv_obj_set_pos(ui.settings, 0, 0);
     lv_obj_set_style_bg_color(ui.settings, lv_color_hex(0x12212c), 0);
-    lv_obj_set_style_bg_opa(ui.settings, LV_OPA_90, 0);
+    lv_obj_set_style_bg_opa(ui.settings, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(ui.settings, 0, 0);
     lv_obj_set_style_border_width(ui.settings, 0, 0);
     lv_obj_set_style_pad_left(ui.settings, ui.width == 240 ? 50 : 9, 0);
     lv_obj_set_style_pad_right(ui.settings, ui.width == 240 ? 50 : 9, 0);
@@ -770,15 +803,14 @@ static void build_settings(void)
     static const char *angle_map[] = {"0°", "\n", "90°", "\n",
                                       "180°", "\n", "270°", ""};
     option_matrix(ui.settings, angle_map, row_w, 4, true);
-    label(ui.settings, "Bildrotation", row_w);
+    label(ui.settings, "Diashow / Abspielreienfolge", row_w);
     static const char *rotation_map[] = {"Aus", "\n", "Nach Namen", "\n",
                                          "Zufall", ""};
     option_matrix(ui.settings, rotation_map, row_w, 3, false);
     lv_obj_t *import = button(ui.settings, "Lade Bilder von URL/Github\nSpäter verfügbar",
                               row_w, 48, NULL, NULL);
     lv_obj_add_state(import, LV_STATE_DISABLED);
-    button(ui.settings, "Status", row_w, 34, status_button, NULL);
-    button(ui.settings, "Zurück", row_w, 34, close_settings, NULL);
+    restore_scroll(ui.settings, 5);
     if (ui.feedback && !lv_obj_has_flag(ui.feedback, LV_OBJ_FLAG_HIDDEN))
         lv_obj_move_foreground(ui.feedback);
 }
@@ -796,7 +828,7 @@ static lv_obj_t *status_label(uint32_t *next, const char *text, int width)
 static void update_status(void)
 {
     if (!ui.status) return;
-    uint32_t next = 2;
+    uint32_t next = 1;
     int text_w = ui.width - (ui.width == 240 ? 100 : 20);
     char date[64], line[128];
     ClockSample last = ui.state.last_confirmation;
@@ -935,6 +967,8 @@ static void update_status(void)
 
 static void build_screen(int16_t width, int16_t height)
 {
+    remember_scroll(ui.settings, 5);
+    remember_scroll(ui.status, ui.status_scroll_slot);
     ui.page = ui.interaction_title = ui.send_button = NULL;
     ui.rx_layer = ui.notice = NULL;
     ui.overlay_key = 0;
@@ -1106,6 +1140,30 @@ static void change_page(int horizontal, int vertical, uint64_t now)
     if (ui.view == CLOCK && next != CLOCK) animate_clock(false);
     ui.view = next;
     if (next == CLOCK) animate_clock(true);
+    if (next == UI_VIEW_STATUS) status_button(NULL);
+    else if (next == SETTINGS) build_settings();
+    else build_page();
+}
+
+static void return_to_settings(uint64_t now)
+{
+    if (ui.view == UI_VIEW_INTERACTION) {
+        interaction_cancel(now);
+        interaction_input(KATMED_INTERACTION_LEAVE, 0, 0, 0, now);
+        delete_page();
+        if (ui.notice) lv_obj_delete(ui.notice);
+        ui.notice = NULL;
+        ++ui.overlay_generation;
+    }
+    if (ui.view == MORSE) {
+        katmed_morse_stop(&ui.morse);
+        if (ui.morse_layer) lv_obj_add_flag(ui.morse_layer, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (ui.keypad) cancel_edit(NULL);
+    if (ui.style_dialog) style_cancel(NULL);
+    ui.grid = (UiGrid){1, 2};
+    ui.view = SETTINGS;
+    build_settings();
 }
 
 static void interaction_open(lv_event_t *event)
@@ -1367,7 +1425,7 @@ void ui_touch_sample(bool touched, int16_t x, int16_t y,
 {
     unsigned modal = notice_kind();
     if (modal) {
-        if (!valid) { ui.reject_contact = true; return; }
+        if (!valid) { ui.reject_contact = true; ui.overlay_contact = false; return; }
         if (touched) {
             if (!ui.touch_down) {
                 ui.touch_down = true;
@@ -1378,6 +1436,15 @@ void ui_touch_sample(bool touched, int16_t x, int16_t y,
             if (abs(x-ui.start_x) >= 20 || abs(y-ui.start_y) >= 20)
                 ui.reject_contact = true;
         } else {
+            if (ui.view == UI_VIEW_INTERACTION && ui.touch_down && ui.overlay_contact &&
+                monotonic_ms >= ui.down_ms+30 && monotonic_ms <= ui.down_ms+1000 &&
+                ui.last_x-ui.start_x >= 40 &&
+                ui.last_x-ui.start_x >= 2*abs(ui.last_y-ui.start_y)) {
+                ui.touch_down = ui.overlay_contact = ui.reject_contact = false;
+                ui.touch_armed = true;
+                return_to_settings(monotonic_ms);
+                return;
+            }
             bool tap = ui.touch_down && ui.overlay_contact && !ui.reject_contact &&
                 monotonic_ms >= ui.down_ms+30 && monotonic_ms <= ui.down_ms+600;
             if (tap) {
@@ -1447,16 +1514,29 @@ void ui_touch_sample(bool touched, int16_t x, int16_t y,
             return;
         }
         if (touched && !ui.touch_down) {
-            katmed_morse_stop(&ui.morse);
-            ui.view = BACKGROUND;
-            ui.grid = (UiGrid){1, 1};
             ui.touch_down = true;
-            ui.reject_contact = true;
-            ui.reject_confirm_motion = true;
-            if (ui.morse_layer) lv_obj_add_flag(ui.morse_layer, LV_OBJ_FLAG_HIDDEN);
+            ui.reject_contact = false;
+            ui.start_x = ui.last_x = x;
+            ui.start_y = ui.last_y = y;
+            ui.down_ms = monotonic_ms;
             return;
         }
+        if (touched) { ui.last_x=x; ui.last_y=y; return; }
         if (!touched) {
+            if (ui.touch_down) {
+                const int dx=ui.last_x-ui.start_x, dy=ui.last_y-ui.start_y;
+                const uint64_t duration=monotonic_ms-ui.down_ms;
+                const bool valid_contact=!ui.reject_contact;
+                ui.touch_down=false;
+                ui.reject_contact=false;
+                if (valid_contact && duration>=30 && duration<=1000 && dx>=40 && dx>=2*abs(dy))
+                    return_to_settings(monotonic_ms);
+                else if (valid_contact && duration>=30 && duration<=600 && abs(dx)<20 && abs(dy)<20) {
+                    katmed_morse_stop(&ui.morse);
+                    ui.view=BACKGROUND;ui.grid=(UiGrid){1,1};
+                    if (ui.morse_layer) lv_obj_add_flag(ui.morse_layer, LV_OBJ_FLAG_HIDDEN);
+                }
+            }
             ui.touch_armed = true;
             return;
         }
@@ -1494,6 +1574,10 @@ void ui_touch_sample(bool touched, int16_t x, int16_t y,
             return;
         }
         bool scrollable = ui.view == SETTINGS || ui.view == UI_VIEW_STATUS || ui.keypad || ui.style_dialog;
+        if (dx>=40 && dx>=2*abs(dy) && (ui.keypad || ui.style_dialog || ui.view==UI_VIEW_INTERACTION)) {
+            return_to_settings(monotonic_ms);
+            return;
+        }
         if ((!scrollable || ui.edge_contact) && abs(dy) >= 40 && abs(dy) >= 2*abs(dx)) {
             change_page(0, dy > 0 ? -1 : 1, monotonic_ms);
             return;

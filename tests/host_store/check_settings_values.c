@@ -25,6 +25,18 @@ static lv_obj_t *find_text(lv_obj_t *node, const char *text)
 
 static void click(const char *text)
 {
+    if ((strcmp(text,"Status")==0 && ui_current_view()==SETTINGS) ||
+        (strcmp(text,"Zurück")==0 && ui_current_view()==UI_VIEW_STATUS)) {
+        static uint64_t tick=10000000;
+        tick+=1000;
+        int height=lv_display_get_vertical_resolution(lv_display_get_default());
+        bool back=ui_current_view()==UI_VIEW_STATUS;
+        ui_touch_sample(false,0,0,true,tick);
+        ui_touch_sample(true,80,back?1:height-2,true,tick+30);
+        ui_touch_sample(true,80,back?100:height-100,true,tick+130);
+        ui_touch_sample(false,0,0,true,tick+230);
+        return;
+    }
     lv_obj_t *caption = find_text(lv_screen_active(), text);
     assert(caption && "expected visible control");
     lv_obj_send_event(lv_obj_get_parent(caption), LV_EVENT_CLICKED, NULL);
@@ -222,10 +234,15 @@ int main(int argc, char **argv)
     expect_text("Nächster Alarm: 25.10.2026 02:30 CET");
     lv_obj_t *panel = lv_obj_get_parent(find_text(lv_screen_active(), "Status"));
     assert(lv_obj_has_flag(panel, LV_OBJ_FLAG_SCROLLABLE));
-    lv_obj_t *back = lv_obj_get_parent(find_text(panel, "Zurück"));
-    lv_obj_scroll_to_view(back, LV_ANIM_OFF);
+    assert(!find_text(panel, "Zurück"));
+    lv_obj_t *last = find_text(panel, "Mesh bisher erfasst (ab Einführung): inaktiv");
+    assert(last);
+    lv_obj_scroll_to_view(last, LV_ANIM_OFF);
     lv_obj_update_layout(panel);
-    assert(lv_obj_get_y2(back) <= lv_obj_get_height(panel));
+    lv_area_t visible_last, panel_bounds;
+    lv_obj_get_coords(last,&visible_last);
+    lv_obj_get_coords(panel,&panel_bounds);
+    assert(visible_last.y1>=panel_bounds.y1&&visible_last.y2<=panel_bounds.y2);
     click("Zurück");
     printf("settings values: real Store/save/reopen/status/unknown %dx%d passed\n",
            width, height);

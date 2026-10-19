@@ -41,7 +41,7 @@ def main():
         run(manifest, "c6", c6, True)
         ids_c3 = re.findall(r"\{UINT64_C\(0x([0-9a-f]{16})\)", c3.read_text())
         ids_c6 = re.findall(r"\{UINT64_C\(0x([0-9a-f]{16})\)", c6.read_text())
-        check(len(ids_c3) == len(ids_c6) == 75 and ids_c3 == ids_c6,
+        check(len(ids_c3) == len(ids_c6) == 72 and ids_c3 == ids_c6,
               "Target indexes do not have the same complete logical IDs")
         for target_file in (c3, c6):
             check(".catalog_sha256 = " in target_file.read_text(), "Full catalogue hash missing")
@@ -78,11 +78,24 @@ def main():
         manifest.write_text(original_manifest)
 
         data = json.loads(original_manifest)
+        data["image_count"] = 0
+        data["images"] = []
+        manifest.write_text(json.dumps(data))
+        run(manifest, "c3", Path(temp) / "empty-catalogue.c", False)
+        manifest.write_text(original_manifest)
+
+        data = json.loads(original_manifest)
+        data["image_count"] = 75
+        manifest.write_text(json.dumps(data))
+        run(manifest, "c6", Path(temp) / "stale-count.c", False)
+        manifest.write_text(original_manifest)
+
+        data = json.loads(original_manifest)
         data["source_root"] = str(Path(temp) / "missing-originals")
         manifest.write_text(json.dumps(data))
         run(manifest, "c3", Path(temp) / "missing-source.c", False)
 
-    print("firmware catalogue: both targets and six damaged/stale input cases passed")
+    print("firmware catalogue: both targets and eight damaged/stale input cases passed")
 
 
 if __name__ == "__main__":

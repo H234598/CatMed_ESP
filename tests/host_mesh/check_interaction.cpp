@@ -27,6 +27,39 @@ struct Mesh {
 };
 int main(){
  {
+  Interaction solo; uint64_t now=3001;
+  solo.bind(11,11,1,true,true,1);solo.bind(11,11,1,true,true,now);
+  auto input=[&](KatmedInteractionInputKind kind,uint64_t contact=0){
+   KatmedInteractionInput in{};in.kind=kind;in.menu_entry=7;in.contact_id=contact;
+   return solo.input(in,now);
+  };
+  assert(input(KATMED_INTERACTION_ENTER));
+  for(unsigned k=1;k<=1000;++k){
+   assert(input(KATMED_INTERACTION_DOWN,k));
+   solo.bind(11,11,1,true,true,now);
+   now+=10;assert(input(KATMED_INTERACTION_UP,k));
+   solo.bind(11,11,1,true,true,now);now+=10;
+   KatmedInteractionStatus s{};solo.status(s,now);
+   assert(s.owns_token&&!s.key_down&&!s.overflow);
+  }
+  for(unsigned n=0;n<400;++n){now+=25;solo.bind(11,11,1,true,true,now);}KatmedInteractionStatus s{};solo.status(s,now);assert(s.finish_prompt);
+  for(unsigned n=0;n<1200;++n){now+=25;solo.bind(11,11,1,true,true,now);}solo.status(s,now);assert(!s.owns_token&&!s.finish_prompt);
+  assert(input(KATMED_INTERACTION_DOWN,1001));solo.bind(11,11,1,true,true,now);solo.status(s,now);assert(s.owns_token&&s.key_down);
+  KatmedInteractionInput alarm{};alarm.kind=KATMED_INTERACTION_ALARM;alarm.active=true;
+  assert(solo.input(alarm,now));solo.status(s,now);assert(!s.owns_token&&!s.key_down&&!s.receive_white);
+  alarm.active=false;assert(solo.input(alarm,now));solo.bind(11,11,1,true,true,now);
+  assert(input(KATMED_INTERACTION_DOWN,1002));solo.bind(11,11,1,true,true,now);
+  assert(input(KATMED_INTERACTION_LEAVE));solo.bind(11,11,1,true,true,now);
+  assert(!input(KATMED_INTERACTION_UP,1002));
+  for(unsigned n=0;n<1800;++n){now+=25;solo.bind(11,11,1,true,true,now);}
+  solo.status(s,now);assert(!s.menu_open&&!s.owns_token&&!s.key_down&&!s.finish_prompt);
+  assert(input(KATMED_INTERACTION_ENTER));assert(input(KATMED_INTERACTION_DOWN,1003));
+  solo.bind(11,11,1,true,true,now);assert(input(KATMED_INTERACTION_UP,1003));
+  solo.bind(11,11,1,true,true,now);solo.status(s,now);assert(s.owns_token&&!s.key_down&&!s.overflow);
+
+ }
+
+ {
   Mesh m;m.deliver_b=false;
   assert(m.input(m.a,KATMED_INTERACTION_ENTER));assert(m.input(m.a,KATMED_INTERACTION_DOWN,1));
   while(!m.status(m.a).owns_token)m.tick(25);
@@ -91,6 +124,10 @@ int main(){
   Mesh m;m.grant();assert(m.input(m.a,KATMED_INTERACTION_UP,1));m.tick(1100);
   for(unsigned k=2;k<=6;++k){assert(m.input(m.a,KATMED_INTERACTION_DOWN,k));m.now+=10;assert(m.input(m.a,KATMED_INTERACTION_UP,k));m.now+=10;}
   assert(m.status(m.a).overflow); // five fresh untransmitted completions genuinely exceed four slots
+  m.tick(10000);assert(!m.status(m.a).overflow&&!m.status(m.root).overflow);
+  assert(m.input(m.a,KATMED_INTERACTION_DOWN,7));m.tick(100);
+  assert(m.input(m.a,KATMED_INTERACTION_UP,7));m.tick(200);
+  assert(!m.status(m.a).key_down);
  }
  {
   Mesh m;assert(m.input(m.b,KATMED_INTERACTION_ENTER));m.tick(300);m.grant();

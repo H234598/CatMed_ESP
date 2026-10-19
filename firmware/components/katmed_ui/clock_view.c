@@ -2,6 +2,9 @@
 #include "katmed_core.h"
 #include "katmed_font.h"
 
+#include "clock_font_30.inc"
+#include "clock_font_68.inc"
+
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -72,9 +75,9 @@ lv_obj_t *clock_view_create(lv_obj_t *parent)
     lv_obj_set_style_pad_all(w->plate, 4, 0);
 
     w->time = clock_label(w->plate, "--:--");
-    lv_obj_set_style_text_font(w->time, &katmed_font_26, 0);
+    lv_obj_set_style_text_font(w->time, &katmed_font_68, 0);
     w->date = clock_label(w->plate, "");
-    lv_obj_set_style_text_font(w->date, &katmed_font_14, 0);
+    lv_obj_set_style_text_font(w->date, &katmed_font_30, 0);
     w->quality = clock_label(w->plate, "Uhrzeit nicht verfügbar");
     lv_obj_set_style_text_font(w->quality, &katmed_font_14, 0);
     w->dial = lv_obj_create(view);
@@ -154,6 +157,7 @@ void clock_view_update(lv_obj_t *view, ClockStyle style, const ClockSample *cloc
     if (!view) return;
     ClockWidgets *w = lv_obj_get_user_data(view);
     if (!w) return;
+    lv_obj_update_layout(view);
     if (style != DIGITAL_LARGE && style != DIGITAL_DATE && style != ANALOG)
         style = DIGITAL_LARGE;
 
@@ -161,8 +165,11 @@ void clock_view_update(lv_obj_t *view, ClockStyle style, const ClockSample *cloc
     bool valid = clock && clock->utc_valid && clock->quality != CLOCK_UNAVAILABLE &&
                  app_berlin_local_time(clock->utc_ms, &local) == APP_OK;
     char buffer[32];
-    if (valid) snprintf(buffer, sizeof(buffer), "%02u:%02u", local.hour, local.minute);
-    else strcpy(buffer, "--:--");
+    const bool stacked = lv_obj_get_width(view) < 200 &&
+                         lv_obj_get_height(view) > lv_obj_get_width(view);
+    if (valid) snprintf(buffer, sizeof(buffer), stacked ? "%02u:\n%02u" : "%02u:%02u",
+                        local.hour, local.minute);
+    else strcpy(buffer, stacked ? "--:\n--" : "--:--");
     lv_label_set_text(w->time, buffer);
     if (valid) snprintf(buffer, sizeof(buffer), "%02u.%02u.%04d", local.day,
                         local.month, local.year);
@@ -173,6 +180,9 @@ void clock_view_update(lv_obj_t *view, ClockStyle style, const ClockSample *cloc
 
     bool analog_style = style == ANALOG;
     bool analog = analog_style && valid;
+    lv_obj_set_style_text_font(w->time, analog_style ? &katmed_font_26 : &katmed_font_68, 0);
+    lv_obj_set_size(w->plate, lv_pct(analog_style ? 84 : 96),
+                             lv_pct(analog_style ? 78 : 96));
     lv_obj_set_style_bg_opa(w->plate,
                             analog_style ? LV_OPA_TRANSP : LV_OPA_70, 0);
     lv_obj_set_style_border_width(w->dial, analog_style ? 0 : 2, 0);
@@ -223,8 +233,14 @@ void clock_view_update(lv_obj_t *view, ClockStyle style, const ClockSample *cloc
         lv_obj_set_size(w->hub, hub_size, hub_size);
         lv_obj_center(w->hub);
     }
-    lv_obj_align(w->time, LV_ALIGN_CENTER, 0,
-                 style == DIGITAL_DATE && valid ? -18 : 0);
-    lv_obj_align(w->date, LV_ALIGN_CENTER, 0, 25);
-    lv_obj_align(w->quality, LV_ALIGN_BOTTOM_MID, 0, -5);
+    if (analog_style) {
+        lv_obj_set_layout(w->plate, LV_LAYOUT_NONE);
+        lv_obj_align(w->time, LV_ALIGN_CENTER, 0, 0);
+        lv_obj_align(w->quality, LV_ALIGN_BOTTOM_MID, 0, -5);
+    } else {
+        lv_obj_set_flex_flow(w->plate, LV_FLEX_FLOW_COLUMN);
+        lv_obj_set_flex_align(w->plate, LV_FLEX_ALIGN_CENTER,
+                              LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+        lv_obj_set_style_pad_row(w->plate, 2, 0);
+    }
 }

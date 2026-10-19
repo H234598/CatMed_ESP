@@ -51,9 +51,12 @@ class Interaction {
     uint64_t own_lease_end=0,seen_grant=0,consumed=0,live_seen=0,white_end=0;
     uint64_t completion=0,completion_root=0,completion_serial=0,acknowledged=0,root_completion=0,local_done=0,root_last_up=0;
     uint8_t cursor=0;
+    uint64_t loss_until=0,remote_loss_until=0;
+    void lost(){loss_until=add(clock,3000);overflow=true;}
+    void remote_loss(uint64_t now){remote_loss_until=add(now,3000);overflow=true;}
     static uint64_t add(uint64_t a,uint64_t b){return a>UINT64_MAX-b?UINT64_MAX:a+b;}
     static uint32_t age(uint64_t now,uint64_t then){return now>=then&&now-then<=UINT32_MAX?uint32_t(now-then):UINT32_MAX;}
-    void append(Record *r,uint8_t &n,const Record &p){if(n==4){for(unsigned i=1;i<4;++i)r[i-1]=r[i];--n;overflow=true;}r[n++]=p;}
+    void append(Record *r,uint8_t &n,const Record &p){if(n==4){for(unsigned i=1;i<4;++i)r[i-1]=r[i];--n;lost();}r[n++]=p;}
     void close_local(){closed=local_grant>closed?local_grant:closed;local_grant=0;held=false;request=0;waiting=false;prompt=false;own_n=0;dirty=true;}
     void close_root(bool finished=true){
         if(!owner)return;
@@ -73,6 +76,7 @@ class Interaction {
     void expire(uint64_t now){
         if(now<clock)return;
         clock=now;
+        overflow=now<loss_until||now<remote_loss_until;
         auto prune=[&](Record *records,uint8_t &n,uint32_t limit){
             unsigned kept=0;for(unsigned i=0;i<n;++i)if(age(now,records[i].ended)<=limit)records[kept++]=records[i];
             n=uint8_t(kept);
@@ -86,11 +90,11 @@ class Interaction {
             if(prompt&&now-prompt_at>=30000){close_local();if(is_root)close_root();}
         }
         for(unsigned i=0;i<rx_n;){if(now>=received[i].ended){consumed=received[i].pulse.id>consumed?received[i].pulse.id:consumed;for(unsigned j=i+1;j<rx_n;++j)received[j-1]=received[j];
-                --rx_n;overflow=true;}else ++i;}
+                --rx_n;lost();}else ++i;}
     }
     InteractionMessage control(uint64_t now){
         InteractionMessage m;m.op=1;m.query=pending;m.challenge=remote_challenge;m.entry=menu?entry:0;m.contact=contact;m.request=request;
-        m.grant=local_grant;m.closed=closed;m.flags=uint8_t((held?1:0)|(alarm?2:0)|(overflow?4:0));
+        m.grant=local_grant;m.closed=closed;m.flags=uint8_t((held?1:0)|(alarm?2:0)|(now<loss_until?4:0));
         m.revision=own_revision;m.impulse=held&&local_grant?own_impulse:0;m.ack=acknowledged;
         for(unsigned i=0;i<own_n;++i)if(age(now,own[i].ended)<=1000){m.pulses[m.count]=own[i].pulse;m.pulses[m.count++].age=age(now,own[i].ended);}
         return m;
@@ -106,14 +110,19 @@ class Interaction {
         }
         if(owner!=device||m.entry!=owner_entry||m.grant!=grant)return;
         lease_end=add(now,2000);
-        if(m.flags&4)overflow=true;
+        if(m.flags&4)remote_loss(now);
         if(m.revision>=root_revision){root_revision=m.revision;root_impulse=(m.flags&1)?m.impulse:0;
             root_down_until=root_impulse?add(now,750-transport_age):0;}
         for(unsigned i=0;i<m.count;++i){auto pulse=m.pulses[i];
             const uint64_t total=uint64_t(pulse.age)+transport_age;
             if(pulse.id<=root_last_pulse||total>1000)continue;
-            if(pulse.id!=root_last_pulse+1)overflow=true;
-            root_last_pulse=pulse.id;append(relay,relay_n,Record{pulse,now-total});root_last_up=now;
+            if(pulse.id!=root_last_pulse+1)lost();
+            root_last_pulse=pulse.id;
+            // Root-local output needs no replay queue when no current peer can receive it.
+            bool receiver=device!=local;
+            for(const auto &peer:peers)if(peer.id&&peer.id!=device&&age(now,peer.last)<=1500)receiver=true;
+            if(receiver)append(relay,relay_n,Record{pulse,now-total});
+            root_last_up=now;
         }
     }
     InteractionMessage project(Peer *p,uint64_t query,uint64_t now){
@@ -153,7 +162,7 @@ class Interaction {
             if(received[i].pulse.id<=(live?live_seen:consumed)){
                 consumed=received[i].pulse.id>consumed?received[i].pulse.id:consumed;
                 for(unsigned j=i+1;j<rx_n;++j)received[j-1]=received[j];
-                --rx_n;overflow=true;
+                --rx_n;lost();
             }else ++i;
         }
         for(unsigned i=0;i<m.count;++i){auto p=m.pulses[i];uint64_t a=uint64_t(p.age)+transit;
@@ -164,7 +173,7 @@ class Interaction {
             if(rx_n==4)consumed=received[0].pulse.id>consumed?received[0].pulse.id:consumed;
             append(received,rx_n,Record{p,add(now,3000-a)});
         }
-        if(m.flags&4)overflow=true;
+        if(!is_root&&(m.flags&4))remote_loss(now);
     }
 public:
     void bind(uint64_t self,uint64_t root_id,uint64_t epoch,bool root_role,bool connected,uint64_t now){
@@ -202,7 +211,11 @@ public:
             if(!held||in.contact_id!=contact)return false;
             if(local_grant){if(own_revision==UINT64_MAX){close_local();return false;}++own_revision;
                 Pulse p{own_impulse,own_revision,age(captured,down_at),0};append(own,own_n,Record{p,captured});}
-            edge_time=captured;held=false;last_up=now;waiting=false;if(!local_grant)request=0;dirty=true;return true;
+            edge_time=captured;held=false;last_up=now;waiting=false;if(!local_grant)request=0;dirty=true;
+            // A local coordinator has already reached the authority: consume its
+            // completion immediately instead of retaining an outbound retry copy.
+            if(is_root&&local_grant){auto m=control(now);apply(local,nullptr,m,now,0);own_n=0;}
+            return true;
         }return false;
     }
     bool receive(uint64_t sender,const InteractionMessage &m,uint64_t now){

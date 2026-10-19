@@ -124,8 +124,9 @@ int main(int argc, char **argv)
     assert(ui_current_view() == MORSE);
     project(&state, &local, &clock, 3010);
     ui_touch_sample(true, host.width/2, host.height/2, true, 3020);
+    assert(ui_current_view() == MORSE);
+    ui_touch_sample(false, 0, 0, true, 3060);
     assert(ui_current_view() == BACKGROUND);
-    ui_touch_sample(false, 0, 0, true, 3030);
     /* Expiry consumes a held modal contact; it never turns into a swipe. */
     interaction.greeting_visible = true; interaction.greeting_id = 9;
     interaction.greeting_until_ms = 3200;

@@ -69,6 +69,9 @@ typedef struct {
     bool (*interaction_input)(void *context, const KatmedInteractionInput *input, uint64_t now_ms);
     void (*interaction_status)(void *context, KatmedInteractionStatus *out, uint64_t now_ms);
     UiSubmitResult (*submit)(void *context, const UiRequest *request);
+    /* Read the actual committed runtime model without rendering/reloading Store.
+     * Called only after durable success, under the caller's existing UI lock. */
+    bool (*read_model)(void *context, AppState *state, LocalSettings *local, ClockSample *clock);
     void (*network_status)(void *context, UiNetworkStatus *status);
     bool (*connected)(void *context); /* Optional; absent means unknown/offline. */
     bool (*last_confirmation)(void *context, ClockSample *historical);

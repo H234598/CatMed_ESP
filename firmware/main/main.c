@@ -220,6 +220,48 @@ static bool time_event_id(Runtime *rt, EventId *id)
     return true;
 }
 
+static void tick_runtime(Runtime *rt, const ClockSample *now)
+{
+    static AppState candidate;
+    candidate = rt->state;
+    AppEffects effects;
+    const AppResult status = app_tick(&candidate, now, &effects);
+    if ((status != APP_OK && status != APP_NO_CHANGE) || effects.persistence_required) return;
+    if (status == APP_OK) rt->state = candidate;
+    /* RANDOM is selected only by the currently bound coordinator. The reducer
+     * leaves its due flag set until this durable, revisioned event commits. */
+    if (!rt->state.image_due_pending || rt->state.alarm_active ||
+        rt->state.settings.rotation != ROTATION_RANDOM ||
+        rt->state.catalog_mismatch || rt->state.image_count == 0 ||
+        rt->state.revision.number == UINT64_MAX || !rt->store_ready ||
+        rt->reboot_required || rt->shared_pending || !rt->mesh_started ||
+        !rt->store.record.provision.configured ||
+        store_get_status(&rt->store, NULL, NULL, NULL) != STORE_OK ||
+        !katmed_mesh_is_coordinator()) return;
+    uint32_t image = 0;
+    if (rt->state.image_count > 1) {
+        image = esp_random() % (rt->state.image_count - 1);
+        if (image >= rt->state.image_id) ++image;
+    }
+    EventId id;
+    if (store_next_event_id(&rt->store, &id) != STORE_OK) return;
+    AppEvent event = {
+        .kind = EVENT_SET_IMAGE,
+        .id = id,
+        .sender = id.device,
+        .round = rt->state.round,
+        .parent_revision = rt->state.revision,
+        .occurred_at = *now,
+        .coordinator_accepted = true,
+        .value.image_id = image,
+    };
+    AppEffects committed_effects;
+    AppResult core_result;
+    if (store_apply_event(&rt->store, &rt->state, &event, now, false,
+                         &committed_effects, &core_result) == STORE_OK)
+        katmed_mesh_notify_local_commit();
+}
+
 static bool apply_time_sample(Runtime *rt, const ClockSample *sample)
 {
     if (!rt->store_ready || !sample || !sample->utc_valid ||
@@ -464,6 +506,17 @@ static bool storage_ready(void *context)
 {
     Runtime *rt = (Runtime *)context;
     return rt != NULL && store_get_status(&rt->store, NULL, NULL, NULL) == STORE_OK;
+}
+
+static bool read_ui_model(void *context, AppState *state, LocalSettings *local,
+                          ClockSample *clock)
+{
+    Runtime *rt = context;
+    if (!rt || !state || !local || !clock) return false;
+    *state = rt->state;
+    *local = rt->local;
+    *clock = clock_sample(rt->boot_domain);
+    return true;
 }
 
 static bool durable_divergence(void *context)
@@ -864,6 +917,7 @@ void app_main(void)
     const UiServices services = {
         .context = &runtime,
         .submit = submit_ui,
+        .read_model = read_ui_model,
         .interaction_input = interaction_submit,
         .interaction_status = interaction_status,
         .connected = group_connected,
@@ -939,15 +993,7 @@ void app_main(void)
             }
         }
         now = clock_sample(runtime.boot_domain);
-        static AppState candidate;
-        candidate = runtime.state;
-        AppEffects effects;
-        const AppResult tick_status = app_tick(&candidate, &now, &effects);
-        if (tick_status == APP_OK && !effects.persistence_required) {
-            /* The reducer owns countdown and image changes. Group broadcast
-             * remains unavailable until the authenticated Mesh adapter. */
-            runtime.state = candidate;
-        }
+        tick_runtime(&runtime, &now);
         process_usb(&runtime, &now);
         now = clock_sample(runtime.boot_domain);
         if (runtime.mesh_started && !runtime.reboot_required)

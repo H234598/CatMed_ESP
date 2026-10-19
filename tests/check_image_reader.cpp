@@ -152,7 +152,7 @@ int main(int argc, char **argv)
 
         expect(katmed_images_mount_storage(storage) == KATMED_IMAGE_OK, "valid pack rejected");
         expect(backend.largest_read == KATMED_IMAGE_READ_CHUNK, "pack hash exceeded its 512-byte buffer");
-        expect(katmed_images_count() == 75, "logical image count mismatch");
+        expect(katmed_images_count() == 72, "logical image count mismatch");
         KatmedGeneratedCatalog malformed = katmed_generated_catalog;
         malformed.images[0].variants[0].offset = UINT32_MAX;
         expect(katmed_images_validate_catalog(&malformed, backend.bytes) == KATMED_IMAGE_BAD_CATALOG,
@@ -200,7 +200,7 @@ int main(int argc, char **argv)
                 }
             }
         }
-        expect(decoded == (katmed_generated_catalog.profile_count == 1 ? 75u : 150u),
+        expect(decoded == (katmed_generated_catalog.profile_count == 1 ? 72u : 144u),
                "not every JPEG variant was decoded");
 
         uint8_t buffer[8];
@@ -212,11 +212,15 @@ int main(int argc, char **argv)
                "overflowing image offset was accepted");
         expect(katmed_images_read_variant(0, 0, 0, buffer, SIZE_MAX, &actual) == KATMED_IMAGE_BAD_RANGE,
                "huge read length was accepted");
-        expect(katmed_images_read_variant(75, 0, 0, buffer, 1, &actual) == KATMED_IMAGE_BAD_ID,
+        expect(katmed_images_read_variant(72, 0, 0, buffer, 1, &actual) == KATMED_IMAGE_BAD_ID,
                "missing logical image was accepted");
         KatmedImageSelection missing;
-        expect(katmed_images_select(75, ORIENTATION_0, &missing) == KATMED_IMAGE_BAD_ID &&
-               missing.show_neutral_fallback, "missing image did not request fallback");
+        for(uint32_t old_index : {72u, 73u, 74u, 65535u, UINT32_MAX}) {
+            expect(katmed_images_select(old_index, ORIENTATION_0, &missing) == KATMED_IMAGE_BAD_ID &&
+                   missing.show_neutral_fallback, "old or invalid image did not request fallback");
+            expect(katmed_images_read_variant(old_index, 0, 0, buffer, 1, &actual) == KATMED_IMAGE_BAD_ID,
+                   "old or invalid image index was readable");
+        }
         for(int invalid_angle : {-1, 4, 255})
             expect(katmed_images_select(0, static_cast<Orientation>(invalid_angle), &missing) ==
                    KATMED_IMAGE_BAD_ID && missing.show_neutral_fallback,

@@ -149,8 +149,9 @@ int main(void)
     /* With no active alarm, ordinary Morse cancellation has no ACK side effect. */
     assert(!state.alarm_active);
     ui_touch_sample(true, 110, 110, true, 5310);
-    assert(ui_current_view() == BACKGROUND);
+    assert(ui_current_view() == MORSE);
     ui_touch_sample(false, 0, 0, true, 5370);
+    assert(ui_current_view() == BACKGROUND);
     render_current(&state, &local, &clock, 5380);
     assert(host.submit_calls == 2 && host.store_calls == 2);
 
@@ -181,8 +182,9 @@ int main(void)
     render_at(&state, &local, &clock, &host, UINT64_C(1494359), 0x0000);
     render_at(&state, &local, &clock, &host, UINT64_C(1494360), 0xffff);
     ui_touch_sample(true, 110, 110, true, UINT64_C(1494370));
-    assert(ui_current_view() == BACKGROUND);
+    assert(ui_current_view() == MORSE);
     ui_touch_sample(false, 0, 0, true, UINT64_C(1494430));
+    assert(ui_current_view() == BACKGROUND);
     render_current(&state, &local, &clock, UINT64_C(1494440));
     assert(host.submit_calls == 3 && host.store_calls == 3);
     lv_indev_delete(indev);

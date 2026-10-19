@@ -1,0 +1,139 @@
+#define main prior_submit_test
+#include "host_store/check_main_submit.c"
+#undef main
+#include "check_ui_refinement_main.h"
+
+void refinement_init(const uint8_t *catalog, uint32_t count)
+{
+    committed_length=0; fail_commit=false; writes=0; fake_microseconds=1000000;
+    memset(&runtime,0,sizeof(runtime));
+    StoreRecovery recovery={0};
+    StoreBackend backend={NULL,test_read,test_write};
+    assert(store_open(&runtime.store,backend,UINT64_C(0xAC276E46BC2C),catalog,count,&recovery)==STORE_OK);
+    runtime.store_ready=true; runtime.boot=recovery.boot_identity;
+    runtime.boot_domain=new_boot_domain(runtime.boot); runtime.local=recovery.local;
+    katmed_time_init(&runtime.time,runtime.boot_domain);
+    assert(katmed_time_accept_utc(&runtime.time,1000,INT64_C(1792393200000),CLOCK_SYNCHRONIZED));
+    ClockSample now=clock_sample(runtime.boot_domain);
+    assert(app_init(&runtime.state,&recovery.shared,&now,runtime.boot,count,catalog)==APP_OK);
+    runtime.mesh_started=true; fake_mesh_coordinator=true; fake_mesh_connected=false;
+    fake_mesh_result=MESH_ACCEPTED;
+    UiRequest confirm={.kind=UI_REQUEST_CONFIRM};
+    assert(submit_ui(&runtime,&confirm)==UI_SUBMIT_PENDING);
+}
+UiServices refinement_services(void) { return (UiServices){.context=&runtime,.submit=submit_ui,.read_model=read_ui_model}; }
+const AppState *refinement_state(void) { return &runtime.state; }
+const LocalSettings *refinement_local(void) { return &runtime.local; }
+ClockSample refinement_clock(void) { return clock_sample(runtime.boot_domain); }
+void refinement_advance(uint32_t ms) { fake_microseconds+=(int64_t)ms*1000; }
+unsigned refinement_writes(void) { return writes; }
+void refinement_fail_commit(bool fail) { fail_commit=fail; }
+AppResult refinement_image(uint32_t id)
+{
+    EventId next;
+    assert(store_next_event_id(&runtime.store,&next)==STORE_OK);
+    ClockSample now=refinement_clock();
+    AppEvent event={.kind=EVENT_SET_IMAGE,.id=next,.sender=next.device,
+        .round=runtime.state.round,.parent_revision=runtime.state.revision,
+        .occurred_at=now,.coordinator_accepted=true,.value.image_id=id};
+    AppEffects effects; AppResult result;
+    (void)store_apply_event(&runtime.store,&runtime.state,&event,&now,false,&effects,&result);
+    return result;
+}
+
+void refinement_index_contract(void)
+{
+    uint8_t current[KATMED_CATALOG_BYTES];
+    memcpy(current,runtime.state.catalog_id,sizeof(current));
+    const uint32_t count=runtime.state.image_count;
+    const uint32_t old_ids[]={72,73,74};
+    for(unsigned i=0;i<3;++i) {
+        uint8_t old[KATMED_CATALOG_BYTES];memcpy(old,current,sizeof(old));old[0]^=1;
+        refinement_init(old,75);
+        assert(refinement_image(old_ids[i])==APP_OK);
+        assert(runtime.store.record.history.image_id==old_ids[i]);
+        const SharedSettings settings=runtime.store.record.shared;
+        StoreRecovery recovery={0};StoreBackend backend={NULL,test_read,test_write};
+        assert(store_open(&runtime.store,backend,UINT64_C(0xAC276E46BC2C),current,count,&recovery)==STORE_OK);
+        assert(recovery.catalog_mismatch);
+        runtime.boot=recovery.boot_identity;
+        runtime.boot_domain=new_boot_domain(runtime.boot);
+        katmed_time_init(&runtime.time,runtime.boot_domain);
+        ClockSample now=refinement_clock();
+        assert(app_init(&runtime.state,&recovery.shared,&now,recovery.boot_identity,count,current)==APP_OK);
+        assert(runtime.state.image_id==0&&runtime.state.image_count==count);
+        assert(settings.medication_seconds==runtime.state.settings.medication_seconds &&
+               settings.image_seconds==runtime.state.settings.image_seconds &&
+               settings.rotation==runtime.state.settings.rotation);
+        UiRequest confirm={.kind=UI_REQUEST_CONFIRM};
+        assert(submit_ui(&runtime,&confirm)==UI_SUBMIT_PENDING);
+        assert(refinement_image(old_ids[i])==APP_INVALID);
+        assert(refinement_image(UINT16_MAX)==APP_INVALID);
+        assert(refinement_image(UINT32_MAX)==APP_INVALID);
+        assert(runtime.state.image_id<count);
+    }
+    refinement_init(current,0);
+    assert(runtime.state.image_id==0&&runtime.state.catalog_mismatch);
+    assert(refinement_image(0)==APP_INVALID);
+    puts("real Store old75 indices72/73/74 reboot to current catalog, invalid65535/max and empty catalog passed");
+}
+
+void refinement_tick_contract(void)
+{
+    StoreProvision *p=&runtime.store.record.provision;
+    for(unsigned i=0;i<16;++i)p->group[i]=(uint8_t)(i+1);
+    for(unsigned i=0;i<32;++i)p->secret[i]=(uint8_t)(i+30);
+    memcpy(p->ssid,"testssid",8);p->ssid_length=8;
+    memcpy(p->password,"password",8);p->password_length=8;
+    memcpy(p->time_source,"pool.ntp.org",12);p->time_source_length=12;
+    p->configured=true;
+    memcpy(runtime.store.record.bound_group,p->group,16);
+    runtime.store.record.group_origin=STORE_GROUP_ORIGIN_FIRST_BOUND;
+    UiRequest interval={.kind=UI_REQUEST_SET_IMAGE_SECONDS,.value.seconds=1};
+    UiRequest random={.kind=UI_REQUEST_SET_ROTATION_MODE,.value.rotation=ROTATION_RANDOM};
+    assert(submit_ui(&runtime,&interval)==UI_SUBMIT_COMMITTED);
+    assert(submit_ui(&runtime,&random)==UI_SUBMIT_COMMITTED);
+    const uint32_t previous=runtime.state.image_id;
+    refinement_advance(1000);ClockSample now=refinement_clock();
+    tick_runtime(&runtime,&now);
+    printf("actual Main tick: pending=%d changed=%d durable=%d\n",
+        runtime.state.image_due_pending,runtime.state.image_id!=previous,
+        runtime.store.record.history.image_id==runtime.state.image_id);
+    fflush(stdout);
+    assert(!runtime.state.image_due_pending&&runtime.state.image_id!=previous);
+    const uint32_t medication=runtime.state.settings.medication_seconds;
+    const int64_t deadline=runtime.state.deadline.effective_utc.ms;
+    for(unsigned i=0;i<150;++i) {
+        uint32_t before=runtime.state.image_id;
+        refinement_advance(1000);now=refinement_clock();tick_runtime(&runtime,&now);
+        assert(runtime.state.image_id<runtime.state.image_count&&runtime.state.image_id!=before);
+        assert(!runtime.state.image_due_pending);
+        assert(runtime.store.record.history.image_id==runtime.state.image_id);
+    }
+    assert(runtime.state.settings.medication_seconds==medication&&runtime.state.deadline.effective_utc.ms==deadline);
+    const uint32_t before=runtime.state.image_id;
+    fake_mesh_coordinator=false;refinement_advance(1000);now=refinement_clock();
+    unsigned prior=writes;tick_runtime(&runtime,&now);
+    assert(runtime.state.image_id==before&&runtime.state.image_due_pending&&writes==prior);
+    fake_mesh_coordinator=true;runtime.mesh_started=false;tick_runtime(&runtime,&now);
+    assert(runtime.state.image_id==before&&writes==prior);
+    runtime.mesh_started=true;runtime.store.record.provision.configured=false;
+    tick_runtime(&runtime,&now);assert(runtime.state.image_id==before&&writes==prior);
+    runtime.store.record.provision.configured=true;
+    UiRequest mode={.kind=UI_REQUEST_SET_ROTATION_MODE,.value.rotation=ROTATION_NAME_ORDER};
+    assert(submit_ui(&runtime,&mode)==UI_SUBMIT_COMMITTED);
+    uint32_t start=runtime.state.image_id;
+    refinement_advance(1000);now=refinement_clock();tick_runtime(&runtime,&now);
+    assert(runtime.state.image_id==(start+1)%runtime.state.image_count);
+    mode.value.rotation=ROTATION_OFF;assert(submit_ui(&runtime,&mode)==UI_SUBMIT_COMMITTED);
+    start=runtime.state.image_id;prior=writes;
+    refinement_advance(1000);now=refinement_clock();tick_runtime(&runtime,&now);
+    assert(runtime.state.image_id==start&&writes==prior);
+    mode.value.rotation=ROTATION_RANDOM;assert(submit_ui(&runtime,&mode)==UI_SUBMIT_COMMITTED);
+    fail_commit=true;prior=writes;
+    refinement_advance(1000);now=refinement_clock();tick_runtime(&runtime,&now);
+    assert(runtime.state.image_id==start&&writes==prior+1);
+    for(unsigned i=0;i<100;++i)tick_runtime(&runtime,&now);
+    assert(runtime.state.image_id==start&&writes==prior+1);
+    puts("actual Main random150 durable bounds, name-order, off, unavailable and fail-closed/no-spam passed");
+}
