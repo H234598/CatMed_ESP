@@ -51,14 +51,13 @@ backups. Local host UI tests use `firmware/components/katmed_ui/host` with
 `KATMED_UI_HOST_MEM34=ON` to exercise the 34 KiB LVGL pool. Root CMake/CTest also
 checks the reducer and the checked-in image packs.
 
-## Verification limits
+## Flashing
 
-Host checks and cross-builds are not hardware certification. Actual C6 touch and
-rendering, multi-device light timing, loss/root-change/multihop behaviour and the
-yellow/red alarm animation still require device acceptance. No flashing or
+No flashing or
 network provisioning runs in CI. Device backups, private firmware, local network
 configuration and project working reports are excluded from this repository.
 
+## Pics
 Public host CI checks the reducer, prepared JPEG/pack checksums and crop geometry,
 the three UI formats with the 34 KiB pool, main contacts, authenticated Mesh,
 transient Morse, admission persistence and Store contracts. Original image files
