@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Public CI only: synthetic credentials, no upload or device operation.
+# Public CI uses the neutral standard profile; no private profile is needed.
 set -euo pipefail
 repo=$(cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$repo"
@@ -7,26 +7,15 @@ mode=${1:?Usage: tools/ci.sh dependencies|host|firmware [c3|c6]}
 board=${2:-c3}
 case "$board" in c3) target=esp32c3;; c6) target=esp32c6;; *) exit 2;; esac
 if [[ "$mode" == dependencies || "$mode" == firmware ]]; then
-    : "${IDF_PATH:?Use the ESP-IDF 5.5.5 environment}"
+    : "${IDF_PATH:?Use the ESP-IDF 6.1 environment}"
     # The SDK lives in the disposable CI container, never a developer's SDK.
     if [[ ${CI:-} != true ]]; then
         echo 'Synthetic firmware setup is restricted to disposable CI.' >&2
         exit 2
     fi
-    printf '%s\n' "$repo" > "$IDF_PATH/.katmed-owned-sdk"
-    python tools/prepare_idf_compat.py "$IDF_PATH" --apply
-    synthetic=$(mktemp -d)
-    trap 'rm -rf -- "$synthetic"' EXIT
-    chmod 700 "$synthetic"
-    python - "$synthetic/config.json" <<'PY'
-import json, os, sys
-with open(sys.argv[1], 'w') as file:
-    json.dump({'ssid': 'CatMed-CI-NOT-A-REAL-NETWORK',
-               'password': 'synthetic-ci-password-only'}, file)
-os.chmod(sys.argv[1], 0o600)
-PY
-    python tools/private_wifi_defaults.py --config "$synthetic/config.json" \
-        --output "$repo/firmware/build-$board/generated/private_wifi_defaults.h"
+    python tools/private_wifi_defaults.py \
+        --output "$repo/firmware/build-$board/generated/private_wifi_defaults.h" \
+        --ui-profile-output "$repo/firmware/build-$board/generated/katmed_private_ui_profile.h"
     action=reconfigure
     [[ "$mode" != firmware ]] || action=build
     (cd firmware && idf.py -B "build-$board" -D "IDF_TARGET=$target" \
