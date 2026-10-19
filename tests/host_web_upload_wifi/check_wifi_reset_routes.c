@@ -79,6 +79,8 @@ int main(void){
  wipe_calls=wipe_length_count=0;wipe_nonzero=false;req_init(&req,semantic_bad);assert(route("/api/wifi/profiles",HTTP_PUT)(&req)==ESP_OK);assert(!strcmp(req.response_status,"422 Unprocessable Content"));assert_wiped_body(strlen(semantic_bad));assert(!strstr(req.response,"synthetic-parse-secret"));
  const char syntax_bad[]="{\"profiles\":[{\"ssid\":\"bad\",\"priority\":1,\"credential\":\"replace\",\"password\":\"synthetic-syntax-secret\"}]}!";
  wipe_calls=wipe_length_count=0;wipe_nonzero=false;req_init(&req,syntax_bad);assert(route("/api/wifi/profiles",HTTP_PUT)(&req)==ESP_OK);assert(!strcmp(req.response_status,"422 Unprocessable Content"));assert_wiped_body(strlen(syntax_bad));assert(!strstr(req.response,"synthetic-syntax-secret"));
+ const char interrupted[]="{\"profiles\":[{\"ssid\":\"network\",\"priority\":1,\"credential\":\"replace\",\"password\":\"synthetic-interrupt-secret\"}]}";
+ wipe_calls=wipe_length_count=0;wipe_nonzero=false;req_init(&req,interrupted);req.fail_after=17;assert(route("/api/wifi/profiles",HTTP_PUT)(&req)==ESP_OK);assert(req.connection_close);assert(!strcmp(req.response_status,"413 Content Too Large"));assert(wipe_calls==1&&!wipe_nonzero&&saw_wipe_length(strlen(interrupted)+1));assert(!strstr(req.response,"synthetic-interrupt-secret"));
  req_init(&req,NULL);req.csrf_ok=false;assert(route("/api/wifi/reconnect",HTTP_POST)(&req)==ESP_OK);assert(!strcmp(req.response_status,"403 Forbidden"));assert(wifi.reconnect_calls==0);
  req_init(&req,NULL);assert(route("/api/wifi/reconnect",HTTP_POST)(&req)==ESP_OK);assert(strstr(req.response,"reevaluate_priority"));assert(wifi.reconnect_calls==1);
 
