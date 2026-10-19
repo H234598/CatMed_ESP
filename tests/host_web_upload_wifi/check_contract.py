@@ -14,6 +14,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 MEDIA_C = ROOT / "firmware/components/katmed_web/katmed_web_media.c"
 WIFI_C = ROOT / "firmware/components/katmed_web/katmed_web_wifi.c"
+RESET_C = ROOT / "firmware/components/katmed_web/katmed_web_reset.c"
+HTML = ROOT / "firmware/components/katmed_web/ui/index.html"
+CSS = ROOT / "firmware/components/katmed_web/ui/style.css"
 APP_JS = ROOT / "firmware/components/katmed_web/ui/app.js"
 CHECKER = ROOT / "tools/check_gift_build_privacy.py"
 
@@ -40,24 +43,72 @@ class RouteContractTests(unittest.TestCase):
         self.assertNotIn("open_read", source)
         self.assertNotIn("fopen(", source)
 
-    def test_wifi_saves_before_separate_reconnect_and_never_returns_credentials(self):
+    def test_wifi_profiles_are_bounded_atomic_and_secrets_are_not_returned(self):
         source = WIFI_C.read_text(encoding="utf-8")
-        self.assertIn("save_durable", source)
-        self.assertIn("schedule_reconnect", source)
-        self.assertIn('"/api/wifi/reconnect"', source)
-        self.assertIn("recovery_available", source)
+        header = (ROOT / "firmware/components/katmed_web/katmed_web_wifi.h").read_text(encoding="utf-8")
+        self.assertIn("profile_limit", header)
+        self.assertIn("save_profiles_atomic", header)
+        self.assertIn("KATMED_WEB_WIFI_CREDENTIAL_KEEP", header)
+        self.assertIn("KATMED_WEB_WIFI_CREDENTIAL_REPLACE", header)
+        self.assertIn("KATMED_WEB_WIFI_CREDENTIAL_OPEN", header)
+        self.assertIn('"/api/wifi/profiles"', source)
+        self.assertIn("profile_limit", source)
+        self.assertIn("save_profiles_atomic", source)
         self.assertIn("authorize(req, true)", source)
-        self.assertNotIn("httpd_resp_send(req, ssid", source)
+        self.assertIn('"/api/wifi/reconnect"', source)
+        self.assertIn("reevaluate_priority", source)
+        self.assertIn("legacy", header.lower())
         self.assertNotIn("httpd_resp_send(req, password", source)
         self.assertNotIn("ESP_LOG", source)
+        # Credentials are parsed only for the atomic save callback, never copied
+        # into the metadata GET representation.
+        get_source = source[source.index("static esp_err_t wifi_get"):source.index("static bool read_body")]
+        self.assertNotIn("password", get_source)
+        self.assertIn("priority", get_source)
+
+    def test_reset_requires_authenticated_prepare_and_separate_one_use_confirmation(self):
+        source = RESET_C.read_text(encoding="utf-8")
+        self.assertIn('"/api/factory-reset/prepare"', source)
+        self.assertIn('"/api/factory-reset/confirm"', source)
+        self.assertIn("authorize(req)", source)
+        self.assertIn("prepare_confirmation", source)
+        self.assertIn("confirm_and_reset", source)
+        self.assertIn("KATMED_WEB_RESET_STALE", source)
+        self.assertIn("Cache-Control", source)
+        self.assertIn("Es wurden keine Daten geändert", source)
+
+    def test_advanced_and_reset_warning_layout_contract(self):
+        html = HTML.read_text(encoding="utf-8")
+        main = html[html.index('id="main-settings"'):html.index('id="advanced-view"')]
+        self.assertIn('id="open-advanced"', main)
+        self.assertNotIn('id="medication-form"', main)
+        self.assertNotIn('id="image-form"', main)
+        self.assertNotIn('id="due-form"', main)
+        self.assertNotIn('id="status-button"', html)
+        self.assertNotIn('id="back-button"', html)
+        self.assertIn('id="factory-reset-no" class="secondary reset-no" type="button" autofocus', html)
+        self.assertIn('id="factory-reset-yes"', html)
+        self.assertIn("Mesh-Bindungen", html)
+        self.assertIn("privaten Build", html)
+        css = CSS.read_text(encoding="utf-8")
+        self.assertIn(".reset-no{width:100%;height:72px", css)
+        self.assertIn(".reset-yes{width:70%;height:50.4px;min-height:50.4px", css)
+        self.assertIn("background:#ffec73", css)
+        self.assertIn("dialog.showModal()", APP_JS.read_text(encoding="utf-8"))
+        self.assertIn('$("factory-reset-no").focus()', APP_JS.read_text(encoding="utf-8"))
 
     def test_ui_wires_upload_wifi_and_csrf(self):
         source = APP_JS.read_text(encoding="utf-8")
         self.assertIn('api("/api/images", "POST", file)', source)
-        self.assertIn('"/api/wifi", "POST"', source)
+        self.assertIn('api("/api/wifi/profiles", "PUT", {profiles})', source)
         self.assertIn('"/api/wifi/reconnect", "POST"', source)
+        self.assertIn('api("/api/factory-reset/prepare", "POST", {})', source)
+        self.assertIn('"/api/factory-reset/confirm", "POST"', source)
         self.assertIn('headers["X-Katmed-CSRF"]', source)
         self.assertIn('credentials: "same-origin"', source)
+        self.assertIn("window.scrollTo(0, state.advancedScrollY)", source)
+        self.assertIn("dx > 64 && Math.abs(dx) > Math.abs(dy) * 1.4", source)
+        self.assertIn("priority - b.profile.priority || a.index - b.index", source)
 
 
 class GiftPrivacyCheckerTests(unittest.TestCase):

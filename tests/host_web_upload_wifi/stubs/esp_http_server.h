@@ -9,7 +9,7 @@
 typedef struct httpd_req httpd_req_t;
 typedef void *httpd_handle_t;
 typedef esp_err_t (*httpd_uri_func)(httpd_req_t *req);
-typedef enum { HTTP_GET, HTTP_POST, HTTP_DELETE } httpd_method_t;
+typedef enum { HTTP_GET, HTTP_POST, HTTP_DELETE, HTTP_PUT } httpd_method_t;
 typedef struct {
     const char *uri;
     httpd_method_t method;
