@@ -62,7 +62,10 @@ static void grid_swipe(bool vertical,bool positive)
     ui_touch_sample(true,x1,y1,true,tick+150);
     ui_touch_sample(false,0,0,true,tick+250);
 }
-int main(int argc,char **argv)
+#ifndef UI_REFINEMENT_ENTRYPOINT
+#define UI_REFINEMENT_ENTRYPOINT main
+#endif
+int UI_REFINEMENT_ENTRYPOINT(int argc,char **argv)
 {
     assert(argc==3||argc==5);
     Host host={.width=argc==5?atoi(argv[3]):240,.height=argc==5?atoi(argv[4]):240};
@@ -110,7 +113,7 @@ int main(int argc,char **argv)
     }
     if (!strcmp(argv[1],"save")) {
         click_label(screen,"Nächste Fälligkeit HH:MM");
-        enter_keys(screen,"11:11");click_label(screen,"Speichern");
+        enter_keys(screen,"1111");click_label(screen,"Speichern");
         assert(refinement_state()->deadline.effective_utc.valid);
         LocalDateTime expected;
         assert(app_berlin_local_time(refinement_state()->deadline.effective_utc.ms,&expected)==APP_OK);
@@ -123,7 +126,7 @@ int main(int argc,char **argv)
         row=find_label_prefix(screen,"Nächster Alarm:");assert(strstr(lv_label_get_text(row),"11:11"));
         click_label(screen,"Zurück");
         click_label(screen,"Nächste Fälligkeit HH:MM");
-        enter_keys(screen,"12:22");click_label(screen,"Speichern");
+        enter_keys(screen,"1222");click_label(screen,"Speichern");
         click_label(screen,"Status");
         row=find_label_prefix(screen,"Nächster Alarm:");assert(strstr(lv_label_get_text(row),"12:22"));
         const AppState committed=*refinement_state();

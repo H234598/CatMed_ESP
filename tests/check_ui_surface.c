@@ -884,7 +884,7 @@ int main(int argc, char **argv)
     report_memory("time-keypad");
     click_label(screen, "0");
     click_label(screen, "2");
-    click_label(screen, ":");
+    /* The HHMM keypad inserts its separator after digit entry. */
     click_label(screen, "3");
     click_label(screen, "0");
     lv_obj_t *skip = find_label_prefix(screen, "02:30 heute nicht vorhanden");
@@ -898,7 +898,7 @@ int main(int argc, char **argv)
     click_label(screen, "Nächste Fälligkeit HH:MM");
     click_label(screen, "1");
     click_label(screen, "2");
-    click_label(screen, ":");
+    /* The HHMM keypad inserts its separator after digit entry. */
     click_label(screen, "3");
     click_label(screen, "0");
     assert(find_label_prefix(screen, "Wirksam:"));

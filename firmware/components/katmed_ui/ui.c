@@ -384,11 +384,13 @@ static void format_hours(char *out, size_t size, uint32_t seconds)
 
 static bool parse_hhmm(const char *text, unsigned *hour, unsigned *minute)
 {
-    if (strlen(text) != 5 || text[2] != ':') return false;
-    for (int i = 0; i < 5; ++i)
-        if (i != 2 && (text[i] < '0' || text[i] > '9')) return false;
+    const size_t length = strlen(text);
+    if (length != 4 && (length != 5 || text[2] != ':')) return false;
+    for (size_t i = 0; i < length; ++i)
+        if (!(length == 5 && i == 2) && (text[i] < '0' || text[i] > '9')) return false;
+    const size_t minutes = length == 4 ? 2 : 3;
     *hour = (unsigned)(text[0] - '0') * 10u + (unsigned)(text[1] - '0');
-    *minute = (unsigned)(text[3] - '0') * 10u + (unsigned)(text[4] - '0');
+    *minute = (unsigned)(text[minutes] - '0') * 10u + (unsigned)(text[minutes + 1] - '0');
     return *hour < 24 && *minute < 60;
 }
 
@@ -463,12 +465,26 @@ static void key_press(lv_event_t *event)
     const char *key = lv_buttonmatrix_get_button_text(keys, selected);
     if (!key) return;
     size_t length = strlen(ui.entry);
+    if (ui.edit == EDIT_NEXT_TIME) {
+        char digits[5] = {0};
+        size_t count = 0;
+        for (size_t i = 0; i < length && count < 4; ++i)
+            if (ui.entry[i] >= '0' && ui.entry[i] <= '9') digits[count++] = ui.entry[i];
+        if (strcmp(key, "<") == 0) {
+            if (count) digits[--count] = '\0';
+        } else {
+            if (key[0] < '0' || key[0] > '9' || key[1] || count == 4) return;
+            digits[count++] = key[0];
+        }
+        if (count <= 2) snprintf(ui.entry, sizeof(ui.entry), "%s", digits);
+        else snprintf(ui.entry, sizeof(ui.entry), "%c%c:%s", digits[0], digits[1], digits + 2);
+        refresh_entry();
+        return;
+    }
     if (strcmp(key, "<") == 0) {
         if (length) ui.entry[length - 1] = '\0';
     } else if (length + strlen(key) < sizeof(ui.entry)) {
-        if (ui.edit == EDIT_NEXT_TIME && strcmp(key, ":") != 0 &&
-            (key[0] < '0' || key[0] > '9')) return;
-        if (ui.edit != EDIT_NEXT_TIME && strcmp(key, ":") == 0) return;
+        if (strcmp(key, ":") == 0) return;
         strcat(ui.entry, key);
     }
     refresh_entry();
@@ -548,8 +564,12 @@ static void open_edit(EditKind edit)
                                     "4", "5", "6", ".", "\n",
                                     "7", "8", "9", ",", "\n",
                                     "0", "0", ":", "<", ""};
+    static const char *time_map[] = {"1", "2", "3", "<", "\n",
+                                     "4", "5", "6", "<", "\n",
+                                     "7", "8", "9", "<", "\n",
+                                     "0", "0", "0", "<", ""};
     lv_obj_t *keys = lv_buttonmatrix_create(ui.keypad);
-    lv_buttonmatrix_set_map(keys, key_map);
+    lv_buttonmatrix_set_map(keys, edit == EDIT_NEXT_TIME ? time_map : key_map);
     lv_obj_set_size(keys, keys_w, 4 * (key_h + 2));
     lv_obj_set_pos(keys, x0, y0);
     lv_obj_set_style_pad_all(keys, 0, LV_PART_MAIN);

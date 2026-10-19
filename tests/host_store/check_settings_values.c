@@ -192,7 +192,7 @@ int main(int argc, char **argv)
     click("Nächste Fälligkeit HH:MM");
     expect_text("14:30");
     assert(writes == before_time_open);
-    keys("<<<<<15:45");
+    keys("<<<<<1545");
     click("Speichern");
     render();
     click("Nächste Fälligkeit HH:MM");
