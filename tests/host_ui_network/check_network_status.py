@@ -6,14 +6,16 @@ import tempfile
 
 root = Path(__file__).resolve().parents[2]
 main = (root / 'firmware/main/main.c').read_text()
-callback = main[main.index('static void network_status('):main.index('static bool group_connected(')]
+callback = (main[main.index('static void network_status('):main.index('static bool web_device_info(')] +
+            main[main.index('static bool web_device_info('):main.index('static bool group_connected(')])
 stubs = r'''
 #include <assert.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
 #include "katmed_ui.h"
-typedef struct {bool store_ready, mesh_started; struct {struct {struct {bool configured;} provision;} record;} store;} Runtime;
+typedef struct {char device_name[24]; bool assigned, uncertain;} KatmedWebDeviceInfo;
+typedef struct {bool store_ready, mesh_started; struct {struct {struct {bool configured;} provision; char mesh_name[24]; unsigned short mesh_name_index;} record; bool uncertain;} store;} Runtime;
 typedef struct {unsigned addr;} Address;
 typedef Address esp_ip4_addr_t;
 typedef struct {struct {int type; union {Address ip4;} u_addr;} ip;} esp_netif_dns_info_t;
@@ -62,11 +64,17 @@ tests = r'''
 int main(void) {
     Runtime rt = {.store_ready=true,.mesh_started=true};
     rt.store.record.provision.configured=true;
+    strcpy(rt.store.record.mesh_name, "KatmedESP-002");
+    rt.store.record.mesh_name_index=2;
     UiNetworkStatus out;
     network_status(&rt,&out);
     assert(out.mesh_active && out.mesh_channel==6);
     assert(out.mesh_current_count==2 && out.mesh_history_count==3 && out.mesh_current_valid && out.mesh_history_complete);
     assert(out.configured && out.connected);
+    assert(!strcmp(out.device_name,"KatmedESP-002") && out.device_name_assigned && !out.device_name_uncertain);
+    KatmedWebDeviceInfo info;
+    assert(web_device_info(&rt,&info) && !strcmp(info.device_name,"KatmedESP-002") &&
+           info.assigned && !info.uncertain);
     assert(!strcmp(out.station_ip,"192.0.2.10") && !strcmp(out.gateway,"192.0.2.1"));
     assert(!strcmp(out.ap_ip,"192.0.2.129"));
     assert(!strcmp(out.dns_ip,"192.0.2.53") && !strcmp(out.sync_server_ip,"203.0.113.1"));

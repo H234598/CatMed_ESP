@@ -143,3 +143,47 @@ extern "C" bool katmed_mesh_decode_hello(const uint8_t *bytes,size_t length,
     *pending_count=bytes[53+n];
     return true;
 }
+
+extern "C" bool katmed_mesh_encode_name_map(const StoreMeshNameEntry *entries,
+                                              uint8_t count, uint8_t *out,
+                                              size_t capacity, uint16_t *length) {
+    if (!entries || !out || !length || count == 0 ||
+        count > KATMED_MESH_NAME_MAX_ENTRIES || capacity < 1u + 10u * count)
+        return false;
+    out[0]=count;
+    for (unsigned i=0;i<count;++i) {
+        if (!entries[i].device || entries[i].index == 0 ||
+            entries[i].index > KATMED_MESH_NAME_MAX_INDEX) return false;
+        for (unsigned j=0;j<i;++j)
+            if (entries[j].device == entries[i].device ||
+                entries[j].index == entries[i].index) return false;
+        for (unsigned j=0;j<8;++j)
+            out[1+10*i+j]=uint8_t(entries[i].device>>(56-8*j));
+        out[1+10*i+8]=uint8_t(entries[i].index>>8);
+        out[1+10*i+9]=uint8_t(entries[i].index);
+    }
+    *length=uint16_t(1u+10u*count);
+    return true;
+}
+
+extern "C" bool katmed_mesh_decode_name_map(const uint8_t *bytes, size_t length,
+                                              StoreMeshNameEntry *entries,
+                                              uint8_t *count) {
+    if (!bytes || !entries || !count || length < 11 || bytes[0] == 0 ||
+        bytes[0] > KATMED_MESH_NAME_MAX_ENTRIES ||
+        length != 1u + 10u * bytes[0]) return false;
+    const uint8_t n=bytes[0];
+    StoreMeshNameEntry decoded[KATMED_MESH_NAME_MAX_ENTRIES]{};
+    for (unsigned i=0;i<n;++i) {
+        uint64_t device=0;
+        for (unsigned j=0;j<8;++j) device=(device<<8)|bytes[1+10*i+j];
+        const uint16_t index=uint16_t(bytes[1+10*i+8]<<8)|bytes[1+10*i+9];
+        if (!device || index == 0 || index > KATMED_MESH_NAME_MAX_INDEX) return false;
+        for (unsigned j=0;j<i;++j)
+            if (decoded[j].device == device || decoded[j].index == index) return false;
+        decoded[i]={device,index};
+    }
+    std::memcpy(entries,decoded,sizeof(decoded));
+    *count=n;
+    return true;
+}

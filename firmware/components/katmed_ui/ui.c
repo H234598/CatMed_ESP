@@ -904,6 +904,11 @@ static void update_status(void)
                  !network.configured ? "WLAN: nicht konfiguriert" :
                  network.connected ? "WLAN: verbunden" : "WLAN: getrennt", text_w);
     if (ui.height < 200) lv_obj_set_style_text_font(item, &katmed_font_12, 0);
+    snprintf(line, sizeof(line), "Gerätename: %s%s",
+             network.device_name[0] ? network.device_name : "KatmedESP",
+             network.device_name_uncertain ? " (Zuweisung unbestätigt)" : "");
+    item = status_label(&next, line, text_w);
+    if (ui.height < 200) lv_obj_set_style_text_font(item, &katmed_font_12, 0);
     if (!ui.services.network_status) snprintf(line, sizeof(line), "Mesh-Funkkanal: unbekannt");
     else if (!network.mesh_active) snprintf(line, sizeof(line), "Mesh-Funkkanal: inaktiv");
     else if (network.mesh_channel >= 1 && network.mesh_channel <= 14)

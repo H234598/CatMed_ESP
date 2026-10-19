@@ -28,6 +28,10 @@ bool katmed_mesh_decode_hello(const uint8_t *bytes, size_t length,
                               const char *expected_version,
                               uint8_t echo[16], bool *catalog_mismatch,
                               uint8_t *pending_count);
+bool katmed_mesh_encode_name_map(const StoreMeshNameEntry *entries, uint8_t count,
+                                 uint8_t *out, size_t capacity, uint16_t *length);
+bool katmed_mesh_decode_name_map(const uint8_t *bytes, size_t length,
+                                 StoreMeshNameEntry *entries, uint8_t *count);
 
 #ifdef __cplusplus
 }

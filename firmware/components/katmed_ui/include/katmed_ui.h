@@ -9,6 +9,7 @@ extern "C" {
 #define UI_VIEW_PLACEHOLDER ((UiView)5)
 #define UI_VIEW_STATUS ((UiView)6)
 #define UI_VIEW_INTERACTION ((UiView)7)
+#define KATMED_UI_DEVICE_NAME_MAX 24u
 typedef struct { uint8_t row, column; } UiGrid;
 UiView ui_grid_view(UiGrid grid);
 void ui_grid_move(UiGrid *grid, int horizontal, int vertical);
@@ -53,6 +54,9 @@ typedef struct {
 typedef struct {
     bool configured;
     bool connected;
+    char device_name[KATMED_UI_DEVICE_NAME_MAX];
+    bool device_name_assigned;
+    bool device_name_uncertain;
     bool mesh_active;
     uint8_t mesh_channel; /* 0: active radio channel unknown. */
     uint16_t mesh_current_count, mesh_history_count;

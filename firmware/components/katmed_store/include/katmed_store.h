@@ -15,6 +15,21 @@ extern "C" {
 #define KATMED_STORE_BLOB_MAX 4096u
 #define KATMED_STORE_USB_LINE_MAX 512u
 #define KATMED_STORE_USB_REPLY_MAX 256u
+#define KATMED_DEVICE_NAME_MAX 17u
+#define KATMED_MESH_NAME_MAX_ENTRIES 9u
+#define KATMED_MESH_NAME_MAX_INDEX 999u
+
+#define KATMED_DEFAULT_DEVICE_NAME "KatmedESP"
+
+typedef enum {
+    STORE_MESH_NAME_INITIAL = 0,
+    STORE_MESH_NAME_ASSIGNED = 1
+} StoreMeshNameState;
+
+typedef struct {
+    uint64_t device;
+    uint16_t index;
+} StoreMeshNameEntry;
 
 typedef enum {
     STORE_OK, STORE_NOT_FOUND, STORE_INVALID, STORE_CORRUPT,
@@ -94,6 +109,12 @@ typedef struct {
     StoreConfirmationHistory last_confirmation; /* Independent of the latest boot-domain state. */
     StoreGroupOrigin group_origin;
     StoreManualIntent manual_intent;
+    StoreMeshNameState mesh_name_state;
+    char mesh_name[KATMED_DEVICE_NAME_MAX];
+    uint16_t mesh_name_index;
+    StoreMeshNameEntry mesh_names[KATMED_MESH_NAME_MAX_ENTRIES];
+    uint8_t mesh_name_count;
+    uint16_t mesh_name_next_index;
 } StoreRecord;
 
 typedef struct {
@@ -173,6 +194,14 @@ StoreResult store_conflict_count(const Store *store, uint8_t *count);
 StoreResult store_conflict_at(const Store *store, size_t index,
                               StorePendingConfirm *conflict);
 bool store_durable_divergent(const Store *store);
+const char *store_mesh_name(const Store *store);
+uint16_t store_mesh_name_index(const Store *store);
+uint16_t store_mesh_name_next_index(const Store *store);
+bool store_mesh_name_has_device(const Store *store, uint64_t device);
+StoreResult store_mesh_name_assign(Store *store, uint64_t device, uint16_t index);
+StoreResult store_mesh_name_merge(Store *store, AppState *active,
+                                  const StoreMeshNameEntry *entries,
+                                  uint8_t count);
 StoreResult store_get_status(const Store *store, bool *configured,
                              uint8_t *pending_count, StoreResult *last_error);
 StoreResult store_usb_handle_line(Store *store, const char *line, size_t length,

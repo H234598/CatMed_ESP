@@ -60,6 +60,7 @@ typedef struct {
     bool nvs_open;
     bool started;
     bool restart_pending;
+    KatmedWebServices services;
     char request_body[BODY_MAX + 1];
     SemaphoreHandle_t auth_mutex;
 } WebContext;
@@ -404,6 +405,19 @@ static cJSON *bootstrap_object(httpd_req_t *req, KatmedWebSession *session)
     bool setup = katmed_web_auth_setup_required(&web.auth);
     cJSON_AddBoolToObject(obj, "setup_required", setup);
     cJSON_AddBoolToObject(obj, "authenticated", session != NULL && !setup);
+    KatmedWebDeviceInfo device = {0};
+    snprintf(device.device_name, sizeof(device.device_name), "KatmedESP");
+    if (web.services.device_info &&
+        !web.services.device_info(web.services.context, &device)) {
+        cJSON_Delete(obj);
+        return NULL;
+    }
+    if (!device.device_name[0] ||
+        strnlen(device.device_name, sizeof(device.device_name)) == sizeof(device.device_name)) {
+        cJSON_Delete(obj);
+        return NULL;
+    }
+    cJSON_AddStringToObject(obj, "device_name", device.device_name);
     if (session && !setup) {
         cJSON_AddStringToObject(obj, "auth_method",
                                 session->certificate ? "certificate" : "password");
@@ -430,6 +444,29 @@ static cJSON *bootstrap_object(httpd_req_t *req, KatmedWebSession *session)
     }
     cJSON_AddBoolToObject(cert, "enrolled", session && web.auth.record.cert_len > 0);
     (void)req;
+    return obj;
+}
+
+static const char *device_name_state(const KatmedWebDeviceInfo *device)
+{
+    if (device->uncertain) return "uncertain";
+    return device->assigned ? "assigned" : "initial";
+}
+
+static cJSON *device_info_object(void)
+{
+    KatmedWebDeviceInfo device = {0};
+    snprintf(device.device_name, sizeof(device.device_name), "KatmedESP");
+    if (web.services.device_info &&
+        !web.services.device_info(web.services.context, &device)) return NULL;
+    if (!device.device_name[0] ||
+        strnlen(device.device_name, sizeof(device.device_name)) == sizeof(device.device_name))
+        return NULL;
+    cJSON *obj = cJSON_CreateObject();
+    if (!obj) return NULL;
+    cJSON_AddStringToObject(obj, "device_name", device.device_name);
+    cJSON_AddStringToObject(obj, "hostname", device.device_name);
+    cJSON_AddStringToObject(obj, "name_state", device_name_state(&device));
     return obj;
 }
 
@@ -468,6 +505,13 @@ static esp_err_t bootstrap_get(httpd_req_t *req)
     cJSON *obj = bootstrap_object(req, session);
     if (web.auth_mutex) xSemaphoreGive(web.auth_mutex);
     return json_reply(req, "200 OK", obj);
+}
+
+static esp_err_t info_get(httpd_req_t *req)
+{
+    char token[KATMED_WEB_TOKEN_HEX + 1];
+    if (!require_session(req, false, token)) return ESP_OK;
+    return json_reply(req, "200 OK", device_info_object());
 }
 
 static esp_err_t setup_post(httpd_req_t *req)
@@ -895,6 +939,7 @@ static bool register_routes(httpd_handle_t server)
         {"/style.css", HTTP_GET, style_get},
         {"/app.js", HTTP_GET, script_get},
         {"/api/bootstrap", HTTP_GET, bootstrap_get},
+        {"/api/info", HTTP_GET, info_get},
         {"/api/setup", HTTP_POST, setup_post},
         {"/api/login", HTTP_POST, login_post},
         {"/api/logout", HTTP_POST, logout_post},
@@ -921,7 +966,7 @@ static bool start_listeners(void)
     }
     httpd_ssl_config_t tls = HTTPD_SSL_CONFIG_DEFAULT();
     tls.httpd.max_open_sockets = 1;
-    tls.httpd.max_uri_handlers = 14;
+    tls.httpd.max_uri_handlers = 15;
     tls.httpd.backlog_conn = 1;
     tls.httpd.lru_purge_enable = true;
     tls.httpd.recv_wait_timeout = 2;
@@ -981,8 +1026,9 @@ static bool start_listeners(void)
     return true;
 }
 
-bool katmed_web_start(void)
+bool katmed_web_start(const KatmedWebServices *services)
 {
+    if (services) web.services = *services;
     if (web.started || web.nvs_open) return web.started;
     if (!resources_allow(false)) {
         ESP_LOGW(WEB_TAG, "HTTPS resource admission rejected");
@@ -1012,7 +1058,7 @@ bool katmed_web_start(void)
 void katmed_web_poll(uint64_t now_ms)
 {
     if (!web.started && now_ms >= web.retry_due_ms) {
-        bool ready = web.nvs_open ? start_listeners() : katmed_web_start();
+        bool ready = web.nvs_open ? start_listeners() : katmed_web_start(&web.services);
         if (!ready) web.retry_due_ms = now_ms + 30000;
     }
     if (!web.nvs_open) return;

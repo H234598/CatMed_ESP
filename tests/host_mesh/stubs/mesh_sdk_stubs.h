@@ -19,6 +19,7 @@ struct esp_netif_ip_info_t { struct { uint32_t addr; } ip; };
 enum esp_netif_dhcp_status_t { ESP_NETIF_DHCP_INIT, ESP_NETIF_DHCP_STARTED, ESP_NETIF_DHCP_STOPPED };
 inline esp_netif_t host_station;
 inline bool host_station_present=false, host_station_up=false;
+inline char host_hostname[32]{};
 inline uint32_t host_station_ip=0;
 inline esp_err_t host_station_ip_result=ESP_OK, host_station_dhcp_result=ESP_OK;
 inline esp_netif_dhcp_status_t host_station_dhcp=ESP_NETIF_DHCP_INIT;
@@ -33,6 +34,10 @@ inline esp_err_t esp_netif_dhcpc_get_status(esp_netif_t *,esp_netif_dhcp_status_
     *out=host_station_dhcp;return host_station_dhcp_result;
 }
 inline bool esp_netif_is_netif_up(esp_netif_t *){return host_station_up;}
+inline esp_err_t esp_netif_set_hostname(esp_netif_t *,const char *name){
+    if(name) __builtin_strncpy(host_hostname,name,sizeof(host_hostname)-1);
+    return ESP_OK;
+}
 void esp_bridge_create_all_netif();
 void esp_fill_random(void *,size_t);
 struct esp_app_desc_t { char version[32]; };

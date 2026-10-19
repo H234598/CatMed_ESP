@@ -54,7 +54,7 @@ int main() {
     assert(katmed_mesh_wire_decode(wire,n,group,secret,&output)&&output.kind==MESH_INTERACTION);
     for(size_t i=0;i<n;++i){wire[i]^=0x80;
         assert(!katmed_mesh_wire_decode(wire,n,group,secret,&output));wire[i]^=0x80;}
-    input.kind=static_cast<KatmedMeshKind>(9);
+    input.kind=static_cast<KatmedMeshKind>(10);
     assert(!katmed_mesh_wire_encode(&input,secret,wire,sizeof(wire),&n));
     std::puts("mesh wire auth/bounds plus STATUS7 1060-byte HMAC tamper rejection OK");
 }

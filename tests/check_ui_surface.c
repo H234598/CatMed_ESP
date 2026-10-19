@@ -916,12 +916,15 @@ int main(int argc, char **argv)
     state.deadline.effective_utc = (UtcInstant){true, 1792015200000LL};
     state.confirmation_pending_sync = true;
     ui_render(&state, &local, SETTINGS, &clock);
+    snprintf(host.network.device_name, sizeof(host.network.device_name), "KatmedESP-002");
+    host.network.device_name_assigned = true;
     click_label(screen, "Status");
     report_memory("status");
     lv_obj_t *feedback = find_label(screen, "Gespeichert");
     assert(feedback && lv_obj_has_flag(feedback, LV_OBJ_FLAG_HIDDEN));
     assert(find_label_prefix(screen, "Letzte Gabe: 14.10.2026"));
     assert(find_label_prefix(screen, "Nächster Alarm: 15.10.2026"));
+    assert(find_label(screen, "Gerätename: KatmedESP-002"));
     assert(find_label(screen, "Bestätigung noch nicht synchronisiert"));
     draw();
     snprintf(name, sizeof(name), "%s_status", prefix);

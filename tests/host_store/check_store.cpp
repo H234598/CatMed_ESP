@@ -38,7 +38,15 @@ void repair_crc(Fake &f) {
     uint32_t crc=static_cast<uint32_t>(crc32(0,f.bytes+12,f.length-12));
     for (unsigned i=0;i<4;++i) f.bytes[8+i]=static_cast<uint8_t>(crc>>(8*i));
 }
+void remove_v8_names(Fake &f) {
+    constexpr size_t mesh_name_suffix=1+17+2+1+9*10+2;
+    assert(f.bytes[4]==8 && f.length>mesh_name_suffix);
+    f.length-=mesh_name_suffix; // v8 appends the bounded Mesh-name registry.
+    f.bytes[4]=7;
+    repair_crc(f);
+}
 void remove_v7_manual(Fake &f) {
+    remove_v8_names(f);
     assert(f.bytes[4]==7 && f.length>77);
     f.length-=77; // v7 appends one bounded manual-deadline projection.
     f.bytes[4]=6;
@@ -121,6 +129,7 @@ void test_corrupt_legacy_future() {
     }
     {
         Fake f=original;
+        remove_v8_names(f);
         f.bytes[f.length-78]=3; // v6 origin before the v7 manual projection.
         repair_crc(f);
         StoreRecovery x{}; const unsigned before=f.writes;
@@ -445,7 +454,8 @@ void test_usb() {
     assert(std::strcmp(reply,"KM1 OK PROVISION\n")==0 && f.writes==before+1);
     {
         Fake forged=f;
-        forged.bytes[forged.length-1]=STORE_GROUP_ORIGIN_FRESH_UNBOUND;
+        constexpr size_t mesh_name_suffix=1+17+2+1+9*10+2;
+        forged.bytes[forged.length-mesh_name_suffix]=9; // Invalid v8 name state.
         repair_crc(forged);
         StoreRecovery x{}; const unsigned before_forged=forged.writes;
         assert(store_open(fresh_store(),backend(forged),kDevice,catalog,75,&x)==STORE_CORRUPT);

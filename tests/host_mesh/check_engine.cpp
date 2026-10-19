@@ -181,6 +181,28 @@ int main(int argc,char **argv){
     }
     KatmedMeshServices services{&store,&state,nullptr,shared_result,utc_received};
     assert(katmed_mesh_start(&provision,&services)==MESH_ACCEPTED);
+    if(argc==2&&std::strcmp(argv[1],"name_assignment")==0){
+        host_station_present=true;
+        level=ROOT;katmed_mesh_poll(&now);
+        assert(std::strcmp(store_mesh_name(&store),"KatmedESP-001")==0 &&
+               store_mesh_name_index(&store)==1 &&
+               std::strcmp(host_hostname,"KatmedESP-001")==0);
+        auto challenge=latest_kind(MESH_HELLO);
+        std::memcpy(current_local_nonce,challenge.session_nonce,16);
+        auto hello=peer_frame(MESH_HELLO,1);
+        assert(katmed_mesh_encode_hello(current_local_nonce,catalog,"d941fae",0,
+            hello.payload,sizeof(hello.payload),&hello.payload_length));
+        inject(hello);katmed_mesh_poll(&now);
+        assert(katmed_mesh_connected());
+        assert(store_mesh_name_has_device(&store,99));
+        auto map_frame=latest_kind(MESH_NAME_MAP);
+        StoreMeshNameEntry entries[KATMED_MESH_NAME_MAX_ENTRIES]{};uint8_t count=0;
+        assert(katmed_mesh_decode_name_map(map_frame.payload,map_frame.payload_length,
+                                            entries,&count));
+        assert(count==2 && entries[0].index!=entries[1].index);
+        std::puts("mesh name assignment: root self/peer persistence, authenticated map and hostname OK");
+        return 0;
+    }
     if(argc==2&&std::strcmp(argv[1],"solo_settings")==0){
         level=ROOT;katmed_mesh_poll(&now);
         assert(katmed_mesh_is_coordinator()&&!katmed_mesh_connected());

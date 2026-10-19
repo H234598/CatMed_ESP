@@ -77,8 +77,10 @@ def run(info):
 
     bootstrap = json_body(expect(200, request(info, "/api/bootstrap")))
     assert bootstrap["setup_required"] and not bootstrap["authenticated"]
+    assert bootstrap["device_name"] == "KatmedESP-002"
     assert "setup_code" not in bootstrap and "pairing_code" not in bootstrap
     expect(401, request(info, "/api/config"))
+    expect(401, request(info, "/api/info"))
     setup = {"password": PASSWORD, "setup_nonce": bootstrap["setup_nonce"]}
     expect(401, request(info, "/api/setup", "POST", {**setup, "setup_code": "000000"}))
     assert json_body(expect(200, request(info, "/api/bootstrap")))["setup_required"]
@@ -89,6 +91,7 @@ def run(info):
     setup_body = json_body(setup_reply)
     assert not setup_body["setup_required"] and setup_body["authenticated"]
     assert setup_body["auth_method"] == "password" and setup_body["csrf_token"]
+    assert setup_body["device_name"] == "KatmedESP-002"
     setup_cookie = setup_reply[1]["Set-Cookie"]
     assert setup_cookie.startswith("katmed_session=")
     assert all(part in setup_cookie for part in ("Secure", "HttpOnly", "SameSite=Strict"))
@@ -104,6 +107,9 @@ def run(info):
     assert all(part in cookie_header for part in ("Secure", "HttpOnly", "SameSite=Strict"))
     cookie = cookie_header.split(";", 1)[0]
     csrf = json_body(login)["csrf_token"]
+    device_info = json_body(expect(200, request(info, "/api/info", cookie=cookie)))
+    assert device_info["device_name"] == device_info["hostname"] == "KatmedESP-002"
+    assert device_info["name_state"] == "assigned"
     config = json_body(expect(200, request(info, "/api/config", cookie=cookie)))
     assert config["next_due_state"] == "active" and config["revision"] == "r1"
     change = {"field": "image_hours", "value": "2,5", "revision": "r1"}

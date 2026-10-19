@@ -22,6 +22,11 @@
     for (const id of views) $(id).hidden = id !== view;
   }
 
+  function renderDeviceName(name) {
+    if (typeof name !== "string" || !name || !$("device-info")) return;
+    $("device-info").textContent = `Gerät: ${name}`;
+  }
+
   function setBusy(form, busy) {
     for (const button of form.querySelectorAll("button")) button.disabled = busy;
   }
@@ -122,6 +127,7 @@
     state.bootstrap = bootstrap;
     state.config = null;
     resetPreview();
+    renderDeviceName(bootstrap.device_name);
     if (bootstrap.setup_required) {
       show("setup-view");
       return;

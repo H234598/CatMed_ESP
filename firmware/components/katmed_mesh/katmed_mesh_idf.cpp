@@ -89,6 +89,9 @@ bool admission_verified[KATMED_MESH_PEERS]{};
 uint64_t greeting_id=0,greeting_until=0;
 bool root();
 bool linked();
+void apply_hostname();
+bool send_name_map(uint64_t destination);
+void ensure_root_name();
 void bind_interaction(uint64_t now){
     const uint64_t self=ctx.services.store?ctx.services.store->record.device:0;
     const bool r=root();uint64_t authority=r?self:ctx.coordinator_device,epoch=0;
@@ -284,6 +287,7 @@ void send_status(){
     if(m.cursor>=pages)m.cursor=0;
     EventId id{};if(!next_event_id(id))return;
     auto f=frame_for(MESH_STATUS,id,ctx.sessions.peers[chosen].device);
+    (void)send_name_map(ctx.sessions.peers[chosen].device);
     f.payload_length=mesh_status_encode(&history,uint8_t(root()?(status_quality()|MS_CURRENT):local_status_flags()),
         m.cursor,root()?ctx.services.store->record.device:ctx.coordinator_device,
         s.current,root()?s.current_count:0,f.payload);
@@ -348,6 +352,15 @@ void send_hello(uint64_t recipient=0,const uint8_t *echo=nullptr){
         esp_app_get_description()->version,pending,
         f.payload,sizeof(f.payload),&f.payload_length))
         (void)send(f);
+}
+bool send_name_map(uint64_t destination){
+    if(!linked()||!destination||ctx.services.store->record.mesh_name_count==0)return false;
+    EventId id{};if(!next_event_id(id))return false;
+    auto f=frame_for(MESH_NAME_MAP,id,destination);
+    if(!katmed_mesh_encode_name_map(ctx.services.store->record.mesh_names,
+                                    ctx.services.store->record.mesh_name_count,
+                                    f.payload,sizeof(f.payload),&f.payload_length))return false;
+    return send_one(f);
 }
 void send_pending(const ClockSample *now){
     if(root()||!linked()||!session_live())return;
@@ -632,6 +645,18 @@ void receive(const KatmedMeshFrame &f,const ClockSample *now){
          * the root can authenticate this leaf before sending STATE. */
         if(!already)send_hello(f.sender,f.session_nonce);
         if(root())ctx.dirty=true;
+        if(root()){
+            if(!store_mesh_name_has_device(ctx.services.store,f.sender) &&
+               !store_durable_divergent(ctx.services.store)){
+                const uint16_t next=store_mesh_name_next_index(ctx.services.store);
+                if(next<=KATMED_MESH_NAME_MAX_INDEX &&
+                   store_mesh_name_assign(ctx.services.store,f.sender,next)==STORE_OK)
+                    ctx.dirty=true;
+            }
+            (void)send_name_map(f.sender);
+        }else if(ctx.coordinator_device){
+            (void)send_name_map(ctx.coordinator_device);
+        }
         note_session_transition();
         return;
     }
@@ -655,6 +680,18 @@ void receive(const KatmedMeshFrame &f,const ClockSample *now){
         return;
     }
     if(f.kind==MESH_STATUS){receive_status(f);return;}
+    if(f.kind==MESH_NAME_MAP){
+        StoreMeshNameEntry entries[KATMED_MESH_NAME_MAX_ENTRIES]{};
+        uint8_t count=0;
+        if(!katmed_mesh_decode_name_map(f.payload,f.payload_length,entries,&count))return;
+        if(!root()&&f.sender!=ctx.coordinator_device)return;
+        const StoreResult result=store_mesh_name_merge(ctx.services.store,ctx.services.state,
+                                                       entries,count);
+        if(result==STORE_OK)apply_hostname();
+        if(root()&&(result==STORE_OK||result==STORE_DUPLICATE))
+            (void)send_name_map(f.sender);
+        return;
+    }
     if(f.kind==MESH_TIME_SYNC){
         if(root()||f.sender!=ctx.coordinator_device||f.payload_length!=9||
            f.payload[8]<CLOCK_HOLDOVER||
@@ -758,6 +795,22 @@ void hex(char *out,const uint8_t *bytes,size_t n){
     for(size_t i=0;i<n;++i){out[2*i]=alphabet[bytes[i]>>4];out[2*i+1]=alphabet[bytes[i]&15];}
     out[2*n]=0;
 }
+void apply_hostname(){
+    if(!ctx.services.store)return;
+    const char *name=store_mesh_name(ctx.services.store);
+    for(const char *key:{"WIFI_STA_DEF","WIFI_AP_DEF"}){
+        esp_netif_t *netif=esp_netif_get_handle_from_ifkey(key);
+        if(netif)(void)esp_netif_set_hostname(netif,name);
+    }
+}
+void ensure_root_name(){
+    if(!root()||store_durable_divergent(ctx.services.store) ||
+       store_mesh_name_has_device(ctx.services.store,ctx.services.store->record.device))return;
+    const uint16_t next=store_mesh_name_next_index(ctx.services.store);
+    if(next<=KATMED_MESH_NAME_MAX_INDEX &&
+       store_mesh_name_assign(ctx.services.store,ctx.services.store->record.device,next)==STORE_OK)
+        apply_hostname();
+}
 }
 
 extern "C" KatmedMeshResult katmed_mesh_start(const StoreProvision *provision,
@@ -780,6 +833,7 @@ extern "C" KatmedMeshResult katmed_mesh_start(const StoreProvision *provision,
     const esp_err_t loop=esp_event_loop_create_default();
     if(loop!=ESP_OK&&loop!=ESP_ERR_INVALID_STATE)return MESH_UNAVAILABLE;
     esp_bridge_create_all_netif();
+    apply_hostname();
     katmed_dhcp_diag_bind_sta();
     esp_mesh_lite_config_t config=ESP_MESH_LITE_DEFAULT_INIT();
     config.mesh_id=provision->group[0]?provision->group[0]:1;
@@ -926,6 +980,7 @@ extern "C" void katmed_mesh_poll(const ClockSample *now){
             katmed_mesh_stop();return;
         }
     }
+    ensure_root_name();
     for(unsigned i=0;i<kRxQueue;++i){
         if(xQueueReceive(ctx.queue,&ctx.receive,0)!=pdTRUE)break;
         KatmedMeshFrame frame{};

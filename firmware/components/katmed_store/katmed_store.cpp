@@ -12,7 +12,7 @@
 
 namespace {
 constexpr uint8_t kMagic[4] = {'K', 'M', 'S', 'T'};
-constexpr uint16_t kCurrentVersion = 7;
+constexpr uint16_t kCurrentVersion = 8;
 constexpr size_t kHeaderSize = 12;
 
 uint32_t checksum(const uint8_t *data, size_t length) {
@@ -127,6 +127,10 @@ void put_manual_intent(Writer &w, const StoreManualIntent &v) {
     put_revision(w,v.revision); put_id(w,v.source);
     w.bytes(v.bound_group,sizeof(v.bound_group));
 }
+
+void put_mesh_name_entry(Writer &w, StoreMeshNameEntry v) {
+    w.u64(v.device); w.u16(v.index);
+}
 StoreManualIntent get_manual_intent(Reader &r) {
     StoreManualIntent v{};
     v.pending=r.boolean(); v.hour=r.u8(); v.minute=r.u8();
@@ -191,6 +195,55 @@ bool valid_manual_intent(const StoreManualIntent &v, const StoreRecord &record) 
         local.hour==v.hour && local.minute==v.minute &&
         app_berlin_local_time(v.effective_utc.ms,&local)==APP_OK &&
         std::memcmp(v.bound_group,record.bound_group,sizeof(v.bound_group))==0;
+}
+
+bool mesh_name_text(uint16_t index, char out[KATMED_DEVICE_NAME_MAX]) {
+    if (!out || index == 0 || index > KATMED_MESH_NAME_MAX_INDEX) return false;
+    const int length = std::snprintf(out, KATMED_DEVICE_NAME_MAX,
+                                     "KatmedESP-%03u", static_cast<unsigned>(index));
+    return length > 0 && static_cast<size_t>(length) < KATMED_DEVICE_NAME_MAX;
+}
+
+bool valid_mesh_name_entry(StoreMeshNameEntry entry) {
+    return entry.device != 0 && entry.index > 0 &&
+           entry.index <= KATMED_MESH_NAME_MAX_INDEX;
+}
+
+bool same_mesh_name_entry(StoreMeshNameEntry a, StoreMeshNameEntry b) {
+    return a.device == b.device && a.index == b.index;
+}
+
+bool valid_mesh_names(const StoreRecord &record) {
+    if (record.mesh_name_state != STORE_MESH_NAME_INITIAL &&
+        record.mesh_name_state != STORE_MESH_NAME_ASSIGNED) return false;
+    if (record.mesh_name_count > KATMED_MESH_NAME_MAX_ENTRIES ||
+        record.mesh_name_next_index == 0 ||
+        record.mesh_name_next_index > KATMED_MESH_NAME_MAX_INDEX + 1u)
+        return false;
+    if (record.mesh_name_state == STORE_MESH_NAME_INITIAL &&
+        (record.mesh_name_index != 0 ||
+         std::strcmp(record.mesh_name, KATMED_DEFAULT_DEVICE_NAME) != 0)) return false;
+    if (record.mesh_name_state == STORE_MESH_NAME_ASSIGNED) {
+        char expected[KATMED_DEVICE_NAME_MAX] = {0};
+        if (!mesh_name_text(record.mesh_name_index, expected) ||
+            std::strcmp(record.mesh_name, expected) != 0) return false;
+    }
+    for (unsigned i = 0; i < record.mesh_name_count; ++i) {
+        if (!valid_mesh_name_entry(record.mesh_names[i])) return false;
+        for (unsigned j = 0; j < i; ++j) {
+            if (record.mesh_names[j].device == record.mesh_names[i].device ||
+                record.mesh_names[j].index == record.mesh_names[i].index)
+                return false;
+        }
+    }
+    if (record.mesh_name_state == STORE_MESH_NAME_ASSIGNED) {
+        bool own = false;
+        for (unsigned i = 0; i < record.mesh_name_count; ++i)
+            if (record.mesh_names[i].device == record.device &&
+                record.mesh_names[i].index == record.mesh_name_index) own = true;
+        if (!own) return false;
+    }
+    return true;
 }
 StoreManualIntent intent_from_state(const AppState &state, const StoreRecord &record) {
     StoreManualIntent intent{};
@@ -281,7 +334,8 @@ bool valid_record(const StoreRecord &v) {
     if (v.device==0 || v.epoch==0 || v.next_sequence < 2 || !valid_settings(v.shared) ||
         !valid_local(v.local,v.device) || v.pending_count > KATMED_STORE_PENDING_MAX ||
         v.conflict_count > KATMED_STORE_CONFLICT_MAX ||
-        !valid_provision(v.provision) || !valid_manual_intent(v.manual_intent,v)) return false;
+        !valid_provision(v.provision) || !valid_manual_intent(v.manual_intent,v) ||
+        !valid_mesh_names(v)) return false;
     if (v.group_origin!=STORE_GROUP_ORIGIN_UNKNOWN &&
         v.group_origin!=STORE_GROUP_ORIGIN_FRESH_UNBOUND &&
         v.group_origin!=STORE_GROUP_ORIGIN_FIRST_BOUND) return false;
@@ -364,6 +418,15 @@ StoreResult encode_record(const StoreRecord &v, uint8_t *bytes, size_t *length, 
     if (version>=3) put_confirmation(w,v.last_confirmation);
     if (version>=6) w.u8(static_cast<uint8_t>(v.group_origin));
     if (version>=7) put_manual_intent(w,v.manual_intent);
+    if (version>=8) {
+        w.u8(static_cast<uint8_t>(v.mesh_name_state));
+        w.bytes(reinterpret_cast<const uint8_t *>(v.mesh_name), sizeof(v.mesh_name));
+        w.u16(v.mesh_name_index);
+        w.u8(v.mesh_name_count);
+        for (unsigned i=0;i<KATMED_MESH_NAME_MAX_ENTRIES;++i)
+            put_mesh_name_entry(w,v.mesh_names[i]);
+        w.u16(v.mesh_name_next_index);
+    }
     if (!w.good || w.position > UINT16_MAX) return STORE_FULL;
     const uint16_t n=static_cast<uint16_t>(w.position);
     bytes[6]=static_cast<uint8_t>(n); bytes[7]=static_cast<uint8_t>(n>>8);
@@ -425,6 +488,18 @@ StoreResult decode_record(const uint8_t *bytes, size_t length, StoreRecord *out)
     if (version>=6) v.group_origin=static_cast<StoreGroupOrigin>(r.u8());
     if (version>=7) v.manual_intent=get_manual_intent(r);
     else if (v.has_history) v.manual_intent=intent_from_state(v.history,v);
+    std::snprintf(v.mesh_name, sizeof(v.mesh_name), "%s", KATMED_DEFAULT_DEVICE_NAME);
+    v.mesh_name_state=STORE_MESH_NAME_INITIAL;
+    v.mesh_name_next_index=1;
+    if (version>=8) {
+        v.mesh_name_state=static_cast<StoreMeshNameState>(r.u8());
+        r.bytes(reinterpret_cast<uint8_t *>(v.mesh_name), sizeof(v.mesh_name));
+        v.mesh_name_index=r.u16();
+        v.mesh_name_count=r.u8();
+        for (unsigned i=0;i<KATMED_MESH_NAME_MAX_ENTRIES;++i)
+            v.mesh_names[i]={r.u64(),r.u16()};
+        v.mesh_name_next_index=r.u16();
+    }
     if (!r.good || r.position!=length || !valid_record(v)) return corrupt();
     return STORE_OK;
 }
@@ -548,6 +623,9 @@ StoreResult store_open(Store *store, StoreBackend backend, uint64_t device,
         r.shared=app_default_settings();
         r.shared.revision.coordinator=device;
         r.local={ORIENTATION_0,DIGITAL_LARGE,device};
+        std::snprintf(r.mesh_name, sizeof(r.mesh_name), "%s", KATMED_DEFAULT_DEVICE_NAME);
+        r.mesh_name_state=STORE_MESH_NAME_INITIAL;
+        r.mesh_name_next_index=1;
         const StoreResult committed=write_record(store,r);
         if (committed!=STORE_OK) return committed;
     } else if (read==STORE_OK) {
@@ -828,6 +906,122 @@ StoreResult store_conflict_at(const Store *store, size_t index,
 
 bool store_durable_divergent(const Store *store) {
     return ready(store) && store->record.group_divergent;
+}
+
+const char *store_mesh_name(const Store *store) {
+    if (!store || !store->record.mesh_name[0]) return KATMED_DEFAULT_DEVICE_NAME;
+    return store->record.mesh_name;
+}
+
+uint16_t store_mesh_name_index(const Store *store) {
+    return store ? store->record.mesh_name_index : 0;
+}
+
+uint16_t store_mesh_name_next_index(const Store *store) {
+    if (!store || !store->open || store->record.mesh_name_next_index == 0)
+        return 1;
+    return store->record.mesh_name_next_index;
+}
+
+bool store_mesh_name_has_device(const Store *store, uint64_t device) {
+    if (!store || !store->open || device == 0) return false;
+    for (unsigned i=0; i<store->record.mesh_name_count; ++i)
+        if (store->record.mesh_names[i].device == device) return true;
+    return false;
+}
+
+StoreResult store_mesh_name_assign(Store *store, uint64_t device, uint16_t index) {
+    if (!ready(store) || device == 0 || index == 0 ||
+        index > KATMED_MESH_NAME_MAX_INDEX)
+        return store ? store->last_error=STORE_INVALID : STORE_UNAVAILABLE;
+    for (unsigned i=0; i<store->record.mesh_name_count; ++i) {
+        const StoreMeshNameEntry entry=store->record.mesh_names[i];
+        if (entry.device == device)
+            return store->last_error=entry.index == index ? STORE_DUPLICATE : STORE_STALE;
+        if (entry.index == index) return store->last_error=STORE_STALE;
+    }
+    if (store->record.mesh_name_count == KATMED_MESH_NAME_MAX_ENTRIES)
+        return store->last_error=STORE_FULL;
+    StoreRecord next=store->record;
+    next.mesh_names[next.mesh_name_count++]={device,index};
+    if (index >= next.mesh_name_next_index)
+        next.mesh_name_next_index=index == KATMED_MESH_NAME_MAX_INDEX
+            ? KATMED_MESH_NAME_MAX_INDEX + 1u : static_cast<uint16_t>(index + 1u);
+    if (device == next.device) {
+        char name[KATMED_DEVICE_NAME_MAX] = {0};
+        if (!mesh_name_text(index,name)) return store->last_error=STORE_INVALID;
+        next.mesh_name_state=STORE_MESH_NAME_ASSIGNED;
+        next.mesh_name_index=index;
+        std::memcpy(next.mesh_name,name,sizeof(next.mesh_name));
+    }
+    return write_record(store,next);
+}
+
+StoreResult store_mesh_name_merge(Store *store, AppState *active,
+                                  const StoreMeshNameEntry *entries,
+                                  uint8_t count) {
+    if (!ready(store) || !entries || count == 0 ||
+        count > KATMED_MESH_NAME_MAX_ENTRIES)
+        return store ? store->last_error=STORE_INVALID : STORE_UNAVAILABLE;
+    for (unsigned i=0; i<count; ++i) {
+        if (!valid_mesh_name_entry(entries[i])) return store->last_error=STORE_INVALID;
+        for (unsigned j=0; j<i; ++j)
+            if (entries[j].device == entries[i].device ||
+                entries[j].index == entries[i].index)
+                return store->last_error=STORE_INVALID;
+    }
+    bool collision=false;
+    for (unsigned i=0; i<count && !collision; ++i) {
+        for (unsigned j=0; j<store->record.mesh_name_count; ++j) {
+            const StoreMeshNameEntry current=store->record.mesh_names[j];
+            if ((current.device == entries[i].device && current.index != entries[i].index) ||
+                (current.index == entries[i].index && current.device != entries[i].device)) {
+                collision=true;
+                break;
+            }
+        }
+    }
+    if (collision) {
+        if (!store->record.group_divergent) {
+            StoreRecord next=store->record;
+            next.group_divergent=true;
+            if (next.has_history) next.history.divergent=true;
+            AppState candidate=active ? *active : AppState{};
+            candidate.divergent=true;
+            const StoreResult committed=write_record(store,next);
+            if (committed != STORE_OK) return committed;
+            if (active) *active=candidate;
+        } else if (active) {
+            active->divergent=true;
+        }
+        return store->last_error=STORE_STALE;
+    }
+    StoreRecord next=store->record;
+    bool changed=false;
+    for (unsigned i=0; i<count; ++i) {
+        bool known=false;
+        for (unsigned j=0; j<next.mesh_name_count; ++j)
+            if (same_mesh_name_entry(next.mesh_names[j],entries[i])) known=true;
+        if (known) continue;
+        if (next.mesh_name_count == KATMED_MESH_NAME_MAX_ENTRIES)
+            return store->last_error=STORE_FULL;
+        next.mesh_names[next.mesh_name_count++]=entries[i];
+        if (entries[i].index >= next.mesh_name_next_index)
+            next.mesh_name_next_index=entries[i].index == KATMED_MESH_NAME_MAX_INDEX
+                ? KATMED_MESH_NAME_MAX_INDEX + 1u
+                : static_cast<uint16_t>(entries[i].index + 1u);
+        changed=true;
+        if (entries[i].device == next.device) {
+            char name[KATMED_DEVICE_NAME_MAX] = {0};
+            if (!mesh_name_text(entries[i].index,name))
+                return store->last_error=STORE_INVALID;
+            next.mesh_name_state=STORE_MESH_NAME_ASSIGNED;
+            next.mesh_name_index=entries[i].index;
+            std::memcpy(next.mesh_name,name,sizeof(next.mesh_name));
+        }
+    }
+    if (!changed) return store->last_error=STORE_DUPLICATE;
+    return write_record(store,next);
 }
 
 StoreResult store_get_status(const Store *store, bool *configured,

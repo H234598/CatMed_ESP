@@ -29,6 +29,7 @@ class State:
         self.session = None
         self.csrf = None
         self.auth_method = None
+        self.device_name = "KatmedESP-002"
         self.enrolled_der = None
         self.revision = 1
         self.preview = None
@@ -93,6 +94,7 @@ class Handler(BaseHTTPRequestHandler):
         return {
             "setup_required": STATE.password is None,
             "authenticated": authenticated,
+            "device_name": STATE.device_name,
             "auth_method": STATE.auth_method if authenticated else None,
             "csrf_token": STATE.csrf if authenticated else None,
             "setup_nonce": STATE.nonce if STATE.password is None else None,
@@ -116,6 +118,10 @@ class Handler(BaseHTTPRequestHandler):
         with STATE.lock:
             if self.path == "/api/bootstrap":
                 self.send_json(200, self.bootstrap(self.authenticated()))
+            elif self.path == "/api/info":
+                self.send_json(200, {"device_name": STATE.device_name,
+                                     "hostname": STATE.device_name,
+                                     "name_state": "assigned"}) if self.authenticated() else self.send_json(401, {"error": "unauthorized"})
             elif self.path == "/api/config":
                 self.send_json(200, STATE.snapshot()) if self.authenticated() else self.send_json(401, {"error": "unauthorized"})
             elif self.path == "/api/client-cert":

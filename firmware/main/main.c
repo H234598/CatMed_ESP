@@ -758,6 +758,13 @@ static void network_status(void *context, UiNetworkStatus *out)
     Runtime *rt = context;
     if (!out) return;
     *out = (UiNetworkStatus){0};
+    snprintf(out->device_name, sizeof(out->device_name), "KatmedESP");
+    if (rt && rt->store_ready && rt->store.record.mesh_name[0]) {
+        snprintf(out->device_name, sizeof(out->device_name), "%s",
+                 rt->store.record.mesh_name);
+        out->device_name_assigned = rt->store.record.mesh_name_index != 0;
+        out->device_name_uncertain = rt->store.uncertain;
+    }
     out->configured = rt && rt->store_ready &&
                       rt->store.record.provision.configured;
     if (!out->configured || !rt->mesh_started) return;
@@ -804,6 +811,20 @@ static void network_status(void *context, UiNetworkStatus *out)
         esp_netif_is_netif_up(ap) && esp_netif_get_ip_info(ap, &ip) == ESP_OK &&
         ip.ip.addr != 0)
         snprintf(out->ap_ip, sizeof(out->ap_ip), IPSTR, IP2STR(&ip.ip));
+}
+
+static bool web_device_info(void *context, KatmedWebDeviceInfo *out)
+{
+    Runtime *rt = context;
+    if (!out) return false;
+    memset(out, 0, sizeof(*out));
+    snprintf(out->device_name, sizeof(out->device_name), "KatmedESP");
+    if (!rt || !rt->store_ready || !rt->store.record.mesh_name[0]) return true;
+    snprintf(out->device_name, sizeof(out->device_name), "%s",
+             rt->store.record.mesh_name);
+    out->assigned = rt->store.record.mesh_name_index != 0;
+    out->uncertain = rt->store.uncertain;
+    return true;
 }
 
 static bool group_connected(void *context)
@@ -1295,8 +1316,14 @@ void app_main(void)
 
     if (!katmed_config_bridge_start())
         ESP_LOGE(tag,"web configuration bridge unavailable");
-    else if (!katmed_web_start())
-        ESP_LOGE(tag, "HTTPS configuration listener unavailable");
+    else {
+        const KatmedWebServices web_services = {
+            .context = &runtime,
+            .device_info = web_device_info,
+        };
+        if (!katmed_web_start(&web_services))
+            ESP_LOGE(tag, "HTTPS configuration listener unavailable");
+    }
 
     uint64_t last_render_ms = now.monotonic_ms;
     KatmedRuntimeMetricsGate metrics_gate = {0};

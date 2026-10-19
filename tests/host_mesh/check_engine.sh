@@ -53,3 +53,5 @@ g++ -std=c++17 -Wall -Wextra -Werror -DKATMED_MESH_HOST \
 
 "$out" peer_rekey_context
 "$out" interaction_previous
+
+"$out" name_assignment
