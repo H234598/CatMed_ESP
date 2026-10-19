@@ -20,6 +20,7 @@ jobs:
           command: >-
             apt-get update && apt-get install -y libssl-dev zlib1g-dev python3-pil nodejs &&
             python -m pip install Pillow==11.3.0 &&
+            python3 tests/check_ci_mbedtls_framework_binding.py &&
             python3 tools/prepare_ci_host_submodules.py &&
             tools/ci.sh dependencies c3 && tools/ci.sh host
   firmware:

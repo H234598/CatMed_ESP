@@ -63,10 +63,33 @@ def required_sources_present(idf: Path, path: str) -> bool:
         return (
             (root / "include/mbedtls/ssl.h").is_file()
             and (root / "tf-psa-crypto/include/mbedtls/md.h").is_file()
+            and (root / "tf-psa-crypto/framework/scripts/mbedtls_framework/__init__.py").is_file()
         )
     if path == "components/lwip/lwip":
         return (idf / path / "src/core/ipv4/ip4_napt.c").is_file()
     return False
+
+
+def prepare_mbedtls_framework_layout(mbedtls_root: Path) -> None:
+    """Expose the pinned TF-PSA framework at the path expected by Mbed TLS scripts."""
+    framework_source = mbedtls_root / "tf-psa-crypto/framework"
+    package_init = framework_source / "scripts/mbedtls_framework/__init__.py"
+    if not package_init.is_file():
+        raise RuntimeError("Pinned mbedTLS framework Python source is incomplete")
+
+    framework_path = mbedtls_root / "framework"
+    if framework_path.is_symlink():
+        if framework_path.resolve() != framework_source.resolve():
+            raise RuntimeError("Mbed TLS framework path is bound to an unexpected source")
+    elif framework_path.exists():
+        raise RuntimeError("Existing Mbed TLS framework path is not the pinned source symlink")
+    else:
+        # Mbed TLS's pinned framework_scripts_path.py imports from this sibling
+        # location. ESP-IDF carries that source under tf-psa-crypto/framework.
+        framework_path.symlink_to(framework_source, target_is_directory=True)
+
+    if not (framework_path / "scripts/mbedtls_framework/__init__.py").is_file():
+        raise RuntimeError("Mbed TLS framework Python package is not importable from its expected path")
 
 
 def prepare(repo: Path) -> None:
@@ -94,6 +117,7 @@ def prepare(repo: Path) -> None:
         raise RuntimeError("Pinned Mbed TLS 4.1.0 public headers are incomplete")
     if not required_sources_present(idf, "components/lwip/lwip"):
         raise RuntimeError("Pinned lwIP NAPT source is missing after submodule initialization")
+    prepare_mbedtls_framework_layout(idf / "components/mbedtls/mbedtls")
     print("CI host SDK submodules verified: pinned lwIP and Mbed TLS 4.1.0")
 
 
