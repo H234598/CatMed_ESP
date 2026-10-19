@@ -38,7 +38,14 @@ void repair_crc(Fake &f) {
     uint32_t crc=static_cast<uint32_t>(crc32(0,f.bytes+12,f.length-12));
     for (unsigned i=0;i<4;++i) f.bytes[8+i]=static_cast<uint8_t>(crc>>(8*i));
 }
+void remove_v7_manual(Fake &f) {
+    assert(f.bytes[4]==7 && f.length>77);
+    f.length-=77; // v7 appends one bounded manual-deadline projection.
+    f.bytes[4]=6;
+    repair_crc(f);
+}
 void remove_v6_empty_conflicts(Fake &f) {
+    remove_v7_manual(f);
     assert(f.bytes[4]==6 && f.length>310);
     --f.length; // v6 appends one origin byte; older blobs cannot prove it.
     constexpr size_t suffix=210+16+83; // Provision, v4 provenance, v3 confirmation.
@@ -114,7 +121,7 @@ void test_corrupt_legacy_future() {
     }
     {
         Fake f=original;
-        f.bytes[f.length-1]=3; // Valid CRC cannot make an unknown marker positive.
+        f.bytes[f.length-78]=3; // v6 origin before the v7 manual projection.
         repair_crc(f);
         StoreRecovery x{}; const unsigned before=f.writes;
         Store *t=fresh_store();
@@ -124,6 +131,7 @@ void test_corrupt_legacy_future() {
     }
     {
         Fake f=original;
+        remove_v7_manual(f);
         --f.length; f.bytes[4]=5; f.bytes[5]=0; repair_crc(f);
         Store *t=fresh_store(); const StoreRecovery x=open(f,t);
         assert(x.pending_count==1 &&
@@ -317,6 +325,56 @@ void test_history_survives_later_boot_state_commit() {
     assert(recovery.last_confirmation.domain!=recovery.boot_identity.epoch);
     assert(boot_state(recovery).alarm_active);
 }
+void test_manual_intent_migration_and_clear() {
+    Fake f{}; Store *first=fresh_store(); StoreRecovery recovery=open(f,first);
+    AppState state=boot_state(recovery);
+    const ClockSample confirmation_at=clock(recovery.boot_identity.epoch,2000);
+    AppEvent confirm=confirmation(first,state,confirmation_at);
+    confirm.coordinator_accepted=true;
+    AppEffects effects{}; AppResult core{};
+    assert(store_apply_event(first,&state,&confirm,&confirmation_at,false,
+                             &effects,&core)==STORE_OK);
+    ClockSample now{3000,recovery.boot_identity.epoch,INT64_C(1792400400000),
+                    true,CLOCK_HOLDOVER};
+    ManualTimePreview preview{};
+    assert(app_preview_local_time(&now,14,30,&preview)==APP_OK);
+    AppEvent next{};
+    assert(store_next_event_id(first,&next.id)==STORE_OK);
+    next.kind=EVENT_SET_NEXT_LOCAL_TIME; next.sender=next.id.device;
+    next.round=state.round; next.parent_revision=state.revision;
+    next.occurred_at=now; next.coordinator_accepted=true;
+    next.value.local_time={14,30,preview.regular_utc,preview.effective_utc};
+    assert(store_apply_event(first,&state,&next,&now,false,&effects,&core)==STORE_OK);
+    assert(first->record.manual_intent.pending &&
+           first->record.manual_intent.source.sequence==next.id.sequence &&
+           first->record.manual_intent.regular_utc.ms==preview.regular_utc.ms);
+
+    Store *reopened=fresh_store(); recovery=open(f,reopened);
+    assert(recovery.manual_intent.pending && recovery.manual_intent.hour==14 &&
+           recovery.manual_intent.minute==30 &&
+           recovery.manual_intent.effective_utc.ms==preview.effective_utc.ms);
+    Fake v6=f; remove_v7_manual(v6);
+    Store *legacy=fresh_store(); StoreRecovery migrated=open(v6,legacy);
+    assert(migrated.manual_intent.pending && migrated.manual_intent.hour==14 &&
+           migrated.manual_intent.regular_utc.ms==preview.regular_utc.ms);
+
+    for (Fault fault : {BEFORE,AFTER}) {
+        Fake candidate=f; Store *s=fresh_store(); open(candidate,s);
+        candidate.fault=fault;
+        assert(store_clear_manual_intent(s)==
+               (fault==BEFORE ? STORE_IO : STORE_COMMIT_UNKNOWN));
+        assert(s->uncertain && s->record.manual_intent.pending);
+        candidate.fault=NONE;
+        Store *after=fresh_store(); const StoreRecovery result=open(candidate,after);
+        assert(result.manual_intent.pending==(fault==BEFORE));
+    }
+    Store *clear=fresh_store(); open(f,clear);
+    assert(store_clear_manual_intent(clear)==STORE_OK);
+    assert(!clear->record.manual_intent.pending);
+    assert(store_clear_manual_intent(clear)==STORE_DUPLICATE);
+    Store *after=fresh_store(); recovery=open(f,after);
+    assert(!recovery.manual_intent.pending);
+}
 void test_boundaries_and_no_tick_writes() {
     Fake f{}; Store *s=fresh_store(); StoreRecovery r=open(f,s);
     AppState state=boot_state(r); ClockSample now=clock(r.boot_identity.epoch,2000);
@@ -429,6 +487,7 @@ int main() {
     test_corrupt_legacy_future();
     test_commit_matrix();
     test_history_survives_later_boot_state_commit();
+    test_manual_intent_migration_and_clear();
     test_boundaries_and_no_tick_writes();
     test_usb();
     std::puts("store host matrix passed");

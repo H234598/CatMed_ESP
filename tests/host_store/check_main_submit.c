@@ -146,14 +146,53 @@ int main(void)
     assert(katmed_time_accept_utc(&runtime.time,(uint64_t)(fake_microseconds/1000),INT64_C(1792400400000),CLOCK_SYNCHRONIZED));
     fake_microseconds+=1000000;
     assert(submit_ui(&runtime,&confirm)==UI_SUBMIT_PENDING);
+    KatmedConfigRequest web={.operation=KATMED_CONFIG_GET};
+    KatmedConfigResponse web_reply={0};
+    config_execute(&runtime,&web,&web_reply);
+    assert(web_reply.status==KATMED_CONFIG_OK &&
+           strcmp(web_reply.snapshot.image_hours,"2")==0);
+    web.operation=KATMED_CONFIG_SAVE;
+    web.field=KATMED_CONFIG_MEDICATION_HOURS;
+    strcpy(web.revision,"stale");
+    strcpy(web.value,"1.5");
+    config_execute(&runtime,&web,&web_reply);
+    assert(web_reply.status==KATMED_CONFIG_STALE);
+    web.operation=KATMED_CONFIG_GET;
+    config_execute(&runtime,&web,&web_reply);
+    strcpy(web.revision,web_reply.snapshot.revision);
+    web.operation=KATMED_CONFIG_SAVE;
+    strcpy(web.value,"0");
+    config_execute(&runtime,&web,&web_reply);
+    assert(web_reply.status==KATMED_CONFIG_INVALID);
+    web.field=KATMED_CONFIG_ORIENTATION;
+    strcpy(web.value,"180");
+    config_execute(&runtime,&web,&web_reply);
+    assert(web_reply.status==KATMED_CONFIG_OK &&
+           web_reply.snapshot.orientation==ORIENTATION_180 &&
+           board_orientation==ORIENTATION_180);
+    web.operation=KATMED_CONFIG_PREVIEW_TIME;
+    strcpy(web.revision,web_reply.snapshot.revision);
+    strcpy(web.value,"14:30");
+    config_execute(&runtime,&web,&web_reply);
+    assert(web_reply.status==KATMED_CONFIG_OK &&
+           strcmp(web_reply.preview.time,"14:30")==0);
+    web.operation=KATMED_CONFIG_SAVE;
+    web.field=KATMED_CONFIG_NEXT_DUE_HHMM;
+    strcpy(web.preview_token,"invalid");
+    const unsigned before_bad_token=writes;
+    config_execute(&runtime,&web,&web_reply);
+    assert(web_reply.status==KATMED_CONFIG_STALE && writes==before_bad_token);
+    web.operation=KATMED_CONFIG_PREVIEW_TIME;
+    config_execute(&runtime,&web,&web_reply);
+    assert(web_reply.status==KATMED_CONFIG_OK);
+    strcpy(web.preview_token,web_reply.preview.preview_token);
+    web.operation=KATMED_CONFIG_SAVE;
     ClockSample manual_now=clock_sample(runtime.boot_domain);
     ManualTimePreview preview;
     assert(app_preview_local_time(&manual_now,14,30,&preview)==APP_OK);
-    UiRequest next={.kind=UI_REQUEST_SET_NEXT_LOCAL_TIME};
-    next.value.local_time.hour=14;
-    next.value.local_time.minute=30;
-    next.value.local_time.preview=preview;
-    assert(submit_ui(&runtime,&next)==UI_SUBMIT_COMMITTED);
+    config_execute(&runtime,&web,&web_reply);
+    assert(web_reply.status==KATMED_CONFIG_OK &&
+           web_reply.snapshot.next_due_state==KATMED_DUE_ACTIVE);
     assert(runtime.state.start_reason==START_MANUAL &&
            runtime.state.deadline.regular_utc.ms==preview.regular_utc.ms &&
            runtime.store.record.history.deadline.regular_utc.ms==preview.regular_utc.ms);
@@ -161,11 +200,65 @@ int main(void)
     const EventId confirmation_saved=runtime.state.last_confirmation_id;
     initialize_runtime(); /* Reopen/decode the actual manual-time history. */
     assert(runtime.store.record.history.start_reason==START_MANUAL &&
+           runtime.store.record.manual_intent.pending &&
            runtime.store.record.history.deadline.regular_utc.ms==preview.regular_utc.ms &&
            runtime.store.record.pending_count==pending_saved &&
            runtime.store.record.last_confirmation.id.sequence==confirmation_saved.sequence);
+    web=(KatmedConfigRequest){.operation=KATMED_CONFIG_GET};
+    config_execute(&runtime,&web,&web_reply);
+    assert(web_reply.status==KATMED_CONFIG_OK &&
+           web_reply.snapshot.next_due_state==KATMED_DUE_PAUSED_BOOT &&
+           strcmp(web_reply.snapshot.next_due_hhmm,"14:30")==0);
+    runtime.mesh_started=true;
+    fake_mesh_connected=true;
+    katmed_time_init(&runtime.time,runtime.boot_domain);
+    const int64_t earlier=(preview.effective_utc.ms<preview.regular_utc.ms ?
+        preview.effective_utc.ms:preview.regular_utc.ms)-600000;
+    assert(katmed_time_accept_utc(&runtime.time,(uint64_t)(fake_microseconds/1000),
+                                  earlier,CLOCK_SYNCHRONIZED));
+    ClockSample restore_now=clock_sample(runtime.boot_domain);
+    assert(apply_time_sample(&runtime,&restore_now));
+    restore_manual_if_ready(&runtime,&restore_now);
+    assert(runtime.state.alarm_active && runtime.store.record.manual_intent.pending);
+    fake_microseconds+=1000000;
+    assert(submit_ui(&runtime,&confirm)==UI_SUBMIT_COMMITTED);
+    restore_now=clock_sample(runtime.boot_domain);
+    restore_manual_if_ready(&runtime,&restore_now);
+    assert(runtime.state.start_reason==START_MANUAL &&
+           runtime.state.deadline.regular_utc.ms==preview.regular_utc.ms &&
+           runtime.store.record.manual_intent.pending);
+    uint8_t saved_before_expiry[KATMED_STORE_BLOB_MAX];
+    const size_t saved_before_expiry_length=committed_length;
+    memcpy(saved_before_expiry,committed,committed_length);
+    initialize_runtime();
+    katmed_time_init(&runtime.time,runtime.boot_domain);
+    assert(katmed_time_accept_utc(&runtime.time,(uint64_t)(fake_microseconds/1000),
+        preview.regular_utc.ms+600000,CLOCK_SYNCHRONIZED));
+    ClockSample expired_now=clock_sample(runtime.boot_domain);
+    restore_manual_if_ready(&runtime,&expired_now);
+    assert(!runtime.store.record.manual_intent.pending &&
+           runtime.manual_restore_status==KATMED_RESTORE_EXPIRED &&
+           runtime.state.alarm_active);
+    web=(KatmedConfigRequest){.operation=KATMED_CONFIG_GET};
+    config_execute(&runtime,&web,&web_reply);
+    assert(web_reply.status==KATMED_CONFIG_OK &&
+           web_reply.snapshot.restore_status==KATMED_RESTORE_EXPIRED);
+
+    memcpy(committed,saved_before_expiry,saved_before_expiry_length);
+    committed_length=saved_before_expiry_length;
+    initialize_runtime();
+    katmed_time_init(&runtime.time,runtime.boot_domain);
+    assert(katmed_time_accept_utc(&runtime.time,(uint64_t)(fake_microseconds/1000),
+                                  earlier,CLOCK_SYNCHRONIZED));
+    runtime.state.settings.revision.number++; /* Conflicting live group state. */
+    ClockSample conflict_now=clock_sample(runtime.boot_domain);
+    restore_manual_if_ready(&runtime,&conflict_now);
+    assert(!runtime.store.record.manual_intent.pending &&
+           runtime.manual_restore_status==KATMED_RESTORE_CONFLICT);
+    initialize_runtime();
     runtime.mesh_started=true;
     const unsigned committed_settings=writes;
+    fake_mesh_connected=false;
     fake_mesh_coordinator=false; /* Disconnected follower must not self-authorize. */
     image.value.seconds=3600;
     assert(submit_ui(&runtime,&image)==UI_SUBMIT_UNAVAILABLE && writes==committed_settings);

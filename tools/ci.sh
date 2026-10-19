@@ -57,6 +57,7 @@ elif [[ "$mode" == host ]]; then
     bash tests/host_mesh/check_interaction.sh
     bash tests/host_mesh/check_admission.sh
     bash tests/host_store/check_store.sh
+    bash tests/host_config_bridge/check_bridge.sh
     bash tests/host_store/check_main_submit.sh
     bash tests/host_mesh/check_engine.sh
     bash tests/host_mesh/check_status.sh

@@ -19,6 +19,7 @@
 #include "freertos/task.h"
 #include "katmed_board.h"
 #include "katmed_core.h"
+#include "katmed_config_bridge.h"
 #include "katmed_images.h"
 #include "katmed_mesh.h"
 #include "katmed_dhcp_diag.h"
@@ -54,6 +55,8 @@ typedef struct {
     uint64_t evidence_sequence;
     char witness_nonce[33]; /* One request, one boot, never persisted. */
     bool witness_armed;
+    bool manual_restore_attempted;
+    KatmedRestoreStatus manual_restore_status;
 } Runtime;
 
 static Runtime runtime;
@@ -420,6 +423,273 @@ static UiSubmitResult submit_ui(void *context, const UiRequest *request)
     }
     if (result == MESH_REJECTED) return UI_SUBMIT_REJECTED;
     return UI_SUBMIT_UNAVAILABLE;
+}
+
+static uint64_t config_mix(uint64_t hash, uint64_t value)
+{
+    for (unsigned i = 0; i < 8; ++i) {
+        hash ^= (uint8_t)(value >> (8u * i));
+        hash *= UINT64_C(1099511628211);
+    }
+    return hash;
+}
+
+/* A compare-and-swap token, never an authorization credential. */
+static void config_revision(const Runtime *rt, char out[KATMED_CONFIG_REVISION_MAX])
+{
+    uint64_t hash = UINT64_C(14695981039346656037);
+    hash = config_mix(hash, rt->boot.epoch);
+    hash = config_mix(hash, rt->state.revision.number);
+    hash = config_mix(hash, rt->state.revision.coordinator);
+    hash = config_mix(hash, rt->state.countdown_origin.epoch);
+    hash = config_mix(hash, rt->state.countdown_origin.sequence);
+    hash = config_mix(hash, (uint64_t)rt->state.alarm_active);
+    hash = config_mix(hash, (uint64_t)rt->state.start_reason);
+    hash = config_mix(hash, (uint64_t)rt->local.orientation);
+    hash = config_mix(hash, (uint64_t)rt->local.clock_style);
+    hash = config_mix(hash, (uint64_t)rt->store.record.manual_intent.pending);
+    (void)snprintf(out, KATMED_CONFIG_REVISION_MAX, "%016" PRIx64, hash);
+}
+
+static void config_hours(char out[24], uint32_t seconds)
+{
+    const unsigned long hours = seconds / 3600u;
+    const unsigned long fraction =
+        ((uint64_t)(seconds % 3600u) * 1000000u + 1800u) / 3600u;
+    if (!fraction) (void)snprintf(out, 24, "%lu", hours);
+    else {
+        (void)snprintf(out, 24, "%lu.%06lu", hours, fraction);
+        size_t length = strlen(out);
+        while (length && out[length - 1] == '0') out[--length] = '\0';
+    }
+}
+
+static bool config_hhmm(const char *text, uint8_t *hour, uint8_t *minute)
+{
+    if (!text || strlen(text) != 5 || text[2] != ':') return false;
+    if (text[0]<'0' || text[0]>'9' || text[1]<'0' || text[1]>'9' ||
+        text[3]<'0' || text[3]>'9' || text[4]<'0' || text[4]>'9') return false;
+    const unsigned h = (unsigned)(text[0]-'0')*10u+(unsigned)(text[1]-'0');
+    const unsigned m = (unsigned)(text[3]-'0')*10u+(unsigned)(text[4]-'0');
+    if (h>23 || m>59) return false;
+    *hour=(uint8_t)h; *minute=(uint8_t)m;
+    return true;
+}
+
+static void config_write_hhmm(char out[6], uint8_t hour, uint8_t minute)
+{
+    out[0]=(char)('0'+hour/10u); out[1]=(char)('0'+hour%10u);
+    out[2]=':';
+    out[3]=(char)('0'+minute/10u); out[4]=(char)('0'+minute%10u);
+    out[5]='\0';
+}
+
+static void config_snapshot(const Runtime *rt, KatmedConfigSnapshot *out)
+{
+    *out=(KatmedConfigSnapshot){0};
+    config_hours(out->medication_hours,rt->state.settings.medication_seconds);
+    config_hours(out->image_hours,rt->state.settings.image_seconds);
+    out->clock_style=rt->local.clock_style;
+    out->orientation=rt->local.orientation;
+    out->rotation=rt->state.settings.rotation;
+    out->restore_status=rt->state.start_reason==START_MANUAL ?
+        KATMED_RESTORE_NONE : rt->manual_restore_status;
+    if (rt->store.record.manual_intent.pending &&
+        rt->state.start_reason!=START_MANUAL) {
+        const StoreManualIntent *intent=&rt->store.record.manual_intent;
+        config_write_hhmm(out->next_due_hhmm,intent->hour,intent->minute);
+        out->next_due_state=KATMED_DUE_PAUSED_BOOT;
+    } else if (!rt->state.alarm_active && rt->state.deadline.effective_utc.valid) {
+        LocalDateTime local;
+        if (app_berlin_local_time(rt->state.deadline.effective_utc.ms,&local)==APP_OK) {
+            (void)snprintf(out->next_due_hhmm,sizeof(out->next_due_hhmm),
+                           "%02u:%02u",local.hour,local.minute);
+            out->next_due_state=KATMED_DUE_ACTIVE;
+        }
+    }
+    config_revision(rt,out->revision);
+}
+
+static void config_preview_token(const char *revision,
+                                 const ManualTimePreview *preview,
+                                 char out[KATMED_CONFIG_PREVIEW_TOKEN_MAX])
+{
+    uint64_t hash=UINT64_C(14695981039346656037);
+    for (const char *p=revision; *p; ++p) {
+        hash^=(uint8_t)*p;
+        hash*=UINT64_C(1099511628211);
+    }
+    hash=config_mix(hash,(uint64_t)preview->regular_utc.ms);
+    hash=config_mix(hash,(uint64_t)preview->effective_utc.ms);
+    (void)snprintf(out,KATMED_CONFIG_PREVIEW_TOKEN_MAX,"%016" PRIx64,hash);
+}
+
+static void config_execute(void *context, const KatmedConfigRequest *request,
+                           KatmedConfigResponse *response)
+{
+    Runtime *rt=context;
+    if (!response) return;
+    response->status=KATMED_CONFIG_UNAVAILABLE;
+    if (!rt || !request || !response || !rt->store_ready || rt->reboot_required ||
+        store_get_status(&rt->store,NULL,NULL,NULL)!=STORE_OK) return;
+    if (request->operation==KATMED_CONFIG_GET) {
+        config_snapshot(rt,&response->snapshot);
+        response->status=KATMED_CONFIG_OK;
+        return;
+    }
+    if (request->operation!=KATMED_CONFIG_PREVIEW_TIME &&
+        request->operation!=KATMED_CONFIG_SAVE) {
+        response->status=KATMED_CONFIG_INVALID;
+        return;
+    }
+    if (!memchr(request->revision,0,sizeof(request->revision)) ||
+        !memchr(request->value,0,sizeof(request->value)) ||
+        !memchr(request->preview_token,0,sizeof(request->preview_token))) {
+        response->status=KATMED_CONFIG_INVALID;
+        return;
+    }
+    char current[KATMED_CONFIG_REVISION_MAX];
+    config_revision(rt,current);
+    if (strcmp(request->revision,current)!=0) {
+        response->status=KATMED_CONFIG_STALE;
+        return;
+    }
+    UiRequest ui_request={0};
+    if (request->operation==KATMED_CONFIG_PREVIEW_TIME ||
+        request->field==KATMED_CONFIG_NEXT_DUE_HHMM) {
+        uint8_t hour,minute;
+        if (!config_hhmm(request->value,&hour,&minute)) {
+            response->status=KATMED_CONFIG_INVALID;
+            return;
+        }
+        const ClockSample now=clock_sample(rt->boot_domain);
+        ManualTimePreview preview;
+        const AppResult result=app_preview_local_time(&now,hour,minute,&preview);
+        if (result!=APP_OK) {
+            response->status=result==APP_TIME_UNAVAILABLE ?
+                KATMED_CONFIG_TIME_UNAVAILABLE : KATMED_CONFIG_INVALID;
+            return;
+        }
+        char token[KATMED_CONFIG_PREVIEW_TOKEN_MAX];
+        config_preview_token(current,&preview,token);
+        if (request->operation==KATMED_CONFIG_PREVIEW_TIME) {
+            config_write_hhmm(response->preview.time,hour,minute);
+            response->preview.regular_local=preview.regular_local;
+            response->preview.effective_local=preview.effective_local;
+            response->preview.night_advanced=preview.night_advanced;
+            response->preview.skipped_nonexistent_time=preview.skipped_nonexistent_time;
+            (void)snprintf(response->preview.preview_token,
+                           sizeof(response->preview.preview_token),"%s",token);
+            response->status=KATMED_CONFIG_OK;
+            return;
+        }
+        if (strcmp(request->preview_token,token)!=0) {
+            response->status=KATMED_CONFIG_STALE;
+            return;
+        }
+        ui_request.kind=UI_REQUEST_SET_NEXT_LOCAL_TIME;
+        ui_request.value.local_time.hour=hour;
+        ui_request.value.local_time.minute=minute;
+        ui_request.value.local_time.preview=preview;
+    } else {
+        if (request->operation!=KATMED_CONFIG_SAVE) {
+            response->status=KATMED_CONFIG_INVALID;
+            return;
+        }
+        switch (request->field) {
+        case KATMED_CONFIG_MEDICATION_HOURS:
+        case KATMED_CONFIG_IMAGE_HOURS: {
+            uint32_t seconds=0;
+            if (app_parse_hours(request->value,&seconds)!=APP_OK) {
+                response->status=KATMED_CONFIG_INVALID; return;
+            }
+            ui_request.kind=request->field==KATMED_CONFIG_MEDICATION_HOURS ?
+                UI_REQUEST_SET_MEDICATION_SECONDS:UI_REQUEST_SET_IMAGE_SECONDS;
+            ui_request.value.seconds=seconds;
+            break;
+        }
+        case KATMED_CONFIG_CLOCK_STYLE:
+            ui_request.kind=UI_REQUEST_SET_CLOCK_STYLE;
+            if (strcmp(request->value,"digital_large")==0) ui_request.value.clock_style=DIGITAL_LARGE;
+            else if (strcmp(request->value,"digital_date")==0) ui_request.value.clock_style=DIGITAL_DATE;
+            else if (strcmp(request->value,"analog")==0) ui_request.value.clock_style=ANALOG;
+            else { response->status=KATMED_CONFIG_INVALID; return; }
+            break;
+        case KATMED_CONFIG_ORIENTATION:
+            ui_request.kind=UI_REQUEST_SET_ORIENTATION;
+            if (strcmp(request->value,"0")==0) ui_request.value.orientation=ORIENTATION_0;
+            else if (strcmp(request->value,"90")==0) ui_request.value.orientation=ORIENTATION_90;
+            else if (strcmp(request->value,"180")==0) ui_request.value.orientation=ORIENTATION_180;
+            else if (strcmp(request->value,"270")==0) ui_request.value.orientation=ORIENTATION_270;
+            else { response->status=KATMED_CONFIG_INVALID; return; }
+            break;
+        case KATMED_CONFIG_ROTATION:
+            ui_request.kind=UI_REQUEST_SET_ROTATION_MODE;
+            if (strcmp(request->value,"off")==0) ui_request.value.rotation=ROTATION_OFF;
+            else if (strcmp(request->value,"name_order")==0) ui_request.value.rotation=ROTATION_NAME_ORDER;
+            else if (strcmp(request->value,"random")==0) ui_request.value.rotation=ROTATION_RANDOM;
+            else { response->status=KATMED_CONFIG_INVALID; return; }
+            break;
+        default: response->status=KATMED_CONFIG_INVALID; return;
+        }
+    }
+    const UiSubmitResult result=submit_ui(rt,&ui_request);
+    if (result==UI_SUBMIT_COMMITTED) {
+        if (request->field==KATMED_CONFIG_NEXT_DUE_HHMM)
+            rt->manual_restore_status=KATMED_RESTORE_NONE;
+        config_snapshot(rt,&response->snapshot);
+        response->status=KATMED_CONFIG_OK;
+    } else if (result==UI_SUBMIT_PENDING_SHARED || result==UI_SUBMIT_PENDING)
+        response->status=KATMED_CONFIG_PENDING;
+    else if (result==UI_SUBMIT_STALE) response->status=KATMED_CONFIG_STALE;
+    else if (result==UI_SUBMIT_REJECTED) response->status=KATMED_CONFIG_INVALID;
+    else response->status=rt->store.uncertain ? KATMED_CONFIG_COMMIT_UNKNOWN :
+        KATMED_CONFIG_UNAVAILABLE;
+}
+
+static void restore_manual_if_ready(Runtime *rt, const ClockSample *now)
+{
+    if (!rt->store_ready || rt->manual_restore_attempted || rt->reboot_required ||
+        !rt->store.record.manual_intent.pending || !now->utc_valid) return;
+    const StoreManualIntent intent=rt->store.record.manual_intent;
+    if (memcmp(intent.bound_group,rt->store.record.bound_group,
+               sizeof(intent.bound_group))!=0 ||
+        intent.revision.number!=rt->state.settings.revision.number ||
+        intent.revision.coordinator!=rt->state.settings.revision.coordinator) {
+        if (store_clear_manual_intent(&rt->store)==STORE_OK) {
+            rt->manual_restore_status=KATMED_RESTORE_CONFLICT;
+            rt->manual_restore_attempted=true;
+        }
+        return;
+    }
+    if (intent.regular_utc.ms<=now->utc_ms ||
+        intent.effective_utc.ms<=now->utc_ms) {
+        if (store_clear_manual_intent(&rt->store)==STORE_OK) {
+            rt->manual_restore_status=KATMED_RESTORE_EXPIRED;
+            rt->manual_restore_attempted=true;
+        }
+        return;
+    }
+    /* A boot alarm must be confirmed before a former manual deadline can
+     * resume. No wall-clock estimate can waive that local safety gate. */
+    if (rt->state.alarm_active || rt->state.start_reason==START_BOOT ||
+        rt->state.start_reason==START_MANUAL || !rt->mesh_started) return;
+    ManualTimePreview preview;
+    if (app_preview_local_time(now,intent.hour,intent.minute,&preview)!=APP_OK ||
+        preview.regular_utc.ms!=intent.regular_utc.ms ||
+        preview.effective_utc.ms!=intent.effective_utc.ms) {
+        if (store_clear_manual_intent(&rt->store)==STORE_OK) {
+            rt->manual_restore_status=KATMED_RESTORE_CONFLICT;
+            rt->manual_restore_attempted=true;
+        }
+        return;
+    }
+    const UiRequest request={
+        .kind=UI_REQUEST_SET_NEXT_LOCAL_TIME,
+        .value.local_time={.hour=intent.hour,.minute=intent.minute,.preview=preview},
+    };
+    const UiSubmitResult result=submit_ui(rt,&request);
+    if (result!=UI_SUBMIT_UNAVAILABLE) rt->manual_restore_attempted=true;
 }
 
 /* Read current SDK interfaces, never stored provisioning addresses. A cached
@@ -964,6 +1234,9 @@ void app_main(void)
         if (!runtime.mesh_started) ESP_LOGE(tag, "group service unavailable: %d", mesh_result);
     }
 
+    if (!katmed_config_bridge_start())
+        ESP_LOGE(tag,"web configuration bridge unavailable");
+
     uint64_t last_render_ms = now.monotonic_ms;
     KatmedRuntimeMetricsGate metrics_gate = {0};
     for (;;) {
@@ -996,6 +1269,8 @@ void app_main(void)
         tick_runtime(&runtime, &now);
         process_usb(&runtime, &now);
         now = clock_sample(runtime.boot_domain);
+        restore_manual_if_ready(&runtime,&now);
+        katmed_config_poll(config_execute,&runtime);
         if (runtime.mesh_started && !runtime.reboot_required)
             interaction_drain(now.monotonic_ms);
         const bool render_due = now.monotonic_ms - last_render_ms >= 50;

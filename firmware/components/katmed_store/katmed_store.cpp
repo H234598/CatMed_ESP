@@ -12,7 +12,7 @@
 
 namespace {
 constexpr uint8_t kMagic[4] = {'K', 'M', 'S', 'T'};
-constexpr uint16_t kCurrentVersion = 6;
+constexpr uint16_t kCurrentVersion = 7;
 constexpr size_t kHeaderSize = 12;
 
 uint32_t checksum(const uint8_t *data, size_t length) {
@@ -121,6 +121,20 @@ StoreConfirmationHistory get_confirmation(Reader &r) {
     h.valid=r.boolean(); h.id=get_id(r); h.round=get_round(r); h.occurred_at=get_clock(r);
     return h;
 }
+void put_manual_intent(Writer &w, const StoreManualIntent &v) {
+    w.boolean(v.pending); w.u8(v.hour); w.u8(v.minute);
+    put_instant(w,v.regular_utc); put_instant(w,v.effective_utc);
+    put_revision(w,v.revision); put_id(w,v.source);
+    w.bytes(v.bound_group,sizeof(v.bound_group));
+}
+StoreManualIntent get_manual_intent(Reader &r) {
+    StoreManualIntent v{};
+    v.pending=r.boolean(); v.hour=r.u8(); v.minute=r.u8();
+    v.regular_utc=get_instant(r); v.effective_utc=get_instant(r);
+    v.revision=get_revision(r); v.source=get_id(r);
+    r.bytes(v.bound_group,sizeof(v.bound_group));
+    return v;
+}
 StoreConfirmationHistory confirmation_from_state(const AppState &s) {
     StoreConfirmationHistory h{};
     if (s.has_last_confirmation) {
@@ -157,6 +171,43 @@ bool valid_clock(ClockSample c) {
            ((!c.utc_valid && c.utc_ms == 0 && c.quality == CLOCK_UNAVAILABLE) ||
             (c.utc_valid && c.quality != CLOCK_UNAVAILABLE &&
              app_berlin_local_time(c.utc_ms,&local)==APP_OK));
+}
+bool valid_manual_intent(const StoreManualIntent &v, const StoreRecord &record) {
+    if (!v.pending) {
+        if (v.hour || v.minute || v.regular_utc.valid || v.regular_utc.ms ||
+            v.effective_utc.valid || v.effective_utc.ms || v.revision.number ||
+            v.revision.coordinator || v.source.device || v.source.epoch ||
+            v.source.sequence) return false;
+        for (uint8_t byte : v.bound_group) if (byte) return false;
+        return true;
+    }
+    LocalDateTime local{};
+    return v.hour<24 && v.minute<60 && v.regular_utc.valid &&
+        v.effective_utc.valid && v.revision.coordinator!=0 &&
+        v.revision.number==record.shared.revision.number &&
+        v.revision.coordinator==record.shared.revision.coordinator &&
+        valid_id(v.source) &&
+        app_berlin_local_time(v.regular_utc.ms,&local)==APP_OK &&
+        local.hour==v.hour && local.minute==v.minute &&
+        app_berlin_local_time(v.effective_utc.ms,&local)==APP_OK &&
+        std::memcmp(v.bound_group,record.bound_group,sizeof(v.bound_group))==0;
+}
+StoreManualIntent intent_from_state(const AppState &state, const StoreRecord &record) {
+    StoreManualIntent intent{};
+    LocalDateTime local{};
+    if (state.start_reason!=START_MANUAL || state.alarm_active ||
+        !state.deadline.regular_utc.valid || !state.deadline.effective_utc.valid ||
+        app_berlin_local_time(state.deadline.regular_utc.ms,&local)!=APP_OK)
+        return intent;
+    intent.pending=true;
+    intent.hour=static_cast<uint8_t>(local.hour);
+    intent.minute=static_cast<uint8_t>(local.minute);
+    intent.regular_utc=state.deadline.regular_utc;
+    intent.effective_utc=state.deadline.effective_utc;
+    intent.revision=state.settings.revision;
+    intent.source=state.countdown_origin;
+    std::memcpy(intent.bound_group,record.bound_group,sizeof(intent.bound_group));
+    return intent;
 }
 bool valid_settings(SharedSettings s) {
     return s.medication_seconds != 0 && s.image_seconds != 0 &&
@@ -230,7 +281,7 @@ bool valid_record(const StoreRecord &v) {
     if (v.device==0 || v.epoch==0 || v.next_sequence < 2 || !valid_settings(v.shared) ||
         !valid_local(v.local,v.device) || v.pending_count > KATMED_STORE_PENDING_MAX ||
         v.conflict_count > KATMED_STORE_CONFLICT_MAX ||
-        !valid_provision(v.provision)) return false;
+        !valid_provision(v.provision) || !valid_manual_intent(v.manual_intent,v)) return false;
     if (v.group_origin!=STORE_GROUP_ORIGIN_UNKNOWN &&
         v.group_origin!=STORE_GROUP_ORIGIN_FRESH_UNBOUND &&
         v.group_origin!=STORE_GROUP_ORIGIN_FIRST_BOUND) return false;
@@ -312,6 +363,7 @@ StoreResult encode_record(const StoreRecord &v, uint8_t *bytes, size_t *length, 
     if (version>=4) w.bytes(v.bound_group,sizeof(v.bound_group));
     if (version>=3) put_confirmation(w,v.last_confirmation);
     if (version>=6) w.u8(static_cast<uint8_t>(v.group_origin));
+    if (version>=7) put_manual_intent(w,v.manual_intent);
     if (!w.good || w.position > UINT16_MAX) return STORE_FULL;
     const uint16_t n=static_cast<uint16_t>(w.position);
     bytes[6]=static_cast<uint8_t>(n); bytes[7]=static_cast<uint8_t>(n>>8);
@@ -371,6 +423,8 @@ StoreResult decode_record(const uint8_t *bytes, size_t length, StoreRecord *out)
         v.last_confirmation={true,last.id,last.round,last.occurred_at};
     }
     if (version>=6) v.group_origin=static_cast<StoreGroupOrigin>(r.u8());
+    if (version>=7) v.manual_intent=get_manual_intent(r);
+    else if (v.has_history) v.manual_intent=intent_from_state(v.history,v);
     if (!r.good || r.position!=length || !valid_record(v)) return corrupt();
     return STORE_OK;
 }
@@ -534,6 +588,7 @@ StoreResult store_get_recovery(const Store *store, StoreRecovery *recovery) {
     r.pending_count=store->record.pending_count;
     r.catalog_mismatch=store->catalog_mismatch;
     r.configured=store->record.provision.configured;
+    r.manual_intent=store->record.manual_intent;
     *recovery=r;
     return STORE_OK;
 }
@@ -584,6 +639,15 @@ StoreResult store_apply_event(Store *store, AppState *active, const AppEvent *ev
         if (candidate.has_last_confirmation)
             store->staged.last_confirmation=confirmation_from_state(candidate);
         store->staged.shared=candidate.settings;
+        if (event->kind==EVENT_SET_NEXT_LOCAL_TIME ||
+            event->kind==EVENT_ADOPT_SNAPSHOT) {
+            store->staged.manual_intent=intent_from_state(candidate,store->staged);
+        } else if (event->kind==EVENT_SET_MEDICATION_INTERVAL ||
+                   (event->kind==EVENT_CONFIRM && active->start_reason!=START_BOOT)) {
+            store->staged.manual_intent=StoreManualIntent{};
+        } else if (store->staged.manual_intent.pending) {
+            store->staged.manual_intent.revision=candidate.settings.revision;
+        }
         store->staged.image_count=candidate.image_count;
         std::memcpy(store->staged.catalog_id,candidate.catalog_id,KATMED_CATALOG_BYTES);
         const bool mismatch=std::memcmp(candidate.catalog_id,store->current_catalog,KATMED_CATALOG_BYTES)!=0 ||
@@ -612,6 +676,15 @@ StoreResult store_set_local(Store *store, LocalSettings *active,
     const StoreResult committed=write_record(store,store->staged);
     if (committed==STORE_OK) *active=*requested;
     return committed;
+}
+
+StoreResult store_clear_manual_intent(Store *store) {
+    if (!ready(store)) return STORE_UNAVAILABLE;
+    if (!store->record.manual_intent.pending)
+        return store->last_error=STORE_DUPLICATE;
+    store->staged=store->record;
+    store->staged.manual_intent=StoreManualIntent{};
+    return write_record(store,store->staged);
 }
 
 StoreResult store_ack_pending(Store *store, AppState *active, EventId id,
