@@ -292,13 +292,14 @@ int main(void)
     assert(store.abort_count == 1);
     assert_old_image_preserved(&server);
 
-    char large_body[2048];
-    memset(large_body, 'x', sizeof(large_body));
+    char large_body[2049];
+    memset(large_body, 'x', sizeof(large_body) - 1u);
+    large_body[sizeof(large_body) - 1u] = '\0';
     large_body[0] = 'O';
     large_body[1] = 'K';
     req = request(HTTP_POST, "image/jpeg", NULL, large_body, SIZE_MAX);
-    req.body_size = sizeof(large_body);
-    req.content_len = (int)sizeof(large_body);
+    req.body_size = sizeof(large_body) - 1u;
+    req.content_len = (int)(sizeof(large_body) - 1u);
     store.write_fail = true;
     assert(route(&server, HTTP_POST)(&req) == ESP_OK);
     assert(strcmp(req.response_status, "507 Insufficient Storage") == 0);
