@@ -691,7 +691,7 @@ void receive(const KatmedMeshFrame &f,const ClockSample *now){
             else{
                 ctx.shared_waiting=false;
                 if(ctx.services.shared_result)
-                    ctx.services.shared_result(ctx.services.context,subject,false);
+                    ctx.services.shared_result(ctx.services.context,subject,MESH_SHARED_REJECTED);
             }
         }
         if(f.payload[24]==1){
@@ -722,7 +722,7 @@ void receive(const KatmedMeshFrame &f,const ClockSample *now){
            recent(*ctx.services.state,ctx.shared_event.id)){
             const EventId id=ctx.shared_event.id;ctx.shared_waiting=false;
             if(ctx.services.shared_result)
-                ctx.services.shared_result(ctx.services.context,id,true);
+                ctx.services.shared_result(ctx.services.context,id,MESH_SHARED_ACCEPTED);
         }
         return;
     }
@@ -958,7 +958,7 @@ extern "C" void katmed_mesh_poll(const ClockSample *now){
     if(ctx.shared_waiting&&now->monotonic_ms-ctx.shared_since>=kSharedTimeoutMs){
         EventId id=ctx.shared_event.id;ctx.shared_waiting=false;
         if(ctx.services.shared_result)
-            ctx.services.shared_result(ctx.services.context,id,false);
+            ctx.services.shared_result(ctx.services.context,id,MESH_SHARED_TIMEOUT);
     }
     if(!linked())return;
     reconcile_own_pending();

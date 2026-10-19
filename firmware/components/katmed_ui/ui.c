@@ -53,6 +53,8 @@ typedef struct {
     lv_obj_t *screen, *background, *fallback;
     lv_obj_t *clock_view, *alarm_bar, *alarm_strips[ALARM_STRIPS], *alarm_text;
     lv_obj_t *settings, *status, *keypad, *feedback, *morse_layer;
+    lv_obj_t *pairing_label;
+    char pairing_code[7];
     lv_obj_t *entry_label, *preview_label;
     lv_obj_t *style_dialog, *style_title, *style_options[3];
     uint32_t image_id;
@@ -226,6 +228,7 @@ static void destroy_menu(void)
     remember_scroll(ui.settings, 5);
     if (ui.settings) lv_obj_delete(ui.settings);
     ui.settings = NULL;
+    ui.pairing_label = NULL;
 }
 
 static void destroy_settings(void)
@@ -328,6 +331,16 @@ void ui_shared_result(bool accepted)
         if (ui.view != ALARM && !ui.state.alarm_active)
             show_feedback("Koordinator hat Änderung nicht übernommen");
     }
+    if (ui.status) update_status();
+}
+
+void ui_shared_timeout(void)
+{
+    if (!ui.shared_pending) return;
+    ui.shared_pending = false;
+    ui.shared_result_status = -2;
+    if (ui.view != ALARM && !ui.state.alarm_active)
+        show_feedback("Bestätigung ausgeblieben; erneuter Versuch möglich");
     if (ui.status) update_status();
 }
 
@@ -810,6 +823,10 @@ static void build_settings(void)
     lv_obj_set_style_pad_row(ui.settings, 5, 0);
     int row_w = ui.width - (ui.width == 240 ? 100 : 18) - 4;
     label(ui.settings, "Einstellungen", row_w);
+    ui.pairing_label = label(ui.settings, "", row_w);
+    if (ui.pairing_code[0])
+        lv_label_set_text_fmt(ui.pairing_label, "Web-Code: %s", ui.pairing_code);
+    else lv_obj_add_flag(ui.pairing_label, LV_OBJ_FLAG_HIDDEN);
     button(ui.settings, "Seltsam", row_w, 34, morse_open, NULL);
     button(ui.settings, "Morsecode", row_w, 34, interaction_open, NULL);
     button(ui.settings, "Medikamente: Stunden", row_w, 34, edit_button,
@@ -851,6 +868,11 @@ static void update_status(void)
     uint32_t next = 1;
     int text_w = ui.width - (ui.width == 240 ? 100 : 20);
     char date[64], line[128];
+    if (ui.pairing_code[0]) {
+        snprintf(line, sizeof(line), "Web-Code: %s", ui.pairing_code);
+        lv_obj_t *code = status_label(&next, line, text_w);
+        if (ui.height < 200) lv_obj_set_style_text_font(code, &katmed_font_12, 0);
+    }
     ClockSample last = ui.state.last_confirmation;
     bool has_last = ui.state.has_last_confirmation;
     if (!has_last && ui.services.last_confirmation)
@@ -942,6 +964,8 @@ static void update_status(void)
     if (ui.shared_result_status != 0) {
         item = status_label(&next, ui.shared_result_status > 0 ?
                      "Letzte gemeinsame Änderung übernommen" :
+                     ui.shared_result_status == -2 ?
+                     "Letzte gemeinsame Änderung unbestätigt" :
                      "Letzte gemeinsame Änderung abgelehnt", text_w);
         if (ui.height < 200) lv_obj_set_style_text_font(item, &katmed_font_12, 0);
     }
@@ -985,6 +1009,39 @@ static void update_status(void)
         lv_obj_delete(lv_obj_get_child(ui.status, next));
 }
 
+void ui_clear_pairing_code(void)
+{
+    if (!ui.pairing_code[0]) return;
+    volatile char *code = ui.pairing_code;
+    for (size_t i = 0; i < sizeof(ui.pairing_code); ++i) code[i] = '\0';
+    if (ui.pairing_label) {
+        lv_label_set_text(ui.pairing_label, "");
+        lv_obj_add_flag(ui.pairing_label, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (ui.status) update_status();
+}
+
+void ui_set_pairing_code(const char code[7])
+{
+    if (!code || code[6] != '\0') {
+        ui_clear_pairing_code();
+        return;
+    }
+    for (unsigned i = 0; i < 6; ++i) {
+        if (code[i] < '0' || code[i] > '9') {
+            ui_clear_pairing_code();
+            return;
+        }
+    }
+    if (memcmp(ui.pairing_code, code, 7) == 0) return;
+    memcpy(ui.pairing_code, code, 7);
+    if (ui.pairing_label) {
+        lv_label_set_text_fmt(ui.pairing_label, "Web-Code: %s", ui.pairing_code);
+        lv_obj_remove_flag(ui.pairing_label, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (ui.status) update_status();
+}
+
 static void build_screen(int16_t width, int16_t height)
 {
     remember_scroll(ui.settings, 5);
@@ -1006,6 +1063,7 @@ static void build_screen(int16_t width, int16_t height)
     ui.alarm_color_shown = false;
     ui.alarm_text = NULL;
     ui.settings = NULL;
+    ui.pairing_label = NULL;
     ui.status = NULL;
     ui.keypad = NULL;
     ui.feedback = NULL;

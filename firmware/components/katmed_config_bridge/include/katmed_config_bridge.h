@@ -1,0 +1,102 @@
+#ifndef KATMED_CONFIG_BRIDGE_H
+#define KATMED_CONFIG_BRIDGE_H
+
+#include <stdbool.h>
+#include <stdint.h>
+#include "katmed_types.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+typedef enum {
+    KATMED_CONFIG_GET,
+    KATMED_CONFIG_PREVIEW_TIME,
+    KATMED_CONFIG_SAVE
+} KatmedConfigOperation;
+
+typedef enum {
+    KATMED_CONFIG_MEDICATION_HOURS,
+    KATMED_CONFIG_IMAGE_HOURS,
+    KATMED_CONFIG_NEXT_DUE_HHMM,
+    KATMED_CONFIG_CLOCK_STYLE,
+    KATMED_CONFIG_ORIENTATION,
+    KATMED_CONFIG_ROTATION
+} KatmedConfigField;
+
+typedef enum {
+    KATMED_CONFIG_OK,
+    KATMED_CONFIG_INVALID,
+    KATMED_CONFIG_STALE,
+    KATMED_CONFIG_PENDING,
+    KATMED_CONFIG_UNAVAILABLE,
+    KATMED_CONFIG_COMMIT_UNKNOWN,
+    KATMED_CONFIG_TIME_UNAVAILABLE
+} KatmedConfigStatus;
+
+typedef enum {
+    KATMED_DUE_NONE,
+    KATMED_DUE_ACTIVE,
+    KATMED_DUE_PAUSED_BOOT
+} KatmedDueState;
+typedef enum {
+    KATMED_RESTORE_NONE,
+    KATMED_RESTORE_EXPIRED,
+    KATMED_RESTORE_CONFLICT
+} KatmedRestoreStatus;
+
+#define KATMED_CONFIG_VALUE_MAX 36u
+#define KATMED_CONFIG_REVISION_MAX 96u
+#define KATMED_CONFIG_PREVIEW_TOKEN_MAX 96u
+
+typedef struct {
+    KatmedConfigOperation operation;
+    KatmedConfigField field;
+    char value[KATMED_CONFIG_VALUE_MAX];
+    char revision[KATMED_CONFIG_REVISION_MAX];
+    char preview_token[KATMED_CONFIG_PREVIEW_TOKEN_MAX];
+} KatmedConfigRequest;
+
+typedef struct {
+    char medication_hours[24];
+    char image_hours[24];
+    char next_due_hhmm[6];
+    KatmedDueState next_due_state;
+    KatmedRestoreStatus restore_status;
+    ClockStyle clock_style;
+    Orientation orientation;
+    RotationMode rotation;
+    char revision[KATMED_CONFIG_REVISION_MAX];
+} KatmedConfigSnapshot;
+
+typedef struct {
+    char time[6];
+    LocalDateTime regular_local;
+    LocalDateTime effective_local;
+    bool night_advanced;
+    bool skipped_nonexistent_time;
+    char preview_token[KATMED_CONFIG_PREVIEW_TOKEN_MAX];
+} KatmedConfigPreview;
+
+typedef struct {
+    KatmedConfigStatus status;
+    KatmedConfigSnapshot snapshot;
+    KatmedConfigPreview preview;
+} KatmedConfigResponse;
+
+typedef void (*KatmedConfigExecute)(void *context, const KatmedConfigRequest *request,
+                                    KatmedConfigResponse *response);
+
+/* One bounded request may be in flight. The HTTP task never receives a pointer
+ * into Runtime and never calls LVGL, Core, Mesh or Store. */
+bool katmed_config_bridge_start(void);
+KatmedConfigStatus katmed_config_exchange(const KatmedConfigRequest *request,
+                                          KatmedConfigResponse *response,
+                                          uint32_t timeout_ms);
+/* Call at most once per application-loop turn. */
+void katmed_config_poll(KatmedConfigExecute execute, void *context);
+
+#ifdef __cplusplus
+}
+#endif
+#endif

@@ -17,6 +17,7 @@ unsigned dropped=0,boot_random=0,failed_sends=0;
 bool fail_send=false;
 uint8_t current_local_nonce[16]{};
 unsigned shared_results=0;bool shared_accepted=false;EventId shared_result_id{};
+KatmedMeshSharedOutcome shared_outcome=MESH_SHARED_TIMEOUT;
 unsigned utc_calls=0;ClockQuality last_quality=CLOCK_UNAVAILABLE;
 uint64_t last_observed_mono=0;int64_t last_received_utc=0;
 std::vector<std::vector<uint8_t>> sent;
@@ -26,8 +27,9 @@ struct Memory {std::vector<uint8_t> blob;bool fail=false;unsigned commits=0;} me
 Memory history_memory;
 Store store{};AppState state{};StoreProvision provision{};
 ClockSample now{1000,7,1760460000000LL,true,CLOCK_SYNCHRONIZED};
-void shared_result(void *,EventId id,bool accepted){
-    ++shared_results;shared_accepted=accepted;shared_result_id=id;
+void shared_result(void *,EventId id,KatmedMeshSharedOutcome outcome){
+    ++shared_results;shared_accepted=outcome==MESH_SHARED_ACCEPTED;
+    shared_outcome=outcome;shared_result_id=id;
 }
 void utc_received(void *,uint64_t observed_mono,int64_t utc,ClockQuality quality){
     ++utc_calls;last_observed_mono=observed_mono;
@@ -390,6 +392,8 @@ int main(int argc,char **argv){
         return 0;
     }
     if(argc==2&&(std::strcmp(argv[1],"leaf")==0||
+                 std::strcmp(argv[1],"leaf_shared_negative")==0||
+                 std::strcmp(argv[1],"leaf_shared_timeout")==0||
                  std::strcmp(argv[1],"leaf_running")==0||
                  std::strcmp(argv[1],"leaf_replay")==0||
                  std::strcmp(argv[1],"leaf_ack2")==0||
@@ -522,6 +526,41 @@ int main(int argc,char **argv){
             ack.payload[16+i]=uint8_t(id.sequence>>(56-8*i));
         }
         ack.payload[24]=1;ack.payload_length=25;
+        if(std::strcmp(argv[1],"leaf_shared_negative")==0){
+            ack.payload[24]=0;
+            inject(ack);katmed_mesh_poll(&now);
+            assert(shared_results==1&&shared_outcome==MESH_SHARED_REJECTED&&
+                   shared_result_id.sequence==id.sequence&&
+                   state.settings.rotation!=ROTATION_OFF);
+            std::puts("mesh explicit negative shared ACK distinguished OK");
+            return 0;
+        }
+        if(std::strcmp(argv[1],"leaf_shared_timeout")==0){
+            advance_now(now.monotonic_ms+10000);
+            katmed_mesh_poll(&now);
+            assert(shared_results==1&&shared_outcome==MESH_SHARED_TIMEOUT&&
+                   shared_result_id.sequence==id.sequence&&
+                   state.settings.rotation!=ROTATION_OFF);
+            /* A late positive ACK alone cannot turn a timeout into success.
+             * A later durable snapshot is still adopted without a second callback. */
+            inject(ack);katmed_mesh_poll(&now);
+            assert(shared_results==1&&shared_outcome==MESH_SHARED_TIMEOUT);
+            AppState remote=state;
+            AppEvent approved=requested;approved.coordinator_accepted=true;
+            assert(app_apply_event(&remote,&approved,&now,&effects)==APP_OK);
+            StateSnapshot snapshot{};
+            assert(app_make_snapshot(&remote,&now,&snapshot)==APP_OK);
+            auto late_state=peer_frame(MESH_STATE,3);
+            assert(katmed_mesh_encode_snapshot(&snapshot,late_state.payload,
+                sizeof(late_state.payload),&late_state.payload_length));
+            inject(late_state);katmed_mesh_poll(&now);
+            assert(shared_results==1&&state.settings.rotation==ROTATION_OFF);
+            Store reopened{};StoreRecovery recovery{};
+            assert(store_open(&reopened,backend,11,catalog,75,&recovery)==STORE_OK);
+            assert(recovery.shared.rotation==ROTATION_OFF);
+            std::puts("mesh timeout, late ACK and durable late snapshot OK");
+            return 0;
+        }
         inject(ack);katmed_mesh_poll(&now);
         assert(shared_results==0&&state.settings.rotation!=ROTATION_OFF);
         AppState remote=state;

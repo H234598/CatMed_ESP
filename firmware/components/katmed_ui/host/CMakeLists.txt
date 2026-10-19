@@ -79,6 +79,8 @@ add_executable(check_settings_values
     "${ROOT}/firmware/components/katmed_time/katmed_time.c")
 target_include_directories(check_settings_values PRIVATE
     "${ROOT}/tests/host_store/stubs" "${ROOT}/tests/host_main/stubs"
+    "${ROOT}/firmware/components/katmed_config_bridge/include"
+    "${ROOT}/firmware/components/katmed_web/include"
     "${ROOT}/firmware/main" "${ROOT}/firmware/components/board/include"
     "${UI}/include" "${ROOT}/firmware/components/katmed_core/include"
     "${ROOT}/firmware/components/katmed_store/include"
@@ -131,6 +133,8 @@ add_executable(check_ui_refinement
     "${ROOT}/firmware/components/katmed_time/katmed_time.c")
 target_include_directories(check_ui_refinement PRIVATE
     "${ROOT}/tests/host_store/stubs" "${ROOT}/tests/host_main/stubs"
+    "${ROOT}/firmware/components/katmed_config_bridge/include"
+    "${ROOT}/firmware/components/katmed_web/include"
     "${ROOT}/firmware/main" "${ROOT}/firmware/components/board/include"
     "${UI}/include" "${ROOT}/firmware/components/katmed_core/include"
     "${ROOT}/firmware/components/katmed_store/include"

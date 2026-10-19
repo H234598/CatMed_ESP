@@ -59,18 +59,23 @@ int main(void)
     assert(host.submit_calls==1 && host.last_request.kind==UI_REQUEST_SET_MEDICATION_SECONDS);
     assert(find_label(screen,"Koordinator prüft Änderung"));
     assert(find_label(screen,"Speichern")); /* Entry remains until ACK. */
+    ui_shared_timeout();
+    assert(find_label(screen,"Bestätigung ausgeblieben; erneuter Versuch möglich"));
+    assert(find_label(screen,"Speichern"));
+    click_label(screen,"Speichern");
+    assert(host.submit_calls==2 && find_label(screen,"Koordinator prüft Änderung"));
     ui_shared_result(false);
     assert(find_label(screen,"Koordinator hat Änderung nicht übernommen"));
     assert(find_label(screen,"Speichern"));
     click_label(screen,"Speichern");
-    assert(host.submit_calls==2 && find_label(screen,"Koordinator prüft Änderung"));
+    assert(host.submit_calls==3 && find_label(screen,"Koordinator prüft Änderung"));
     ui_shared_result(true);
     assert(find_label(screen,"Gemeinsame Änderung gespeichert"));
     assert(!find_label(screen,"Speichern"));
     click_label(screen,"Medikamente: Stunden");
     enter_keys(screen,"2");
     click_label(screen,"Speichern");
-    assert(host.submit_calls==3);
+    assert(host.submit_calls==4);
     state.alarm_active=true;
     state.round.ordinal++;
     ui_render(&state,&local,ALARM,&clock);

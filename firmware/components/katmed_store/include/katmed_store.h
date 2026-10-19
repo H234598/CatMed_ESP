@@ -45,6 +45,17 @@ typedef struct {
     ClockSample occurred_at;
 } StoreConfirmationHistory;
 
+/* A coordinator-accepted manual deadline retained while the boot alarm takes
+ * priority. It is only a durable projection of the existing Core event. */
+typedef struct {
+    bool pending;
+    uint8_t hour, minute;
+    UtcInstant regular_utc, effective_utc;
+    StateRevision revision;
+    EventId source;
+    uint8_t bound_group[16];
+} StoreManualIntent;
+
 typedef struct {
     uint8_t group[16];
     uint8_t secret[32];
@@ -82,6 +93,7 @@ typedef struct {
     uint8_t bound_group[16]; /* Durable provenance, retained by RESET CONFIG. */
     StoreConfirmationHistory last_confirmation; /* Independent of the latest boot-domain state. */
     StoreGroupOrigin group_origin;
+    StoreManualIntent manual_intent;
 } StoreRecord;
 
 typedef struct {
@@ -121,6 +133,7 @@ typedef struct {
     uint8_t pending_count;
     bool catalog_mismatch;
     bool configured;
+    StoreManualIntent manual_intent;
 } StoreRecovery;
 
 typedef struct {
@@ -144,6 +157,7 @@ StoreResult store_apply_event(Store *store, AppState *active, const AppEvent *ev
                               AppEffects *effects, AppResult *core_result);
 StoreResult store_set_local(Store *store, LocalSettings *active,
                             const LocalSettings *requested);
+StoreResult store_clear_manual_intent(Store *store);
 StoreResult store_ack_pending(Store *store, AppState *active, EventId id,
                               bool coordinator_accepted);
 StoreResult store_pending_at(const Store *store, size_t index,
