@@ -27,7 +27,8 @@ int main() {
     std::array<uint8_t,KATMED_STORE_BLOB_MAX+1> bytes{};
     std::cin.read(reinterpret_cast<char *>(bytes.data()), bytes.size());
     const size_t n=static_cast<size_t>(std::cin.gcount());
-    if (n<12 || n> KATMED_STORE_BLOB_MAX || bytes[4]!=8 || bytes[5]!=0 ||
+    if (n<12 || n> KATMED_STORE_BLOB_MAX ||
+        (bytes[4]!=5 && bytes[4]!=8) || bytes[5]!=0 ||
         std::cin.bad()) return 1;
     StoreRecord record{};
     if (decode_record(bytes.data(),n,&record)!=STORE_OK) return 1;

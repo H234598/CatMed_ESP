@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Independent, synthetic SDK-NVS and real Store-v5 codec review."""
+"""Independent synthetic IDF6.1 NVS and real Store-v8 codec review."""
 
 import hashlib
 import json
@@ -14,9 +14,9 @@ import zlib
 
 
 ROOT = Path(__file__).resolve().parents[2]
-SDK = (Path.home() / '.local/share/katmed-tools/esp-idf-v5.5.5')
-IDF_PY = (Path.home() / '.local/share/katmed-tools/idf-tools/python_env/idf5.5_py3.13_env/bin/python3')
-TOOL = ROOT / "tools/katmed_store_v5_evidence.py"
+SDK = (Path.home() / '.local/share/katmed-tools/esp-idf-v6.1-acme-20261019')
+IDF_PY = (Path.home() / '.local/share/katmed-tools/esp-idf-v6.1-tools-acme-20261019/python_env/idf6.1_py3.14_env/bin/python3')
+TOOL = ROOT / "tools/katmed_store_v8_evidence.py"
 SOURCE = r'''
 #include "katmed_store.cpp"
 #include <cstdlib>
@@ -24,8 +24,9 @@ SOURCE = r'''
 #include <cstring>
 
 int main(int argc, char **argv) {
-    if (argc != 2) return 2;
+    if (argc < 2 || argc > 3) return 2;
     const unsigned long long boot = std::strtoull(argv[1], nullptr, 10);
+    const unsigned version = argc == 3 ? static_cast<unsigned>(std::strtoul(argv[2], nullptr, 10)) : 8;
     StoreRecord r{};
     r.device = 91;
     r.epoch = boot;
@@ -67,9 +68,18 @@ int main(int argc, char **argv) {
     std::memcpy(r.provision.ssid, ssid, sizeof(ssid) - 1);
     std::memcpy(r.provision.password, password, sizeof(password) - 1);
     std::memcpy(r.provision.time_source, ntp, sizeof(ntp) - 1);
+    r.wifi_profile_count = 1;
+    r.next_wifi_profile_id = 2;
+    r.wifi_profiles[0].id = 1;
+    r.wifi_profiles[0].priority = 1;
+    r.wifi_profiles[0].ssid_length = sizeof(ssid) - 1;
+    r.wifi_profiles[0].password_length = sizeof(password) - 1;
+    r.wifi_profiles[0].secured = true;
+    std::memcpy(r.wifi_profiles[0].ssid, ssid, sizeof(ssid) - 1);
+    std::memcpy(r.wifi_profiles[0].password, password, sizeof(password) - 1);
     uint8_t blob[KATMED_STORE_BLOB_MAX]{};
     size_t size = 0;
-    if (encode_record(r, blob, &size) != STORE_OK) return 4;
+    if (encode_record(r, blob, &size, static_cast<uint16_t>(version)) != STORE_OK) return 4;
     return std::fwrite(blob, 1, size, stdout) == size ? 0 : 5;
 }
 '''
@@ -148,7 +158,7 @@ def main():
             encoded = run([str(binary), str(boot)])
             assert encoded.returncode == 0, "independent fixture serialization failed"
             blob = encoded.stdout
-            assert 12 <= len(blob) <= 4096 and blob[:6] == b"KMST\x05\x00"
+            assert 12 <= len(blob) <= 4096 and blob[:6] == b"KMST\x08\x00"
             blobs[boot] = blob
             nvs = generate(tmp, f"boot{boot}", blob)
             states[boot] = inspect(nvs, 0, tmp=work)
@@ -162,9 +172,23 @@ def main():
         assert a["record"]["has_history"] is True
         assert len(a["record"]["pending"]) == 8
         assert len(a["record"]["conflicts"]) == 1
+        assert a["record"]["wifi_profile_count"] == 1
+        assert a["record"]["wifi_priorities"] == [1]
         assert a["record"]["last_confirmation"]["occurred_at"]["domain"] == 5
         assert a["record"]["pending"][0]["id"]["sequence"] == 20
         passed.append("two saved boot epochs preserve ID, round, time and bounded journals")
+
+        legacy_encoded = run([str(binary), "10", "5"])
+        assert legacy_encoded.returncode == 0, "historical v5 fixture serialization failed"
+        legacy_blob = legacy_encoded.stdout
+        assert 12 <= len(legacy_blob) <= 4096 and legacy_blob[:6] == b"KMST\x05\x00"
+        legacy_nvs = generate(tmp, "historical-v5", legacy_blob)
+        legacy_state = inspect(legacy_nvs, 0, tmp=work)
+        check_status(legacy_state, "valid")
+        assert legacy_state["record"]["wifi_profile_count"] == 1
+        assert legacy_state["record"]["wifi_priorities"] == [1]
+        assert list(work.iterdir()) == [], "legacy migration left temporary decoder files"
+        passed.append("historical Store-v5 input migrates through current v8 codec")
 
         full_data = b"\xff" * 0x9000 + (tmp / "boot8.bin").read_bytes()
         for kind, total in (("full-c3", 0x400000), ("full-c6", 0x800000)):
@@ -239,7 +263,7 @@ def main():
 
     for item in passed:
         print("PASS " + item)
-    print(f"independent private Store-v5 review: {len(passed)} checks OK")
+    print(f"independent private Store-v8/IDF6.1 review: {len(passed)} checks OK")
 
 
 if __name__ == "__main__":
