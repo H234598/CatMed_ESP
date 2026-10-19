@@ -26,12 +26,20 @@ if [[ "$mode" == dependencies || "$mode" == firmware ]]; then
         python tools/check_firmware_layout.py "$board"
     fi
 elif [[ "$mode" == host ]]; then
+    : "${IDF_PATH:?Use the ESP-IDF 6.1 runner environment}"
+    mbedtls_source="${IDF_PATH}/components/mbedtls/mbedtls"
+    if [[ ! -f "${mbedtls_source}/include/mbedtls/sha256.h" ]]; then
+        echo 'Pinned ESP-IDF mbedTLS source is missing from IDF_PATH.' >&2
+        exit 1
+    fi
     python3 tests/check_crop_geometry.py
-    cmake -S . -B build-ci-host -G Ninja
+    cmake -S . -B build-ci-host -G Ninja \
+        -DKATMED_MBEDTLS_SOURCE="${mbedtls_source}"
     cmake --build build-ci-host -j 4
     ctest --test-dir build-ci-host --output-on-failure
     cmake -S firmware/components/katmed_ui/host -B build-ci-ui -G Ninja \
-        -DKATMED_UI_HOST_MEM34=ON
+        -DKATMED_UI_HOST_MEM34=ON \
+        -DKATMED_MBEDTLS_SOURCE="${mbedtls_source}"
     cmake --build build-ci-ui -j 4
     ctest --test-dir build-ci-ui --output-on-failure
     mkdir -p build-ci-ui/surface
