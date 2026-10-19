@@ -472,8 +472,9 @@ static void open_edit(EditKind edit)
     destroy_settings();
     ui.edit = edit;
     ui.entry[0] = '\0';
-    if (edit == EDIT_IMAGE)
-        format_hours(ui.entry, sizeof(ui.entry), ui.state.settings.image_seconds);
+    if (edit == EDIT_IMAGE || edit == EDIT_MEDICATION)
+        format_hours(ui.entry, sizeof(ui.entry), edit == EDIT_MEDICATION ?
+                     ui.state.settings.medication_seconds : ui.state.settings.image_seconds);
     else if (edit == EDIT_NEXT_TIME) {
         LocalDateTime current;
         if (ui.state.deadline.effective_utc.valid &&

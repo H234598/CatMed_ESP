@@ -96,6 +96,11 @@ int main(int argc, char **argv)
     assert(katmed_time_accept_utc(&runtime.time, 1000, INT64_C(1792400400000),
                                   CLOCK_SYNCHRONIZED));
     assert(submit_ui(&runtime, &confirm) == UI_SUBMIT_PENDING);
+    UiRequest medication = {.kind=UI_REQUEST_SET_MEDICATION_SECONDS};
+    medication.value.seconds = 7200;
+    assert(submit_ui(&runtime, &medication) == UI_SUBMIT_COMMITTED);
+    assert(runtime.state.settings.medication_seconds == 7200 &&
+           runtime.state.settings.image_seconds == 5400);
 
     lv_init();
     lv_display_t *display = lv_display_create(width, height);
@@ -103,6 +108,23 @@ int main(int argc, char **argv)
     UiServices services = {.context=&runtime, .submit=submit_ui};
     ui_set_services(&services);
     render();
+    const AppState before_medication_open = runtime.state;
+    const unsigned medication_open_writes = writes;
+    const unsigned medication_open_submits = fake_shared_calls;
+    click("Medikamente: Stunden");
+    expect_text("2"); /* Medication interval, distinct from image interval 1.5h. */
+    assert(writes == medication_open_writes &&
+           fake_shared_calls == medication_open_submits &&
+           memcmp(&before_medication_open, &runtime.state, sizeof(AppState)) == 0);
+    keys("<3.5");
+    click("Speichern");
+    assert(runtime.state.settings.medication_seconds == 12600 &&
+           runtime.store.record.shared.medication_seconds == 12600 &&
+           runtime.state.settings.image_seconds == 5400);
+    render();
+    click("Medikamente: Stunden");
+    expect_text("3.5");
+    click("Abbrechen");
     const unsigned before_open = writes;
     const unsigned submissions_before_open = fake_shared_calls;
     const AppState state_before_open = runtime.state;
