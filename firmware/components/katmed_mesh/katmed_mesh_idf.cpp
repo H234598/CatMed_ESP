@@ -889,7 +889,9 @@ extern "C" KatmedMeshResult katmed_mesh_submit_shared(const AppEvent *event,
                                                         const ClockSample *now,
                                                         AppEffects *effects){
     if(effects)*effects=AppEffects{};
-    if(!event||!now||!linked()||!session_live())return MESH_UNAVAILABLE;
+    /* A live peer is needed to reach a remote coordinator, not for the
+     * current provisioned root to durably accept its own change. */
+    if(!event||!now||!linked()||(!root()&&!session_live()))return MESH_UNAVAILABLE;
     if(root()){
         AppEvent accepted=*event;accepted.coordinator_accepted=true;
         AppResult core=APP_INVALID;

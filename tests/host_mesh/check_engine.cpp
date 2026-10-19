@@ -179,6 +179,64 @@ int main(int argc,char **argv){
     }
     KatmedMeshServices services{&store,&state,nullptr,shared_result,utc_received};
     assert(katmed_mesh_start(&provision,&services)==MESH_ACCEPTED);
+    if(argc==2&&std::strcmp(argv[1],"solo_settings")==0){
+        level=ROOT;katmed_mesh_poll(&now);
+        assert(katmed_mesh_is_coordinator()&&!katmed_mesh_connected());
+        EventId id{};assert(store_next_event_id(&store,&id)==STORE_OK);
+        AppEvent event{};event.kind=EVENT_SET_IMAGE_INTERVAL;event.id=id;
+        event.sender=id.device;event.round=state.round;event.parent_revision=state.revision;
+        event.occurred_at=now;event.value.interval_seconds=7200;
+        AppEffects effects{};
+        assert(katmed_mesh_submit_shared(&event,&now,&effects)==MESH_ACCEPTED);
+        assert(state.settings.image_seconds==7200&&store.record.shared.image_seconds==7200);
+        Store reopened{};StoreRecovery recovered{};
+        assert(store_open(&reopened,backend,11,catalog,75,&recovered)==STORE_OK);
+        assert(recovered.shared.image_seconds==7200);
+        assert(store_next_event_id(&store,&id)==STORE_OK);
+        event.kind=EVENT_CONFIRM;event.id=id;event.sender=id.device;
+        event.round=state.round;event.parent_revision=state.revision;
+        assert(katmed_mesh_submit_shared(&event,&now,&effects)==MESH_ACCEPTED);
+        assert(store_next_event_id(&store,&id)==STORE_OK);
+        ManualTimePreview preview{};
+        assert(app_preview_local_time(&now,14,30,&preview)==APP_OK);
+        event.kind=EVENT_SET_NEXT_LOCAL_TIME;event.id=id;event.sender=id.device;
+        event.parent_revision=state.revision;event.round=state.round;
+        event.value.local_time.hour=14;event.value.local_time.minute=30;
+        event.value.local_time.selected_utc=preview.regular_utc;
+        event.value.local_time.selected_effective_utc=preview.effective_utc;
+        assert(katmed_mesh_submit_shared(&event,&now,&effects)==MESH_ACCEPTED);
+        assert(state.start_reason==START_MANUAL&&
+               store.record.history.deadline.regular_utc.ms==preview.regular_utc.ms);
+        Memory decoded=memory;
+        Store durable{};StoreRecovery durable_recovery{};
+        assert(store_open(&durable,{&decoded,read_blob,write_blob},11,catalog,75,&durable_recovery)==STORE_OK);
+        assert(durable.record.history.start_reason==START_MANUAL&&
+               durable.record.history.deadline.regular_utc.ms==preview.regular_utc.ms);
+        const auto stable=state;
+        assert(store_next_event_id(&store,&id)==STORE_OK);
+        event.kind=EVENT_SET_IMAGE_INTERVAL;event.id=id;event.sender=id.device;
+        event.round=state.round;event.parent_revision=state.revision;event.value.interval_seconds=3600;
+        level=2;katmed_mesh_poll(&now); /* No authenticated coordinator session. */
+        assert(katmed_mesh_submit_shared(&event,&now,&effects)==MESH_UNAVAILABLE);
+        level=ROOT;katmed_mesh_poll(&now);
+        store.record.provision.group[0]^=1; /* Foreign binding fails current_group. */
+        assert(katmed_mesh_submit_shared(&event,&now,&effects)==MESH_UNAVAILABLE);
+        store.record.provision.group[0]^=1;
+        store.record.provision.configured=false;
+        assert(katmed_mesh_submit_shared(&event,&now,&effects)==MESH_UNAVAILABLE);
+        store.record.provision.configured=true;
+        store.record.provision.secret[0]^=1;
+        assert(katmed_mesh_submit_shared(&event,&now,&effects)==MESH_UNAVAILABLE);
+        store.record.provision.secret[0]^=1;
+        const auto before_failure=memory.blob;
+        memory.fail=true;
+        assert(katmed_mesh_submit_shared(&event,&now,&effects)==MESH_STORE_ERROR);
+        assert(state.settings.image_seconds==stable.settings.image_seconds&&
+               state.revision.number==stable.revision.number);
+        assert(memory.blob==before_failure);
+        std::puts("mesh solo-root settings: durable image/next-time; follower, foreign, unconfigured, commit failure OK");
+        return 0;
+    }
     #include "check_status_engine.inc"
     #include "check_interaction_engine.inc"
     if(argc==3&&std::strcmp(argv[1],"cold_consume")==0){

@@ -332,7 +332,10 @@ static UiSubmitResult submit_ui(void *context, const UiRequest *request)
             return UI_SUBMIT_REJECTED;
         return UI_SUBMIT_UNAVAILABLE;
     }
-    if (rt->shared_pending || !rt->mesh_started || !katmed_mesh_connected())
+    /* A provisioned coordinator accepts its own durable settings even when
+     * there is no authenticated peer. Followers still require that session. */
+    if (rt->shared_pending || !rt->mesh_started ||
+        (!katmed_mesh_is_coordinator() && !katmed_mesh_connected()))
         return UI_SUBMIT_UNAVAILABLE;
     AppEventKind kind;
     switch (request->kind) {

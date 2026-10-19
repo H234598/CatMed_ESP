@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-out="$(mktemp -d -p /tmp katmed-store-XXXXXX)"
+out="$(mktemp -d "${TMPDIR:-/tmp}/katmed-store-XXXXXX")"
 cleanup() {
   python3 - "$out" <<'PY'
+import os
 import pathlib
 import shutil
 import sys
 p = pathlib.Path(sys.argv[1])
-if p.parent != pathlib.Path('/tmp') or not p.name.startswith('katmed-store-') or p.is_symlink():
+if p.parent != pathlib.Path(os.environ.get('TMPDIR', '/tmp')).resolve() or not p.name.startswith('katmed-store-') or p.is_symlink():
     raise SystemExit('unsafe temporary test directory')
 shutil.rmtree(p)
 PY

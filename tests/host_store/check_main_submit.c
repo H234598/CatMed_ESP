@@ -125,6 +125,60 @@ int main(void)
     assert(submit_ui(&runtime,&confirm)==UI_SUBMIT_UNAVAILABLE);
     assert(runtime.state.alarm_active==before_state.alarm_active &&
            runtime.state.round.ordinal==before_state.round.ordinal && !storage_ready(&runtime));
+    /* Real board callback + Core + durable Store, with no authenticated peer.
+     * The Mesh transport double below still commits through store_apply_event. */
+    committed_length=0;
+    fail_commit=false;
+    initialize_runtime();
+    runtime.mesh_started=true;
+    fake_mesh_connected=false;
+    fake_mesh_coordinator=true;
+    fake_mesh_result=MESH_ACCEPTED;
+    UiRequest image={.kind=UI_REQUEST_SET_IMAGE_SECONDS};
+    image.value.seconds=7200;
+    assert(submit_ui(&runtime,&image)==UI_SUBMIT_COMMITTED);
+    assert(runtime.state.settings.image_seconds==7200 &&
+           runtime.store.record.shared.image_seconds==7200);
+    initialize_runtime();
+    assert(runtime.state.settings.image_seconds==7200); /* Actual blob decode. */
+    runtime.mesh_started=true;
+    katmed_time_init(&runtime.time,runtime.boot_domain);
+    assert(katmed_time_accept_utc(&runtime.time,(uint64_t)(fake_microseconds/1000),INT64_C(1792400400000),CLOCK_SYNCHRONIZED));
+    fake_microseconds+=1000000;
+    assert(submit_ui(&runtime,&confirm)==UI_SUBMIT_PENDING);
+    ClockSample manual_now=clock_sample(runtime.boot_domain);
+    ManualTimePreview preview;
+    assert(app_preview_local_time(&manual_now,14,30,&preview)==APP_OK);
+    UiRequest next={.kind=UI_REQUEST_SET_NEXT_LOCAL_TIME};
+    next.value.local_time.hour=14;
+    next.value.local_time.minute=30;
+    next.value.local_time.preview=preview;
+    assert(submit_ui(&runtime,&next)==UI_SUBMIT_COMMITTED);
+    assert(runtime.state.start_reason==START_MANUAL &&
+           runtime.state.deadline.regular_utc.ms==preview.regular_utc.ms &&
+           runtime.store.record.history.deadline.regular_utc.ms==preview.regular_utc.ms);
+    const uint8_t pending_saved=runtime.store.record.pending_count;
+    const EventId confirmation_saved=runtime.state.last_confirmation_id;
+    initialize_runtime(); /* Reopen/decode the actual manual-time history. */
+    assert(runtime.store.record.history.start_reason==START_MANUAL &&
+           runtime.store.record.history.deadline.regular_utc.ms==preview.regular_utc.ms &&
+           runtime.store.record.pending_count==pending_saved &&
+           runtime.store.record.last_confirmation.id.sequence==confirmation_saved.sequence);
+    runtime.mesh_started=true;
+    const unsigned committed_settings=writes;
+    fake_mesh_coordinator=false; /* Disconnected follower must not self-authorize. */
+    image.value.seconds=3600;
+    assert(submit_ui(&runtime,&image)==UI_SUBMIT_UNAVAILABLE && writes==committed_settings);
+    fake_mesh_coordinator=true;
+    runtime.mesh_started=false; /* Unstarted/unconfigured runtime stays blocked. */
+    assert(submit_ui(&runtime,&image)==UI_SUBMIT_UNAVAILABLE && writes==committed_settings);
+    runtime.mesh_started=true;
+    fail_commit=true;
+    const AppState stable=runtime.state;
+    assert(submit_ui(&runtime,&image)==UI_SUBMIT_UNAVAILABLE);
+    assert(runtime.state.settings.image_seconds==stable.settings.image_seconds &&
+           runtime.state.revision.number==stable.revision.number);
+    puts("main solo-root settings: image persistence, next-time history, follower/unstarted and commit failure OK");
     puts("main submit/reboot regression passed");
     return 0;
 }

@@ -18,6 +18,7 @@ g++ -std=c++17 -Wall -Wextra -Werror -DKATMED_MESH_HOST \
   "$repo/firmware/components/katmed_core/katmed_core.cpp" \
   "$repo/tests/host_mesh/check_engine.cpp" -l:libcrypto.so.3 -lz -o "$out"
 "$out"
+"$out" solo_settings
 "$out" fanout
 "$out" time
 "$out" leaf_running
