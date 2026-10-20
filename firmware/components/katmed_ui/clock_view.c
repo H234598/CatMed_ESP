@@ -57,7 +57,7 @@ lv_obj_t *clock_view_create(lv_obj_t *parent)
     memset(w, 0, sizeof(*w));
     lv_obj_set_user_data(view, w);
     lv_obj_add_event_cb(view, cleanup, LV_EVENT_DELETE, w);
-    lv_obj_remove_flag(view, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scrollable(view, false);
     lv_obj_set_size(view, lv_pct(100), lv_pct(100));
     lv_obj_set_pos(view, 0, 0);
     lv_obj_set_style_bg_opa(view, LV_OPA_TRANSP, 0);
@@ -65,7 +65,7 @@ lv_obj_t *clock_view_create(lv_obj_t *parent)
     lv_obj_set_style_pad_all(view, 0, 0);
 
     w->plate = lv_obj_create(view);
-    lv_obj_remove_flag(w->plate, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scrollable(w->plate, false);
     lv_obj_set_size(w->plate, lv_pct(84), lv_pct(78));
     lv_obj_center(w->plate);
     lv_obj_set_style_bg_color(w->plate, lv_color_black(), 0);
@@ -81,7 +81,7 @@ lv_obj_t *clock_view_create(lv_obj_t *parent)
     w->quality = clock_label(w->plate, "Uhrzeit nicht verfügbar");
     lv_obj_set_style_text_font(w->quality, &katmed_font_14, 0);
     w->dial = lv_obj_create(view);
-    lv_obj_remove_flag(w->dial, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scrollable(w->dial, false);
     lv_obj_set_style_bg_opa(w->dial, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_color(w->dial, lv_color_white(), 0);
     lv_obj_set_style_border_width(w->dial, 2, 0);
@@ -108,8 +108,8 @@ lv_obj_t *clock_view_create(lv_obj_t *parent)
     lv_obj_set_style_line_rounded(w->second_outline, true, 0);
     w->second_hand = lv_line_create(w->dial);
     w->hub_outline = lv_obj_create(w->dial);
-    lv_obj_remove_flag(w->hub_outline, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_remove_flag(w->hub_outline, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_scrollable(w->hub_outline, false);
+    lv_obj_set_clickable(w->hub_outline, false);
     lv_obj_set_style_bg_opa(w->hub_outline, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_color(w->hub_outline, lv_color_black(), 0);
     lv_obj_set_style_border_width(w->hub_outline, 3, 0);
@@ -123,7 +123,7 @@ lv_obj_t *clock_view_create(lv_obj_t *parent)
     lv_obj_set_style_line_width(w->hour_hand, 3, 0);
     lv_obj_set_style_line_width(w->minute_hand, 3, 0);
     lv_obj_set_style_line_width(w->second_hand, 1, 0);
-    lv_obj_remove_flag(w->hub, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scrollable(w->hub, false);
     lv_obj_set_style_bg_opa(w->hub, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_color(w->hub, lv_color_hex(0xbdd731), 0);
     lv_obj_set_style_border_width(w->hub, 2, 0);
@@ -187,15 +187,11 @@ void clock_view_update(lv_obj_t *view, ClockStyle style, const ClockSample *cloc
                             analog_style ? LV_OPA_TRANSP : LV_OPA_70, 0);
     lv_obj_set_style_border_width(w->dial, analog_style ? 0 : 2, 0);
     for (int i = 0; i < 12; ++i) {
-        if (analog_style) lv_obj_add_flag(w->marks[i], LV_OBJ_FLAG_HIDDEN);
-        else lv_obj_remove_flag(w->marks[i], LV_OBJ_FLAG_HIDDEN);
+        lv_obj_set_hidden(w->marks[i], analog_style);
     }
-    if (analog) lv_obj_remove_flag(w->dial, LV_OBJ_FLAG_HIDDEN);
-    else lv_obj_add_flag(w->dial, LV_OBJ_FLAG_HIDDEN);
-    if (style == ANALOG && valid) lv_obj_add_flag(w->time, LV_OBJ_FLAG_HIDDEN);
-    else lv_obj_remove_flag(w->time, LV_OBJ_FLAG_HIDDEN);
-    if (style == DIGITAL_DATE && valid) lv_obj_remove_flag(w->date, LV_OBJ_FLAG_HIDDEN);
-    else lv_obj_add_flag(w->date, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_hidden(w->dial, !analog);
+    lv_obj_set_hidden(w->time, style == ANALOG && valid);
+    lv_obj_set_hidden(w->date, !(style == DIGITAL_DATE && valid));
 
     lv_obj_update_layout(view);
     int pw = lv_obj_get_content_width(w->plate);

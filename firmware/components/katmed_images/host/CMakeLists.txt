@@ -9,11 +9,15 @@ if(NOT EXISTS "${KATMED_MBEDTLS_SOURCE}/include/mbedtls/ssl.h" OR
    NOT EXISTS "${KATMED_MBEDTLS_SOURCE}/tf-psa-crypto/include/mbedtls/md.h")
     message(FATAL_ERROR "Set IDF_PATH or KATMED_MBEDTLS_SOURCE to the pinned ESP-IDF mbedTLS source")
 endif()
+set(MBEDTLS_FRAMEWORK_DIR "${KATMED_MBEDTLS_SOURCE}/framework")
 set(ENABLE_PROGRAMS OFF CACHE BOOL "" FORCE)
 set(ENABLE_TESTING OFF CACHE BOOL "" FORCE)
 set(MBEDTLS_FATAL_WARNINGS OFF CACHE BOOL "Warnings in pinned SDK code are reported" FORCE)
 set(Python3_EXECUTABLE "/usr/bin/python3" CACHE FILEPATH "Image preparation Python with Pillow" FORCE)
+include_directories("${KATMED_MBEDTLS_SOURCE}/../port/include"
+    "${KATMED_ROOT}/firmware/build-c3/config")
 add_subdirectory("${KATMED_MBEDTLS_SOURCE}" "${CMAKE_CURRENT_BINARY_DIR}/mbedtls" EXCLUDE_FROM_ALL)
+target_include_directories(tfpsacrypto PUBLIC "${KATMED_MBEDTLS_SOURCE}/../port/include")
 set(LV_BUILD_CONF_PATH "${CMAKE_CURRENT_LIST_DIR}/lv_conf.h" CACHE PATH "" FORCE)
 set(CONFIG_LV_BUILD_DEMOS OFF CACHE BOOL "" FORCE)
 set(CONFIG_LV_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
@@ -59,9 +63,13 @@ foreach(target c3 c6)
     target_include_directories(check_image_reader_${target} PRIVATE
         "${KATMED_COMPONENT}" "${KATMED_COMPONENT}/include"
         "${KATMED_ROOT}/firmware/components/katmed_core/include")
+    target_include_directories(check_image_reader_${target} SYSTEM PRIVATE
+        "${KATMED_MBEDTLS_SOURCE}/include"
+        "${KATMED_MBEDTLS_SOURCE}/tf-psa-crypto/include"
+        "${KATMED_MBEDTLS_SOURCE}/tf-psa-crypto/drivers/builtin/include")
     target_compile_features(check_image_reader_${target} PRIVATE cxx_std_17)
     target_compile_options(check_image_reader_${target} PRIVATE -Wall -Wextra -Wpedantic -Werror)
     target_link_options(check_image_reader_${target} PRIVATE -Wl,--wrap=lv_strdup)
-    target_link_libraries(check_image_reader_${target} PRIVATE lvgl mbedcrypto)
+    target_link_libraries(check_image_reader_${target} PRIVATE lvgl tfpsacrypto)
     add_dependencies(check_image_reader_${target} verify_image_assets)
 endforeach()

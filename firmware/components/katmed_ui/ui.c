@@ -225,7 +225,8 @@ static void remember_scroll(lv_obj_t *panel, unsigned slot)
 
 static void restore_scroll(lv_obj_t *panel, unsigned slot)
 {
-    lv_obj_remove_flag(panel, LV_OBJ_FLAG_SCROLL_MOMENTUM | LV_OBJ_FLAG_SCROLL_ELASTIC);
+    lv_obj_set_scroll_momentum(panel, false);
+    lv_obj_set_scroll_elastic(panel, false);
     lv_obj_set_scroll_dir(panel, LV_DIR_VER);
     lv_obj_update_layout(panel);
     int32_t maximum = lv_obj_get_scroll_bottom(panel) + lv_obj_get_scroll_y(panel);
@@ -263,7 +264,7 @@ static void show_feedback(const char *text)
 {
     if (!ui.feedback) return;
     lv_label_set_text(ui.feedback, text);
-    lv_obj_remove_flag(ui.feedback, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_hidden(ui.feedback, false);
     lv_obj_move_foreground(ui.feedback);
     ui.feedback_until_ms = ui.clock.monotonic_ms + 3000u;
 }
@@ -577,7 +578,7 @@ static void open_edit(EditKind edit)
     lv_obj_set_style_bg_opa(ui.keypad, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(ui.keypad, 0, 0);
     lv_obj_set_style_pad_all(ui.keypad, 0, 0);
-    lv_obj_remove_flag(ui.keypad, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scrollable(ui.keypad, false);
 
     bool round = ui.width == 240 && ui.height == 240;
     int keys_w = landscape ? ui.width / 2 : round ? 180 : ui.width - 32;
@@ -738,7 +739,7 @@ static void style_open(lv_event_t *event)
     lv_obj_set_style_bg_opa(ui.style_dialog, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(ui.style_dialog, 0, 0);
     lv_obj_set_style_pad_all(ui.style_dialog, 0, 0);
-    lv_obj_remove_flag(ui.style_dialog, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scrollable(ui.style_dialog, false);
     ui.style_title = label(ui.style_dialog, "Uhrdesign wählen", width - 12);
     lv_obj_set_pos(ui.style_title, 6, 4);
     static const char *names[3] = {"Digital groß", "Digital mit Datum", "Analog"};
@@ -776,12 +777,12 @@ static void morse_open(lv_event_t *event)
     if (!ui.morse.active) return;
     ui.morse_start_contact = ui.touch_down;
     ui.view = MORSE;
-    if (ui.settings) lv_obj_add_flag(ui.settings, LV_OBJ_FLAG_HIDDEN);
+    if (ui.settings) lv_obj_set_hidden(ui.settings, true);
     if (ui.morse_layer) {
         lv_obj_set_style_bg_color(ui.morse_layer, lv_color_white(), 0);
         ui.morse_shown_white = true;
         ui.morse_color_valid = true;
-        lv_obj_remove_flag(ui.morse_layer, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_set_hidden(ui.morse_layer, false);
         lv_obj_move_foreground(ui.morse_layer);
     }
 }
@@ -790,7 +791,7 @@ static void status_button(lv_event_t *event)
 {
     (void)event;
     retire_clock_for_menu();
-    if (ui.feedback) lv_obj_add_flag(ui.feedback, LV_OBJ_FLAG_HIDDEN);
+    if (ui.feedback) lv_obj_set_hidden(ui.feedback, true);
     ui.grid.row = 2;
     ui.view = UI_VIEW_STATUS;
     destroy_menu();
@@ -817,11 +818,11 @@ static void build_settings(void)
 {
     retire_clock_for_menu();
     if (ui.settings) {
-        lv_obj_remove_flag(ui.settings, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_set_hidden(ui.settings, false);
         return;
     }
     ui.settings = lv_obj_create(ui.screen);
-    lv_obj_remove_flag(ui.settings, LV_OBJ_FLAG_SCROLL_MOMENTUM);
+    lv_obj_set_scroll_momentum(ui.settings, false);
     lv_obj_set_size(ui.settings, ui.width, ui.height);
     lv_obj_set_pos(ui.settings, 0, 0);
     lv_obj_set_style_bg_color(ui.settings, lv_color_hex(0x12212c), 0);
@@ -844,7 +845,7 @@ static void build_settings(void)
         button(ui.settings, "Nächste Fälligkeit HH:MM", row_w, 40, edit_button,
                (void *)(intptr_t)EDIT_NEXT_TIME);
         restore_scroll(ui.settings, 9);
-        if (ui.feedback && !lv_obj_has_flag(ui.feedback, LV_OBJ_FLAG_HIDDEN))
+        if (ui.feedback && !lv_obj_is_hidden(ui.feedback))
             lv_obj_move_foreground(ui.feedback);
         return;
     }
@@ -852,7 +853,7 @@ static void build_settings(void)
     ui.pairing_label = label(ui.settings, "", row_w);
     if (ui.pairing_code[0])
         lv_label_set_text_fmt(ui.pairing_label, "Web-Code: %s", ui.pairing_code);
-    else lv_obj_add_flag(ui.pairing_label, LV_OBJ_FLAG_HIDDEN);
+    else lv_obj_set_hidden(ui.pairing_label, true);
     button(ui.settings, "Seltsam", row_w, 34, morse_open, NULL);
     button(ui.settings, "Morsecode", row_w, 34, interaction_open, NULL);
     label(ui.settings, "Zeiten", row_w);
@@ -872,7 +873,7 @@ static void build_settings(void)
     button(ui.settings, "Werkseinstellungen zurücksetzen", row_w, 42,
            reset_open, NULL);
     restore_scroll(ui.settings, 5);
-    if (ui.feedback && !lv_obj_has_flag(ui.feedback, LV_OBJ_FLAG_HIDDEN))
+    if (ui.feedback && !lv_obj_is_hidden(ui.feedback))
         lv_obj_move_foreground(ui.feedback);
 }
 
@@ -947,7 +948,7 @@ static void reset_open(lv_event_t *event)
     lv_obj_set_style_border_width(ui.reset_dialog, 4, 0);
     lv_obj_set_style_radius(ui.reset_dialog, 8, 0);
     lv_obj_set_style_pad_all(ui.reset_dialog, 8, 0);
-    lv_obj_remove_flag(ui.reset_dialog, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scrollable(ui.reset_dialog, false);
     lv_obj_set_flex_flow(ui.reset_dialog, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_style_pad_row(ui.reset_dialog, 5, 0);
     lv_obj_t *warning = label(ui.reset_dialog,
@@ -1142,7 +1143,7 @@ void ui_clear_pairing_code(void)
     for (size_t i = 0; i < sizeof(ui.pairing_code); ++i) code[i] = '\0';
     if (ui.pairing_label) {
         lv_label_set_text(ui.pairing_label, "");
-        lv_obj_add_flag(ui.pairing_label, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_set_hidden(ui.pairing_label, true);
     }
     if (ui.status) update_status();
 }
@@ -1163,7 +1164,7 @@ void ui_set_pairing_code(const char code[7])
     memcpy(ui.pairing_code, code, 7);
     if (ui.pairing_label) {
         lv_label_set_text_fmt(ui.pairing_label, "Web-Code: %s", ui.pairing_code);
-        lv_obj_remove_flag(ui.pairing_label, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_set_hidden(ui.pairing_label, false);
     }
     if (ui.status) update_status();
 }
@@ -1225,7 +1226,7 @@ static void build_screen(int16_t width, int16_t height)
     lv_obj_set_style_border_width(ui.alarm_bar, 0, 0);
     lv_obj_set_style_radius(ui.alarm_bar, 0, 0);
     lv_obj_set_style_pad_all(ui.alarm_bar, 0, 0);
-    lv_obj_add_flag(ui.alarm_bar, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_hidden(ui.alarm_bar, true);
     for (unsigned i = 0; i < ALARM_STRIPS; ++i) {
         const int top = alarm_y + (alarm_end - alarm_y) * (int)i / (int)ALARM_STRIPS;
         const int bottom = alarm_y + (alarm_end - alarm_y) * (int)(i + 1u) / (int)ALARM_STRIPS;
@@ -1238,7 +1239,7 @@ static void build_screen(int16_t width, int16_t height)
         lv_obj_set_style_border_width(strip, 0, 0);
         lv_obj_set_style_radius(strip, 0, 0);
         lv_obj_set_style_pad_all(strip, 0, 0);
-        lv_obj_add_flag(strip, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_set_hidden(strip, true);
     }
     ui.alarm_text = label(ui.screen, KATMED_DEFAULT_ALARM_TEXT, width == 240 ? 170 : width - 24);
     lv_obj_set_style_bg_color(ui.alarm_text, lv_color_black(), 0);
@@ -1246,13 +1247,13 @@ static void build_screen(int16_t width, int16_t height)
     lv_obj_set_style_text_align(ui.alarm_text, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_pad_all(ui.alarm_text, 5, 0);
     lv_obj_center(ui.alarm_text);
-    lv_obj_add_flag(ui.alarm_text, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_hidden(ui.alarm_text, true);
     ui.feedback = label(ui.screen, "", width == 240 ? 170 : width - 16);
     lv_obj_set_style_bg_color(ui.feedback, lv_color_hex(0x1c2630), 0);
     lv_obj_set_style_bg_opa(ui.feedback, LV_OPA_90, 0);
     lv_obj_set_style_text_align(ui.feedback, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_align(ui.feedback, LV_ALIGN_BOTTOM_MID, 0, width == 240 ? -20 : -4);
-    lv_obj_add_flag(ui.feedback, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_hidden(ui.feedback, true);
     ui.morse_layer = lv_obj_create(ui.screen);
     lv_obj_set_pos(ui.morse_layer, 0, 0);
     lv_obj_set_size(ui.morse_layer, width, height);
@@ -1261,9 +1262,9 @@ static void build_screen(int16_t width, int16_t height)
     lv_obj_set_style_border_width(ui.morse_layer, 0, 0);
     lv_obj_set_style_radius(ui.morse_layer, 0, 0);
     lv_obj_set_style_pad_all(ui.morse_layer, 0, 0);
-    lv_obj_remove_flag(ui.morse_layer, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_remove_flag(ui.morse_layer, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_flag(ui.morse_layer, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_scrollable(ui.morse_layer, false);
+    lv_obj_set_clickable(ui.morse_layer, false);
+    lv_obj_set_hidden(ui.morse_layer, true);
 }
 
 static void clock_move(void *obj, int32_t x)
@@ -1280,7 +1281,7 @@ static void animate_clock(bool opening)
     }
     if (!ui.clock_view) return;
     lv_anim_delete(ui.clock_view, clock_move);
-    if (opening) lv_obj_remove_flag(ui.clock_view, LV_OBJ_FLAG_HIDDEN);
+    if (opening) lv_obj_set_hidden(ui.clock_view, false);
     lv_anim_t anim;
     lv_anim_init(&anim);
     lv_anim_set_var(&anim, ui.clock_view);
@@ -1361,7 +1362,7 @@ static void return_to_settings(uint64_t now)
     }
     if (ui.view == MORSE) {
         katmed_morse_stop(&ui.morse);
-        if (ui.morse_layer) lv_obj_add_flag(ui.morse_layer, LV_OBJ_FLAG_HIDDEN);
+        if (ui.morse_layer) lv_obj_set_hidden(ui.morse_layer, true);
     }
     if (ui.keypad) cancel_edit(NULL);
     if (ui.style_dialog) style_cancel(NULL);
@@ -1396,8 +1397,8 @@ static lv_obj_t *flat_layer(void)
     lv_obj_set_style_pad_all(obj, 0, 0);
     lv_obj_set_style_border_width(obj, 0, 0);
     lv_obj_set_style_radius(obj, 0, 0);
-    lv_obj_remove_flag(obj, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_remove_flag(obj, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_scrollable(obj, false);
+    lv_obj_set_clickable(obj, false);
     return obj;
 }
 
@@ -1578,9 +1579,9 @@ static void update_interaction(uint64_t now)
         lv_obj_set_height(ui.rx_layer, ui.view == UI_VIEW_INTERACTION ?
             (ui.height == 240 ? 136 : ui.height == 320 ? 180 : 94) : ui.height);
         if (white && ui.view != MORSE) {
-            lv_obj_remove_flag(ui.rx_layer, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_set_hidden(ui.rx_layer, false);
             lv_obj_move_foreground(ui.rx_layer);
-        } else lv_obj_add_flag(ui.rx_layer, LV_OBJ_FLAG_HIDDEN);
+        } else lv_obj_set_hidden(ui.rx_layer, true);
     }
     if (ui.notice) lv_obj_move_foreground(ui.notice);
     if (!ui.state.alarm_active && ui.feedback && now < ui.interaction_loss_until_ms)
@@ -1738,7 +1739,7 @@ void ui_touch_sample(bool touched, int16_t x, int16_t y,
                 else if (valid_contact && duration>=30 && duration<=600 && abs(dx)<20 && abs(dy)<20) {
                     katmed_morse_stop(&ui.morse);
                     ui.view=BACKGROUND;ui.grid=(UiGrid){1,1};
-                    if (ui.morse_layer) lv_obj_add_flag(ui.morse_layer, LV_OBJ_FLAG_HIDDEN);
+                    if (ui.morse_layer) lv_obj_set_hidden(ui.morse_layer, true);
                 }
             }
             ui.touch_armed = true;
@@ -1838,10 +1839,9 @@ static lv_color_t alarm_color(AlarmColor color)
 
 static void set_bar_visible(lv_obj_t *bar, bool visible)
 {
-    if (!bar || lv_obj_has_flag(bar, LV_OBJ_FLAG_HIDDEN) != visible) return;
+    if (!bar || lv_obj_is_hidden(bar) != visible) return;
     if (blink_metrics.pending_changes < UINT32_MAX) ++blink_metrics.pending_changes;
-    if (visible) lv_obj_remove_flag(bar, LV_OBJ_FLAG_HIDDEN);
-    else lv_obj_add_flag(bar, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_hidden(bar, !visible);
 }
 
 static void update_alarm_bar(const AppState *state, const ClockSample *clock)
@@ -1889,8 +1889,7 @@ static void update_alarm_bar(const AppState *state, const ClockSample *clock)
         }
         set_bar_visible(strip, visible);
     }
-    if (state->alarm_active) lv_obj_remove_flag(ui.alarm_text, LV_OBJ_FLAG_HIDDEN);
-    else lv_obj_add_flag(ui.alarm_text, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_hidden(ui.alarm_text, !state->alarm_active);
 }
 
 void ui_render(const AppState *state, const LocalSettings *local,
@@ -1902,7 +1901,7 @@ void ui_render(const AppState *state, const LocalSettings *local,
                          !same_round(ui.state.round, state->round);
     if (round_changed && ui.touch_down) ui.reject_contact = true;
     if ((round_changed || alarm_started) && ui.feedback)
-        lv_obj_add_flag(ui.feedback, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_set_hidden(ui.feedback, true);
     ui.state = *state;
     ui.local = *local;
     ui.clock = *clock;
@@ -1925,7 +1924,7 @@ void ui_render(const AppState *state, const LocalSettings *local,
             if (ui.touch_down) ui.reject_contact = true;
             if (ui.clock_view) {
                 lv_anim_delete(ui.clock_view, clock_move);
-                lv_obj_add_flag(ui.clock_view, LV_OBJ_FLAG_HIDDEN);
+                lv_obj_set_hidden(ui.clock_view, true);
             }
             if (ui.keypad) cancel_edit(NULL);
             if (ui.style_dialog) style_cancel(NULL);
@@ -2018,17 +2017,17 @@ void ui_render(const AppState *state, const LocalSettings *local,
         }
         if (ui.view != CLOCK && ui.view != ALARM &&
             lv_obj_get_x(ui.clock_view) <= -width)
-            lv_obj_add_flag(ui.clock_view, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_set_hidden(ui.clock_view, true);
     }
     if (ui.status &&
-        !lv_obj_has_flag(ui.status, LV_OBJ_FLAG_HIDDEN) &&
+        !lv_obj_is_hidden(ui.status) &&
         ui.status_second != clock->monotonic_ms / 1000u) {
         update_status();
         ui.status_second = clock->monotonic_ms / 1000u;
     }
     if (ui.alarm_bar) update_alarm_bar(state, clock);
     if (ui.feedback && clock->monotonic_ms >= ui.feedback_until_ms)
-        lv_obj_add_flag(ui.feedback, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_set_hidden(ui.feedback, true);
     if (ui.morse_layer) {
         if (ui.view == MORSE && ui.morse.active) {
             bool white = katmed_morse_update(&ui.morse, clock->monotonic_ms);
@@ -2038,11 +2037,11 @@ void ui_render(const AppState *state, const LocalSettings *local,
                 ui.morse_color_valid = true;
                 ui.morse_shown_white = white;
             }
-            if (lv_obj_has_flag(ui.morse_layer, LV_OBJ_FLAG_HIDDEN))
-                lv_obj_remove_flag(ui.morse_layer, LV_OBJ_FLAG_HIDDEN);
+            if (lv_obj_is_hidden(ui.morse_layer))
+                lv_obj_set_hidden(ui.morse_layer, false);
         } else {
-            if (!lv_obj_has_flag(ui.morse_layer, LV_OBJ_FLAG_HIDDEN))
-                lv_obj_add_flag(ui.morse_layer, LV_OBJ_FLAG_HIDDEN);
+            if (!lv_obj_is_hidden(ui.morse_layer))
+                lv_obj_set_hidden(ui.morse_layer, true);
         }
     }
     update_interaction(clock->monotonic_ms);

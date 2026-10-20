@@ -41,8 +41,8 @@ static UiSubmitResult submit(void *ctx, const UiRequest *req) {
 KatmedImageStatus katmed_images_present(lv_obj_t *image, lv_obj_t *fallback,
                                         uint32_t id, Orientation orientation) {
     (void)id; (void)orientation;
-    lv_obj_add_flag(image, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_remove_flag(fallback, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_hidden(image, true);
+    lv_obj_set_hidden(fallback, false);
     return KATMED_IMAGE_OK;
 }
 static void dispatch(bool down, int x, bool valid, uint64_t ms,

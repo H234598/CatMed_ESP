@@ -22,10 +22,15 @@ if(NOT EXISTS "${KATMED_MBEDTLS_SOURCE}/include/mbedtls/ssl.h" OR
    NOT EXISTS "${KATMED_MBEDTLS_SOURCE}/tf-psa-crypto/include/mbedtls/md.h")
     message(FATAL_ERROR "Set IDF_PATH or KATMED_MBEDTLS_SOURCE to the pinned ESP-IDF mbedTLS source")
 endif()
+set(MBEDTLS_FRAMEWORK_DIR "${KATMED_MBEDTLS_SOURCE}/framework")
 set(ENABLE_PROGRAMS OFF CACHE BOOL "" FORCE)
 set(ENABLE_TESTING OFF CACHE BOOL "" FORCE)
 set(MBEDTLS_FATAL_WARNINGS OFF CACHE BOOL "" FORCE)
+# Mirror ESP-IDF's component-level public include directory for the pinned port.
+include_directories("${KATMED_MBEDTLS_SOURCE}/../port/include"
+    "${CMAKE_CURRENT_SOURCE_DIR}/firmware/build-c3/config")
 add_subdirectory("${KATMED_MBEDTLS_SOURCE}" "${CMAKE_CURRENT_BINARY_DIR}/mbedtls" EXCLUDE_FROM_ALL)
+target_include_directories(tfpsacrypto PUBLIC "${KATMED_MBEDTLS_SOURCE}/../port/include")
 set(LV_BUILD_CONF_PATH "${KATMED_IMAGE_COMPONENT}/host/lv_conf.h" CACHE PATH "" FORCE)
 set(CONFIG_LV_BUILD_DEMOS OFF CACHE BOOL "" FORCE)
 set(CONFIG_LV_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
@@ -67,7 +72,13 @@ foreach(board IN ITEMS c3 c6)
         "${catalog}")
     target_include_directories(check_image_${board} PRIVATE
         "${KATMED_IMAGE_COMPONENT}/include" "${KATMED_IMAGE_COMPONENT}")
-    target_link_libraries(check_image_${board} PRIVATE katmed_core lvgl::lvgl mbedcrypto)
+    # mbedTLS 4 splits public headers across these SDK directories. The host
+    # decoder target needs all three for mbedtls/md.h and its private_access.h.
+    target_include_directories(check_image_${board} SYSTEM PRIVATE
+        "${KATMED_MBEDTLS_SOURCE}/include"
+        "${KATMED_MBEDTLS_SOURCE}/tf-psa-crypto/include"
+        "${KATMED_MBEDTLS_SOURCE}/tf-psa-crypto/drivers/builtin/include")
+    target_link_libraries(check_image_${board} PRIVATE katmed_core lvgl::lvgl tfpsacrypto)
     target_link_options(check_image_${board} PRIVATE -Wl,--wrap=lv_strdup)
     target_compile_options(check_image_${board} PRIVATE -Wall -Wextra -Wpedantic -Werror)
     add_dependencies(check_image_${board} verify_image_assets)

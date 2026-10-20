@@ -19,8 +19,9 @@ jobs:
           extra_docker_args: -e CI=true -e IDF_PATH=/opt/esp/idf
           command: >-
             apt-get update && apt-get install -y libssl-dev zlib1g-dev python3-pil nodejs &&
-            python -m pip install Pillow==11.3.0 &&
+            python -m pip install Pillow==13.0.0 &&
             python3 tests/check_ci_mbedtls_framework_binding.py &&
+            python3 tests/check_ci_host_mbedtls_lvgl.py &&
             python3 tools/prepare_ci_host_submodules.py &&
             tools/ci.sh dependencies c3 && tools/ci.sh host
   firmware:
@@ -42,4 +43,4 @@ jobs:
           esp_idf_version: v6.1
           target: ${{ matrix.target }}
           extra_docker_args: -e CI=true
-          command: apt-get update && apt-get install -y python3-pil && python -m pip install Pillow==11.3.0 && tools/ci.sh firmware ${{ matrix.board }}
+          command: apt-get update && apt-get install -y python3-pil && python -m pip install Pillow==13.0.0 && tools/ci.sh firmware ${{ matrix.board }}

@@ -31,6 +31,8 @@ flags=(-std=c11 -Wall -Wextra -Werror -Wno-unused-variable
     "-I${repo_dir}/firmware/components/katmed_time/include"
     "-I${repo_dir}/firmware/components/katmed_images/include"
     "-I${repo_dir}/firmware/main"
+    "-I${repo_dir}/firmware/components/katmed_reset/include"
+    "-I${repo_dir}/firmware/components/katmed_acme/include"
     "-I${repo_dir}/firmware/managed_components/lvgl__lvgl")
 cc "${flags[@]}" -c "${repo_dir}/firmware/components/katmed_ui/ui.c" -o "${out_dir}/ui.o"
 cc "${flags[@]}" -c "${repo_dir}/tests/host_main/main_contact_regression.c" \
@@ -47,7 +49,7 @@ objects=(
     "${object_root}/katmed_ui/katmed_font_26.c.o"
     "${object_root}/katmed_core/katmed_core.cpp.o")
 g++ -Wl,--gc-sections "${out_dir}/main_contact_regression.o" "${out_dir}/ui.o" \
-    "${objects[@]}" "${build_dir}/lvgl/lib/liblvgl.a" -lm -o "${out_dir}/check_main_contact"
+    "${objects[@]}" "${build_dir}/lvgl/liblvgl.a" -lm -o "${out_dir}/check_main_contact"
 timeout 20s "${out_dir}/check_main_contact" lost_error
 timeout 20s "${out_dir}/check_main_contact" lost_move
 timeout 20s "${out_dir}/check_main_contact" round_switch
@@ -65,7 +67,7 @@ g++ -std=c++17 -Wall -Wextra -Werror -ffunction-sections -fdata-sections \
     -I"${repo_dir}/firmware/components/katmed_mesh/include" \
     -c "${repo_dir}/tests/host_main/interaction_adapter.cpp" -o "${out_dir}/interaction-adapter.o"
 g++ -Wl,--gc-sections "${out_dir}/main-real.o" "${out_dir}/interaction-adapter.o" \
-    "${out_dir}/ui.o" "${objects[@]}" "${build_dir}/lvgl/lib/liblvgl.a" -lm \
+    "${out_dir}/ui.o" "${objects[@]}" "${build_dir}/lvgl/liblvgl.a" -lm \
     -o "${out_dir}/check_main_real_adapter"
 "${out_dir}/check_main_real_adapter" interaction_real_adapter
 

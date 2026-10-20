@@ -1,7 +1,7 @@
 #include "katmed_images_internal.h"
 #include "katmed_images_hash.h"
 #include "katmed_core.h"
-#include "src/draw/lv_image_decoder_private.h"
+#include "src/image/lv_image_decoder_private.h"
 #include <array>
 #include <cassert>
 #include <cstdio>
@@ -280,10 +280,10 @@ int main(int argc, char **argv)
         AppState before = state;
         expect(katmed_images_present(image, fallback, 0, ORIENTATION_0) == KATMED_IMAGE_OK,
                "valid image could not be presented");
-        expect(!lv_obj_has_flag(image, LV_OBJ_FLAG_HIDDEN) &&
-               lv_obj_has_flag(fallback, LV_OBJ_FLAG_HIDDEN), "valid image left neutral fallback visible");
+        expect(!lv_obj_is_hidden(image) &&
+               lv_obj_is_hidden(fallback), "valid image left neutral fallback visible");
         lv_refr_now(display);
-        expect(flushes != 0 && !lv_obj_has_flag(image, LV_OBJ_FLAG_HIDDEN),
+        expect(flushes != 0 && !lv_obj_is_hidden(image),
                "real successful LVGL refresh failed");
         expect(std::strcmp(static_cast<const char *>(lv_image_get_src(image)), "K:/00_0.jpg") == 0,
                "source-copy regression needs a previously selected image");
@@ -294,8 +294,8 @@ int main(int argc, char **argv)
                "failed source-string allocation was reported as a successful image change");
         expect(!fail_next_image_path_copy && failed_image_path_copies == 1,
                "source-string allocation fault was not injected exactly once");
-        expect(lv_image_get_src(image) == nullptr && lv_obj_has_flag(image, LV_OBJ_FLAG_HIDDEN) &&
-               !lv_obj_has_flag(fallback, LV_OBJ_FLAG_HIDDEN) &&
+        expect(lv_image_get_src(image) == nullptr && lv_obj_is_hidden(image) &&
+               !lv_obj_is_hidden(fallback) &&
                katmed_images_last_error() == KATMED_IMAGE_IO_ERROR,
                "source-string allocation failure did not replace the stale image with fallback");
         expect(katmed_images_open_file_count() == 0 &&
@@ -304,7 +304,7 @@ int main(int argc, char **argv)
         lv_refr_now(display);
         expect(katmed_images_present(image, fallback, 1, ORIENTATION_0) == KATMED_IMAGE_OK &&
                std::strcmp(static_cast<const char *>(lv_image_get_src(image)), "K:/01_0.jpg") == 0 &&
-               !lv_obj_has_flag(image, LV_OBJ_FLAG_HIDDEN) && lv_obj_has_flag(fallback, LV_OBJ_FLAG_HIDDEN),
+               !lv_obj_is_hidden(image) && lv_obj_is_hidden(fallback),
                "image path did not recover to the requested image after an allocation failure");
         lv_refr_now(display);
         // Select and preflight successfully, then fail only the later real
@@ -312,13 +312,13 @@ int main(int argc, char **argv)
         backend.fail = true;
         lv_obj_invalidate(image);
         lv_refr_now(display);
-        expect(lv_obj_has_flag(image, LV_OBJ_FLAG_HIDDEN) &&
-               !lv_obj_has_flag(fallback, LV_OBJ_FLAG_HIDDEN),
+        expect(lv_obj_is_hidden(image) &&
+               !lv_obj_is_hidden(fallback),
                "late draw-time I/O failure did not show neutral fallback");
         expect(katmed_images_present(image, fallback, 0, ORIENTATION_0) != KATMED_IMAGE_OK,
                "injected image read fault went unnoticed");
-        expect(lv_obj_has_flag(image, LV_OBJ_FLAG_HIDDEN) &&
-               !lv_obj_has_flag(fallback, LV_OBJ_FLAG_HIDDEN), "failed image did not show neutral fallback");
+        expect(lv_obj_is_hidden(image) &&
+               !lv_obj_is_hidden(fallback), "failed image did not show neutral fallback");
         expect(std::strcmp(lv_label_get_text(fallback), "Bild nicht verfügbar") == 0,
                "neutral fallback text missing");
         expect(std::memcmp(&state, &before, sizeof(state)) == 0 &&

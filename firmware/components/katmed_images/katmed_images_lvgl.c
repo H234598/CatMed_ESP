@@ -344,8 +344,8 @@ static KatmedImageStatus decode_check(const KatmedImageSelection *selection)
 static void show_fallback(lv_obj_t *image, lv_obj_t *label)
 {
     lv_image_set_src(image, NULL);
-    lv_obj_add_flag(image, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_remove_flag(label, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_hidden(image, true);
+    lv_obj_set_hidden(label, false);
 }
 
 static void image_event(lv_event_t *event)
@@ -372,7 +372,7 @@ static void display_event(lv_event_t *event)
     }
     else if(lv_event_get_code(event) == LV_EVENT_REFR_READY && active_image != NULL &&
             active_fallback != NULL && katmed_images_last_error() != KATMED_IMAGE_OK &&
-            !lv_obj_has_flag(active_image, LV_OBJ_FLAG_HIDDEN)) {
+            !lv_obj_is_hidden(active_image)) {
         // LVGL 9.4 forbids invalidation during DRAW_POST/RENDER_READY.
         // REFR_READY runs after rendering and requires no deferred allocation.
         record_failed_presentation();
@@ -433,8 +433,8 @@ KatmedImageStatus katmed_images_present(lv_obj_t *image, lv_obj_t *fallback_labe
             status = KATMED_IMAGE_IO_ERROR;
     }
     if(status == KATMED_IMAGE_OK) {
-        lv_obj_remove_flag(image, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_add_flag(fallback_label, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_set_hidden(image, false);
+        lv_obj_set_hidden(fallback_label, true);
         katmed_images_clear_error();
     }
     else {

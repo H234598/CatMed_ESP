@@ -79,7 +79,7 @@ static void expect_text(const char *text)
     lv_obj_t *label = find_text(lv_screen_active(), text);
     if (!label) fprintf(stderr, "missing visible model value: %s\n", text);
     assert(label && "configured model value must be drawn");
-    assert(!lv_obj_has_flag(label, LV_OBJ_FLAG_HIDDEN));
+    assert(!lv_obj_is_hidden(label));
 }
 
 int main(int argc, char **argv)
@@ -233,7 +233,7 @@ int main(int argc, char **argv)
     click("Status");
     expect_text("Nächster Alarm: 25.10.2026 02:30 CET");
     lv_obj_t *panel = lv_obj_get_parent(find_text(lv_screen_active(), "Status"));
-    assert(lv_obj_has_flag(panel, LV_OBJ_FLAG_SCROLLABLE));
+    assert(lv_obj_is_scrollable(panel));
     assert(!find_text(panel, "Zurück"));
     lv_obj_t *last = find_text(panel, "Mesh bisher erfasst (ab Einführung): inaktiv");
     assert(last);

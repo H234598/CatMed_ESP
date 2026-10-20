@@ -200,7 +200,7 @@ int main(int argc, char **argv)
     interaction.overflow=true;
     project(&state, &local, &clock, 6600);
     lv_obj_t *loss=find_label(lv_screen_active(), "Impulse: Speicher voll");
-    assert(loss && !lv_obj_has_flag(loss, LV_OBJ_FLAG_HIDDEN));
+    assert(loss && !lv_obj_is_hidden(loss));
     /* Local sender colour is gated by real grant/key state, not just Down. */
     interaction.overflow = interaction.receive_white = false;
     interaction.can_request = true;

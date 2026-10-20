@@ -132,7 +132,7 @@ int main(void)
     assert(ui_current_view() == ALARM);
     lv_obj_t *alarm_text = find_label(lv_screen_active(),
                                       "Please customize me! This is Alarm!");
-    assert(alarm_text && !lv_obj_has_flag(alarm_text, LV_OBJ_FLAG_HIDDEN));
+    assert(alarm_text && !lv_obj_is_hidden(alarm_text));
     assert(host.submit_calls == 0 && host.store_calls == 0);
     render_current(&state, &local, &clock, 5000);
     assert(ui_current_view() == ALARM);

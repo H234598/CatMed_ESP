@@ -82,6 +82,8 @@ target_include_directories(check_settings_values PRIVATE
     "${ROOT}/firmware/components/katmed_config_bridge/include"
     "${ROOT}/firmware/components/katmed_web/include"
     "${ROOT}/firmware/main" "${ROOT}/firmware/components/board/include"
+    "${ROOT}/firmware/components/katmed_reset/include"
+    "${ROOT}/firmware/components/katmed_acme/include"
     "${UI}/include" "${ROOT}/firmware/components/katmed_core/include"
     "${ROOT}/firmware/components/katmed_store/include"
     "${ROOT}/firmware/components/katmed_time/include"
@@ -110,10 +112,14 @@ endforeach()
 
 # Real UI/Main/Store and original image decoder regression; pinned SDK only.
 set(KATMED_MBEDTLS_SOURCE "$ENV{IDF_PATH}/components/mbedtls/mbedtls" CACHE PATH "Pinned SDK mbedTLS")
+set(MBEDTLS_FRAMEWORK_DIR "${KATMED_MBEDTLS_SOURCE}/framework")
 set(ENABLE_PROGRAMS OFF CACHE BOOL "" FORCE)
 set(ENABLE_TESTING OFF CACHE BOOL "" FORCE)
 set(MBEDTLS_FATAL_WARNINGS OFF CACHE BOOL "" FORCE)
+include_directories("${KATMED_MBEDTLS_SOURCE}/../port/include"
+    "${ROOT}/firmware/build-c3/config")
 add_subdirectory("${KATMED_MBEDTLS_SOURCE}" "${CMAKE_CURRENT_BINARY_DIR}/mbedtls" EXCLUDE_FROM_ALL)
+target_include_directories(tfpsacrypto PUBLIC "${KATMED_MBEDTLS_SOURCE}/../port/include")
 add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/refinement_catalog.c"
     COMMAND /usr/bin/python3 "${ROOT}/tools/generate_firmware_catalog.py"
         --target c3 --output "${CMAKE_CURRENT_BINARY_DIR}/refinement_catalog.c"
@@ -136,18 +142,24 @@ target_include_directories(check_ui_refinement PRIVATE
     "${ROOT}/firmware/components/katmed_config_bridge/include"
     "${ROOT}/firmware/components/katmed_web/include"
     "${ROOT}/firmware/main" "${ROOT}/firmware/components/board/include"
+    "${ROOT}/firmware/components/katmed_reset/include"
+    "${ROOT}/firmware/components/katmed_acme/include"
     "${UI}/include" "${ROOT}/firmware/components/katmed_core/include"
     "${ROOT}/firmware/components/katmed_store/include"
     "${ROOT}/firmware/components/katmed_time/include"
     "${ROOT}/firmware/components/katmed_mesh/include"
     "${ROOT}/firmware/components/katmed_images/include"
     "${ROOT}/firmware/components/katmed_images")
+target_include_directories(check_ui_refinement SYSTEM PRIVATE
+    "${KATMED_MBEDTLS_SOURCE}/include"
+    "${KATMED_MBEDTLS_SOURCE}/tf-psa-crypto/include"
+    "${KATMED_MBEDTLS_SOURCE}/tf-psa-crypto/drivers/builtin/include")
 target_compile_definitions(check_ui_refinement PRIVATE LV_LVGL_H_INCLUDE_SIMPLE)
 target_compile_options(check_ui_refinement PRIVATE -Wall -Wextra -Werror
     -Wno-unused-variable -ffunction-sections -fdata-sections)
 target_compile_features(check_ui_refinement PRIVATE cxx_std_17)
 target_link_options(check_ui_refinement PRIVATE -Wl,--gc-sections)
-target_link_libraries(check_ui_refinement PRIVATE lvgl m z mbedcrypto)
+target_link_libraries(check_ui_refinement PRIVATE lvgl m z tfpsacrypto)
 foreach(mode IN ITEMS random save nav scroll scroll-status indices clock-menu tick)
     add_test(NAME ui_refinement_${mode} COMMAND check_ui_refinement ${mode}
         "${ROOT}/assets/generated/c3_images.bin")
@@ -193,7 +205,7 @@ target_compile_options(check_ui_hhmm PRIVATE -Wall -Wextra -Werror
     -Wno-unused-variable -ffunction-sections -fdata-sections)
 target_compile_features(check_ui_hhmm PRIVATE cxx_std_17)
 target_link_options(check_ui_hhmm PRIVATE -Wl,--gc-sections)
-target_link_libraries(check_ui_hhmm PRIVATE lvgl m z mbedcrypto)
+target_link_libraries(check_ui_hhmm PRIVATE lvgl m z tfpsacrypto)
 foreach(format IN ITEMS "240;240" "172;320" "320;172")
     list(GET format 0 width)
     list(GET format 1 height)

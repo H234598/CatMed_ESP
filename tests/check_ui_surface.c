@@ -61,7 +61,7 @@ KatmedImageStatus katmed_images_present(lv_obj_t *image, lv_obj_t *fallback,
     image_dsc.data_size = (uint32_t)(width * height * 2);
     image_dsc.data = (const uint8_t *)test_image;
     lv_image_set_src(image, &image_dsc);
-    lv_obj_add_flag(fallback, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_hidden(fallback, true);
     return KATMED_IMAGE_OK;
 }
 
@@ -176,7 +176,7 @@ static unsigned visible_alarm_strips(lv_obj_t *screen, lv_obj_t *fallback_bar)
     for (uint32_t i = 0; i < lv_obj_get_child_count(screen); ++i) {
         lv_obj_t *child = lv_obj_get_child(screen, i);
         if (child != fallback_bar && lv_obj_get_style_bg_opa(child, 0) == 217 &&
-            !lv_obj_has_flag(child, LV_OBJ_FLAG_HIDDEN)) ++count;
+            !lv_obj_is_hidden(child)) ++count;
     }
     return count;
 }
@@ -392,7 +392,7 @@ int main(int argc, char **argv)
     clock.monotonic_ms = 2000;
     ui_render(&display_state, &local, ALARM, &clock);
     draw();
-    assert(lv_obj_has_flag(bar, LV_OBJ_FLAG_HIDDEN));
+    assert(lv_obj_is_hidden(bar));
     unsigned first_strips = visible_alarm_strips(screen, bar);
     assert(first_strips > 0 && first_strips <= 6);
     char name[128];
@@ -401,7 +401,7 @@ int main(int argc, char **argv)
     clock.monotonic_ms = 2250;
     ui_render(&display_state, &local, ALARM, &clock);
     draw();
-    assert(lv_obj_has_flag(bar, LV_OBJ_FLAG_HIDDEN));
+    assert(lv_obj_is_hidden(bar));
     unsigned second_strips = visible_alarm_strips(screen, bar);
     assert(second_strips < first_strips);
     snprintf(name, sizeof(name), "%s_alarm_off", prefix);
@@ -429,7 +429,7 @@ int main(int argc, char **argv)
             for (uint32_t n = 0; n < lv_obj_get_child_count(screen); ++n) {
                 lv_obj_t *part = lv_obj_get_child(screen, n);
                 if (part == bar || lv_obj_get_style_bg_opa(part, 0) != 217 ||
-                    lv_obj_has_flag(part, LV_OBJ_FLAG_HIDDEN)) continue;
+                    lv_obj_is_hidden(part)) continue;
                 assert(lv_obj_get_y(part) == expected_y + first + covered);
                 covered += lv_obj_get_height(part);
             }
@@ -536,7 +536,7 @@ int main(int argc, char **argv)
     ui_render(&state, &local, CLOCK, &clock);
     lv_obj_t *rotated_clock = find_clock_view(screen);
     assert(rotated_clock);
-    assert(!lv_obj_has_flag(rotated_clock, LV_OBJ_FLAG_HIDDEN));
+    assert(!lv_obj_is_hidden(rotated_clock));
     assert(find_label(screen, "15.10.2026"));
     local.orientation = original_orientation;
     ui_render(&state, &local, CLOCK, &clock);
@@ -552,7 +552,7 @@ int main(int argc, char **argv)
     assert(lv_obj_get_style_bg_opa(plate, 0) == LV_OPA_TRANSP);
     assert(lv_obj_get_style_border_width(dial, 0) == 0);
     for (unsigned mark = 0; mark < 12; ++mark)
-        assert(lv_obj_has_flag(lv_obj_get_child(dial, mark), LV_OBJ_FLAG_HIDDEN));
+        assert(lv_obj_is_hidden(lv_obj_get_child(dial, mark)));
     lv_obj_t *hour_outline = lv_obj_get_child(dial, 12);
     lv_obj_t *hour = lv_obj_get_child(dial, 13);
     lv_obj_t *minute_outline = lv_obj_get_child(dial, 14);
@@ -571,8 +571,8 @@ int main(int argc, char **argv)
     assert(lv_obj_get_style_border_width(hub, 0) == 2);
     assert(lv_obj_get_style_border_width(hub_outline, 0) == 3);
     assert(lv_obj_get_width(hub_outline) == lv_obj_get_width(hub) + 2);
-    assert(!lv_obj_has_flag(second_outline, LV_OBJ_FLAG_CLICKABLE));
-    assert(!lv_obj_has_flag(hub_outline, LV_OBJ_FLAG_CLICKABLE));
+    assert(!lv_obj_is_clickable(second_outline));
+    assert(!lv_obj_is_clickable(hub_outline));
     assert(lv_obj_get_style_bg_opa(hub_outline, 0) == LV_OPA_TRANSP);
     assert(lv_obj_get_style_bg_opa(hub, 0) == LV_OPA_TRANSP);
     lv_obj_t *outlines[] = {hour_outline, minute_outline};
@@ -581,7 +581,7 @@ int main(int argc, char **argv)
                (lv_obj_get_width(dial) < 240 ? 4 : 5));
         assert(lv_color_to_u32(lv_obj_get_style_line_color(outlines[h], 0)) ==
                lv_color_to_u32(lv_color_black()));
-        assert(!lv_obj_has_flag(outlines[h], LV_OBJ_FLAG_CLICKABLE));
+        assert(!lv_obj_is_clickable(outlines[h]));
     }
     assert(lv_obj_get_width(dial) == (host.width < host.height ? host.width : host.height));
     assert(lv_color_to_u32(lv_obj_get_style_line_color(hour, 0)) ==
@@ -644,15 +644,15 @@ int main(int argc, char **argv)
             uint16_t *without_outline = malloc(bytes);
             assert(without_outline);
             for (unsigned h = 0; h < 2; ++h)
-                lv_obj_add_flag(outlines[h], LV_OBJ_FLAG_HIDDEN);
-            lv_obj_add_flag(second_outline, LV_OBJ_FLAG_HIDDEN);
-            lv_obj_add_flag(hub_outline, LV_OBJ_FLAG_HIDDEN);
+                lv_obj_set_hidden(outlines[h], true);
+            lv_obj_set_hidden(second_outline, true);
+            lv_obj_set_hidden(hub_outline, true);
             draw();
             memcpy(without_outline, host.frame, bytes);
             for (unsigned h = 0; h < 2; ++h)
-                lv_obj_remove_flag(outlines[h], LV_OBJ_FLAG_HIDDEN);
-            lv_obj_remove_flag(second_outline, LV_OBJ_FLAG_HIDDEN);
-            lv_obj_remove_flag(hub_outline, LV_OBJ_FLAG_HIDDEN);
+                lv_obj_set_hidden(outlines[h], false);
+            lv_obj_set_hidden(second_outline, false);
+            lv_obj_set_hidden(hub_outline, false);
             draw();
             lv_area_t area;
             lv_obj_get_coords(dial, &area);
@@ -709,12 +709,12 @@ int main(int argc, char **argv)
             size_t bytes = (size_t)host.width * host.height * sizeof(uint16_t);
             uint16_t *without_seconds = malloc(bytes);
             assert(without_seconds);
-            lv_obj_add_flag(second_outline, LV_OBJ_FLAG_HIDDEN);
-            lv_obj_add_flag(hub_outline, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_set_hidden(second_outline, true);
+            lv_obj_set_hidden(hub_outline, true);
             draw();
             memcpy(without_seconds, host.frame, bytes);
-            lv_obj_remove_flag(second_outline, LV_OBJ_FLAG_HIDDEN);
-            lv_obj_remove_flag(hub_outline, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_set_hidden(second_outline, false);
+            lv_obj_set_hidden(hub_outline, false);
             draw();
             lv_area_t area;
             lv_obj_get_coords(dial, &area);
@@ -763,7 +763,7 @@ int main(int argc, char **argv)
             lv_obj_t *behind_hub[] = {hour_outline, hour, minute_outline,
                                      minute_hand, second_outline, second_hand};
             for (unsigned h = 0; h < 6; ++h)
-                lv_obj_add_flag(behind_hub[h], LV_OBJ_FLAG_HIDDEN);
+                lv_obj_set_hidden(behind_hub[h], true);
             draw();
             clear = 0;
             for (int y = hub_area.y1 + 2; y <= hub_area.y2 - 2; ++y)
@@ -774,7 +774,7 @@ int main(int argc, char **argv)
             printf("seconds isolated hub clear=%u\n", clear);
             assert(clear > 0);
             for (unsigned h = 0; h < 6; ++h)
-                lv_obj_remove_flag(behind_hub[h], LV_OBJ_FLAG_HIDDEN);
+                lv_obj_set_hidden(behind_hub[h], false);
             draw();
             free(without_seconds);
             snprintf(name, sizeof(name), "%s_analog_123015", prefix);
@@ -800,7 +800,7 @@ int main(int argc, char **argv)
     dial = lv_obj_get_child(clock_obj, 1);
     assert(lv_obj_get_style_bg_opa(plate, 0) == LV_OPA_TRANSP);
     assert(lv_obj_get_style_border_width(dial, 0) == 0);
-    assert(lv_obj_has_flag(dial, LV_OBJ_FLAG_HIDDEN));
+    assert(lv_obj_is_hidden(dial));
     snprintf(name, sizeof(name), "%s_clock_unavailable", prefix);
     snapshot(&host, dir, name);
     clock.utc_valid = true;
@@ -871,7 +871,7 @@ int main(int argc, char **argv)
     lv_obj_t *saved_feedback = find_label(screen, "Gespeichert");
     lv_obj_t *rebuilt_menu = lv_obj_get_parent(find_label(screen, "Einstellungen"));
     assert(saved_feedback && rebuilt_menu);
-    assert(!lv_obj_has_flag(saved_feedback, LV_OBJ_FLAG_HIDDEN));
+    assert(!lv_obj_is_hidden(saved_feedback));
     assert(lv_obj_get_index(saved_feedback) > lv_obj_get_index(rebuilt_menu));
     draw();
     snprintf(name, sizeof(name), "%s_style_saved_feedback", prefix);
@@ -921,7 +921,7 @@ int main(int argc, char **argv)
     click_label(screen, "Status");
     report_memory("status");
     lv_obj_t *feedback = find_label(screen, "Gespeichert");
-    assert(feedback && lv_obj_has_flag(feedback, LV_OBJ_FLAG_HIDDEN));
+    assert(feedback && lv_obj_is_hidden(feedback));
     assert(find_label_prefix(screen, "Letzte Gabe: 14.10.2026"));
     assert(find_label_prefix(screen, "Nächster Alarm: 15.10.2026"));
     assert(find_label(screen, "Gerätename: KatmedESP-002"));
