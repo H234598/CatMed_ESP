@@ -1,10 +1,13 @@
 #include "katmed_ui.h"
+#include "katmed_i18n.h"
+#include "katmed_font.h"
 #include "clock_view.h"
 #include "katmed_images.h"
 #include "katmed_core.h"
 #include "katmed_reset_journal.h"
 #include "c3_pins.h"
 #include "lvgl.h"
+#include "src/misc/lv_text_ap.h"
 
 #include <assert.h>
 #include <math.h>
@@ -410,6 +413,7 @@ int main(int argc, char **argv)
                          .utc_ms = 1791973800000LL, .utc_valid = true,
                          .quality = CLOCK_SYNCHRONIZED};
     AppState state = {0};
+    katmed_i18n_select(KATMED_LANG_DE); /* Existing surface assertions use German source copy. */
     state.alarm_active = true;
     state.start_reason = START_SETTINGS; /* Synthetic fixture is a due reminder. */
     state.image_id = 0;
@@ -1320,11 +1324,94 @@ int main(int argc, char **argv)
     lv_obj_send_event(no, LV_EVENT_CLICKED, NULL);
     assert(host.reset_confirms == 1 && !host.reset_warning);
 
+    /* Real LVGL glyph lookup and framebuffer snapshots for non-Latin copy. */
+    lv_font_glyph_dsc_t glyph = {0};
+    for (unsigned i = 0; i < 4; ++i) {
+        const uint32_t codepoint[] = {0x0627, 0xfe8d, 0x836f, 0x85ac};
+        assert(lv_font_get_glyph_dsc(&katmed_font_12, &glyph, codepoint[i], 0));
+        assert(glyph.adv_w > 0 && glyph.box_w > 0 && glyph.box_h > 0);
+        lv_draw_buf_t *bitmap = lv_draw_buf_create(glyph.box_w, glyph.box_h,
+                                                    LV_COLOR_FORMAT_A8, 0);
+        assert(bitmap && lv_font_get_glyph_bitmap(&glyph, bitmap));
+        bool drawn = false;
+        for (uint32_t byte = 0; byte < bitmap->data_size; ++byte)
+            if (((const uint8_t *)bitmap->data)[byte]) { drawn = true; break; }
+        assert(drawn);
+        lv_font_glyph_release_draw_data(&glyph);
+        lv_draw_buf_destroy(bitmap);
+    }
+    assert(lv_font_get_glyph_dsc(&katmed_font_30, &glyph, '-', 0));
+    assert(lv_font_get_glyph_dsc(&katmed_font_30, &glyph, '/', 0));
+    state.alarm_active = false;
+    for (unsigned i = 0; i < 3; ++i) {
+        const uint8_t languages[] = {KATMED_LANG_AR, KATMED_LANG_ZH_HANS, KATMED_LANG_JA};
+        const char *suffix[] = {"arabic", "chinese", "japanese"};
+        katmed_i18n_select(languages[i]);
+        clock.monotonic_ms += 1000;
+        ui_render(&state, &local, SETTINGS, &clock);
+        ui_render(&state, &local, SETTINGS, &clock);
+        assert(ui_current_view() == SETTINGS);
+        const char *title = katmed_i18n_text("Einstellungen");
+        char shaped[128];
+        if (languages[i] == KATMED_LANG_AR) {
+            assert(lv_text_ap_strlen(title) < sizeof(shaped));
+            lv_text_ap_proc(title, shaped);
+            title = shaped;
+        }
+        lv_obj_t *translated = find_label(screen, title);
+        if (!translated) translated = find_label(screen, katmed_i18n_text("Sprache"));
+        assert(translated);
+        lv_obj_scroll_to_view(translated, LV_ANIM_OFF);
+        lv_obj_update_layout(screen);
+        lv_refr_now(display);
+        snprintf(name, sizeof(name), "%s-i18n-%s", prefix, suffix[i]);
+        snapshot(&host, dir, name);
+    }
+    katmed_i18n_select(KATMED_LANG_FR);
+    clock.monotonic_ms += 1000;
+    ui_render(&state, &local, SETTINGS, &clock);
+    lv_obj_t *long_dialog = lv_obj_create(screen);
+    lv_obj_set_size(long_dialog, host.width - 16, host.height - 16);
+    lv_obj_center(long_dialog);
+    lv_obj_t *long_label = lv_label_create(long_dialog);
+    lv_obj_set_width(long_label, host.width - 40);
+    lv_obj_set_style_text_font(long_label, &katmed_font_12, 0);
+    lv_label_set_text(long_label, katmed_i18n_text(
+        "WARNUNG: Löscht WLAN, Laufzeittexte, Mesh, Alarm/Verlauf, Webzugang, Zertifikate/ACME, Uploads und Cache. Firmware und Standardbilder bleiben. In einem privaten Build bleiben einkompilierte private Vorgaben erhalten."));
+    lv_obj_update_layout(screen);
+    assert(lv_obj_get_height(long_label) > 60);
+    lv_refr_now(display);
+    snprintf(name, sizeof(name), "%s-i18n-long-french", prefix);
+    snapshot(&host, dir, name);
+    lv_obj_delete(long_dialog);
+    katmed_i18n_select(KATMED_LANG_EN);
+    local.clock_style = DIGITAL_DATE;
+    clock.monotonic_ms += 1000;
+    ui_render(&state, &local, CLOCK, &clock);
+    LocalDateTime date_parts = {0};
+    assert(app_berlin_local_time(clock.utc_ms, &date_parts) == APP_OK);
+    char localized_date[16];
+    katmed_i18n_format_date(localized_date, sizeof(localized_date),
+                             (unsigned)date_parts.year, date_parts.month, date_parts.day);
+    assert(find_label(screen, localized_date));
+    lv_refr_now(display);
+    snprintf(name, sizeof(name), "%s-i18n-english-date", prefix);
+    snapshot(&host, dir, name);
+    katmed_i18n_format_date(localized_date, sizeof(localized_date), 2026, 10, 20);
+    assert(strcmp(localized_date, "2026-10-20") == 0);
+    katmed_i18n_select(KATMED_LANG_FR);
+    katmed_i18n_format_date(localized_date, sizeof(localized_date), 2026, 10, 20);
+    assert(strcmp(localized_date, "20/10/2026") == 0);
+    katmed_i18n_select(KATMED_LANG_DE);
+    katmed_i18n_format_date(localized_date, sizeof(localized_date), 2026, 10, 20);
+    assert(strcmp(localized_date, "20.10.2026") == 0);
+    katmed_i18n_select(KATMED_LANG_EN);
+
     lv_display_delete(display);
     lv_deinit();
     free(draw_buffer);
     free(host.frame);
-    printf("layout=%dx%d orientation=%d touch/store=%d network=%d artifacts=14\n",
+    printf("layout=%dx%d orientation=%d touch/store=%d network=%d artifacts=19\n",
            host.width, host.height, orientation_index * 90,
            host.store_calls, host.network_calls);
     return 0;

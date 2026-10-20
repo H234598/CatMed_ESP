@@ -4,7 +4,68 @@
   const $ = (id) => document.getElementById(id);
   const state = { bootstrap: null, config: null, preview: null, wifiProfiles: [],
     wifiLimit: 0, advancedScrollY: 0,
-    catalogOffset: 0, catalogCount: 0 };
+    catalogOffset: 0, catalogCount: 0, language: "en" };
+  const catalog = window.KATMED_I18N || { keys: [], values: {} };
+  const translations = Object.fromEntries(Object.entries(catalog.values).map(([code, values]) =>
+    [code, Object.fromEntries(catalog.keys.map((key, index) => [key, values[index]]))]));
+  const originalText = [];
+  const originalAttrs = [];
+  const originalTitle = document.title;
+
+  function captureStaticCopy() {
+    if (typeof document.createTreeWalker !== "function") return;
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      const key = node.nodeValue.trim();
+      if (key && Object.prototype.hasOwnProperty.call(translations.de || {}, key))
+        originalText.push([node, key, node.nodeValue.match(/^\s*/)[0],
+                           node.nodeValue.match(/\s*$/)[0]]);
+    }
+    for (const element of document.querySelectorAll("[placeholder],[title],[aria-label]"))
+      for (const attr of ["placeholder", "title", "aria-label"]) {
+        const key = element.getAttribute(attr);
+        if (key && Object.prototype.hasOwnProperty.call(translations.de || {}, key))
+          originalAttrs.push([element, attr, key]);
+      }
+  }
+
+  function tr(source) {
+    return translations[state.language]?.[source] ?? translations.en?.[source] ?? source;
+  }
+
+  function trf(source, ...values) {
+    return tr(source).replace(/\{(\d+)\}/g, (_all, index) => String(values[Number(index)] ?? ""));
+  }
+
+  function formatPreviewDate(value) {
+    const match = /^(\d{2})\.(\d{2})\.(\d{4}) (\d{2}:\d{2})(?: (CEST|CET))?$/.exec(value);
+    if (!match) return value;
+    const [, day, month, year, time, zone] = match;
+    const date = ["en", "zh-Hans", "ja", "tlh-Latn"].includes(state.language) ?
+      `${year}-${month}-${day}` : ["fr", "es", "ar"].includes(state.language) ?
+        `${day}/${month}/${year}` : `${day}.${month}.${year}`;
+    return `${date} ${time}${zone ? ` ${zone}` : ""}`;
+  }
+
+  function applyLocale(language) {
+    if (!translations[language]) language = "en";
+    state.language = language;
+    document.documentElement.lang = language;
+    document.documentElement.dir = language === "ar" ? "rtl" : "ltr";
+    for (const [node, key, before, after] of originalText)
+      node.nodeValue = before + tr(key) + after;
+    for (const [element, attr, key] of originalAttrs)
+      element.setAttribute(attr, tr(key));
+    document.title = tr(originalTitle);
+    if ($("language-select")) $("language-select").value = language;
+    document.body?.classList?.remove("i18n-loading");
+  }
+
+  async function loadLanguage() {
+    const response = await api("/api/language");
+    if (!response || typeof response.language !== "string") throw new Error("Invalid language response");
+    applyLocale(response.language);
+  }
   const views = ["setup-view", "login-view", "private-view"];
   const fields = ["medication_hours", "image_hours", "next_due_hhmm", "clock_style", "orientation", "rotation"];
   const controls = {
@@ -57,7 +118,7 @@
 
   function renderDeviceName(name) {
     if (typeof name !== "string" || !name || !$("device-info")) return;
-    $("device-info").textContent = `Gerät: ${name}`;
+    $("device-info").textContent = trf("Gerät: {0}", name);
   }
 
   function setBusy(form, busy) {
@@ -65,16 +126,16 @@
   }
 
   function errorText(error) {
-    if (error instanceof TypeError || error.name === "TypeError") return "Das Gerät ist derzeit nicht erreichbar.";
-    if (error.status === 401) return "Die Anmeldung ist abgelaufen. Bitte erneut anmelden.";
-    if (error.status === 403) return "Zugriff abgelehnt. Bitte Seite neu laden und erneut anmelden.";
-    if (error.status === 409) return "Die Daten haben sich geändert. Aktuelle Werte wurden neu geladen.";
-    if (error.status === 413) return "Die Eingabe ist zu groß.";
-    if (error.status === 422) return "Ungültige Eingabe. Bitte Wert und Format prüfen.";
-    if (error.status === 429) return "Zu viele Versuche. Bitte später erneut versuchen.";
-    if (error.status === 503) return "Speichern derzeit nicht verfügbar. Bitte später erneut versuchen.";
-    if (error.status === 507) return "Der Bildspeicher ist voll oder derzeit nicht verfügbar.";
-    return "Anfrage fehlgeschlagen. Bitte erneut versuchen.";
+    if (error instanceof TypeError || error.name === "TypeError") return tr("Das Gerät ist derzeit nicht erreichbar.");
+    if (error.status === 401) return tr("Die Anmeldung ist abgelaufen. Bitte erneut anmelden.");
+    if (error.status === 403) return tr("Zugriff abgelehnt. Bitte Seite neu laden und erneut anmelden.");
+    if (error.status === 409) return tr("Die Daten haben sich geändert. Aktuelle Werte wurden neu geladen.");
+    if (error.status === 413) return tr("Die Eingabe ist zu groß.");
+    if (error.status === 422) return tr("Ungültige Eingabe. Bitte Wert und Format prüfen.");
+    if (error.status === 429) return tr("Zu viele Versuche. Bitte später erneut versuchen.");
+    if (error.status === 503) return tr("Speichern derzeit nicht verfügbar. Bitte später erneut versuchen.");
+    if (error.status === 507) return tr("Der Bildspeicher ist voll oder derzeit nicht verfügbar.");
+    return tr("Anfrage fehlgeschlagen. Bitte erneut versuchen.");
   }
 
   async function api(path, method = "GET", body = null) {
@@ -101,7 +162,7 @@
   function resetPreview() {
     state.preview = null;
     $("save-due").disabled = true;
-    $("due-preview").textContent = "Vor dem Speichern Vorschau prüfen.";
+    $("due-preview").textContent = tr("Vor dem Speichern Vorschau prüfen.");
   }
 
   function validConfig(config) {
@@ -127,12 +188,12 @@
     $(controls.orientation).value = String(config.orientation);
     $(controls.rotation).value = config.rotation;
     $("due-current").textContent = config.next_due_state === "none" ?
-      "Derzeit kein Termin verfügbar." : config.next_due_state === "paused_boot" ?
-      `Boot-Alarm aktiv; gespeicherter Termin ${config.next_due_hhmm} pausiert.` :
-      `Aktuell: ${config.next_due_hhmm}`;
+      tr("Derzeit kein Termin verfügbar.") : config.next_due_state === "paused_boot" ?
+      trf("Boot-Alarm aktiv; gespeicherter Termin {0} pausiert.", config.next_due_hhmm) :
+      trf("Aktuell: {0}", config.next_due_hhmm);
     const restore = config.restore_status === "expired" ?
-      "Gespeicherter HH:MM-Termin ist abgelaufen." : config.restore_status === "conflict" ?
-      "Gespeicherter HH:MM-Termin konnte nach Neustart nicht übernommen werden." : "";
+      tr("Gespeicherter HH:MM-Termin ist abgelaufen.") : config.restore_status === "conflict" ?
+      tr("Gespeicherter HH:MM-Termin konnte nach Neustart nicht übernommen werden.") : "";
     $("due-restore").textContent = restore;
     $("due-restore").hidden = !restore;
     resetPreview();
@@ -145,8 +206,8 @@
   function renderCertificate(certificate) {
     const enrolled = certificate && certificate.enrolled === true;
     $("cert-state").textContent = enrolled ?
-      `Freigegeben${certificate.subject ? `: ${certificate.subject}` : "."}` :
-      "Kein Clientzertifikat freigegeben.";
+      (certificate.subject ? trf("Freigegeben: {0}", certificate.subject) : tr("Freigegeben.")) :
+      tr("Kein Clientzertifikat freigegeben.");
     $("cert-remove-form").hidden = !enrolled;
     $("cert-form").hidden = enrolled;
   }
@@ -168,10 +229,11 @@
     state.wifiProfiles = wifi.profiles.map((p) => ({...p}));
     state.wifiLimit = wifi.profile_limit;
     $("wifi-state").textContent = wifi.configured ?
-      ("WLAN-Daten gespeichert. Wiederherstellungsweg " +
-       (wifi.recovery_available ? "verfügbar." : "nicht verfügbar.")) :
-      "Noch keine gespeicherten WLAN-Daten. Firmware-Standardwerte können weiter gelten.";
-    $("wifi-limit").textContent = `${wifi.profiles.length} von ${wifi.profile_limit} WLAN-Profilen belegt. Priorität 1 ist die höchste.`;
+      (tr("WLAN-Daten gespeichert. Wiederherstellungsweg ") +
+       (wifi.recovery_available ? tr("verfügbar.") : tr("nicht verfügbar."))) :
+      tr("Noch keine gespeicherten WLAN-Daten. Firmware-Standardwerte können weiter gelten.");
+    $("wifi-limit").textContent = trf("{0} von {1} WLAN-Profilen belegt. Priorität 1 ist die höchste.",
+                                      wifi.profiles.length, wifi.profile_limit);
     $("wifi-reconnect").disabled = wifi.profiles.length === 0;
     renderWifiProfiles();
   }
@@ -184,30 +246,32 @@
     for (const {profile, index} of ordered) {
       const item = document.createElement("li");
       const summary = document.createElement("span");
-      summary.textContent = `Priorität ${profile.priority} · ${profile.ssid} · ${profile.secured ? "Schlüssel gespeichert" : "offenes WLAN"}`;
+      summary.textContent = trf("Priorität {0} · {1} · {2}", profile.priority,
+                                profile.ssid, profile.secured ? tr("Schlüssel gespeichert") : tr("offenes WLAN"));
       const actions = document.createElement("span");
       actions.className = "actions";
       const edit = document.createElement("button");
       edit.type = "button";
       edit.className = "secondary";
-      edit.textContent = "Bearbeiten";
+      edit.textContent = tr("Bearbeiten");
       edit.dataset.profileEdit = String(index);
       const remove = document.createElement("button");
       remove.type = "button";
       remove.className = "danger";
-      remove.textContent = "Entfernen";
+      remove.textContent = tr("Entfernen");
       remove.dataset.profileDelete = String(profile.id);
       actions.append(edit, remove);
       item.append(summary, actions);
       list.append(item);
     }
     $("wifi-profile-save").textContent = $("wifi-profile-form").dataset.editId ?
-      "Profiländerung speichern" : "Profil zur Liste hinzufügen";
+      tr("Profiländerung speichern") : tr("Profil zur Liste hinzufügen");
     $("wifi-profile-save").disabled = state.wifiProfiles.length >= state.wifiLimit &&
       !$("wifi-profile-form").dataset.editId;
   }
 
   function openAdvanced() {
+    void loadLanguage().catch(() => {});
     state.advancedScrollY = window.scrollY;
     $("main-settings").hidden = true;
     $("advanced-view").hidden = false;
@@ -234,27 +298,27 @@
     const list = $("image-list");
     if (!append) list.replaceChildren();
     $("media-usage").textContent =
-      page.image_count + " Bilder · " + page.used_bytes + " von " +
-      (page.used_bytes + page.free_bytes) + " Byte belegt";
+      page.image_count + tr(" Bilder · ") + page.used_bytes + tr(" von ") +
+      (page.used_bytes + page.free_bytes) + tr(" Byte belegt");
     for (const image of page.images) {
       const item = document.createElement("li");
       const details = document.createElement("div");
       const preview = document.createElement("img");
       preview.className = "image-preview";
       preview.loading = "lazy";
-      preview.alt = "Gespeichertes Bild";
+      preview.alt = tr("Gespeichertes Bild");
       preview.referrerPolicy = "no-referrer";
       preview.src = "/api/images?id=" + encodeURIComponent(image.id);
       const description = document.createElement("span");
       description.className = "help";
-      description.textContent = ((image.id >>> 31) ? "Katalogkopie · " : "Eigenes Bild · ") +
-        "JPEG " + image.width + " × " + image.height +
-        " · " + image.bytes + " Byte";
+      description.textContent = ((image.id >>> 31) ? tr("Katalogkopie · ") : tr("Eigenes Bild · ")) +
+        tr("JPEG ") + image.width + " × " + image.height +
+        " · " + image.bytes + tr(" Byte");
       details.append(preview, description);
       const remove = document.createElement("button");
       remove.type = "button";
       remove.className = "danger";
-      remove.textContent = "Entfernen";
+      remove.textContent = tr("Entfernen");
       remove.dataset.imageId = String(image.id);
       item.append(details, remove);
       list.append(item);
@@ -290,14 +354,14 @@
       const item = document.createElement("li");
       const details = document.createElement("span");
       details.className = "help";
-      details.textContent = "GitHub-Katalogbild " + (image.id + 1);
+      details.textContent = tr("GitHub-Katalogbild ") + (image.id + 1);
       const variants = document.createElement("span");
       variants.className = "actions";
       for (const variant of image.variants) {
         const button = document.createElement("button");
         button.type = "button";
         button.className = "secondary";
-        button.textContent = "Kopie übernehmen · " + variant.width + " × " +
+        button.textContent = tr("Kopie übernehmen · ") + variant.width + " × " +
           variant.height;
         button.dataset.catalogId = String(image.id);
         button.dataset.catalogProfile = String(variant.profile);
@@ -333,9 +397,9 @@
       return;
     }
     show("private-view");
-    $("save-status").textContent = "Aktuelle Werte werden geladen.";
+    $("save-status").textContent = tr("Aktuelle Werte werden geladen.");
     await Promise.all([loadConfig(), loadCertificate(), loadWifi(), loadImages(), loadCatalog()]);
-    $("save-status").textContent = "Aktuelle Werte geladen.";
+    $("save-status").textContent = tr("Aktuelle Werte geladen.");
   }
 
   async function refreshBootstrap() {
@@ -356,7 +420,7 @@
 
   async function handleLoginFailure(error) {
     if (error.status === 401) {
-      notice("Anmeldung fehlgeschlagen. Passwort oder Clientzertifikat prüfen.", true);
+      notice(tr("Anmeldung fehlgeschlagen. Passwort oder Clientzertifikat prüfen."), true);
       return;
     }
     await handleFailure(error);
@@ -373,13 +437,13 @@
     if (field === "next_due_hhmm") {
       if (!state.preview || state.preview.time !== value ||
           state.preview.revision !== state.config.revision) {
-        notice("Bitte die Fälligkeit erneut prüfen.", true);
+        notice(tr("Bitte die Fälligkeit erneut prüfen."), true);
         return;
       }
       request.preview_token = state.preview.token;
     }
     setBusy(form, true);
-    $("save-status").textContent = "Speichern läuft …";
+    $("save-status").textContent = tr("Speichern läuft …");
     notice("");
     try {
       const committed = await api("/api/config", "PUT", request);
@@ -389,10 +453,10 @@
           committed[field] !== readback[field])
         throw new Error("Readback differs from committed configuration");
       renderConfig(readback);
-      $("save-status").textContent = "Gespeichert und bestätigt.";
-      notice("Einstellung gespeichert.");
+      $("save-status").textContent = tr("Gespeichert und bestätigt.");
+      notice(tr("Einstellung gespeichert."));
     } catch (error) {
-      $("save-status").textContent = "Speichern nicht bestätigt.";
+      $("save-status").textContent = tr("Speichern nicht bestätigt.");
       await handleFailure(error, true);
     } finally {
       setBusy(form, false);
@@ -416,9 +480,11 @@
           typeof preview.effective_local !== "string")
         throw new Error("Invalid preview response");
       state.preview = { time, revision: state.config.revision, token: preview.preview_token };
-      let description = `Termin: ${preview.regular_local}. Wirksam: ${preview.effective_local}.`;
-      if (preview.skipped_nonexistent_time) description += " Diese Uhrzeit entfällt durch die Zeitumstellung.";
-      if (preview.night_advanced) description += " Nachtvorziehung aktiv.";
+      let description = trf("Termin: {0}. Wirksam: {1}.",
+                            formatPreviewDate(preview.regular_local),
+                            formatPreviewDate(preview.effective_local));
+      if (preview.skipped_nonexistent_time) description += tr(" Diese Uhrzeit entfällt durch die Zeitumstellung.");
+      if (preview.night_advanced) description += tr(" Nachtvorziehung aktiv.");
       $("due-preview").textContent = description;
     } catch (error) {
       await handleFailure(error, true);
@@ -433,7 +499,7 @@
     const form = event.currentTarget;
     const password = $("setup-password").value;
     if (password !== $("setup-confirm").value) {
-      notice("Die Passwörter stimmen nicht überein.", true);
+      notice(tr("Die Passwörter stimmen nicht überein."), true);
       return;
     }
     setBusy(form, true);
@@ -443,11 +509,11 @@
         setup_code: $("setup-code").value
       });
       form.reset();
-      notice("Passwort eingerichtet. Bitte anmelden.");
+      notice(tr("Passwort eingerichtet. Bitte anmelden."));
       await refreshBootstrap();
     } catch (error) {
       if (error.status === 401 && error.code === "denied")
-        notice("Einmalcode ungültig oder abgelaufen. Bitte Code am Display prüfen.", true);
+        notice(tr("Einmalcode ungültig oder abgelaufen. Bitte Code am Display prüfen."), true);
       else await handleFailure(error);
     } finally { setBusy(form, false); }
   });
@@ -503,7 +569,7 @@
     const form = event.currentTarget;
     const file = $("cert-file").files[0];
     if (!file || file.size > 8192) {
-      notice("Bitte ein öffentliches PEM-Zertifikat bis 8 KiB auswählen.", true);
+      notice(tr("Bitte ein öffentliches PEM-Zertifikat bis 8 KiB auswählen."), true);
       return;
     }
     setBusy(form, true);
@@ -511,7 +577,7 @@
       const certificate_pem = await file.text();
       if (!certificate_pem.includes("-----BEGIN CERTIFICATE-----") ||
           certificate_pem.includes("PRIVATE KEY")) {
-        notice("Die Datei muss ein öffentliches Clientzertifikat enthalten.", true);
+        notice(tr("Die Datei muss ein öffentliches Clientzertifikat enthalten."), true);
         return;
       }
       await api("/api/client-cert", "POST", {
@@ -519,10 +585,10 @@
       });
       form.reset();
       await loadCertificate();
-      notice("Clientzertifikat freigegeben.");
+      notice(tr("Clientzertifikat freigegeben."));
     } catch (error) {
       if (error.status === 401 && error.code === "denied")
-        notice("Passwort zur Zertifikatsfreigabe ist falsch.", true);
+        notice(tr("Passwort zur Zertifikatsfreigabe ist falsch."), true);
       else await handleFailure(error);
     }
     finally { setBusy(form, false); }
@@ -536,16 +602,40 @@
       await api("/api/client-cert", "DELETE", { password: $("cert-remove-password").value });
       form.reset();
       await loadCertificate();
-      notice("Clientzertifikat-Freigabe entfernt.");
+      notice(tr("Clientzertifikat-Freigabe entfernt."));
     } catch (error) {
       if (error.status === 401 && error.code === "denied")
-        notice("Passwort zum Entfernen der Zertifikatsfreigabe ist falsch.", true);
+        notice(tr("Passwort zum Entfernen der Zertifikatsfreigabe ist falsch."), true);
       else await handleFailure(error);
     }
     finally { setBusy(form, false); }
   });
 
   $("open-advanced").addEventListener("click", openAdvanced);
+  $("language-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const previous = state.language;
+    setBusy(form, true);
+    let response;
+    try {
+      response = await api("/api/language", "PUT",
+                           {language: $("language-select").value});
+      if (!response || typeof response.language !== "string")
+        throw new Error("Invalid language response");
+    } catch (error) {
+      applyLocale(previous);
+      await handleFailure(error);
+      setBusy(form, false);
+      return;
+    }
+    applyLocale(response.language);
+    if (state.config) renderConfig(state.config);
+    try { await Promise.all([loadWifi(), loadImages(), loadCatalog()]); }
+    catch (error) { await handleFailure(error); }
+    notice(tr("Einstellung gespeichert."));
+    setBusy(form, false);
+  });
   $("advanced-back").addEventListener("click", () => closeAdvanced());
   window.addEventListener("popstate", (event) => {
     if (!event.state?.katmedAdvanced && !$("advanced-view").hidden) closeAdvanced();
@@ -587,16 +677,16 @@
         (!isOpen && !password.length && !previous?.secured) ||
         (!isOpen && passwordBytes.length > 0 && passwordBytes.length < 8) ||
         (passwordBytes.length === 64 && !/^[0-9a-fA-F]{64}$/.test(password))) {
-      notice("SSID oder WLAN-Schlüssel hat eine ungültige Länge.", true);
+      notice(tr("SSID oder WLAN-Schlüssel hat eine ungültige Länge."), true);
       return;
     }
     if (!editId && state.wifiProfiles.length >= state.wifiLimit) {
-      notice("Der vom Gerätespeicher erlaubte Profilplatz ist ausgeschöpft.", true);
+      notice(tr("Der vom Gerätespeicher erlaubte Profilplatz ist ausgeschöpft."), true);
       return;
     }
     const priority = Number($("wifi-priority").value);
     if (!Number.isSafeInteger(priority) || priority < 1) {
-      notice("Die Priorität muss eine positive ganze Zahl sein.", true);
+      notice(tr("Die Priorität muss eine positive ganze Zahl sein."), true);
       return;
     }
     setBusy(form, true);
@@ -617,7 +707,7 @@
       $("wifi-password").disabled = false;
       $("wifi-priority").value = "1";
       await loadWifi();
-      notice("WLAN-Profile dauerhaft gespeichert. Zum Anwenden die Prioritäten bewusst neu bewerten lassen.");
+      notice(tr("WLAN-Profile dauerhaft gespeichert. Zum Anwenden die Prioritäten bewusst neu bewerten lassen."));
     } catch (error) { await handleFailure(error); }
     finally { setBusy(form, false); }
   });
@@ -634,7 +724,7 @@
       $("wifi-password").disabled = !profile.secured;
       $("wifi-open").checked = !profile.secured;
       $("wifi-priority").value = String(profile.priority);
-      $("wifi-profile-save").textContent = "Profiländerung speichern";
+      $("wifi-profile-save").textContent = tr("Profiländerung speichern");
       $("wifi-ssid").focus();
       return;
     }
@@ -644,7 +734,7 @@
     try {
       await api("/api/wifi/profiles?id=" + encodeURIComponent(remove.dataset.profileDelete), "DELETE");
       await loadWifi();
-      notice("WLAN-Profil entfernt. Die aktive Verbindung wird dadurch nicht automatisch gewechselt.");
+      notice(tr("WLAN-Profil entfernt. Die aktive Verbindung wird dadurch nicht automatisch gewechselt."));
     } catch (error) { await handleFailure(error); }
     finally { remove.disabled = false; }
   });
@@ -654,7 +744,7 @@
     button.disabled = true;
     try {
       await api("/api/wifi/reconnect", "POST", {});
-      notice("Prioritäten werden bei der bewussten Neuverbindung neu bewertet. Die Geräteadresse kann sich ändern.");
+      notice(tr("Prioritäten werden bei der bewussten Neuverbindung neu bewertet. Die Geräteadresse kann sich ändern."));
     } catch (error) {
       await handleFailure(error);
       button.disabled = false;
@@ -666,7 +756,7 @@
     const dialog = $("factory-reset-dialog");
     const status = $("reset-status");
     const poll = ++resetPoll;
-    status.textContent = "Displaykachel öffnet.";
+    status.textContent = tr("Displaykachel öffnet.");
     resetPending = true;
     resetCsrf = state.bootstrap?.csrf_token;
     try {
@@ -693,12 +783,12 @@
       if (poll !== resetPoll) return;
       const display = result.display;
       $("reset-status").textContent = display === "press_reset" ?
-        "Kachel offen: Physische RESET-Taste drücken." :
-        display === "confirm_on_display" ? "Warnfrage: Am Display Nein oder neu Ja wählen." :
-        display === "reset_committed" ? "Reset bestätigt; Löschung läuft oder steht an." :
-        display === "preparing" ? "Displaykachel öffnet." :
-        display === "idle" ? "Keine aktive Resetvorbereitung." :
-        "Kachel nicht geöffnet. Display prüfen.";
+        tr("Kachel offen: Physische RESET-Taste drücken.") :
+        display === "confirm_on_display" ? tr("Warnfrage: Am Display Nein oder neu Ja wählen.") :
+        display === "reset_committed" ? tr("Reset bestätigt; Löschung läuft oder steht an.") :
+        display === "preparing" ? tr("Displaykachel öffnet.") :
+        display === "idle" ? tr("Keine aktive Resetvorbereitung.") :
+        tr("Kachel nicht geöffnet. Display prüfen.");
       if (["preparing", "press_reset", "confirm_on_display"].includes(display) && $("factory-reset-dialog").open)
         setTimeout(() => refreshResetStatus(poll), display === "preparing" ? 500 : 5000);
     } catch (error) {
@@ -711,11 +801,11 @@
       await api("/api/factory-reset/cancel", "POST", {});
       ++resetPoll;
       $("factory-reset-dialog").close();
-      $("reset-status").textContent = "Vorbereitung abgebrochen.";
+      $("reset-status").textContent = tr("Vorbereitung abgebrochen.");
     } catch (error) {
       $("reset-status").textContent = error.code === "reset_already_confirmed" ?
-        "Reset bereits bestätigt; Löschung steht an oder läuft." :
-        error.code === "reset_not_prepared" ? "Keine aktive Resetvorbereitung." : errorText(error);
+        tr("Reset bereits bestätigt; Löschung steht an oder läuft.") :
+        error.code === "reset_not_prepared" ? tr("Keine aktive Resetvorbereitung.") : errorText(error);
     }
   });
 
@@ -733,7 +823,7 @@
     const form = event.currentTarget;
     const file = $("image-upload").files[0];
     if (!file || file.type !== "image/jpeg" || file.size === 0 || file.size > 131072) {
-      notice("Bitte eine JPEG-Datei bis 128 KiB auswählen.", true);
+      notice(tr("Bitte eine JPEG-Datei bis 128 KiB auswählen."), true);
       return;
     }
     setBusy(form, true);
@@ -741,7 +831,7 @@
       await api("/api/images", "POST", file);
       form.reset();
       await loadImages();
-      notice("Bild geprüft und gespeichert.");
+      notice(tr("Bild geprüft und gespeichert."));
     } catch (error) { await handleFailure(error); }
     finally { setBusy(form, false); }
   });
@@ -753,7 +843,7 @@
     try {
       await api("/api/images?id=" + encodeURIComponent(button.dataset.imageId), "DELETE");
       await loadImages();
-      notice("Bild entfernt.");
+      notice(tr("Bild entfernt."));
     } catch (error) { await handleFailure(error); }
     finally { button.disabled = false; }
   });
@@ -767,7 +857,7 @@
         "&profile=" + encodeURIComponent(button.dataset.catalogProfile);
       await api("/api/images/import" + query, "POST");
       await loadImages();
-      notice("Katalogbild atomar in den beschreibbaren Speicher übernommen.");
+      notice(tr("Katalogbild atomar in den beschreibbaren Speicher übernommen."));
     } catch (error) { await handleFailure(error); }
     finally { button.disabled = false; }
   });
@@ -780,13 +870,19 @@
     finally { button.disabled = false; }
   });
 
-  const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(location.hostname);
-  if (location.protocol !== "https:" && !loopback) {
-    $("connection").textContent = "HTTPS erforderlich";
-    notice("Diese Konfiguration ist nur über HTTPS erreichbar.", true);
-  } else {
-    $("connection").textContent = loopback && location.protocol === "http:" ?
-      "Lokaler Test" : "Sichere lokale Verbindung";
-    refreshBootstrap().catch((error) => notice(errorText(error), true));
+  captureStaticCopy();
+  applyLocale("en");
+  async function start() {
+    try { await loadLanguage(); } catch (_) { /* English is the safe default. */ }
+    const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(location.hostname);
+    if (location.protocol !== "https:" && !loopback) {
+      $("connection").textContent = tr("HTTPS erforderlich");
+      notice(tr("Diese Konfiguration ist nur über HTTPS erreichbar."), true);
+    } else {
+      $("connection").textContent = loopback && location.protocol === "http:" ?
+        tr("Lokaler Test") : tr("Sichere lokale Verbindung");
+      refreshBootstrap().catch((error) => notice(errorText(error), true));
+    }
   }
+  void start();
 })();

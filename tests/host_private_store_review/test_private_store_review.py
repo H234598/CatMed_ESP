@@ -108,6 +108,7 @@ int main(int argc, char **argv) {
     }
     r.wifi_profile_count = static_cast<uint8_t>(requested_profiles);
     r.next_wifi_profile_id = requested_profiles + 1;
+    r.language = version >= 11 ? KATMED_LANG_AR : KATMED_LANG_EN;
     for (unsigned i = 0; i < r.wifi_profile_count; ++i) {
         StoreWifiProfile &profile = r.wifi_profiles[i];
         profile.id = i + 1;
@@ -124,9 +125,7 @@ int main(int argc, char **argv) {
     if (encode_record(r, blob, &size, static_cast<uint16_t>(version)) != STORE_OK) return 4;
     if (roundtrip) {
         DurableFixture disk{};
-        Store writer{};
-        writer.backend = {&disk, durable_read, durable_write};
-        if (write_record(&writer, r) != STORE_OK || disk.length != size) return 6;
+        if (durable_write(&disk, blob, size) != STORE_OK || disk.length != size) return 6;
         Store reopened{};
         StoreRecovery recovery{};
         if (store_open(&reopened, {&disk, durable_read, durable_write}, r.device,
@@ -138,6 +137,7 @@ int main(int argc, char **argv) {
             std::strcmp(d.mesh_name, r.mesh_name) != 0 || d.wifi_profile_count != r.wifi_profile_count ||
             d.pending_count != r.pending_count || d.conflict_count != r.conflict_count ||
             d.group_divergent != r.group_divergent || d.has_history != r.has_history ||
+            d.language != (version >= 11 ? r.language : static_cast<uint8_t>(KATMED_LANG_EN)) ||
             d.last_confirmation.valid != r.last_confirmation.valid) return 8;
         for (unsigned i = 0; i < r.mesh_name_count; ++i)
             if (d.mesh_names[i].device != r.mesh_names[i].device ||
@@ -249,6 +249,9 @@ def main():
             assert roundtrip.returncode == 0, "durable Store reopen comparison failed"
             assert roundtrip.stdout.decode().strip() == (
                 f"roundtrip profiles={profile_count} bytes={expected_bytes} names=64 history_events=16 pending=8 conflicts=8")
+        v11 = run([str(binary), "10", "11", "roundtrip", "4"])
+        assert v11.returncode == 0, "maximal v11 language reopen failed"
+        assert b"bytes=4065 names=64 history_events=16 pending=8 conflicts=8" in v11.stdout
         fifth_row = struct.pack("<IBB", 5, 5, 32) + b"N" * 32 + b"\x01\x3f" + b"p" * 63
         assert len(fifth_row) == 103
         five_profile_blob = bytearray(run([str(binary), "10"]).stdout)

@@ -12,9 +12,9 @@
 
 namespace {
 constexpr uint8_t kMagic[4] = {'K', 'M', 'S', 'T'};
-/* v10 combines the independently developed v9 mesh-name registry and the
- * v8 Wi-Fi profile list. Versions 8 and 9 were never an on-device release. */
-constexpr uint16_t kCurrentVersion = 10;
+/* v11 appends one local language byte after the unchanged v10 payload.
+ * Versions 8 and 9 were never an on-device release. */
+constexpr uint16_t kCurrentVersion = 11;
 constexpr size_t kHeaderSize = 12;
 
 uint32_t checksum(const uint8_t *data, size_t length) {
@@ -372,7 +372,8 @@ bool valid_record(const StoreRecord &v) {
         !valid_local(v.local,v.device) || v.pending_count > KATMED_STORE_PENDING_MAX ||
         v.conflict_count > KATMED_STORE_CONFLICT_MAX ||
         !valid_provision(v.provision) || !valid_manual_intent(v.manual_intent,v) ||
-        !valid_mesh_names(v) || !valid_wifi_profiles(v)) return false;
+        !valid_mesh_names(v) || !valid_wifi_profiles(v) ||
+        v.language>=KATMED_LANGUAGE_COUNT) return false;
     if (v.group_origin!=STORE_GROUP_ORIGIN_UNKNOWN &&
         v.group_origin!=STORE_GROUP_ORIGIN_FRESH_UNBOUND &&
         v.group_origin!=STORE_GROUP_ORIGIN_FIRST_BOUND) return false;
@@ -474,6 +475,7 @@ StoreResult encode_record(const StoreRecord &v, uint8_t *bytes, size_t *length, 
             w.boolean(p.secured); w.u8(p.password_length); w.bytes(p.password,sizeof(p.password));
         }
     }
+    if (version>=11) w.u8(v.language);
     if (!w.good || w.position > UINT16_MAX) return STORE_FULL;
     const uint16_t n=static_cast<uint16_t>(w.position);
     bytes[6]=static_cast<uint8_t>(n); bytes[7]=static_cast<uint8_t>(n>>8);
@@ -565,6 +567,8 @@ StoreResult decode_record(const uint8_t *bytes, size_t length, StoreRecord *out)
         std::memcpy(p.password,v.provision.password,sizeof(p.password));
         p.secured=p.password_length!=0; v.wifi_profile_count=1; v.next_wifi_profile_id=2;
     }
+    if (version>=11) v.language=r.u8();
+    if (v.language>=KATMED_LANGUAGE_COUNT) return corrupt();
     if (!r.good || r.position!=length || !valid_record(v)) return corrupt();
     return STORE_OK;
 }
@@ -732,6 +736,7 @@ StoreResult store_get_recovery(const Store *store, StoreRecovery *recovery) {
     r.catalog_mismatch=store->catalog_mismatch;
     r.configured=store->record.provision.configured;
     r.manual_intent=store->record.manual_intent;
+    r.language=store->record.language;
     *recovery=r;
     return STORE_OK;
 }
@@ -819,6 +824,15 @@ StoreResult store_set_local(Store *store, LocalSettings *active,
     const StoreResult committed=write_record(store,store->staged);
     if (committed==STORE_OK) *active=*requested;
     return committed;
+}
+
+StoreResult store_set_language(Store *store, uint8_t language) {
+    if (!ready(store)) return STORE_UNAVAILABLE;
+    if (language>=KATMED_LANGUAGE_COUNT) return store->last_error=STORE_INVALID;
+    if (store->record.language==language) return store->last_error=STORE_DUPLICATE;
+    store->staged=store->record;
+    store->staged.language=language;
+    return write_record(store,store->staged);
 }
 
 StoreResult store_clear_manual_intent(Store *store) {

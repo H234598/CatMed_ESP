@@ -34,6 +34,8 @@ extern const unsigned char _binary_style_css_start[];
 extern const unsigned char _binary_style_css_end[];
 extern const unsigned char _binary_app_js_start[];
 extern const unsigned char _binary_app_js_end[];
+extern const unsigned char _binary_i18n_js_start[];
+extern const unsigned char _binary_i18n_js_end[];
 
 #define WEB_TAG "katmed_web"
 #define BODY_MAX 3072u
@@ -426,6 +428,47 @@ static esp_err_t script_get(httpd_req_t *req)
 {
     return asset_reply(req, _binary_app_js_start, _binary_app_js_end,
                        "application/javascript; charset=utf-8");
+}
+static esp_err_t language_script_get(httpd_req_t *req)
+{
+    return asset_reply(req, _binary_i18n_js_start, _binary_i18n_js_end,
+                       "application/javascript; charset=utf-8");
+}
+
+static const char *const language_codes[KATMED_LANGUAGE_COUNT] = {
+    "en", "de", "fr", "nl", "uk", "ar", "zh-Hans", "es", "ja", "bar", "eo", "tlh-Latn"
+};
+
+static esp_err_t language_get(httpd_req_t *req)
+{
+    uint8_t language = KATMED_LANG_EN;
+    if (web.services.language_get &&
+        !web.services.language_get(web.services.context, &language))
+        return error_reply(req, "503 Service Unavailable", "unavailable");
+    if (language >= KATMED_LANGUAGE_COUNT) language = KATMED_LANG_EN;
+    cJSON *obj = cJSON_CreateObject();
+    if (!obj) return error_reply(req, "503 Service Unavailable", "unavailable");
+    cJSON_AddStringToObject(obj, "language", language_codes[language]);
+    return json_reply(req, "200 OK", obj);
+}
+
+static esp_err_t language_put(httpd_req_t *req)
+{
+    char token[KATMED_WEB_TOKEN_HEX + 1];
+    if (!require_session(req, true, token)) return ESP_OK;
+    cJSON *obj = read_json(req);
+    const char *const keys[] = {"language"};
+    const char *code = json_string(obj, "language", 16);
+    int selected = -1;
+    if (keys_only(obj, keys, 1) && code)
+        for (unsigned i = 0; i < KATMED_LANGUAGE_COUNT; ++i)
+            if (strcmp(code, language_codes[i]) == 0) selected = (int)i;
+    if (obj) { wipe_json(obj); cJSON_Delete(obj); }
+    if (selected < 0) return error_reply(req, "422 Unprocessable Entity", "invalid");
+    if (!web.services.language_set ||
+        !web.services.language_set(web.services.context, (uint8_t)selected))
+        return error_reply(req, "503 Service Unavailable", "unavailable");
+    return language_get(req);
 }
 
 static cJSON *bootstrap_object(httpd_req_t *req, KatmedWebSession *session)
@@ -969,6 +1012,9 @@ static bool register_routes(httpd_handle_t server)
         {"/", HTTP_GET, page_get},
         {"/style.css", HTTP_GET, style_get},
         {"/app.js", HTTP_GET, script_get},
+        {"/i18n.js", HTTP_GET, language_script_get},
+        {"/api/language", HTTP_GET, language_get},
+        {"/api/language", HTTP_PUT, language_put},
         {"/api/bootstrap", HTTP_GET, bootstrap_get},
         {"/api/info", HTTP_GET, info_get},
         {"/api/setup", HTTP_POST, setup_post},

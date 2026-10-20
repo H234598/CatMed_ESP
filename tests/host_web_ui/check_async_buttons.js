@@ -20,6 +20,7 @@ const replies = [];
 const calls = [];
 const timers = [];
 const document = {
+  documentElement: { lang: "en", dir: "ltr" }, title: "Fixture",
   getElementById: element,
   querySelectorAll() { return []; },
   createElement(tag) { return element(`created-${tag}-${Math.random()}`); }

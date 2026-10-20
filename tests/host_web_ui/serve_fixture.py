@@ -17,7 +17,8 @@ from pathlib import Path
 ASSETS = Path(__file__).resolve().parents[2] / "firmware/components/katmed_web/ui"
 FILES = {"/": ("index.html", "text/html; charset=utf-8"),
          "/style.css": ("style.css", "text/css; charset=utf-8"),
-         "/app.js": ("app.js", "text/javascript; charset=utf-8")}
+         "/app.js": ("app.js", "text/javascript; charset=utf-8"),
+         "/i18n.js": ("i18n.js", "text/javascript; charset=utf-8")}
 
 
 class State:
@@ -31,6 +32,7 @@ class State:
         self.auth_method = None
         self.device_name = "KatmedESP-002"
         self.enrolled_der = None
+        self.language = "en"
         self.revision = 1
         self.preview = None
         self.config = {
@@ -124,6 +126,8 @@ class Handler(BaseHTTPRequestHandler):
                                      "name_state": "assigned"}) if self.authenticated() else self.send_json(401, {"error": "unauthorized"})
             elif self.path == "/api/config":
                 self.send_json(200, STATE.snapshot()) if self.authenticated() else self.send_json(401, {"error": "unauthorized"})
+            elif self.path == "/api/language":
+                self.send_json(200, {"language": STATE.language})
             elif self.path == "/api/client-cert":
                 self.send_json(200, {"enrolled": STATE.enrolled_der is not None,
                                      "subject": "CN=Fixture Client" if STATE.enrolled_der else None}) if self.authenticated() else self.send_json(401, {"error": "unauthorized"})
@@ -190,6 +194,13 @@ class Handler(BaseHTTPRequestHandler):
                 STATE.csrf = None
                 STATE.auth_method = None
                 self.send_json(200, {}, "katmed_session=; Path=/; Max-Age=0; Secure; HttpOnly; SameSite=Strict")
+            elif self.path == "/api/language" and method == "PUT":
+                if set(data) != {"language"} or data["language"] not in (
+                        "en", "de", "fr", "nl", "uk", "ar", "zh-Hans", "es", "ja", "bar", "eo", "tlh-Latn"):
+                    self.send_json(422, {"error": "invalid"})
+                else:
+                    STATE.language = data["language"]
+                    self.send_json(200, {"language": STATE.language})
             elif self.path == "/api/config/preview-time" and method == "POST":
                 time = data.get("time")
                 if data.get("revision") != f"r{STATE.revision}":

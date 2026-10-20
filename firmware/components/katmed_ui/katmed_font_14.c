@@ -9,6 +9,7 @@
 #else
 #include "lvgl/lvgl.h"
 #endif
+extern const lv_font_t katmed_font_i18n_14;
 
 #ifndef KATMED_FONT_14
 #define KATMED_FONT_14 1
@@ -676,7 +677,7 @@ lv_font_t katmed_font_14 = {
 #endif
     .dsc = &font_dsc,          /*The custom font data. Will be accessed by `get_glyph_bitmap/dsc` */
 #if LV_VERSION_CHECK(8, 2, 0) || LVGL_VERSION_MAJOR >= 9
-    .fallback = NULL,
+    .fallback = &katmed_font_i18n_14,
 #endif
     .user_data = NULL,
 };

@@ -1,6 +1,7 @@
 #include "clock_view.h"
 #include "katmed_core.h"
 #include "katmed_font.h"
+#include "katmed_i18n.h"
 
 #include "clock_font_30.inc"
 #include "clock_font_68.inc"
@@ -78,7 +79,7 @@ lv_obj_t *clock_view_create(lv_obj_t *parent)
     lv_obj_set_style_text_font(w->time, &katmed_font_68, 0);
     w->date = clock_label(w->plate, "");
     lv_obj_set_style_text_font(w->date, &katmed_font_30, 0);
-    w->quality = clock_label(w->plate, "Uhrzeit nicht verfügbar");
+    w->quality = clock_label(w->plate, katmed_i18n_text("Uhrzeit nicht verfügbar"));
     lv_obj_set_style_text_font(w->quality, &katmed_font_14, 0);
     w->dial = lv_obj_create(view);
     lv_obj_set_scrollable(w->dial, false);
@@ -171,12 +172,15 @@ void clock_view_update(lv_obj_t *view, ClockStyle style, const ClockSample *cloc
                         local.hour, local.minute);
     else strcpy(buffer, stacked ? "--:\n--" : "--:--");
     lv_label_set_text(w->time, buffer);
-    if (valid) snprintf(buffer, sizeof(buffer), "%02u.%02u.%04d", local.day,
-                        local.month, local.year);
+    if (valid) katmed_i18n_format_date(buffer, sizeof(buffer), (unsigned)local.year,
+                                       local.month, local.day);
     else buffer[0] = '\0';
+    lv_obj_set_style_text_font(w->date,
+                               lv_obj_get_width(view) < 200 ? &katmed_font_14 : &katmed_font_30,
+                               0);
     lv_label_set_text(w->date, buffer);
-    lv_label_set_text(w->quality, !valid ? "Uhrzeit nicht verfügbar" :
-                      clock->quality == CLOCK_HOLDOVER ? "Zeit nicht synchronisiert" : "");
+    lv_label_set_text(w->quality, !valid ? katmed_i18n_text("Uhrzeit nicht verfügbar") :
+                      clock->quality == CLOCK_HOLDOVER ? katmed_i18n_text("Zeit nicht synchronisiert") : "");
 
     bool analog_style = style == ANALOG;
     bool analog = analog_style && valid;

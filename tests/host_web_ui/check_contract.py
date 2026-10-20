@@ -61,25 +61,24 @@ def expect(status, result):
 
 
 def run(info):
-    files = {name: (ASSETS / name).read_bytes() for name in ("index.html", "style.css", "app.js")}
-    # These raw bytes are embedded in flash (served from the linked image),
-    # not copied into the measured HTTPS runtime heap. The Web upload, multi-
-    # profile Wi-Fi and reset/Advanced controls raise the raw bundle to 44.5 KiB;
-    # retain a 48 KiB product bound, independently covered by target app layout.
-    assert sum(map(len, files.values())) < 48 * 1024
+    files = {name: (ASSETS / name).read_bytes() for name in ("index.html", "style.css", "app.js", "i18n.js")}
+    # Catalog bytes are linked into flash; target app layout is checked separately.
+    assert sum(map(len, files.values())) < 160 * 1024
     links = Links()
     links.feed(files["index.html"].decode())
-    assert links.resources == ["/style.css", "/app.js"]
+    assert links.resources == ["/style.css", "/i18n.js", "/app.js"]
     assert b"@import" not in files["style.css"] and b"url(" not in files["style.css"]
 
     redirect = expect(308, request(info, "/", plain=True))
     assert redirect[1]["Location"] == f"https://127.0.0.1:{info['https']}/"
-    for path, name in (("/", "index.html"), ("/style.css", "style.css"), ("/app.js", "app.js")):
+    for path, name in (("/", "index.html"), ("/style.css", "style.css"),
+                       ("/i18n.js", "i18n.js"), ("/app.js", "app.js")):
         fetched = expect(200, request(info, path))
         assert fetched[2] == files[name]
         assert "script-src 'self'" in fetched[1]["Content-Security-Policy"]
 
     bootstrap = json_body(expect(200, request(info, "/api/bootstrap")))
+    assert json_body(expect(200, request(info, "/api/language")))["language"] == "en"
     assert bootstrap["setup_required"] and not bootstrap["authenticated"]
     assert bootstrap["device_name"] == "KatmedESP-002"
     assert "setup_code" not in bootstrap and "pairing_code" not in bootstrap
@@ -111,6 +110,11 @@ def run(info):
     assert all(part in cookie_header for part in ("Secure", "HttpOnly", "SameSite=Strict"))
     cookie = cookie_header.split(";", 1)[0]
     csrf = json_body(login)["csrf_token"]
+    expect(403, request(info, "/api/language", "PUT", {"language": "ar"}, cookie))
+    expect(422, request(info, "/api/language", "PUT", {"language": "unknown"}, cookie, csrf))
+    assert json_body(expect(200, request(info, "/api/language", "PUT",
+                                      {"language": "ar"}, cookie, csrf)))["language"] == "ar"
+    assert json_body(expect(200, request(info, "/api/language")))["language"] == "ar"
     device_info = json_body(expect(200, request(info, "/api/info", cookie=cookie)))
     assert device_info["device_name"] == device_info["hostname"] == "KatmedESP-002"
     assert device_info["name_state"] == "assigned"

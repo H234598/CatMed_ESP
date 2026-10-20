@@ -4,9 +4,10 @@ idf_component_register(
          "katmed_web_media.c"
     INCLUDE_DIRS "include"
     PRIV_INCLUDE_DIRS "."
-    REQUIRES katmed_config_bridge
+    REQUIRES katmed_config_bridge katmed_core
     PRIV_REQUIRES esp_https_server esp_http_server esp-tls mbedtls nvs_flash cjson
                   esp_timer esp_hw_support esp_system katmed_images)
 target_add_binary_data(${COMPONENT_LIB} "ui/index.html" BINARY)
 target_add_binary_data(${COMPONENT_LIB} "ui/style.css" BINARY)
 target_add_binary_data(${COMPONENT_LIB} "ui/app.js" BINARY)
+target_add_binary_data(${COMPONENT_LIB} "ui/i18n.js" BINARY)

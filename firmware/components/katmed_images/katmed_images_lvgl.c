@@ -401,7 +401,7 @@ static void prepare_fallback(lv_obj_t *image, lv_obj_t *label)
     active_fallback = label;
     /* These allocations and styles happen before the decode. A late I/O
      * failure need only flip existing flags and release the image source. */
-    lv_label_set_text_static(label, "Bild nicht verfügbar");
+    /* The UI supplies localized fallback copy before the image request. */
     lv_obj_set_size(label, LV_PCT(100), LV_PCT(100));
     lv_obj_set_style_bg_color(label, lv_color_hex(0x303438), 0);
     lv_obj_set_style_bg_opa(label, LV_OPA_COVER, 0);

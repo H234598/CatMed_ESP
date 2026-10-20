@@ -29,6 +29,7 @@
 #include "katmed_dhcp_diag.h"
 #include "katmed_store.h"
 #include "katmed_store_idf.h"
+#include "katmed_i18n.h"
 #include "katmed_reset_idf.h"
 #include "katmed_acme.h"
 #include <private_wifi_defaults.h>
@@ -562,6 +563,14 @@ static UiSubmitResult submit_ui_with_id(void *context, const UiRequest *request,
      * until the store is reopened and the durable value is known. */
     if (store_get_status(&rt->store, NULL, NULL, NULL) != STORE_OK)
         return UI_SUBMIT_UNAVAILABLE;
+    if (request->kind == UI_REQUEST_SET_LANGUAGE) {
+        const uint8_t language=request->value.language;
+        if (!katmed_i18n_available(language)) return UI_SUBMIT_REJECTED;
+        const StoreResult result=store_set_language(&rt->store,language);
+        if (result!=STORE_OK && result!=STORE_DUPLICATE) return UI_SUBMIT_UNAVAILABLE;
+        katmed_i18n_select(language);
+        return UI_SUBMIT_COMMITTED;
+    }
     if (request->kind == UI_REQUEST_SET_CLOCK_STYLE) {
         if (request->value.clock_style > ANALOG) return UI_SUBMIT_REJECTED;
         if (request->value.clock_style == rt->local.clock_style)
@@ -1048,6 +1057,25 @@ static bool web_wifi_ready(Runtime *rt)
 {
     return rt != NULL && rt->store_ready &&
         store_get_status(&rt->store, NULL, NULL, NULL) == STORE_OK;
+}
+
+static bool web_language_get(void *context, uint8_t *out)
+{
+    Runtime *rt=context;
+    if (!out || !web_wifi_ready(rt)) return false;
+    *out=katmed_i18n_available(rt->store.record.language) ?
+        rt->store.record.language : KATMED_LANG_EN;
+    return true;
+}
+
+static bool web_language_set(void *context, uint8_t language)
+{
+    Runtime *rt=context;
+    if (!web_wifi_ready(rt) || !katmed_i18n_available(language)) return false;
+    const StoreResult result=store_set_language(&rt->store,language);
+    if (result!=STORE_OK && result!=STORE_DUPLICATE) return false;
+    katmed_i18n_select(language);
+    return true;
 }
 
 static bool web_wifi_configured(void *context, bool *out)
@@ -1710,6 +1738,7 @@ void app_main(void)
         .reset_confirm = katmed_runtime_reset_confirm,
     };
     ui_set_services(&services);
+    katmed_i18n_select(runtime.store_ready ? runtime.store.record.language : KATMED_LANG_EN);
     board_set_touch_filter(ui_lvgl_touch_allowed);
     ui_render(&runtime.state, &runtime.local, ui_current_view(), &now);
     if (runtime.reset_warning_ready) ui_reset_show_warning();
@@ -1753,6 +1782,8 @@ void app_main(void)
         const KatmedWebServices web_services = {
             .context = &runtime,
             .device_info = web_device_info,
+            .language_get = web_language_get,
+            .language_set = web_language_set,
             .wifi = {
                 .configured = web_wifi_configured,
                 .recovery_available = web_wifi_recovery_available,

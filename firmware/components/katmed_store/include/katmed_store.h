@@ -5,6 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "katmed_core.h"
+#include "katmed_language.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -145,6 +146,7 @@ typedef struct {
     StoreWifiProfile wifi_profiles[KATMED_STORE_WIFI_PROFILE_MAX];
     uint8_t wifi_profile_count;
     uint32_t next_wifi_profile_id;
+    uint8_t language; /* v11: local presentation preference, English on legacy records. */
 } StoreRecord;
 
 typedef struct {
@@ -185,6 +187,7 @@ typedef struct {
     bool catalog_mismatch;
     bool configured;
     StoreManualIntent manual_intent;
+    uint8_t language;
 } StoreRecovery;
 
 typedef struct {
@@ -208,6 +211,7 @@ StoreResult store_apply_event(Store *store, AppState *active, const AppEvent *ev
                               AppEffects *effects, AppResult *core_result);
 StoreResult store_set_local(Store *store, LocalSettings *active,
                             const LocalSettings *requested);
+StoreResult store_set_language(Store *store, uint8_t language);
 StoreResult store_clear_manual_intent(Store *store);
 StoreResult store_ack_pending(Store *store, AppState *active, EventId id,
                               bool coordinator_accepted);

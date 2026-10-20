@@ -6,6 +6,7 @@
 #include "esp_http_server.h"
 #include "katmed_web_wifi.h"
 #include "katmed_web_reset.h"
+#include "katmed_language.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -22,6 +23,8 @@ typedef struct {
 typedef struct {
     void *context;
     bool (*device_info)(void *context, KatmedWebDeviceInfo *out);
+    bool (*language_get)(void *context, uint8_t *out);
+    bool (*language_set)(void *context, uint8_t language);
     /* Runtime data adapters. katmed_web_start supplies the shared HTTPS
      * session/CSRF authorize callback before registering these routes. */
     KatmedWebWifiServices wifi;

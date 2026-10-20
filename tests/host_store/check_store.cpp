@@ -46,9 +46,14 @@ void remove_v9_names(Fake &f) {
     repair_crc(f);
 }
 void remove_v10_wifi_profiles(Fake &f);
+void remove_v11_language(Fake &f) {
+    assert(f.bytes[4]==11 && f.length>12);
+    --f.length; f.bytes[4]=10; repair_crc(f);
+}
 void downgrade_names_to_v8(Fake &f) {
     constexpr size_t v9_suffix=1+17+2+1+KATMED_MESH_NAME_MAX_ENTRIES*10+4;
     constexpr size_t v8_suffix=1+17+2+1+9*10+2;
+    if (f.bytes[4]==11) remove_v11_language(f);
     if (f.bytes[4]==10) remove_v10_wifi_profiles(f);
     assert(f.bytes[4]==9 && f.length>v9_suffix);
     const size_t suffix=f.length-v9_suffix;
@@ -60,6 +65,7 @@ void downgrade_names_to_v8(Fake &f) {
     repair_crc(f);
 }
 void remove_v10_wifi_profiles(Fake &f) {
+    if (f.bytes[4]==11) remove_v11_language(f);
     assert(f.bytes[4]==10 && f.length>=17);
     size_t suffix=0; unsigned matches=0;
     for (unsigned count=0;count<=KATMED_STORE_WIFI_PROFILE_MAX;++count) {
@@ -72,6 +78,7 @@ void remove_v10_wifi_profiles(Fake &f) {
     f.length-=suffix; f.bytes[4]=9; repair_crc(f);
 }
 void remove_v7_manual(Fake &f) {
+    if (f.bytes[4]==11) remove_v11_language(f);
     if (f.bytes[4]==10) remove_v10_wifi_profiles(f);
     if (f.bytes[4]==9) remove_v9_names(f);
     assert(f.bytes[4]==7 && f.length>77);
@@ -161,7 +168,7 @@ void test_v8_mesh_name_migration_past_999() {
     assert(std::strcmp(store_mesh_name(&migrated),"KatmedESP-999")==0);
     assert(store_mesh_name_next_index(&migrated)==1000);
     assert(store_mesh_name_assign(&migrated,UINT64_C(0xAC276E46BC2D),1000)==STORE_OK);
-    assert(fixture.bytes[4]==10 && store_mesh_name_next_index(&migrated)==1001);
+    assert(fixture.bytes[4]==11 && store_mesh_name_next_index(&migrated)==1001);
 }
 void test_corrupt_legacy_future() {
     Fake original{}; Store *s=fresh_store(); StoreRecovery r=open(original,s);
@@ -535,7 +542,7 @@ void test_usb() {
         Fake forged=f;
         constexpr size_t mesh_name_suffix=1+17+2+1+KATMED_MESH_NAME_MAX_ENTRIES*10+4;
         constexpr size_t wifi_suffix=5u+103u;
-        forged.bytes[forged.length-wifi_suffix-mesh_name_suffix]=9; // Invalid mesh-name state.
+        forged.bytes[forged.length-1-wifi_suffix-mesh_name_suffix]=9; // Invalid mesh-name state.
         repair_crc(forged);
         StoreRecovery x{}; const unsigned before_forged=forged.writes;
         Store forged_store{};
@@ -571,10 +578,31 @@ void test_usb() {
     assert(std::strstr(reply,"durable=0") && std::strstr(reply,"error=CORRUPT"));
     assert(store_usb_handle_line(t,"KM1 RESET CONFIG\n",17,&info,reply,sizeof(reply))==STORE_UNAVAILABLE);
 }
+void test_language_reboot_and_factory_default() {
+    Fake disk{};
+    Store first{};
+    StoreRecovery initial{};
+    assert(store_open(&first,backend(disk),kDevice,catalog,75,&initial)==STORE_OK);
+    assert(initial.language==KATMED_LANG_EN && first.record.language==KATMED_LANG_EN);
+    assert(store_set_language(&first,KATMED_LANG_AR)==STORE_OK);
+    assert(disk.length>12 && disk.bytes[4]==11 && first.record.language==KATMED_LANG_AR);
+    assert(store_set_language(&first,KATMED_LANG_AR)==STORE_DUPLICATE);
+    assert(store_set_language(&first,KATMED_LANGUAGE_COUNT)==STORE_INVALID);
+    Store reboot{};
+    StoreRecovery restored{};
+    assert(store_open(&reboot,backend(disk),kDevice,catalog,75,&restored)==STORE_OK);
+    assert(restored.language==KATMED_LANG_AR && reboot.record.language==KATMED_LANG_AR);
+    Fake wiped{}; /* Synthetic empty backend after a full factory wipe. */
+    Store reset{};
+    StoreRecovery fresh{};
+    assert(store_open(&reset,backend(wiped),kDevice,catalog,75,&fresh)==STORE_OK);
+    assert(fresh.language==KATMED_LANG_EN && reset.record.language==KATMED_LANG_EN);
+}
 }
 int main() {
     for (unsigned i=0;i<sizeof(catalog);++i) catalog[i]=static_cast<uint8_t>(i+1);
     test_missing_and_local();
+    test_language_reboot_and_factory_default();
     test_v8_mesh_name_migration_past_999();
     test_corrupt_legacy_future();
     test_commit_matrix();

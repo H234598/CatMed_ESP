@@ -2,6 +2,7 @@
 #define KATMED_UI_H
 #include "katmed_types.h"
 #include "katmed_interaction.h"
+#include "katmed_language.h"
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -22,7 +23,8 @@ typedef enum {
     UI_REQUEST_SET_NEXT_LOCAL_TIME,
     UI_REQUEST_SET_ROTATION_MODE,
     UI_REQUEST_SET_ORIENTATION,
-    UI_REQUEST_SET_CLOCK_STYLE
+    UI_REQUEST_SET_CLOCK_STYLE,
+    UI_REQUEST_SET_LANGUAGE
 } UiRequestKind;
 typedef struct {
     UiRequestKind kind;
@@ -36,6 +38,7 @@ typedef struct {
         RotationMode rotation;
         Orientation orientation;
         ClockStyle clock_style;
+        uint8_t language;
     } value;
 } UiRequest;
 typedef enum {

@@ -5,8 +5,10 @@
 #include "clock_view.h"
 #include "katmed_core.h"
 #include "katmed_font.h"
+#include "katmed_i18n.h"
 #include "katmed_images.h"
 #include "katmed_morse.h"
+#define T(source) katmed_i18n_text(source)
 #ifdef ESP_PLATFORM
 #include "katmed_private_ui_profile.h"
 #endif
@@ -96,6 +98,7 @@ typedef struct {
     bool morse_shown_white;
     int32_t scroll_y[10]; /* Tile positions plus the Advanced subpage. */
     uint8_t status_scroll_slot;
+    uint8_t applied_language;
 } UiContext;
 
 static UiContext ui = {.view = BACKGROUND, .grid = {1, 1}, .shown_clock_tick = INT64_MIN};
@@ -199,6 +202,7 @@ static void update_status(void);
 static void build_settings(void);
 static void status_button(lv_event_t *event);
 static void advanced_button(lv_event_t *event);
+static void language_select(lv_event_t *event);
 static void reset_open(lv_event_t *event);
 static void reset_cancel(lv_event_t *event);
 static void reset_execute(lv_event_t *event);
@@ -274,15 +278,15 @@ static void show_feedback(const char *text)
 static const char *result_text(UiSubmitResult result)
 {
     switch (result) {
-    case UI_SUBMIT_COMMITTED: return "Gespeichert";
-    case UI_SUBMIT_DISMISSED: return "Hinweis geschlossen";
-    case UI_SUBMIT_PENDING: return "Lokal gespeichert; Gruppe ausstehend";
-    case UI_SUBMIT_PENDING_SHARED: return "Koordinator prüft Änderung";
-    case UI_SUBMIT_REJECTED: return "Änderung abgelehnt";
-    case UI_SUBMIT_STALE: return "Vorschau veraltet; erneut prüfen";
-    case UI_SUBMIT_UNAVAILABLE: return "Speichern derzeit nicht verfügbar";
+    case UI_SUBMIT_COMMITTED: return T("Gespeichert");
+    case UI_SUBMIT_DISMISSED: return T("Hinweis geschlossen");
+    case UI_SUBMIT_PENDING: return T("Lokal gespeichert; Gruppe ausstehend");
+    case UI_SUBMIT_PENDING_SHARED: return T("Koordinator prüft Änderung");
+    case UI_SUBMIT_REJECTED: return T("Änderung abgelehnt");
+    case UI_SUBMIT_STALE: return T("Vorschau veraltet; erneut prüfen");
+    case UI_SUBMIT_UNAVAILABLE: return T("Speichern derzeit nicht verfügbar");
     }
-    return "Speichern fehlgeschlagen";
+    return T("Speichern fehlgeschlagen");
 }
 
 static UiSubmitResult submit(const UiRequest *request)
@@ -337,7 +341,7 @@ void ui_shared_result(bool accepted)
         if (ui.services.read_model)
             ui.services.read_model(ui.services.context, &ui.state, &ui.local, &ui.clock);
         if (ui.view != ALARM && !ui.state.alarm_active)
-            show_feedback("Gemeinsame Änderung gespeichert");
+            show_feedback(T("Gemeinsame Änderung gespeichert"));
         if (ui.keypad) {
             lv_obj_delete(ui.keypad);
             ui.keypad = NULL;
@@ -348,7 +352,7 @@ void ui_shared_result(bool accepted)
         }
     } else {
         if (ui.view != ALARM && !ui.state.alarm_active)
-            show_feedback("Koordinator hat Änderung nicht übernommen");
+            show_feedback(T("Koordinator hat Änderung nicht übernommen"));
     }
     if (ui.status) update_status();
 }
@@ -359,7 +363,7 @@ void ui_shared_timeout(void)
     ui.shared_pending = false;
     ui.shared_result_status = -2;
     if (ui.view != ALARM && !ui.state.alarm_active)
-        show_feedback("Bestätigung ausgeblieben; erneuter Versuch möglich");
+        show_feedback(T("Bestätigung ausgeblieben; erneuter Versuch möglich"));
     if (ui.status) update_status();
 }
 
@@ -392,11 +396,21 @@ static void format_local(char *out, size_t size, UtcInstant instant)
 {
     LocalDateTime t;
     if (!instant.valid || app_berlin_local_time(instant.ms, &t) != APP_OK) {
-        snprintf(out, size, "Zeit nicht verfügbar");
+        snprintf(out, size, "%s", T("Zeit nicht verfügbar"));
         return;
     }
-    snprintf(out, size, "%02u.%02u.%04d %02u:%02u %s", t.day, t.month,
-             t.year, t.hour, t.minute, t.daylight_saving ? "CEST" : "CET");
+    char date[16];
+    katmed_i18n_format_date(date, sizeof(date), (unsigned)t.year, t.month, t.day);
+    snprintf(out, size, "%s %02u:%02u %s", date, t.hour, t.minute,
+             t.daylight_saving ? "CEST" : "CET");
+}
+
+static void format_local_parts(char *out, size_t size, const LocalDateTime *local)
+{
+    char date[16];
+    katmed_i18n_format_date(date, sizeof(date), (unsigned)local->year,
+                             local->month, local->day);
+    snprintf(out, size, "%s %02u:%02u", date, local->hour, local->minute);
 }
 
 static void format_hours(char *out, size_t size, uint32_t seconds)
@@ -434,11 +448,11 @@ static void update_preview(void)
     if (ui.edit == EDIT_NEXT_TIME) {
         unsigned hour, minute;
         if (!parse_hhmm(ui.entry, &hour, &minute)) {
-            lv_label_set_text(ui.preview_label, "HH:MM eingeben");
+            lv_label_set_text(ui.preview_label, T("HH:MM eingeben"));
             return;
         }
         if (app_preview_local_time(&ui.clock, hour, minute, &ui.preview) != APP_OK) {
-            lv_label_set_text(ui.preview_label, "Uhrzeit nicht verfügbar");
+            lv_label_set_text(ui.preview_label, T("Uhrzeit nicht verfügbar"));
             return;
         }
         ui.preview_valid = true;
@@ -446,39 +460,39 @@ static void update_preview(void)
         if (ui.preview.skipped_nonexistent_time) {
             LocalDateTime *regular = &ui.preview.regular_local;
             LocalDateTime *effective = &ui.preview.effective_local;
+            char regular_text[32], effective_text[32];
+            format_local_parts(regular_text, sizeof(regular_text), regular);
+            format_local_parts(effective_text, sizeof(effective_text), effective);
             lv_label_set_text_fmt(ui.preview_label,
-                                  "%02u:%02u heute nicht vorhanden\n"
-                                  "Nächster %02u.%02u.%04d %02u:%02u\n"
-                                  "Alarm %02u.%02u.%04d %02u:%02u\n%s%s",
-                                  hour, minute, regular->day, regular->month,
-                                  regular->year, regular->hour, regular->minute,
-                                  effective->day, effective->month, effective->year,
-                                  effective->hour, effective->minute,
+                                  T("%02u:%02u heute nicht vorhanden\n"
+                                    "Nächster %s\n"
+                                    "Alarm %s\n%s%s"),
+                                  hour, minute, regular_text, effective_text,
                                   effective->daylight_saving ? "CEST" : "CET",
-                                  ui.preview.night_advanced ? " (vorgezogen)" : "");
+                                  ui.preview.night_advanced ? T(" (vorgezogen)") : "");
         } else
-            lv_label_set_text_fmt(ui.preview_label, "Wirksam: %s%s", text,
-                                  ui.preview.night_advanced ? " (Nachtvorziehung)" : "");
+            lv_label_set_text_fmt(ui.preview_label, T("Wirksam: %s%s"), text,
+                                  ui.preview.night_advanced ? T(" (Nachtvorziehung)") : "");
         return;
     }
     uint32_t seconds = 0;
     if (app_parse_hours(ui.entry, &seconds) != APP_OK) {
-        lv_label_set_text(ui.preview_label, "Positive Stundenzahl eingeben");
+        lv_label_set_text(ui.preview_label, T("Positive Stundenzahl eingeben"));
         return;
     }
     ui.preview_valid = true;
     if (ui.edit == EDIT_MEDICATION) {
         Deadline deadline;
         if (app_calculate_deadline(&ui.clock, seconds, &deadline) != APP_OK) {
-            lv_label_set_text(ui.preview_label, "Termin nicht berechenbar");
+            lv_label_set_text(ui.preview_label, T("Termin nicht berechenbar"));
             ui.preview_valid = false;
             return;
         }
         format_local(text, sizeof(text), deadline.effective_utc);
-        lv_label_set_text_fmt(ui.preview_label, "Wirksam: %s%s", text,
-                              deadline.night_advanced ? " (Nachtvorziehung)" : "");
+        lv_label_set_text_fmt(ui.preview_label, T("Wirksam: %s%s"), text,
+                              deadline.night_advanced ? T(" (Nachtvorziehung)") : "");
     } else {
-        lv_label_set_text_fmt(ui.preview_label, "Bildwechsel: %lu Sekunden",
+        lv_label_set_text_fmt(ui.preview_label, T("Bildwechsel: %lu Sekunden"),
                               (unsigned long)seconds);
     }
 }
@@ -537,7 +551,7 @@ static void save_edit(lv_event_t *event)
 {
     (void)event;
     if (!ui.preview_valid) {
-        show_feedback("Eingabe ungültig; bitte prüfen");
+        show_feedback(T("Eingabe ungültig; bitte prüfen"));
         return;
     }
     UiRequest request = {0};
@@ -616,9 +630,9 @@ static void open_edit(EditKind edit)
     int info_w = landscape ? ui.width - info_x - 8 :
                  round ? 140 : ui.width - 40;
     lv_obj_t *heading = label(ui.keypad, round ?
-          (edit == EDIT_NEXT_TIME ? "HH:MM" : edit == EDIT_MEDICATION ? "Medikamente" : "Bilder") :
-          edit == EDIT_NEXT_TIME ? "Nächste Zeit HH:MM" :
-          edit == EDIT_MEDICATION ? "Medikamente: Stunden" : "Bilder: Stunden",
+          (edit == EDIT_NEXT_TIME ? "HH:MM" : edit == EDIT_MEDICATION ? T("Medikamente") : T("Bilder")) :
+          edit == EDIT_NEXT_TIME ? T("Nächste Zeit HH:MM") :
+          edit == EDIT_MEDICATION ? T("Medikamente: Stunden") : T("Bilder: Stunden"),
           info_w);
     lv_obj_set_pos(heading, info_x, landscape ? 8 : round ? 36 : 8);
     if (round) lv_obj_set_width(heading, 76);
@@ -635,9 +649,9 @@ static void open_edit(EditKind edit)
     lv_obj_set_pos(ui.preview_label, info_x, landscape ? 62 : round ? 56 : 47);
     int action_y = landscape ? ui.height - 40 : round ? 188 : ui.height - 35;
     int action_w = landscape || round ? (info_w - 4) / 2 : (ui.width - 44) / 2;
-    lv_obj_t *save = button(ui.keypad, "Speichern", action_w, 30, save_edit, NULL);
+    lv_obj_t *save = button(ui.keypad, T("Speichern"), action_w, 30, save_edit, NULL);
     lv_obj_set_pos(save, info_x, action_y);
-    lv_obj_t *cancel = button(ui.keypad, "Abbrechen", action_w, 30, cancel_edit, NULL);
+    lv_obj_t *cancel = button(ui.keypad, T("Abbrechen"), action_w, 30, cancel_edit, NULL);
     lv_obj_set_pos(cancel, info_x + action_w + 4, action_y);
     lv_obj_set_width(lv_obj_get_child(save, 0), action_w - 2);
     lv_obj_set_width(lv_obj_get_child(cancel, 0), action_w - 2);
@@ -745,9 +759,9 @@ static void style_open(lv_event_t *event)
     lv_obj_set_style_border_width(ui.style_dialog, 0, 0);
     lv_obj_set_style_pad_all(ui.style_dialog, 0, 0);
     lv_obj_set_scrollable(ui.style_dialog, false);
-    ui.style_title = label(ui.style_dialog, "Uhrdesign wählen", width - 12);
+    ui.style_title = label(ui.style_dialog, T("Uhrdesign wählen"), width - 12);
     lv_obj_set_pos(ui.style_title, 6, 4);
-    static const char *names[3] = {"Digital groß", "Digital mit Datum", "Analog"};
+    const char *names[3] = {T("Digital groß"), T("Digital mit Datum"), T("Analog")};
     int option_h = height < 170 ? 25 : 30;
     int first_y = height < 170 ? 30 : 36;
     for (int i = 0; i < 3; ++i) {
@@ -757,9 +771,9 @@ static void style_open(lv_event_t *event)
     }
     style_highlight();
     int action_w = (width - 18) / 2;
-    lv_obj_t *save = button(ui.style_dialog, "Speichern", action_w, 29,
+    lv_obj_t *save = button(ui.style_dialog, T("Speichern"), action_w, 29,
                             style_save, NULL);
-    lv_obj_t *cancel = button(ui.style_dialog, "Abbrechen", action_w, 29,
+    lv_obj_t *cancel = button(ui.style_dialog, T("Abbrechen"), action_w, 29,
                               style_cancel, NULL);
     lv_obj_set_pos(save, 6, height - 35);
     lv_obj_set_pos(cancel, 12 + action_w, height - 35);
@@ -812,7 +826,7 @@ static void status_button(lv_event_t *event)
     lv_obj_set_flex_flow(ui.status, LV_FLEX_FLOW_COLUMN);
     if (ui.height < 200) lv_obj_set_style_pad_row(ui.status, 2, 0);
     int row_w = ui.width - (ui.width == 240 ? 100 : 18) - 4;
-    lv_obj_t *title = label(ui.status, "Status", row_w);
+    lv_obj_t *title = label(ui.status, T("Status"), row_w);
     if (ui.height < 200)
         lv_obj_set_style_text_font(title, &katmed_font_12, 0);
     update_status();
@@ -842,40 +856,57 @@ static void build_settings(void)
     lv_obj_set_style_pad_row(ui.settings, 5, 0);
     int row_w = ui.width - (ui.width == 240 ? 100 : 18) - 4;
     if (ui.advanced_open) {
-        label(ui.settings, "Advanced", row_w);
-        button(ui.settings, "Medikamente: Stunden", row_w, 34, edit_button,
+        label(ui.settings, T("Advanced"), row_w);
+        label(ui.settings, T("Sprache"), row_w);
+        static const struct { uint8_t id; const char *name; } languages[] = {
+            {KATMED_LANG_EN, "English"}, {KATMED_LANG_DE, "Deutsch"},
+            {KATMED_LANG_FR, "Français"}, {KATMED_LANG_NL, "Nederlands"},
+            {KATMED_LANG_UK, "Українська"}, {KATMED_LANG_AR, "العربية"},
+            {KATMED_LANG_ZH_HANS, "简体中文"}, {KATMED_LANG_ES, "Español"},
+            {KATMED_LANG_JA, "日本語"}, {KATMED_LANG_EO, "Esperanto"},
+        };
+        for (size_t i = 0; i < sizeof(languages)/sizeof(languages[0]); ++i) {
+            lv_obj_t *choice=button(ui.settings,languages[i].name,row_w,34,
+                                    language_select,(void *)(intptr_t)languages[i].id);
+            if (languages[i].id==katmed_i18n_selected())
+                lv_obj_set_style_bg_color(choice,lv_color_hex(0x13708b),0);
+        }
+        button(ui.settings, T("Medikamente: Stunden"), row_w, 34, edit_button,
                (void *)(intptr_t)EDIT_MEDICATION);
-        button(ui.settings, "Bilder: Stunden", row_w, 34, edit_button,
+        button(ui.settings, T("Bilder: Stunden"), row_w, 34, edit_button,
                (void *)(intptr_t)EDIT_IMAGE);
-        button(ui.settings, "Nächste Fälligkeit HH:MM", row_w, 40, edit_button,
+        button(ui.settings, T("Nächste Fälligkeit HH:MM"), row_w, 40, edit_button,
                (void *)(intptr_t)EDIT_NEXT_TIME);
         restore_scroll(ui.settings, 9);
         if (ui.feedback && !lv_obj_is_hidden(ui.feedback))
             lv_obj_move_foreground(ui.feedback);
         return;
     }
-    label(ui.settings, "Einstellungen", row_w);
+    label(ui.settings, T("Einstellungen"), row_w);
     ui.pairing_label = label(ui.settings, "", row_w);
     if (ui.pairing_code[0])
-        lv_label_set_text_fmt(ui.pairing_label, "Web-Code: %s", ui.pairing_code);
+        lv_label_set_text_fmt(ui.pairing_label, T("Web-Code: %s"), ui.pairing_code);
     else lv_obj_set_hidden(ui.pairing_label, true);
-    button(ui.settings, "Seltsam", row_w, 34, morse_open, NULL);
-    button(ui.settings, "Morsecode", row_w, 34, interaction_open, NULL);
-    label(ui.settings, "Zeiten", row_w);
-    button(ui.settings, "Advanced", row_w, 34, advanced_button, NULL);
-    button(ui.settings, "Uhrdesign", row_w, 34, style_open, NULL);
-    label(ui.settings, "Ausrichtung", row_w);
+    button(ui.settings, T("Seltsam"), row_w, 34, morse_open, NULL);
+    button(ui.settings, T("Morsecode"), row_w, 34, interaction_open, NULL);
+    label(ui.settings, T("Zeiten"), row_w);
+    button(ui.settings, T("Advanced"), row_w, 34, advanced_button, NULL);
+    button(ui.settings, T("Uhrdesign"), row_w, 34, style_open, NULL);
+    label(ui.settings, T("Ausrichtung"), row_w);
     static const char *angle_map[] = {"0°", "\n", "90°", "\n",
                                       "180°", "\n", "270°", ""};
     option_matrix(ui.settings, angle_map, row_w, 4, true);
-    label(ui.settings, "Diashow / Abspielreienfolge", row_w);
+    label(ui.settings, T("Diashow / Abspielreienfolge"), row_w);
     static const char *rotation_map[] = {"Aus", "\n", "Nach Namen", "\n",
                                          "Zufall", ""};
+    rotation_map[0]=T("Aus");
+    rotation_map[2]=T("Nach Namen");
+    rotation_map[4]=T("Zufall");
     option_matrix(ui.settings, rotation_map, row_w, 3, false);
-    lv_obj_t *import = button(ui.settings, "Lade Bilder von URL/Github\nSpäter verfügbar",
+    lv_obj_t *import = button(ui.settings, T("Lade Bilder von URL/Github\nSpäter verfügbar"),
                               row_w, 48, NULL, NULL);
     lv_obj_add_state(import, LV_STATE_DISABLED);
-    button(ui.settings, "Werkseinstellungen zurücksetzen", row_w, 42,
+    button(ui.settings, T("Werkseinstellungen zurücksetzen"), row_w, 42,
            reset_open, NULL);
     restore_scroll(ui.settings, 5);
     if (ui.feedback && !lv_obj_is_hidden(ui.feedback))
@@ -889,6 +920,15 @@ static void advanced_button(lv_event_t *event)
     destroy_menu();
     ui.advanced_open = !ui.advanced_open;
     build_settings();
+}
+
+static void language_select(lv_event_t *event)
+{
+    const uint8_t language=(uint8_t)(intptr_t)lv_event_get_user_data(event);
+    const UiRequest request={.kind=UI_REQUEST_SET_LANGUAGE,.value.language=language};
+    const UiSubmitResult result=ui.services.submit
+        ? ui.services.submit(ui.services.context,&request) : UI_SUBMIT_UNAVAILABLE;
+    show_feedback(T(result_text(result)));
 }
 
 static void reset_dialog_press(lv_event_t *event)
@@ -922,7 +962,7 @@ static void reset_cancel(lv_event_t *event)
     (void)event;
     if (!ui.reset_dialog_pressed) return;
     if (!reset_abandon()) {
-        show_feedback("Abbruch konnte nicht gespeichert werden");
+        show_feedback(T("Abbruch konnte nicht gespeichert werden"));
         return;
     }
 }
@@ -935,16 +975,16 @@ static void reset_execute(lv_event_t *event)
         ? ui.services.reset_confirm(ui.services.context, ui.reset_token,
                                     ui.reset_token_length) : 2;
     reset_dialog_close();
-    show_feedback(result == 0 ? "Reset vorgemerkt" :
-                  result == 1 ? "Bestätigung abgelaufen; bitte neu starten" :
-                                "Reset nicht verfügbar");
+    show_feedback(result == 0 ? T("Reset vorgemerkt") :
+                  result == 1 ? T("Bestätigung abgelaufen; bitte neu starten") :
+                                T("Reset nicht verfügbar"));
 }
 
 static void reset_open(lv_event_t *event)
 {
     if (!ui.screen || ui.state.alarm_active || ui.reset_dialog || !ui.services.reset_arm ||
         !ui.services.reset_cancel) {
-        show_feedback("Reset nicht verfügbar");
+        show_feedback(T("Reset nicht verfügbar"));
         return;
     }
     ui.reset_dialog = lv_obj_create(ui.screen);
@@ -955,17 +995,17 @@ static void reset_open(lv_event_t *event)
     lv_obj_set_style_pad_all(ui.reset_dialog, 12, 0);
     lv_obj_set_scrollable(ui.reset_dialog, false);
     lv_obj_set_flex_flow(ui.reset_dialog, LV_FLEX_FLOW_COLUMN);
-    label(ui.reset_dialog, "Factory Reset vorbereiten", ui.width - 32);
+    label(ui.reset_dialog, T("Factory Reset vorbereiten"), ui.width - 32);
     label(ui.reset_dialog,
-          "Um den Factory Reset durchzuführen, bitte die RESET-Taste links oben auf der Rückseite des Displays drücken, während diese Kachel offen ist.",
+          T("Um den Factory Reset durchzuführen, bitte die RESET-Taste links oben auf der Rückseite des Displays drücken, während diese Kachel offen ist."),
           ui.width - 32);
-    lv_obj_t *cancel = button(ui.reset_dialog, "Abbrechen", ui.width - 36,
+    lv_obj_t *cancel = button(ui.reset_dialog, T("Abbrechen"), ui.width - 36,
                               42, reset_cancel, NULL);
     lv_obj_add_event_cb(cancel, reset_dialog_press, LV_EVENT_PRESSED, NULL);
     lv_obj_move_foreground(ui.reset_dialog);
     if (!ui.services.reset_arm(ui.services.context, event == NULL)) {
         reset_dialog_close();
-        show_feedback("Resetvorbereitung nicht verfügbar");
+        show_feedback(T("Resetvorbereitung nicht verfügbar"));
         return;
     }
     ui.reset_stage = 1;
@@ -992,7 +1032,7 @@ void ui_reset_show_warning(void)
                                    sizeof(ui.reset_token), &token_length) ||
         token_length == 0 || token_length >= sizeof(ui.reset_token)) {
         reset_dialog_close();
-        show_feedback("Resetbestätigung konnte nicht vorbereitet werden");
+        show_feedback(T("Resetbestätigung konnte nicht vorbereitet werden"));
         return;
     }
     ui.reset_token_length = token_length;
@@ -1010,7 +1050,7 @@ void ui_reset_show_warning(void)
     lv_obj_set_flex_flow(ui.reset_dialog, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_style_pad_row(ui.reset_dialog, 5, 0);
     lv_obj_t *warning = label(ui.reset_dialog,
-        "WARNUNG: Löscht WLAN, Laufzeittexte, Mesh, Alarm/Verlauf, Webzugang, Zertifikate/ACME, Uploads und Cache. Firmware und Standardbilder bleiben. In einem privaten Build bleiben einkompilierte private Vorgaben erhalten.",
+        T("WARNUNG: Löscht WLAN, Laufzeittexte, Mesh, Alarm/Verlauf, Webzugang, Zertifikate/ACME, Uploads und Cache. Firmware und Standardbilder bleiben. In einem privaten Build bleiben einkompilierte private Vorgaben erhalten."),
         ui.width - 40);
     lv_obj_set_style_text_color(warning, lv_color_white(), 0);
     lv_obj_set_style_text_font(warning, &katmed_font_12, 0);
@@ -1018,9 +1058,9 @@ void ui_reset_show_warning(void)
     int action_height = (ui.height - 24 - 30) / 3;
     if (action_height > 46) action_height = 46;
     if (action_height < 28) action_height = 28;
-    lv_obj_t *yes = button(ui.reset_dialog, "Ja, zurücksetzen",
+    lv_obj_t *yes = button(ui.reset_dialog, T("Ja, zurücksetzen"),
                            action_width, action_height, reset_execute, NULL);
-    lv_obj_t *no = button(ui.reset_dialog, "Nein",
+    lv_obj_t *no = button(ui.reset_dialog, T("Nein"),
                           action_width, action_height, reset_cancel, NULL);
     lv_obj_set_width(yes, (lv_obj_get_width(no) * 7) / 10);
     lv_obj_set_height(yes, (lv_obj_get_height(no) * 7) / 10);
@@ -1049,7 +1089,7 @@ static void update_status(void)
     int text_w = ui.width - (ui.width == 240 ? 100 : 20);
     char date[64], line[128];
     if (ui.pairing_code[0]) {
-        snprintf(line, sizeof(line), "Web-Code: %s", ui.pairing_code);
+        snprintf(line, sizeof(line), T("Web-Code: %s"), ui.pairing_code);
         lv_obj_t *code = status_label(&next, line, text_w);
         if (ui.height < 200) lv_obj_set_style_text_font(code, &katmed_font_12, 0);
     }
@@ -1059,76 +1099,76 @@ static void update_status(void)
         has_last = ui.services.last_confirmation(ui.services.context, &last);
     if (has_last && last.utc_valid)
         format_local(date, sizeof(date), (UtcInstant){true, last.utc_ms});
-    else if (has_last) snprintf(date, sizeof(date), "bestätigt, Uhrzeit unbekannt");
-    else snprintf(date, sizeof(date), "nicht bekannt");
-    snprintf(line, sizeof(line), "Letzte Gabe: %s", date);
+    else if (has_last) snprintf(date, sizeof(date), "%s", T("bestätigt, Uhrzeit unbekannt"));
+    else snprintf(date, sizeof(date), "%s", T("nicht bekannt"));
+    snprintf(line, sizeof(line), T("Letzte Gabe: %s"), date);
     lv_obj_t *item = status_label(&next, line, text_w);
     if (ui.height < 200) lv_obj_set_style_text_font(item, &katmed_font_12, 0);
     char hours[32];
     format_hours(hours, sizeof(hours), ui.state.settings.image_seconds);
-    snprintf(line, sizeof(line), "Bilderabstand: %s Stunden", hours);
+    snprintf(line, sizeof(line), T("Bilderabstand: %s Stunden"), hours);
     item = status_label(&next, line, text_w);
     if (ui.height < 200) lv_obj_set_style_text_font(item, &katmed_font_12, 0);
     format_local(date, sizeof(date), ui.state.deadline.effective_utc);
-    snprintf(line, sizeof(line), "Nächster Alarm: %s", date);
+    snprintf(line, sizeof(line), T("Nächster Alarm: %s"), date);
     item = status_label(&next, line, text_w);
     if (ui.height < 200) lv_obj_set_style_text_font(item, &katmed_font_12, 0);
-    item = status_label(&next, ui.clock.quality == CLOCK_SYNCHRONIZED ? "Uhr: synchronisiert" :
-          ui.clock.quality == CLOCK_HOLDOVER ? "Uhr: Zeit nicht synchronisiert" :
-                                               "Uhrzeit nicht verfügbar", text_w);
+    item = status_label(&next, ui.clock.quality == CLOCK_SYNCHRONIZED ? T("Uhr: synchronisiert") :
+          ui.clock.quality == CLOCK_HOLDOVER ? T("Uhr: Zeit nicht synchronisiert") :
+                                               T("Uhrzeit nicht verfügbar"), text_w);
     if (ui.height < 200) lv_obj_set_style_text_font(item, &katmed_font_12, 0);
     UiNetworkStatus network = {0};
     if (ui.services.network_status)
         ui.services.network_status(ui.services.context, &network);
-    item = status_label(&next, !ui.services.network_status ? "WLAN: unbekannt" :
-                 !network.configured ? "WLAN: nicht konfiguriert" :
-                 network.connected ? "WLAN: verbunden" : "WLAN: getrennt", text_w);
+    item = status_label(&next, !ui.services.network_status ? T("WLAN: unbekannt") :
+                 !network.configured ? T("WLAN: nicht konfiguriert") :
+                 network.connected ? T("WLAN: verbunden") : T("WLAN: getrennt"), text_w);
     if (ui.height < 200) lv_obj_set_style_text_font(item, &katmed_font_12, 0);
-    snprintf(line, sizeof(line), "Gerätename: %s%s",
+    snprintf(line, sizeof(line), T("Gerätename: %s%s"),
              network.device_name[0] ? network.device_name : "KatmedESP",
-             network.device_name_uncertain ? " (Zuweisung unbestätigt)" : "");
+             network.device_name_uncertain ? T(" (Zuweisung unbestätigt)") : "");
     item = status_label(&next, line, text_w);
     if (ui.height < 200) lv_obj_set_style_text_font(item, &katmed_font_12, 0);
-    if (!ui.services.network_status) snprintf(line, sizeof(line), "Mesh-Funkkanal: unbekannt");
-    else if (!network.mesh_active) snprintf(line, sizeof(line), "Mesh-Funkkanal: inaktiv");
+    if (!ui.services.network_status) snprintf(line, sizeof(line), T("Mesh-Funkkanal: unbekannt"));
+    else if (!network.mesh_active) snprintf(line, sizeof(line), T("Mesh-Funkkanal: inaktiv"));
     else if (network.mesh_channel >= 1 && network.mesh_channel <= 14)
-        snprintf(line, sizeof(line), "Mesh-Funkkanal: %u", network.mesh_channel);
-    else snprintf(line, sizeof(line), "Mesh-Funkkanal: unbekannt");
+        snprintf(line, sizeof(line), T("Mesh-Funkkanal: %u"), network.mesh_channel);
+    else snprintf(line, sizeof(line), T("Mesh-Funkkanal: unbekannt"));
     item = status_label(&next, line, text_w);
     if (ui.height < 200) lv_obj_set_style_text_font(item, &katmed_font_12, 0);
-    const char *mesh_reason = (network.mesh_quality & 2u) ? "Speicherfehler" :
-        (network.mesh_quality & 1u) ? "Speicher voll" :
-        (network.mesh_quality & 8u) ? "unvollständig" : "Abgleich";
-    if (!network.mesh_active) snprintf(line, sizeof(line), "Mesh aktuell (inkl. Gerät): inaktiv");
-    else if (!network.mesh_current_valid) snprintf(line, sizeof(line), "Mesh aktuell (inkl. Gerät): unbekannt");
+    const char *mesh_reason = (network.mesh_quality & 2u) ? T("Speicherfehler") :
+        (network.mesh_quality & 1u) ? T("Speicher voll") :
+        (network.mesh_quality & 8u) ? T("unvollständig") : T("Abgleich");
+    if (!network.mesh_active) snprintf(line, sizeof(line), T("Mesh aktuell (inkl. Gerät): inaktiv"));
+    else if (!network.mesh_current_valid) snprintf(line, sizeof(line), T("Mesh aktuell (inkl. Gerät): unbekannt"));
     else if (network.mesh_quality & (4u | 8u))
-        snprintf(line, sizeof(line), "Mesh aktuell (inkl. Gerät): mindestens %u (%s)",
-                 network.mesh_current_count, (network.mesh_quality & 8u) ? "unvollständig" : "Wiederaufbau");
-    else snprintf(line, sizeof(line), "Mesh aktuell (inkl. Gerät): %u", network.mesh_current_count);
+        snprintf(line, sizeof(line), T("Mesh aktuell (inkl. Gerät): mindestens %u (%s)"),
+                 network.mesh_current_count, (network.mesh_quality & 8u) ? T("unvollständig") : T("Wiederaufbau"));
+    else snprintf(line, sizeof(line), T("Mesh aktuell (inkl. Gerät): %u"), network.mesh_current_count);
     item = status_label(&next, line, text_w);
     if (ui.height < 200) lv_obj_set_style_text_font(item, &katmed_font_12, 0);
-    if (!network.mesh_active) snprintf(line, sizeof(line), "Mesh bisher erfasst (ab Einführung): inaktiv");
+    if (!network.mesh_active) snprintf(line, sizeof(line), T("Mesh bisher erfasst (ab Einführung): inaktiv"));
     else if (!network.mesh_history_complete)
-        snprintf(line, sizeof(line), "Mesh bisher erfasst (ab Einführung): mindestens %u (%s)",
+        snprintf(line, sizeof(line), T("Mesh bisher erfasst (ab Einführung): mindestens %u (%s)"),
                  network.mesh_history_count, mesh_reason);
-    else snprintf(line, sizeof(line), "Mesh bisher erfasst (ab Einführung): %u", network.mesh_history_count);
+    else snprintf(line, sizeof(line), T("Mesh bisher erfasst (ab Einführung): %u"), network.mesh_history_count);
     item = status_label(&next, line, text_w);
     if (ui.height < 200) lv_obj_set_style_text_font(item, &katmed_font_12, 0);
     snprintf(line, sizeof(line), "IP: %s", network.configured && network.connected && network.station_ip[0]
-             ? network.station_ip : "nicht verfügbar");
+             ? network.station_ip : T("nicht verfügbar"));
     item = status_label(&next, line, text_w);
     if (ui.height < 200) lv_obj_set_style_text_font(item, &katmed_font_12, 0);
     snprintf(line, sizeof(line), "Gateway: %s", network.configured && network.connected && network.gateway[0]
-             ? network.gateway : "nicht verfügbar");
+             ? network.gateway : T("nicht verfügbar"));
     item = status_label(&next, line, text_w);
     if (ui.height < 200) lv_obj_set_style_text_font(item, &katmed_font_12, 0);
     snprintf(line, sizeof(line), "DNS-IP: %s", network.configured && network.connected && network.dns_ip[0]
-             ? network.dns_ip : "unbekannt");
+             ? network.dns_ip : T("unbekannt"));
     item = status_label(&next, line, text_w);
     if (ui.height < 200) lv_obj_set_style_text_font(item, &katmed_font_12, 0);
-    snprintf(line, sizeof(line), "Zeitserver-IP (letzter lokaler Sync): %s",
+    snprintf(line, sizeof(line), T("Zeitserver-IP (letzter lokaler Sync): %s"),
              network.configured && network.connected && network.sync_server_ip[0]
-             ? network.sync_server_ip : "unbekannt");
+             ? network.sync_server_ip : T("unbekannt"));
     item = status_label(&next, line, text_w);
     if (ui.height < 200) lv_obj_set_style_text_font(item, &katmed_font_12, 0);
     if (network.configured && network.ap_ip[0]) {
@@ -1139,29 +1179,29 @@ static void update_status(void)
     const uint8_t pending = ui.services.pending_count
         ? ui.services.pending_count(ui.services.context) : 0;
     if (ui.state.confirmation_pending_sync || pending != 0) {
-        item = status_label(&next, "Bestätigung noch nicht synchronisiert", text_w);
+        item = status_label(&next, T("Bestätigung noch nicht synchronisiert"), text_w);
         if (ui.height < 200) lv_obj_set_style_text_font(item, &katmed_font_12, 0);
     }
     if (ui.shared_pending) {
-        item = status_label(&next, "Gemeinsame Änderung wird geprüft", text_w);
+        item = status_label(&next, T("Gemeinsame Änderung wird geprüft"), text_w);
         if (ui.height < 200) lv_obj_set_style_text_font(item, &katmed_font_12, 0);
     }
     if (ui.shared_result_status != 0) {
         item = status_label(&next, ui.shared_result_status > 0 ?
-                     "Letzte gemeinsame Änderung übernommen" :
+                     T("Letzte gemeinsame Änderung übernommen") :
                      ui.shared_result_status == -2 ?
-                     "Letzte gemeinsame Änderung unbestätigt" :
-                     "Letzte gemeinsame Änderung abgelehnt", text_w);
+                     T("Letzte gemeinsame Änderung unbestätigt") :
+                     T("Letzte gemeinsame Änderung abgelehnt"), text_w);
         if (ui.height < 200) lv_obj_set_style_text_font(item, &katmed_font_12, 0);
     }
     if (ui.services.storage_ready && !ui.services.storage_ready(ui.services.context)) {
-        item = status_label(&next, "Speicher: nicht verfügbar", text_w);
+        item = status_label(&next, T("Speicher: nicht verfügbar"), text_w);
         if (ui.height < 200) lv_obj_set_style_text_font(item, &katmed_font_12, 0);
     }
     const bool divergent = ui.state.divergent ||
         (ui.services.durable_divergence && ui.services.durable_divergence(ui.services.context));
     if (divergent) {
-        item = status_label(&next, "Gruppenzustand weicht ab", text_w);
+        item = status_label(&next, T("Gruppenzustand weicht ab"), text_w);
         if (ui.height < 200) lv_obj_set_style_text_font(item, &katmed_font_12, 0);
     }
     const uint8_t conflicts = ui.services.conflict_count
@@ -1170,7 +1210,7 @@ static void update_status(void)
         UiConflict conflict;
         if (!ui.services.conflict_at ||
             !ui.services.conflict_at(ui.services.context,i,&conflict)) continue;
-        snprintf(line,sizeof(line),"Nicht übernommen: Runde %llu/%llu, Ereignis %llu/%llu",
+        snprintf(line,sizeof(line),T("Nicht übernommen: Runde %llu/%llu, Ereignis %llu/%llu"),
                  (unsigned long long)conflict.round.origin.device,
                  (unsigned long long)conflict.round.ordinal,
                  (unsigned long long)conflict.id.device,
@@ -1179,11 +1219,11 @@ static void update_status(void)
         if (ui.height<200) lv_obj_set_style_text_font(item,&katmed_font_12,0);
         if (conflict.occurred_at.utc_valid) {
             format_local(date,sizeof(date),(UtcInstant){true,conflict.occurred_at.utc_ms});
-            snprintf(line,sizeof(line),"Ereigniszeit: %s (%s)",date,
+            snprintf(line,sizeof(line),T("Ereigniszeit: %s (%s)"),date,
                      conflict.occurred_at.quality==CLOCK_SYNCHRONIZED
-                         ? "synchronisiert" : "nicht synchronisiert");
+                         ? T("synchronisiert") : T("nicht synchronisiert"));
         } else {
-            snprintf(line,sizeof(line),"Ereigniszeit: UTC unbekannt; Domäne %llu, ms %llu",
+            snprintf(line,sizeof(line),T("Ereigniszeit: UTC unbekannt; Domäne %llu, ms %llu"),
                      (unsigned long long)conflict.occurred_at.domain,
                      (unsigned long long)conflict.occurred_at.monotonic_ms);
         }
@@ -1221,7 +1261,7 @@ void ui_set_pairing_code(const char code[7])
     if (memcmp(ui.pairing_code, code, 7) == 0) return;
     memcpy(ui.pairing_code, code, 7);
     if (ui.pairing_label) {
-        lv_label_set_text_fmt(ui.pairing_label, "Web-Code: %s", ui.pairing_code);
+        lv_label_set_text_fmt(ui.pairing_label, T("Web-Code: %s"), ui.pairing_code);
         lv_obj_set_hidden(ui.pairing_label, false);
     }
     if (ui.status) update_status();
@@ -1237,6 +1277,9 @@ static void build_screen(int16_t width, int16_t height)
     ++ui.overlay_generation;
     ui.rx_until = 0;
     ui.screen = lv_screen_active();
+    lv_obj_set_style_base_dir(ui.screen,
+                              katmed_i18n_selected() == KATMED_LANG_AR ? LV_BASE_DIR_RTL : LV_BASE_DIR_LTR,
+                              0);
     ui.width = width;
     ui.height = height;
     ui.screen_orientation = ui.local.orientation;
@@ -1267,7 +1310,7 @@ static void build_screen(int16_t width, int16_t height)
     lv_obj_set_style_pad_all(ui.screen, 0, 0);
     ui.background = lv_image_create(ui.screen);
     lv_obj_set_pos(ui.background, 0, 0);
-    ui.fallback = label(ui.screen, "Bild nicht verfügbar", width);
+    ui.fallback = label(ui.screen, T("Bild nicht verfügbar"), width);
     lv_obj_set_size(ui.fallback, width, height);
     lv_obj_set_style_bg_color(ui.fallback, lv_color_hex(0x555e66), 0);
     lv_obj_set_style_bg_opa(ui.fallback, LV_OPA_COVER, 0);
@@ -1477,7 +1520,7 @@ static void build_page(void)
         lv_obj_set_pos(alarm, (ui.width-w)/2, (ui.height-h)/2-12);
         lv_obj_set_style_bg_color(alarm, lv_color_hex(0xd01818), 0);
         lv_obj_set_style_radius(alarm, 30, 0);
-        lv_obj_t *text = label(ui.page, "Nur im Notfall. Drücken kostet!", round ? 160 : ui.width-24);
+        lv_obj_t *text = label(ui.page, T("Nur im Notfall. Drücken kostet!"), round ? 160 : ui.width-24);
         lv_obj_set_style_text_font(text, &katmed_font_12, 0);
         lv_obj_set_style_text_align(text, LV_TEXT_ALIGN_CENTER, 0);
         lv_obj_set_style_bg_color(text, lv_color_black(), 0);
@@ -1488,13 +1531,13 @@ static void build_page(void)
         return;
     }
     int upper = ui.height == 240 ? 136 : ui.height == 320 ? 180 : 94;
-    ui.interaction_title = label(ui.page, "Verbindung wird geprüft", round ? 170 : ui.width-24);
+    ui.interaction_title = label(ui.page, T("Verbindung wird geprüft"), round ? 170 : ui.width-24);
     lv_obj_set_style_text_align(ui.interaction_title, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_pos(ui.interaction_title, round ? 35 : 12, round ? 46 : 24);
     int available = ui.height-edge_size()-upper-4;
     int diameter = available < ui.width-24 ? available : ui.width-24;
     if (diameter > 96) diameter = 96;
-    ui.send_button = button(ui.page, "Senden", diameter, diameter, NULL, NULL);
+    ui.send_button = button(ui.page, T("Senden"), diameter, diameter, NULL, NULL);
     lv_obj_set_pos(ui.send_button, (ui.width-diameter)/2, upper+2);
     lv_obj_set_style_radius(ui.send_button, LV_RADIUS_CIRCLE, 0);
     lv_obj_set_style_text_font(lv_obj_get_child(ui.send_button, 0), &katmed_font_12, 0);
@@ -1530,18 +1573,18 @@ static void update_interaction(uint64_t now)
         ui.services.interaction_status(ui.services.context, &ui.interaction, now);
     else memset(&ui.interaction, 0, sizeof(ui.interaction));
     if (ui.interaction.overflow && !ui.interaction_overflow_shown && !ui.state.alarm_active) {
-        show_feedback("Impulse: Speicher voll");
+        show_feedback(T("Impulse: Speicher voll"));
         ui.interaction_loss_until_ms = ui.feedback_until_ms;
     }
     ui.interaction_overflow_shown = ui.interaction.overflow && !ui.state.alarm_active;
     if (ui.interaction_title) {
-        const char *text = !ui.interaction.connected ? "Mesh nicht verbunden" :
-            !ui.interaction.synchronized ? "Mesh wird abgeglichen" :
-            ui.interaction.overflow ? "Impulse: Speicher voll" :
-            ui.interaction.owns_token ? "Du sendest" :
-            ui.interaction.mode == KATMED_INTERACTION_REQUESTING ? "Anfrage läuft" :
-            ui.interaction.sender_finished ? "Absender ist fertig" :
-            ui.interaction.can_request ? "Bereit zum Senden" : "Anderes Gerät sendet";
+        const char *text = !ui.interaction.connected ? T("Mesh nicht verbunden") :
+            !ui.interaction.synchronized ? T("Mesh wird abgeglichen") :
+            ui.interaction.overflow ? T("Impulse: Speicher voll") :
+            ui.interaction.owns_token ? T("Du sendest") :
+            ui.interaction.mode == KATMED_INTERACTION_REQUESTING ? T("Anfrage läuft") :
+            ui.interaction.sender_finished ? T("Absender ist fertig") :
+            ui.interaction.can_request ? T("Bereit zum Senden") : T("Anderes Gerät sendet");
         if (strcmp(lv_label_get_text(ui.interaction_title), text))
             lv_label_set_text(ui.interaction_title, text);
     }
@@ -1581,23 +1624,23 @@ static void update_interaction(uint64_t now)
             bool round = ui.width == 240;
             int w = round ? 170 : ui.width-20;
             lv_obj_t *title = label(ui.notice, kind == 3 ? "Telacore" :
-                                   kind == 1 ? "Fertig?" : "Absender ist fertig", w);
+                                   kind == 1 ? T("Fertig?") : T("Absender ist fertig"), w);
             lv_obj_set_style_text_align(title, LV_TEXT_ALIGN_CENTER, 0);
             lv_obj_set_style_text_font(title, kind == 3 ? &katmed_font_26 : &katmed_font_14, 0);
             lv_obj_set_pos(title, (ui.width-w)/2, ui.height/2-55);
             if (kind == 3) {
-                lv_obj_t *text = label(ui.notice, "Neues Gerät im Mesh", w);
+                lv_obj_t *text = label(ui.notice, T("Neues Gerät im Mesh"), w);
                 lv_obj_set_style_text_align(text, LV_TEXT_ALIGN_CENTER, 0);
                 lv_obj_set_pos(text, (ui.width-w)/2, ui.height/2-12);
-                text = label(ui.notice, "Herzlich willkommen", w);
+                text = label(ui.notice, T("Herzlich willkommen"), w);
                 lv_obj_set_style_text_font(text, &katmed_font_12, 0);
                 lv_obj_set_style_text_align(text, LV_TEXT_ALIGN_CENTER, 0);
                 lv_obj_set_pos(text, (ui.width-w)/2, ui.height/2+25);
             } else {
-                lv_obj_t *yes = button(ui.notice, kind == 1 ? "Ja" : "OK", 62, 32, NULL, NULL);
+                lv_obj_t *yes = button(ui.notice, kind == 1 ? T("Ja") : "OK", 62, 32, NULL, NULL);
                 lv_obj_set_pos(yes, ui.width/2-(kind == 1 ? 68 : 31), ui.height/2+15);
                 if (kind == 1) {
-                    lv_obj_t *more = button(ui.notice, "Weiter", 62, 32, NULL, NULL);
+                    lv_obj_t *more = button(ui.notice, T("Weiter"), 62, 32, NULL, NULL);
                     lv_obj_set_pos(more, ui.width/2+6, ui.height/2+15);
                 }
             }
@@ -2028,13 +2071,15 @@ void ui_render(const AppState *state, const LocalSettings *local,
     int16_t height = (int16_t)lv_display_get_vertical_resolution(display);
     bool rebuild = !ui.screen || ui.screen != lv_screen_active() ||
                    width != ui.width || height != ui.height ||
-                   local->orientation != ui.screen_orientation;
+                   local->orientation != ui.screen_orientation ||
+                   ui.applied_language != katmed_i18n_selected();
     bool editing_before_rebuild = rebuild && (ui.keypad || ui.style_dialog);
     if (rebuild) {
         interaction_cancel(clock->monotonic_ms);
         if (ui.touch_down) ui.reject_contact = true;
         build_screen(width, height);
-        if (editing_before_rebuild) show_feedback("Eingabe nach Drehung verworfen");
+        ui.applied_language=katmed_i18n_selected();
+        if (editing_before_rebuild) show_feedback(T("Eingabe nach Drehung verworfen"));
     }
     if (ui.view != SETTINGS && ui.view != UI_VIEW_STATUS) {
         if (ui.keypad) cancel_edit(NULL);
