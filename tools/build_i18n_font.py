@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Emit an LVGL bitmap fallback for translated display copy.
 
-Build input: locally installed OFL Noto Sans CJK SC and Noto Sans Arabic.
+Build inputs: pinned Noto Sans CJK SC, Noto Sans Regular, and Noto Sans Arabic.
 The checked-in result is generated code; no runtime font loader is needed.
 """
 import argparse
@@ -24,6 +24,20 @@ CJK_SHA256 = '2c76254f6fc379fddfce0a7e84fb5385bb135d3e399294f6eeb6680d0365b74b'
 ARABIC = Path('/usr/share/fonts/google-noto-vf/NotoSansArabic[wght].ttf')
 LATIN_CYRILLIC = Path('/usr/share/fonts/google-noto/NotoSans-Regular.ttf')
 LATIN_CYRILLIC_SHA256 = '478c558ea716033cd60c03438f628dfa75694dcf6b5f6d505a2f05fd2b4f3823'
+
+
+def licensed_cmap(path, family):
+    font = TTFont(path)
+    try:
+        names = font['name'].names
+        families = {name.toUnicode() for name in names if name.nameID == 1}
+        licenses = {name.toUnicode() for name in names if name.nameID == 13}
+        if family not in families or not any('SIL Open Font License, Version 1.1' in license
+                                             for license in licenses):
+            raise RuntimeError(f'unexpected font family or license: {family}')
+        return font.getBestCmap()
+    finally:
+        font.close()
 
 
 def converter_path():
@@ -54,8 +68,9 @@ def render(size):
     if (not LATIN_CYRILLIC.exists() or
             hashlib.sha256(LATIN_CYRILLIC.read_bytes()).hexdigest() != LATIN_CYRILLIC_SHA256):
         raise RuntimeError('unexpected Noto Sans Latin/Cyrillic font version')
-    cmap = TTFont(CJK).getBestCmap()
-    latin_cyrillic_cmap = TTFont(LATIN_CYRILLIC).getBestCmap()
+    cmap = licensed_cmap(CJK, 'Noto Sans CJK SC')
+    licensed_cmap(ARABIC, 'Noto Sans Arabic')
+    latin_cyrillic_cmap = licensed_cmap(LATIN_CYRILLIC, 'Noto Sans')
     non_arabic = {c for text in strings for c in text
                   if ord(c) > 127 and not 0x0600 <= ord(c) <= 0x06ff}
     chars = ''.join(sorted(c for c in non_arabic if ord(c) in cmap))
@@ -80,7 +95,17 @@ def render(size):
         ], check=False, capture_output=True)
     if result.returncode:
         raise RuntimeError(result.stderr.decode(errors='replace')[-600:])
-    return result.stdout.decode().replace('};\n\n\n\n#endif', '};\n\n#endif').rstrip() + '\n'
+    lines = result.stdout.decode().splitlines(keepends=True)
+    opts = [i for i, line in enumerate(lines) if line.startswith(' * Opts: ')]
+    if len(opts) != 1:
+        raise RuntimeError('font converter metadata format changed')
+    lines[opts[0]] = (' * Sources: Noto Sans CJK SC Regular 2.004; '
+                      'Noto Sans Arabic; Noto Sans Regular '
+                      '(Noto Project Authors; SIL OFL 1.1).\n')
+    output = ''.join(lines)
+    if any(str(path) in output for path in (CJK, ARABIC, LATIN_CYRILLIC)):
+        raise RuntimeError('font converter output contains an input path')
+    return output.replace('};\n\n\n\n#endif', '};\n\n#endif').rstrip() + '\n'
 
 
 def main():
