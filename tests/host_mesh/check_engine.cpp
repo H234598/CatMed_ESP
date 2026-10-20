@@ -40,6 +40,22 @@ void advance_now(uint64_t mono){
     now.utc_ms+=int64_t(mono-now.monotonic_ms);
     now.monotonic_ms=mono;
 }
+void prepare_due_round(){
+    AppEffects effects{};
+    assert(app_dismiss_boot_alarm(&state,&now,&effects)==APP_OK);
+    assert(!effects.persistence_required&&!effects.broadcast_required&&
+           !state.has_last_confirmation);
+    EventId id{};assert(store_next_event_id(&store,&id)==STORE_OK);
+    AppEvent event{};event.kind=EVENT_SET_MEDICATION_INTERVAL;
+    event.id=id;event.sender=id.device;event.round=state.round;
+    event.parent_revision=state.revision;event.occurred_at=now;
+    event.coordinator_accepted=true;event.value.interval_seconds=1;
+    AppResult core=APP_INVALID;
+    assert(store_apply_event(&store,&state,&event,&now,false,&effects,&core)==STORE_OK);
+    advance_now(now.monotonic_ms+1000);
+    assert(app_tick(&state,&now,&effects)==APP_OK&&state.alarm_active&&
+           state.start_reason==START_SETTINGS&&!state.has_last_confirmation);
+}
 
 StoreResult read_blob(void *arg,uint8_t *out,size_t *n){
     auto &m=*static_cast<Memory *>(arg);
@@ -217,10 +233,10 @@ int main(int argc,char **argv){
         Store reopened{};StoreRecovery recovered{};
         assert(store_open(&reopened,backend,11,catalog,75,&recovered)==STORE_OK);
         assert(recovered.shared.image_seconds==7200);
-        assert(store_next_event_id(&store,&id)==STORE_OK);
-        event.kind=EVENT_CONFIRM;event.id=id;event.sender=id.device;
-        event.round=state.round;event.parent_revision=state.revision;
-        assert(katmed_mesh_submit_shared(&event,&now,&effects)==MESH_ACCEPTED);
+        const unsigned before_dismiss=memory.commits;
+        assert(app_dismiss_boot_alarm(&state,&now,&effects)==APP_OK);
+        assert(!state.has_last_confirmation&&!effects.persistence_required&&
+               !effects.broadcast_required&&memory.commits==before_dismiss);
         assert(store_next_event_id(&store,&id)==STORE_OK);
         ManualTimePreview preview{};
         assert(app_preview_local_time(&now,14,30,&preview)==APP_OK);
@@ -307,6 +323,7 @@ int main(int argc,char **argv){
         return 0;
     }
     if(argc==2&&std::strcmp(argv[1],"pending")==0){
+        prepare_due_round();
         EventId own{};assert(store_next_event_id(&store,&own)==STORE_OK);
         AppEvent local{};local.kind=EVENT_CONFIRM;local.id=own;
         local.sender=own.device;local.round=state.round;
@@ -327,6 +344,7 @@ int main(int argc,char **argv){
         return 0;
     }
     if(argc==2&&std::strcmp(argv[1],"send_failure")==0){
+        prepare_due_round();
         EventId own{};assert(store_next_event_id(&store,&own)==STORE_OK);
         AppEvent local{};local.kind=EVENT_CONFIRM;local.id=own;
         local.sender=own.device;local.round=state.round;
@@ -343,16 +361,17 @@ int main(int argc,char **argv){
         assert(katmed_mesh_connected());
         const unsigned before=count_kind(MESH_CONFIRM);
         fail_send=true;
-        advance_now(2000);katmed_mesh_poll(&now);
+        advance_now(now.monotonic_ms+1000);katmed_mesh_poll(&now);
         assert(failed_sends>0&&count_kind(MESH_CONFIRM)==before&&
                store.record.pending_count==1&&state.confirmation_pending_sync);
         fail_send=false;
-        advance_now(3000);katmed_mesh_poll(&now);
+        advance_now(now.monotonic_ms+1000);katmed_mesh_poll(&now);
         assert(count_kind(MESH_CONFIRM)>before&&store.record.pending_count==1);
         std::puts("mesh raw transport send failure retains durable pending OK");
         return 0;
     }
     if(argc==2&&std::strcmp(argv[1],"full")==0){
+        prepare_due_round();
         advance_now((UINT64_C(1)<<32)+1000);
         AppEffects effects{};
         assert(app_tick(&state,&now,&effects)==APP_OK);
@@ -448,6 +467,7 @@ int main(int argc,char **argv){
         assert(found);
         if(std::strcmp(argv[1],"leaf_ack2")==0||
            std::strcmp(argv[1],"leaf_ack2_fail")==0){
+            prepare_due_round();
             EventId id{};assert(store_next_event_id(&store,&id)==STORE_OK);
             AppEvent local{};local.kind=EVENT_CONFIRM;local.id=id;
             local.sender=id.device;local.round=state.round;
@@ -525,6 +545,7 @@ int main(int argc,char **argv){
         }
         if(std::strcmp(argv[1],"leaf_running")==0||
            std::strcmp(argv[1],"leaf_replay")==0){
+            prepare_due_round();
             EventId confirmed{};assert(store_next_event_id(&store,&confirmed)==STORE_OK);
             AppEvent med{};med.kind=EVENT_CONFIRM;med.id=confirmed;
             med.sender=confirmed.device;med.round=state.round;
@@ -691,6 +712,7 @@ int main(int argc,char **argv){
             std::strcmp(argv[1],"same_domain_no_utc")==0;
         const bool single_unknown=std::strcmp(argv[1],"single_unknown")==0;
         const bool late_peer=std::strcmp(argv[1],"late_peer")==0;
+        prepare_due_round();
         advance_now(10000);
         AppEffects effects{};
         assert(app_tick(&state,&now,&effects)==APP_OK);
@@ -838,6 +860,7 @@ int main(int argc,char **argv){
         std::puts("mesh eight-peer authenticated STATE fanout OK");
         return 0;
     }
+    prepare_due_round();
     const unsigned ack_before=count_kind(MESH_ACK);
     auto confirm=peer_frame(MESH_CONFIRM,3);
     StorePendingConfirm pending{};pending.id=confirm.id;pending.round=state.round;

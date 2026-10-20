@@ -59,11 +59,22 @@ int main(){
     /* The actual reducer, not a copied reducer in the test, decides whether
      * a foreign snapshot can be adopted and keeps a cold boot alarm when its
      * causal time cannot be proved. */
+    AppEffects effects{};
+    assert(app_dismiss_boot_alarm(&state,&now,&effects)==APP_OK);
+    assert(!effects.persistence_required&&!effects.broadcast_required&&
+           !state.has_last_confirmation);
+    AppEvent due_settings{};due_settings.kind=EVENT_SET_MEDICATION_INTERVAL;
+    due_settings.id={11,81,2};due_settings.sender=11;due_settings.round=state.round;
+    due_settings.parent_revision=state.revision;due_settings.occurred_at=now;
+    due_settings.coordinator_accepted=true;due_settings.value.interval_seconds=2;
+    assert(app_apply_event(&state,&due_settings,&now,&effects)==APP_OK);
+    now.monotonic_ms+=2000;now.utc_ms+=2000;
+    assert(app_tick(&state,&now,&effects)==APP_OK&&state.alarm_active&&
+           state.start_reason==START_SETTINGS);
     AppEvent medication{};medication.kind=EVENT_CONFIRM;
-    medication.id={11,81,2};medication.sender=11;medication.round=state.round;
+    medication.id={11,81,3};medication.sender=11;medication.round=state.round;
     medication.parent_revision=state.revision;medication.occurred_at=now;
     medication.coordinator_accepted=true;
-    AppEffects effects{};
     assert(app_apply_event(&state,&medication,&now,&effects)==APP_OK);
     assert(app_make_snapshot(&state,&now,&snap)==APP_OK);
     assert(katmed_mesh_encode_snapshot(&snap,bytes,sizeof(bytes),&len));
@@ -71,7 +82,7 @@ int main(){
     ClockSample peer_now{5000001000ULL,91,now.utc_ms+1000,true,CLOCK_HOLDOVER};
     AppState peer{};EventId peer_boot{17,91,1};
     assert(app_init(&peer,&settings,&peer_now,peer_boot,75,catalog)==APP_OK);
-    AppEvent adopt{};adopt.kind=EVENT_ADOPT_SNAPSHOT;adopt.id={11,81,3};
+    AppEvent adopt{};adopt.kind=EVENT_ADOPT_SNAPSHOT;adopt.id={11,81,4};
     adopt.sender=11;adopt.round=peer.round;adopt.parent_revision=peer.revision;
     adopt.occurred_at=peer_now;adopt.coordinator_accepted=true;
     adopt.value.snapshot=&output;
@@ -80,7 +91,7 @@ int main(){
     ClockSample no_utc{5000001000ULL,93,0,false,CLOCK_UNAVAILABLE};
     AppState isolated{};EventId isolated_boot{19,93,1};
     assert(app_init(&isolated,&settings,&no_utc,isolated_boot,75,catalog)==APP_OK);
-    adopt.id.sequence=4;adopt.round=isolated.round;
+    adopt.id.sequence=5;adopt.round=isolated.round;
     adopt.parent_revision=isolated.revision;adopt.occurred_at=no_utc;
     assert(app_apply_event(&isolated,&adopt,&no_utc,&effects)==APP_TIME_UNAVAILABLE);
     assert(isolated.alarm_active&&isolated.round.ordinal==1);

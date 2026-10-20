@@ -22,7 +22,14 @@ int main()
     KatmedMeshServices services{&store,&state,nullptr,shared_result,utc_received};
     assert(katmed_mesh_start(&provision,&services)==MESH_ACCEPTED);
     level=ROOT;katmed_mesh_poll(&now);
-    for(AppEventKind kind:{EVENT_CONFIRM,EVENT_SET_IMAGE_INTERVAL,EVENT_SET_ROTATION_MODE}) {
+    const unsigned before_dismiss=memory.commits;
+    AppEffects dismiss_effects{};
+    assert(state.start_reason==START_BOOT&&state.alarm_active);
+    assert(app_dismiss_boot_alarm(&state,&now,&dismiss_effects)==APP_OK);
+    assert(!state.alarm_active&&!state.has_last_confirmation&&
+           !dismiss_effects.persistence_required&&!dismiss_effects.broadcast_required&&
+           memory.commits==before_dismiss);
+    for(AppEventKind kind:{EVENT_SET_IMAGE_INTERVAL,EVENT_SET_ROTATION_MODE}) {
         EventId id{};assert(store_next_event_id(&store,&id)==STORE_OK);
         AppEvent event{};event.kind=kind;event.id=id;event.sender=id.device;
         event.round=state.round;event.parent_revision=state.revision;event.occurred_at=now;

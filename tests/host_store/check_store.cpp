@@ -105,6 +105,25 @@ AppState boot_state(const StoreRecovery &r,uint64_t ms=1000) {
     assert(state.alarm_active && state.start_reason==START_BOOT);
     return state;
 }
+AppState due_state(const StoreRecovery &r,uint64_t ms=1000) {
+    AppState state=boot_state(r,ms);
+    const ClockSample started=clock(r.boot_identity.epoch,ms);
+    AppEffects effects{};
+    assert(app_dismiss_boot_alarm(&state,&started,&effects)==APP_OK);
+    assert(!effects.persistence_required&&!effects.broadcast_required);
+    AppEvent settings{};
+    settings.kind=EVENT_SET_MEDICATION_INTERVAL;
+    settings.id={99,r.boot_identity.epoch,1};settings.sender=settings.id.device;
+    settings.round=state.round;settings.parent_revision=state.revision;
+    settings.occurred_at=started;settings.coordinator_accepted=true;
+    settings.value.interval_seconds=1;
+    assert(app_apply_event(&state,&settings,&started,&effects)==APP_OK);
+    const ClockSample due=clock(r.boot_identity.epoch,ms+1000);
+    assert(app_tick(&state,&due,&effects)==APP_OK);
+    assert(state.start_reason==START_SETTINGS&&state.alarm_active&&
+           !state.has_last_confirmation);
+    return state;
+}
 AppEvent confirmation(Store *s,const AppState &state,const ClockSample &now) {
     AppEvent e{};
     assert(store_next_event_id(s,&e.id)==STORE_OK);
@@ -146,7 +165,7 @@ void test_v8_mesh_name_migration_past_999() {
 }
 void test_corrupt_legacy_future() {
     Fake original{}; Store *s=fresh_store(); StoreRecovery r=open(original,s);
-    AppState state=boot_state(r);
+    AppState state=due_state(r);
     ClockSample at=clock(r.boot_identity.epoch,2000);
     AppEvent e=confirmation(s,state,at);
     AppEffects fx{}; AppResult core=APP_INVALID;
@@ -259,7 +278,7 @@ void test_corrupt_legacy_future() {
 void test_commit_matrix() {
     for (Fault fault : {BEFORE,DURING,AFTER}) {
         Fake f{}; Store *s=fresh_store(); StoreRecovery r=open(f,s);
-        AppState state=boot_state(r); ClockSample at=clock(r.boot_identity.epoch,2000);
+        AppState state=due_state(r); ClockSample at=clock(r.boot_identity.epoch,2000);
         AppEvent e=confirmation(s,state,at);
         const AppState old=state;
         f.fault=fault;
@@ -276,7 +295,7 @@ void test_commit_matrix() {
     }
     {
         Fake f{}; Store *s=fresh_store(); StoreRecovery r=open(f,s);
-        AppState state=boot_state(r); ClockSample at=clock(r.boot_identity.epoch,2000);
+        AppState state=due_state(r); ClockSample at=clock(r.boot_identity.epoch,2000);
         AppEvent e=confirmation(s,state,at); AppEffects fx{}; AppResult core{};
         assert(store_apply_event(s,&state,&e,&at,true,&fx,&core)==STORE_OK);
         assert(!state.alarm_active && state.confirmation_pending_sync && s->record.pending_count==1);
@@ -302,7 +321,7 @@ void test_commit_matrix() {
     }
     for (Fault fault : {BEFORE,DURING,AFTER}) {
         Fake f{}; Store *first=fresh_store(); StoreRecovery r=open(f,first);
-        AppState active=boot_state(r); const ClockSample at=clock(r.boot_identity.epoch,2000);
+        AppState active=due_state(r); const ClockSample at=clock(r.boot_identity.epoch,2000);
         const AppEvent e=confirmation(first,active,at);
         AppEffects fx{}; AppResult core{};
         assert(store_apply_event(first,&active,&e,&at,true,&fx,&core)==STORE_OK);
@@ -332,7 +351,7 @@ void test_commit_matrix() {
 }
 void test_history_survives_later_boot_state_commit() {
     Fake f{}; Store *first=fresh_store(); StoreRecovery recovery=open(f,first);
-    AppState first_state=boot_state(recovery);
+    AppState first_state=due_state(recovery);
     const ClockSample confirmed_at=clock(recovery.boot_identity.epoch,2000);
     const AppEvent confirm=confirmation(first,first_state,confirmed_at);
     AppEffects effects{}; AppResult core{};
@@ -379,14 +398,14 @@ void test_history_survives_later_boot_state_commit() {
 }
 void test_manual_intent_migration_and_clear() {
     Fake f{}; Store *first=fresh_store(); StoreRecovery recovery=open(f,first);
-    AppState state=boot_state(recovery);
+    AppState state=due_state(recovery);
     const ClockSample confirmation_at=clock(recovery.boot_identity.epoch,2000);
     AppEvent confirm=confirmation(first,state,confirmation_at);
     confirm.coordinator_accepted=true;
     AppEffects effects{}; AppResult core{};
     assert(store_apply_event(first,&state,&confirm,&confirmation_at,false,
                              &effects,&core)==STORE_OK);
-    ClockSample now{3000,recovery.boot_identity.epoch,INT64_C(1792400400000),
+    ClockSample now{2001,recovery.boot_identity.epoch,INT64_C(1792400400000),
                     true,CLOCK_HOLDOVER};
     ManualTimePreview preview{};
     assert(app_preview_local_time(&now,14,30,&preview)==APP_OK);
@@ -439,6 +458,7 @@ void test_boundaries_and_no_tick_writes() {
     }
     // Clock overlay, blink and transient navigation have no Store call.
     assert(f.writes==writes);
+    state=due_state(r,now.monotonic_ms-1000);
     s->record.next_sequence=UINT64_MAX;
     EventId id{};
     assert(store_next_event_id(s,&id)==STORE_FULL && f.writes==writes);
