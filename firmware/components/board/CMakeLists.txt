@@ -6,6 +6,6 @@ elseif(IDF_TARGET STREQUAL "esp32c3")
 else()
     message(FATAL_ERROR "Katmed board supports only esp32c3 and esp32c6")
 endif()
-idf_component_register(SRCS "board.c" "board_geometry.c" "board_protocol.c" "board_indev_gate.c" "board_touch_buffer.c"
+idf_component_register(SRCS "board.c" "board_geometry.c" "board_protocol.c" "board_indev_gate.c" "board_touch_buffer.c" "board_boot_gate.c"
                        INCLUDE_DIRS "include" PRIV_INCLUDE_DIRS "../../boards"
                        REQUIRES ${board_reqs})

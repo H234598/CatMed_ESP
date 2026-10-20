@@ -15,4 +15,7 @@
 #define KATMED_C6_TOUCH_SCL 19
 #define KATMED_C6_TOUCH_RESET 20
 #define KATMED_C6_TOUCH_INTERRUPT 21
+/* Waveshare ESP32-C6-Touch-LCD-1.47 schematic: Key2 BOOT -> GPIO9,
+ * with external R10 10K pull-up. Key1 ESP_RST is a separate reset line. */
+#define KATMED_C6_BOOT_GPIO 9
 #endif

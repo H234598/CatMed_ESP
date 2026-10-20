@@ -4,6 +4,7 @@
 #include "board_indev_gate.h"
 #include "board_touch_buffer.h"
 #include "board_display_budget.h"
+#include "board_boot_gate.h"
 #include <string.h>
 #include "esp_heap_caps.h"
 #include "esp_log.h"
@@ -35,6 +36,7 @@
 #define TOUCH_RESET KATMED_C3_TOUCH_RESET
 #define TOUCH_INTERRUPT KATMED_C3_TOUCH_INTERRUPT
 #define TOUCH_ADDRESS KATMED_C3_TOUCH_I2C_ADDRESS_7BIT
+#define BOOT_GPIO KATMED_C3_BOOT_GPIO
 #define PANEL_MIRROR_X_AT_ZERO KATMED_C3_PANEL_MIRROR_X_AT_ZERO
 #else
 #include "c6_pins.h"
@@ -53,6 +55,7 @@
 #define TOUCH_RESET KATMED_C6_TOUCH_RESET
 #define TOUCH_INTERRUPT KATMED_C6_TOUCH_INTERRUPT
 #define TOUCH_ADDRESS ESP_LCD_TOUCH_IO_I2C_AXS5106_ADDRESS
+#define BOOT_GPIO KATMED_C6_BOOT_GPIO
 #define PANEL_MIRROR_X_AT_ZERO 0
 #endif
 
@@ -90,6 +93,30 @@ static BoardIndevGate indev_gate = {.quarantined = true};
 static TaskHandle_t touch_sampler_task;
 static volatile bool touch_sampler_active;
 static BoardTouchBuffer touch_samples;
+static BoardBootGate boot_gate;
+static bool boot_input_ready;
+
+BoardResult board_boot_button_init(void)
+{
+    const gpio_config_t config = {
+        .pin_bit_mask = 1ULL << BOOT_GPIO,
+        .mode = GPIO_MODE_INPUT,
+        /* Both documented boards have an external 10K pull-up. */
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+    };
+    if (gpio_config(&config) != ESP_OK) return BOARD_IO_ERROR;
+    boot_gate = (BoardBootGate){0};
+    boot_input_ready = true;
+    return BOARD_OK;
+}
+
+bool board_boot_button_released(uint64_t monotonic_ms)
+{
+    if (!boot_input_ready) return false;
+    return board_boot_gate_poll(&boot_gate, gpio_get_level(BOOT_GPIO) == 0,
+                                monotonic_ms);
+}
 
 static void touch_sampler(void *argument)
 {
@@ -390,6 +417,7 @@ BoardResult board_read_touch(BoardTouch *touch)
 
 void board_deinit(void)
 {
+    boot_input_ready = false;
 #ifdef ESP_PLATFORM
     board_touch_sampler_stop();
 #endif

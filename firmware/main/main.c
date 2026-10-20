@@ -1675,6 +1675,8 @@ void app_main(void)
         board_deinit();
         return;
     }
+    if (board_boot_button_init() != BOARD_OK)
+        ESP_LOGE(tag, "BOOT input unavailable; app continues without button restart");
 
 #if defined(ESP_PLATFORM) || defined(KATMED_PHASE_HOST_TEST)
     katmed_usb_console_phase_init(runtime.boot_domain, monotonic_ms,
@@ -1725,11 +1727,27 @@ void app_main(void)
 
     uint64_t last_render_ms = now.monotonic_ms;
     KatmedRuntimeMetricsGate metrics_gate = {0};
+    bool boot_restart_pending = false;
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(25));
         if (reset_runtime_step(&runtime,monotonic_ms())) {
             vTaskDelay(pdMS_TO_TICKS(100));
             continue;
+        }
+        if (board_boot_button_released(monotonic_ms()))
+            boot_restart_pending = true;
+        if (boot_restart_pending &&
+            xSemaphoreTake(reset_mutex,pdMS_TO_TICKS(100))==pdTRUE) {
+            boot_restart_pending = false;
+            if (!runtime.reset_active && !runtime.reset_requested) {
+                /* BOOT is separate from the physical EN/RESET confirmation.
+                 * A pending preparation must not survive this software boot. */
+                if (runtime.reset_prepared && !reset_cancel_locked(&runtime))
+                    ESP_LOGW(tag,"BOOT restart could not clear reset preparation");
+                ESP_LOGI(tag,"BOOT released; restarting application");
+                esp_restart();
+            }
+            xSemaphoreGive(reset_mutex);
         }
         reboot_if_due(&runtime, monotonic_ms());
         now = clock_sample(runtime.boot_domain);

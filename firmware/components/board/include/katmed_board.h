@@ -33,6 +33,10 @@ BoardResult board_touch_sampler_start(void);
 void board_touch_sampler_stop(void);
 bool board_touch_sampler_running(void);
 bool board_touch_sampler_take(BoardTouch *touch, BoardResult *result);
+/* BOOT is an input only after ROM strap sampling. A completed, debounced
+ * press/release yields one restart request; a held key never requests one. */
+BoardResult board_boot_button_init(void);
+bool board_boot_button_released(uint64_t monotonic_ms);
 
 #ifdef __cplusplus
 }

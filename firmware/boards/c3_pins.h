@@ -30,4 +30,8 @@
 #define KATMED_C3_TOUCH_INTERRUPT 0
 #define KATMED_C3_TOUCH_I2C_ADDRESS_7BIT 0x15
 
+/* GUITION ESP32-2424S012 V1.0: BOOT switch pulls IO9 low; R2 pulls it
+ * high. This is a ROM strap during reset, sampled as input only in app. */
+#define KATMED_C3_BOOT_GPIO 9
+
 #endif
