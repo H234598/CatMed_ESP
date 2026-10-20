@@ -43,10 +43,14 @@ objects=(
     "${object_root}/katmed_ui/morse.c.o"
     "${object_root}/katmed_ui/navigation.c.o"
     "${object_root}/katmed_ui/clock_view.c.o"
+    "${object_root}/katmed_ui/i18n_catalog.c.o"
+    "${object_root}/katmed_ui/i18n_date.c.o"
     "${object_root}/katmed_ui/katmed_font_10.c.o"
     "${object_root}/katmed_ui/katmed_font_12.c.o"
     "${object_root}/katmed_ui/katmed_font_14.c.o"
     "${object_root}/katmed_ui/katmed_font_26.c.o"
+    "${object_root}/katmed_ui/katmed_font_i18n_12.c.o"
+    "${object_root}/katmed_ui/katmed_font_i18n_14.c.o"
     "${object_root}/katmed_core/katmed_core.cpp.o")
 g++ -Wl,--gc-sections "${out_dir}/main_contact_regression.o" "${out_dir}/ui.o" \
     "${objects[@]}" "${build_dir}/lvgl/liblvgl.a" -lm -o "${out_dir}/check_main_contact"

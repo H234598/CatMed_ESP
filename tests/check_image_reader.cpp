@@ -254,6 +254,9 @@ int main(int argc, char **argv)
         lv_obj_t *screen = lv_screen_active();
         lv_obj_t *image = lv_image_create(screen);
         lv_obj_t *fallback = lv_label_create(screen);
+        // The UI owns the localized copy; the adapter must preserve it on
+        // preflight failures as well as failures during a later LVGL draw.
+        lv_label_set_text(fallback, "Image not available");
         ClockSample clock{1000, 1, 0, false, CLOCK_UNAVAILABLE};
         EventId boot{1, 1, 1};
         AppState state{};
@@ -301,6 +304,8 @@ int main(int argc, char **argv)
                !lv_obj_is_hidden(fallback) &&
                katmed_images_last_error() == KATMED_IMAGE_IO_ERROR,
                "source-string allocation failure did not replace the stale image with fallback");
+        expect(std::strcmp(lv_label_get_text(fallback), "Image not available") == 0,
+               "source-string failure changed the caller's fallback text");
         expect(katmed_images_open_file_count() == 0 &&
                std::memcmp(&state, &before, sizeof(state)) == 0,
                "source-string allocation failure leaked a handle or changed the active alarm");
@@ -318,12 +323,15 @@ int main(int argc, char **argv)
         expect(lv_obj_is_hidden(image) &&
                !lv_obj_is_hidden(fallback),
                "late draw-time I/O failure did not show neutral fallback");
+        expect(std::strcmp(lv_label_get_text(fallback), "Image not available") == 0,
+               "late draw failure changed the caller's fallback text");
+        lv_label_set_text(fallback, "Bild nicht verfügbar");
         expect(katmed_images_present(image, fallback, 0, ORIENTATION_0) != KATMED_IMAGE_OK,
                "injected image read fault went unnoticed");
         expect(lv_obj_is_hidden(image) &&
                !lv_obj_is_hidden(fallback), "failed image did not show neutral fallback");
         expect(std::strcmp(lv_label_get_text(fallback), "Bild nicht verfügbar") == 0,
-               "neutral fallback text missing");
+               "adapter changed the caller's German fallback text");
         expect(std::memcmp(&state, &before, sizeof(state)) == 0 &&
                state.alarm_active == before.alarm_active &&
                state.deadline.regular_monotonic_ms == before.deadline.regular_monotonic_ms &&

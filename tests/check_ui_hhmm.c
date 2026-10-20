@@ -153,6 +153,7 @@ int main(int argc,char **argv)
     assert(katmed_images_mount_storage(storage)==KATMED_IMAGE_OK);
     refinement_init(katmed_images_catalog_sha256(),katmed_images_count());
     UiServices services=refinement_services();ui_set_services(&services);
+    katmed_i18n_select(KATMED_LANG_DE); /* HH:MM flow uses German control labels. */
     ClockSample now=refinement_clock();
     ui_render(refinement_state(),refinement_local(),SETTINGS,&now);draw();
     lv_obj_t *screen=lv_screen_active();

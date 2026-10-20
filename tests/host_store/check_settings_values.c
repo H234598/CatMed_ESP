@@ -118,6 +118,7 @@ int main(int argc, char **argv)
     assert(display);
     UiServices services = {.context=&runtime, .submit=submit_ui};
     ui_set_services(&services);
+    katmed_i18n_select(KATMED_LANG_DE); /* This fixture asserts German UI copy. */
     render();
     click("Advanced");
     const AppState before_medication_open = runtime.state;

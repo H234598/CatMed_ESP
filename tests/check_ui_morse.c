@@ -126,6 +126,7 @@ int main(void)
     lv_display_set_user_data(display, &host);
     UiServices services = {.context = &host, .submit = submit};
     ui_set_services(&services);
+    katmed_i18n_select(KATMED_LANG_DE); /* Interaction labels below use German. */
     ClockSample clock = {.monotonic_ms = 1000, .domain = 1};
     LocalSettings local = {.orientation = ORIENTATION_0,
                            .clock_style = DIGITAL_LARGE};

@@ -441,6 +441,8 @@ int main(int argc, char **argv)
     state.round.origin = (EventId){.device = 1, .epoch = 1, .sequence = 1};
     state.round.ordinal = 1;
     ui_render(&state, &local, BACKGROUND, &clock);
+    assert(find_label(lv_screen_active(), "Bild nicht verfügbar") &&
+           "UI must supply the German image fallback label");
     report_memory("alarm-start");
     assert(ui_current_view() == ALARM);
 
@@ -1508,6 +1510,8 @@ int main(int argc, char **argv)
     local.clock_style = DIGITAL_DATE;
     clock.monotonic_ms += 1000;
     ui_render(&state, &local, CLOCK, &clock);
+    assert(find_label(screen, "Image not available") &&
+           "UI must localize the image fallback before adapter presentation");
     LocalDateTime date_parts = {0};
     assert(app_berlin_local_time(clock.utc_ms, &date_parts) == APP_OK);
     char localized_date[16];

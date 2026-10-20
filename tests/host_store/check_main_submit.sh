@@ -36,6 +36,7 @@ flags=(-std=c11 -Wall -Wextra -Werror -Wno-error=cpp -Wno-unused-variable -ffunc
     "-I${repo_root}/firmware/managed_components/lvgl__lvgl")
 cc "${flags[@]}" -c "$repo_root/tests/host_store/check_main_submit.c" -o "$out/main.o"
 cc "${flags[@]}" -c "$repo_root/firmware/components/katmed_ui/navigation.c" -o "$out/navigation.o"
+cc "${flags[@]}" -c "$repo_root/firmware/components/katmed_ui/i18n_catalog.c" -o "$out/i18n_catalog.o"
 cc "${flags[@]}" -c "$repo_root/firmware/components/katmed_reset/katmed_reset_journal.c" -o "$out/reset_journal.o"
 cc "${flags[@]}" -c "$repo_root/firmware/components/katmed_time/katmed_time.c" -o "$out/time.o"
 c++ -std=c++17 -Wall -Wextra -Werror -ffunction-sections -fdata-sections \
@@ -46,5 +47,5 @@ c++ -std=c++17 -Wall -Wextra -Werror -ffunction-sections -fdata-sections \
     -I"$repo_root/firmware/components/katmed_core/include" \
     -I"$repo_root/firmware/components/katmed_store/include" \
     -c "$repo_root/firmware/components/katmed_store/katmed_store.cpp" -o "$out/store.o"
-c++ -Wl,--gc-sections "$out/main.o" "$out/navigation.o" "$out/reset_journal.o" "$out/time.o" "$out/core.o" "$out/store.o" -lz -o "$out/check_main_submit"
+c++ -Wl,--gc-sections "$out/main.o" "$out/navigation.o" "$out/i18n_catalog.o" "$out/reset_journal.o" "$out/time.o" "$out/core.o" "$out/store.o" -lz -o "$out/check_main_submit"
 "$out/check_main_submit"

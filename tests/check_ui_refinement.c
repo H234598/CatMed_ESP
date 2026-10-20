@@ -80,6 +80,7 @@ int UI_REFINEMENT_ENTRYPOINT(int argc,char **argv)
     assert(katmed_images_mount_storage(storage)==KATMED_IMAGE_OK);
     refinement_init(katmed_images_catalog_sha256(),katmed_images_count());
     UiServices services=refinement_services();ui_set_services(&services);
+    katmed_i18n_select(KATMED_LANG_DE); /* Keep the German label assertions explicit. */
     ClockSample now=refinement_clock();
     ui_render(refinement_state(),refinement_local(),SETTINGS,&now);draw();
     lv_obj_t *screen=lv_screen_active();
@@ -150,6 +151,8 @@ int UI_REFINEMENT_ENTRYPOINT(int argc,char **argv)
         click_label(screen,"Bilder: Stunden");
         click_label(screen,"3");
         right_swipe();
+        assert(!find_matrix_with_first_button(screen,"1")&&
+               "right swipe must dismiss the Advanced editor keypad");
         menu=lv_obj_get_parent(find_label(screen,"Einstellungen"));
         assert(menu&&"detail right swipe must cancel and return to settings");
         lv_obj_update_layout(menu);
@@ -160,6 +163,8 @@ int UI_REFINEMENT_ENTRYPOINT(int argc,char **argv)
         for(unsigned i=0;i<3;++i) {
             if(i<2) click_label(screen,"Advanced");
             click_label(screen,details[i]);right_swipe();
+            assert(!find_matrix_with_first_button(screen,"1")&&
+                   "detail right swipe must dismiss its keypad");
             menu=lv_obj_get_parent(find_label(screen,"Einstellungen"));assert(menu);
             assert(lv_obj_get_scroll_y(menu)==saved&&refinement_writes()==writes);
         }
@@ -270,7 +275,9 @@ int UI_REFINEMENT_ENTRYPOINT(int argc,char **argv)
                 assert(lv_font_get_glyph_dsc(&katmed_font_14,&old_glyph,'8',0));
                 assert(lv_font_get_glyph_dsc(datefont,&new_glyph,'8',0));
                 printf("old_date_height=%u new_date_height=%u\n",old_glyph.box_h,new_glyph.box_h);
-                assert(new_glyph.box_h>=old_glyph.box_h*2);
+                /* Narrow portrait uses the compact date font to fit. */
+                assert(datefont==(host.width<200?&katmed_font_14:&katmed_font_30));
+                if(host.width>=200) assert(new_glyph.box_h>=old_glyph.box_h*2);
                 lv_obj_get_coords(date,&area);
                 assert(area.x1>=0&&area.x2<host.width&&area.y1>=0&&area.y2<host.height);
                 lv_text_get_size(&extent,lv_label_get_text(date),datefont,0,0,10000,LV_TEXT_FLAG_NONE);

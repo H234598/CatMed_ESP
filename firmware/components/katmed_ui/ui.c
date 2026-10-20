@@ -1069,7 +1069,9 @@ void ui_reset_show_warning(void)
     lv_obj_set_style_text_font(warning, &katmed_font_12, 0);
     /* Keep both pixel dimensions on an exact 7:10 grid. */
     const int action_width = ((ui.width - 40) / 10) * 10;
-    const int action_height = 60;
+    /* Leave enough warning text visible for a real swipe on the short
+     * landscape panel while keeping the buttons' 7:10 size ratio. */
+    const int action_height = ui.height < 200 ? 40 : 60;
     const int yes_width = action_width * 7 / 10;
     const int yes_height = action_height * 7 / 10;
     lv_obj_t *yes = button(ui.reset_dialog, T("Ja, zurücksetzen"),
@@ -1902,6 +1904,9 @@ void ui_touch_sample(bool touched, int16_t x, int16_t y,
         }
         if (ui.view == SETTINGS && ui.advanced_open && dx >= 40 &&
             dx >= 2 * abs(dy)) {
+            /* A detail editor belongs to Advanced. Dismiss it before
+             * returning to the main menu or its keypad remains overlaid. */
+            if (ui.keypad) cancel_edit(NULL);
             remember_scroll(ui.settings, 9);
             destroy_menu();
             ui.advanced_open = false;
