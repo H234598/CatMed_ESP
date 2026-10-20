@@ -7,6 +7,7 @@
 #include <map>
 #include <string>
 #include <vector>
+#include <zlib.h>
 
 struct Memory {
     std::map<std::string, std::vector<uint8_t>> values;
@@ -23,6 +24,11 @@ struct Memory {
     size_t available_entries = 600;
     unsigned writes = 0;
     unsigned erases = 0;
+    std::map<std::string, std::vector<uint8_t>> staged_files;
+    std::map<std::string, std::vector<uint8_t>> final_files;
+    size_t fs_free = 256 * 1024;
+    int fail_publish_at = -1;
+    int fail_stage_at = -1;
 };
 static std::string id(const char *ns, const char *key) {
     return std::string(ns) + "/" + key;
@@ -96,9 +102,61 @@ static bool validate_web(void *context, const uint8_t *auth, size_t auth_len,
         (!identity_len || (identity && identity_len == 1288)) &&
         (!auth_len || identity_len);
 }
+static std::string file_id(const KatmedImportFile *f) {
+    return std::to_string(f->kind) + "/" + std::to_string(f->id);
+}
+static bool file_equal(const std::vector<uint8_t> &bytes,
+                       const KatmedImportFile *f) {
+    return bytes.size() == f->length &&
+        uint32_t(crc32(0, bytes.data(), bytes.size())) == f->crc;
+}
+static bool files_empty(void *context, size_t bytes, size_t count) {
+    auto &m = *static_cast<Memory *>(context);
+    return m.staged_files.empty() && m.final_files.empty() &&
+        m.fs_free >= bytes + 32768 + count * 256;
+}
+static bool file_stage(void *context, unsigned ordinal, const KatmedImportFile *f,
+                       const KatmedImportInput *in) {
+    auto &m = *static_cast<Memory *>(context);
+    if (int(ordinal) == m.fail_stage_at) { m.fail_stage_at = -1; return false; }
+    if (m.staged_files.count(file_id(f)) || m.final_files.count(file_id(f))) return false;
+    std::vector<uint8_t> bytes(f->length);
+    if (!in->read(in->context, f->input_offset, bytes.data(), bytes.size()) ||
+        !file_equal(bytes, f)) return false;
+    m.staged_files[file_id(f)] = std::move(bytes);
+    return true;
+}
+static bool file_final(void *context, unsigned, const KatmedImportFile *f) {
+    auto &m = *static_cast<Memory *>(context);
+    auto it = m.final_files.find(file_id(f));
+    return it != m.final_files.end() && file_equal(it->second, f) &&
+        m.staged_files.count(file_id(f)) == 0;
+}
+static bool file_publish(void *context, unsigned ordinal, const KatmedImportFile *f) {
+    auto &m = *static_cast<Memory *>(context);
+    if (int(ordinal) == m.fail_publish_at) { m.fail_publish_at = -1; return false; }
+    const auto final = m.final_files.find(file_id(f));
+    if (final != m.final_files.end()) {
+        if (!file_equal(final->second, f)) return false;
+        m.staged_files.erase(file_id(f));
+        return true;
+    }
+    const auto staged = m.staged_files.find(file_id(f));
+    if (staged == m.staged_files.end() || !file_equal(staged->second, f)) return false;
+    m.final_files[file_id(f)] = staged->second;
+    m.staged_files.erase(staged);
+    return true;
+}
+static bool file_abort(void *context, unsigned, const KatmedImportFile *f) {
+    auto &m = *static_cast<Memory *>(context);
+    if (m.final_files.count(file_id(f))) return false;
+    m.staged_files.erase(file_id(f));
+    return true;
+}
 static KatmedImportBackend backend(Memory &m) {
     return {&m, read_blob, write_blob, erase_blob, target_empty, free_entries,
-            validate_web};
+            validate_web, files_empty, file_stage, file_publish, file_final,
+            file_abort};
 }
 static KatmedImportInput input(Memory &m) {
     return {&m, m.capsule.size(), 1, input_read};
@@ -170,6 +228,64 @@ int main(int argc, char **argv) {
             m.values.count("katmed_web/auth") == 0 &&
             m.values.count("katmed_reset/journal") == 0 &&
             m.values.count("katmed_imp/journal") == 0;
+    } else if (mode == "files_success") {
+        ok = katmed_import_apply(&in, &b) &&
+            m.final_files.size() == 2 && m.staged_files.empty() &&
+            m.values.count("katmed/state") == 1 &&
+            m.values.at("katmed/state").size() == 4065 &&
+            m.values.at("katmed/state")[4] == 11 &&
+            m.values.at("katmed/state").back() == 1 &&
+            m.values.count("katmed_web/identity") == 1 &&
+            m.values.count("katmed_web/auth") == 1 &&
+            m.values.count("katmed_reset/journal") == 1 &&
+            m.values.count("katmed_imp/journal") == 0 &&
+            katmed_import_resume(&b, 1) &&
+            !katmed_import_apply(&in, &b) && m.final_files.size() == 2;
+    } else if (mode == "files_replay") {
+        m.fail_publish_at = 1;
+        ok = !katmed_import_apply(&in, &b) &&
+            m.final_files.size() == 1 && m.staged_files.size() == 1 &&
+            m.values.count("katmed_imp/journal") == 1 &&
+            m.values.count("katmed/state") == 0;
+        const unsigned writes = m.writes, erases = m.erases;
+        ok = ok && !katmed_import_resume(&b, 2) &&
+            m.writes == writes && m.erases == erases &&
+            katmed_import_resume(&b, 1) &&
+            m.final_files.size() == 2 && m.staged_files.empty() &&
+            m.values.count("katmed/state") == 1 &&
+            m.values.count("katmed_imp/journal") == 0;
+    } else if (mode == "files_missing") {
+        m.fail_publish_at = 1;
+        ok = !katmed_import_apply(&in, &b) && m.staged_files.size() == 1;
+        m.staged_files.clear();
+        const unsigned writes = m.writes, erases = m.erases;
+        ok = ok && !katmed_import_resume(&b, 1) &&
+            m.writes == writes && m.erases == erases &&
+            m.values.count("katmed_imp/journal") == 1 &&
+            m.values.count("katmed/state") == 0;
+    } else if (mode == "files_stage_error") {
+        m.fail_stage_at = 1;
+        ok = !katmed_import_apply(&in, &b) &&
+            m.staged_files.empty() && m.final_files.empty() &&
+            m.values.count("katmed_imp/journal") == 0 &&
+            m.values.count("katmed_imp/stage") == 0 &&
+            m.values.count("katmed/state") == 0;
+    } else if (mode == "files_no_space" || mode == "files_zero_space") {
+        m.fs_free = mode == "files_zero_space" ? 0 : 8 * 1024;
+        ok = !katmed_import_apply(&in, &b) &&
+            m.writes == 0 && m.erases == 0 && m.values.empty() &&
+            m.staged_files.empty();
+    } else if (mode == "files_occupied") {
+        m.final_files["1/7"] = {1, 2, 3};
+        ok = !katmed_import_apply(&in, &b) &&
+            m.writes == 0 && m.erases == 0 && m.values.empty() &&
+            m.final_files.at("1/7") == std::vector<uint8_t>({1, 2, 3});
+    } else if (mode == "files_many") {
+        ok = katmed_import_apply(&in, &b) &&
+            m.final_files.size() == 127 && m.staged_files.empty() &&
+            m.values.count("katmed/state") == 1 &&
+            m.values.count("katmed_imp/journal") == 0 &&
+            katmed_import_resume(&b, 1);
     } else if (mode == "legacy_cleanup") {
         const size_t path_len = size_t(m.capsule[16]) | size_t(m.capsule[17]) << 8;
         const size_t data_len = size_t(m.capsule[20]) |
@@ -210,6 +326,16 @@ int main(int argc, char **argv) {
             m.values.count("katmed_web/auth") == 1 &&
             m.values.count("katmed_reset/journal") == 1 &&
             m.values.count("katmed_imp/journal") == 0;
+    } else if (mode == "live_conflict") {
+        m.fail_write_key_once = "katmed_web/auth";
+        ok = !katmed_import_apply(&in, &b) &&
+            m.values.count("katmed_imp/journal") == 1 &&
+            m.values.count("katmed_web/identity") == 1;
+        m.values.at("katmed_web/identity")[8] ^= 1;
+        const unsigned writes = m.writes, erases = m.erases;
+        ok = ok && !katmed_import_resume(&b, 1) &&
+            m.writes == writes && m.erases == erases &&
+            m.values.count("katmed_imp/journal") == 1;
     } else if (mode == "fail_write" || mode == "fail_readback") {
         if (argc != 4) return 2;
         const std::string key = argv[3];

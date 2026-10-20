@@ -27,6 +27,17 @@ typedef enum {
     KATMED_IMPORT_READ_ERROR
 } KatmedImportRead;
 
+/* A file name is encoded from kind/id; no arbitrary target path is accepted.
+ * kind 1 = uploaded img-ID, kind 2 = catalogue index/profile packed as
+ * (index << 1) | profile. input_offset is used only while staging. */
+typedef struct {
+    uint8_t kind;
+    uint32_t id;
+    uint32_t length;
+    uint32_t crc;
+    size_t input_offset;
+} KatmedImportFile;
+
 /* Every write and erase callback must commit durably before returning true. */
 typedef struct {
     void *context;
@@ -42,10 +53,18 @@ typedef struct {
     /* IDF implementation uses the product Web X.509/key-pair validator. */
     bool (*validate_web)(void *, const uint8_t *auth, size_t auth_len,
                          const uint8_t *identity, size_t identity_len);
+    /* File callbacks operate on the real mounted user_images LittleFS. The
+     * IDF implementation never formats it. Each success is durable and
+     * checked against the exact name, length and CRC in the NVS stage. */
+    bool (*files_empty)(void *, size_t content_bytes, size_t count);
+    bool (*file_stage)(void *, unsigned ordinal, const KatmedImportFile *,
+                       const KatmedImportInput *);
+    bool (*file_publish)(void *, unsigned ordinal, const KatmedImportFile *);
+    bool (*file_final)(void *, unsigned ordinal, const KatmedImportFile *);
+    bool (*file_abort)(void *, unsigned ordinal, const KatmedImportFile *);
 } KatmedImportBackend;
 
-/* Accepts canonical state, optional mesh_history, Web identity/auth and a
- * non-pending physical reset journal. Files still fail closed. */
+/* Accepts canonical v11 NVS and bounded user-images; ACME fails closed. */
 bool katmed_import_apply(const KatmedImportInput *input,
                          const KatmedImportBackend *backend);
 /* Called before Store/Web/mesh startup with the locally read device ID.

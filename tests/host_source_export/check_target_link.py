@@ -17,7 +17,9 @@ parser.add_argument("--symbol", choices=("katmed_source_export",
                                          "katmed_import_apply_idf",
                                          "katmed_import_resume_idf",
                                          "katmed_import_abort_idf",
-                                         "katmed_web_import_records_valid"),
+                                         "katmed_web_import_records_valid",
+                                         "katmed_import_files_empty",
+                                         "katmed_import_file_publish"),
                     default="katmed_source_export")
 args = parser.parse_args()
 build = ROOT / "firmware" / f"build-a61-{args.board}-security"

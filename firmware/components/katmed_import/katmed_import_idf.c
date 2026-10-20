@@ -5,6 +5,7 @@
 #include "nvs_flash.h"
 #include "sdkconfig.h"
 #include "katmed_web_import.h"
+#include "katmed_import_files_idf.h"
 
 #if CONFIG_NVS_ENCRYPTION
 /* Factory MAC is the same read-only local identity used by boot_identity().
@@ -93,7 +94,12 @@ static KatmedImportBackend backend(void)
     KatmedImportBackend b = {
         .context = NULL, .read = read_blob, .write = write_blob,
         .erase = erase_blob, .target_empty = target_empty,
-        .free_entries = free_entries, .validate_web = validate_web
+        .free_entries = free_entries, .validate_web = validate_web,
+        .files_empty = katmed_import_files_empty,
+        .file_stage = katmed_import_file_stage,
+        .file_publish = katmed_import_file_publish,
+        .file_final = katmed_import_file_final,
+        .file_abort = katmed_import_file_abort
     };
     return b;
 }
@@ -106,7 +112,9 @@ bool katmed_import_apply_idf(const KatmedImportInput *input)
     if (!input || !local_device_id(&device) ||
         input->expected_device != device) return false;
     KatmedImportBackend b = backend();
-    return katmed_import_apply(input, &b);
+    bool ok = katmed_import_apply(input, &b);
+    bool closed = katmed_import_files_unmount();
+    return ok && closed;
 #else
     (void)input;
     return false;
@@ -119,7 +127,9 @@ bool katmed_import_resume_idf(void)
     uint64_t device = 0;
     if (!local_device_id(&device)) return false;
     KatmedImportBackend b = backend();
-    return katmed_import_resume(&b, device);
+    bool ok = katmed_import_resume(&b, device);
+    bool closed = katmed_import_files_unmount();
+    return ok && closed;
 #else
     return false;
 #endif
@@ -129,7 +139,9 @@ bool katmed_import_abort_idf(void)
 {
 #if CONFIG_NVS_ENCRYPTION
     KatmedImportBackend b = backend();
-    return katmed_import_abort(&b);
+    bool ok = katmed_import_abort(&b);
+    bool closed = katmed_import_files_unmount();
+    return ok && closed;
 #else
     return false;
 #endif

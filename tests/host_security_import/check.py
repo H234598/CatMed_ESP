@@ -8,6 +8,8 @@ import struct
 import subprocess
 import tempfile
 import zlib
+from io import BytesIO
+from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[2]
 spec = importlib.util.spec_from_file_location("migration", ROOT / "tools/security_migration.py")
@@ -85,6 +87,26 @@ with tempfile.TemporaryDirectory(prefix="katmed-import-test-") as temporary:
         "nvs/katmed/state": state,
         "nvs/katmed_web/identity": identity,
     }, codec)
+    def synthetic_jpeg(color):
+        stream = BytesIO()
+        Image.new("RGB", (8, 8), color).save(stream, format="JPEG", progressive=False)
+        return stream.getvalue()
+    uploaded = synthetic_jpeg((17, 38, 59))
+    cached = synthetic_jpeg((91, 73, 29))
+    full_files = staged_capsule(root, "full-files", {
+        "nvs/katmed/state": state,
+        "nvs/katmed/mesh_history": fixture[8 + length:],
+        "nvs/katmed_web/auth": auth,
+        "nvs/katmed_web/identity": identity,
+        "nvs/katmed_reset/journal": b"\0\0",
+        "littlefs/user-images/img-00000007.jpg": uploaded,
+        "littlefs/user-images/cat-00-0.jpg": cached,
+    }, codec)
+    many_images = {"nvs/katmed/state": state,
+                   "littlefs/user-images/cat-00-0.jpg": cached}
+    many_images.update({f"littlefs/user-images/img-{number:08x}.jpg": uploaded
+                        for number in range(1, 127)})
+    many_files = staged_capsule(root, "many-files", many_images, codec)
     image = root / "image.bin"
     image.write_bytes(migration.firmware_capsule({
         "nvs/katmed/state": state,
@@ -147,10 +169,63 @@ with tempfile.TemporaryDirectory(prefix="katmed-import-test-") as temporary:
         subprocess.run([str(binary), str(with_history), mode], check=True)
     subprocess.run([str(binary), str(full), "full_nvs"], check=True)
     subprocess.run([str(binary), str(identity_only), "identity_only"], check=True)
+    for mode in ("files_success", "files_replay", "files_missing",
+                 "files_stage_error", "files_no_space", "files_zero_space",
+                 "files_occupied"):
+        subprocess.run([str(binary), str(full_files), mode], check=True)
+    subprocess.run([str(binary), str(many_files), "files_many"], check=True)
+    for label, files in (
+        ("bad-jpeg", {"nvs/katmed/state": state,
+                      "littlefs/user-images/img-00000007.jpg": uploaded[:-2] + b"xx"}),
+        ("bad-catalog-id", {"nvs/katmed/state": state,
+                            "littlefs/user-images/cat-48-0.jpg": cached}),
+        ("bad-upload-id", {"nvs/katmed/state": state,
+                           "littlefs/user-images/img-00000000.jpg": uploaded}),
+        ("long-image", {"nvs/katmed/state": state,
+                        "littlefs/user-images/img-00000007.jpg": uploaded + b"x" * (128 * 1024)}),
+    ):
+        path = root / f"invalid-{label}.bin"
+        path.write_bytes(migration.firmware_capsule(files))
+        subprocess.run([str(binary), str(path), "reject"], check=True)
+    file_capsule = full_files.read_bytes()
+    body = file_capsule[16:]
+    first_path = struct.unpack_from("<H", body)[0]
+    first_data = struct.unpack_from("<I", body, 4)[0]
+    repeated = body + body[:12 + first_path + first_data]
+    repeated_path = root / "invalid-duplicate-file.bin"
+    repeated_path.write_bytes(b"KMI1" + struct.pack("<IHHI", 16 + len(repeated),
+        struct.unpack_from("<H", file_capsule, 8)[0] + 1, 0,
+        zlib.crc32(repeated)) + repeated)
+    subprocess.run([str(binary), str(repeated_path), "reject"], check=True)
+    lfs_dir = ROOT / "firmware/managed_components/joltwallet__littlefs/src/littlefs"
+    lfs_objects = []
+    for name in ("lfs.c", "lfs_util.c"):
+        obj = root / (name + ".o")
+        subprocess.run(["cc", "-std=c11", "-Wall", "-Wextra", "-Werror", "-O1",
+                        "-I", str(lfs_dir), "-c", str(lfs_dir / name), "-o", str(obj)],
+                       check=True)
+        lfs_objects.append(str(obj))
+    lfs_binary = root / "littlefs-import-check"
+    subprocess.run([
+        "c++", "-std=c++17", "-Wall", "-Wextra", "-Werror", "-O1",
+        "-I", str(ROOT / "firmware/components/katmed_core/include"),
+        "-I", str(ROOT / "firmware/components/katmed_store/include"),
+        "-I", str(ROOT / "firmware/components/katmed_import/include"),
+        "-I", str(ROOT / "firmware/components/katmed_mesh/include"),
+        "-I", str(lfs_dir),
+        str(ROOT / "tests/host_security_import/check_littlefs_import.cpp"),
+        str(ROOT / "firmware/components/katmed_import/katmed_import.cpp"),
+        str(ROOT / "firmware/components/katmed_store/katmed_store.cpp"),
+        str(ROOT / "firmware/components/katmed_mesh/katmed_mesh_status.cpp"),
+        str(ROOT / "firmware/components/katmed_core/katmed_core.cpp"),
+        *lfs_objects, "-lz", "-o", str(lfs_binary),
+    ], check=True)
+    subprocess.run([str(lfs_binary), str(full_files)], check=True)
     subprocess.run([str(binary), str(partial), "legacy_cleanup"], check=True)
     subprocess.run([str(binary), str(full), "full_space"], check=True)
     subprocess.run([str(binary), str(full), "reject_web"], check=True)
     subprocess.run([str(binary), str(full), "full_wrong_replay_id"], check=True)
+    subprocess.run([str(binary), str(full), "live_conflict"], check=True)
     for key in ("katmed_imp/stage", "katmed_imp/journal", "katmed/state",
                 "katmed/mesh_history", "katmed_web/identity",
                 "katmed_web/auth", "katmed_reset/journal"):
@@ -163,4 +238,4 @@ with tempfile.TemporaryDirectory(prefix="katmed-import-test-") as temporary:
     subprocess.run([str(binary), str(raw_v10), "reject"], check=True)
     for path in invalid_history:
         subprocess.run([str(binary), str(path), "reject"], check=True)
-print("synthetic product import: 46 cases passed")
+print("synthetic product import: 60 cases plus real LittleFS remount passed")
