@@ -333,6 +333,37 @@ class MigrationContract(unittest.TestCase):
         self.assertNotEqual(self.run_tool("export", self.source, self.package).returncode, 0)
         self.assertFalse(self.package.exists())
 
+    def test_web_auth_requires_existing_server_identity(self):
+        (self.source / "nvs/katmed_web/identity").unlink()
+        inventory = json.loads((self.source / "source-inventory.json").read_text())
+        inventory["nvs"].remove("nvs/katmed_web/identity")
+        put(self.source / "source-inventory.json", json.dumps(inventory).encode())
+        self.assertNotEqual(self.run_tool("export", self.source, self.package).returncode, 0)
+        self.assertFalse(self.package.exists())
+
+    def test_manifest_consistent_web_auth_without_identity_rejected_at_stage(self):
+        self.assertEqual(self.run_tool("export", self.source, self.package).returncode, 0)
+        (self.package / "nvs/katmed_web/identity").unlink()
+        inventory = json.loads((self.package / "source-inventory.json").read_text())
+        inventory["nvs"].remove("nvs/katmed_web/identity")
+        put(self.package / "source-inventory.json", json.dumps(inventory).encode())
+        spec = importlib.util.spec_from_file_location("migration", TOOL)
+        migration = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(migration)
+        files = migration.inventory(self.package, package=True)
+        put(self.package / "manifest.json", json.dumps(migration.manifest(files)).encode())
+        self.assertNotEqual(self.run_tool("import-stage", self.package, self.staged).returncode, 0)
+        self.assertFalse(self.staged.exists())
+
+    def test_server_identity_without_configured_auth_is_optional(self):
+        (self.source / "nvs/katmed_web/auth").unlink()
+        inventory = json.loads((self.source / "source-inventory.json").read_text())
+        inventory["nvs"].remove("nvs/katmed_web/auth")
+        put(self.source / "source-inventory.json", json.dumps(inventory).encode())
+        self.assertEqual(self.run_tool("export", self.source, self.package).returncode, 0)
+        self.assertEqual(self.run_tool("import-stage", self.package, self.staged).returncode, 0)
+        self.assertFalse((self.staged / "nvs/katmed_web/auth").exists())
+
     def test_insecure_source_rejected(self):
         (self.source / "nvs/katmed/state").chmod(0o644)
         self.assertNotEqual(self.run_tool("export", self.source, self.package).returncode, 0)

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Force the dormant source adapter into an existing neutral IDF 6.1 target link."""
+"""Force dormant migration APIs into an existing Security IDF 6.1 target link."""
 
 import argparse
 import os
@@ -16,7 +16,8 @@ parser.add_argument("board", choices=("c3", "c6"))
 parser.add_argument("--symbol", choices=("katmed_source_export",
                                          "katmed_import_apply_idf",
                                          "katmed_import_resume_idf",
-                                         "katmed_import_abort_idf"),
+                                         "katmed_import_abort_idf",
+                                         "katmed_web_import_records_valid"),
                     default="katmed_source_export")
 args = parser.parse_args()
 build = ROOT / "firmware" / f"build-a61-{args.board}-security"

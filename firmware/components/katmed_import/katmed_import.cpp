@@ -24,7 +24,23 @@ constexpr char kJournal[] = "journal";
 constexpr char kLiveNs[] = "katmed";
 constexpr char kLiveKey[] = "state";
 constexpr char kHistoryKey[] = "mesh_history";
-constexpr size_t kStageMax = 4 + KATMED_STORE_BLOB_MAX + MESH_HISTORY_BLOB;
+constexpr size_t kAuthSize = 1112;
+constexpr size_t kIdentitySize = 1288;
+constexpr size_t kResetSize = 2;
+constexpr size_t kStageHeader = 14;
+constexpr size_t kStageMax = kStageHeader + KATMED_STORE_BLOB_MAX +
+    MESH_HISTORY_BLOB + kAuthSize + kIdentitySize + kResetSize;
+enum Part { State, History, Auth, Identity, Reset, PartCount };
+struct LiveKey { const char *ns; const char *key; };
+constexpr LiveKey kLiveKeys[PartCount] = {
+    {kLiveNs, kLiveKey}, {kLiveNs, kHistoryKey},
+    {"katmed_web", "auth"}, {"katmed_web", "identity"},
+    {"katmed_reset", "journal"}
+};
+struct StageView {
+    size_t length[PartCount]{};
+    const uint8_t *data[PartCount]{};
+};
 
 uint16_t le16(const uint8_t *p) { return uint16_t(p[0]) | uint16_t(p[1]) << 8; }
 uint32_t le32(const uint8_t *p) {
@@ -130,48 +146,103 @@ bool same_blob(const KatmedImportBackend *b, const char *ns, const char *key,
     return read_blob(b, ns, key, scratch, capacity, &got) &&
         got == n && std::memcmp(scratch, expected, n) == 0;
 }
-bool valid_stage(const uint8_t *stage, size_t n, uint64_t local_device) {
-    if (n < 16) return false;
-    const size_t state_len = le16(stage);
-    const size_t history_len = le16(stage + 2);
-    if (state_len < 20 || state_len > KATMED_STORE_BLOB_MAX ||
-        (history_len != 0 && history_len != MESH_HISTORY_BLOB &&
-         history_len != MESH_HISTORY_LEGACY_BLOB) ||
-        n != 4 + state_len + history_len) return false;
+bool stage_view(const uint8_t *stage, size_t n, StageView *view) {
+    if (!stage || !view || n < 16) return false;
+    size_t header = 4;
+    view->length[State] = le16(stage);
+    view->length[History] = le16(stage + 2);
+    if (n >= kStageHeader && std::memcmp(stage, "KMS2", 4) == 0) {
+        header = kStageHeader;
+        for (unsigned i = 0; i < PartCount; ++i)
+            view->length[i] = le16(stage + 4 + 2 * i);
+    }
+    if (view->length[State] < 20 ||
+        view->length[State] > KATMED_STORE_BLOB_MAX ||
+        (view->length[History] != 0 &&
+         view->length[History] != MESH_HISTORY_BLOB &&
+         view->length[History] != MESH_HISTORY_LEGACY_BLOB) ||
+        (view->length[Auth] && view->length[Auth] != kAuthSize) ||
+        (view->length[Identity] && view->length[Identity] != kIdentitySize) ||
+        (view->length[Reset] && view->length[Reset] != kResetSize) ||
+        (view->length[Auth] && !view->length[Identity])) return false;
+    size_t at = header;
+    for (unsigned i = 0; i < PartCount; ++i) {
+        if (view->length[i] > n - at) return false;
+        view->data[i] = stage + at;
+        at += view->length[i];
+    }
+    return at == n;
+}
+bool valid_stage(const uint8_t *stage, size_t n, uint64_t local_device,
+                 const KatmedImportBackend *b) {
+    StageView view{};
+    if (!stage_view(stage, n, &view)) return false;
     uint8_t group[16];
     /* The canonical v11 Store header carries its device ID at byte 12. */
     if (!local_device ||
-        !store_import_blob_group(stage + 4, state_len, group) ||
-        le64(stage + 4 + 12) != local_device) return false;
-    if (!history_len) return true;
-    MeshHistory *history = static_cast<MeshHistory *>(std::calloc(1, sizeof(MeshHistory)));
-    if (!history) return false;
-    bool ok = mesh_history_decode(history, stage + 4 + state_len,
-                                  history_len, group) == STORE_OK;
-    wipe(history, sizeof(*history));
-    std::free(history);
-    return ok;
+        !store_import_blob_group(view.data[State], view.length[State], group) ||
+        le64(view.data[State] + 12) != local_device) return false;
+    if (view.length[History]) {
+        MeshHistory *history = static_cast<MeshHistory *>(std::calloc(1, sizeof(MeshHistory)));
+        if (!history) return false;
+        const bool good = mesh_history_decode(history, view.data[History],
+                                               view.length[History], group) == STORE_OK;
+        wipe(history, sizeof(*history));
+        std::free(history);
+        if (!good) return false;
+    }
+    if (view.length[Reset] &&
+        (view.data[Reset][0] != 0 || view.data[Reset][1] > 5)) return false;
+    if (view.length[Auth]) {
+        const uint8_t *auth = view.data[Auth];
+        const size_t cert_len = le16(auth + 6);
+        if (le32(auth) != 0x4b574131u || le16(auth + 4) != 1 ||
+            cert_len > 1024) return false;
+        for (size_t i = 88 + cert_len; i < kAuthSize; ++i)
+            if (auth[i] != 0) return false;
+        if (!cert_len) for (size_t i = 56; i < 88; ++i)
+            if (auth[i] != 0) return false;
+    }
+    if (view.length[Identity]) {
+        const uint8_t *identity = view.data[Identity];
+        const size_t key_len = le16(identity + 4);
+        const size_t cert_len = le16(identity + 6);
+        if (le32(identity) != 0x4b574931u || !key_len || key_len > 256 ||
+            !cert_len || cert_len > 1024) return false;
+        for (size_t i = 8 + key_len; i < 264; ++i)
+            if (identity[i] != 0) return false;
+        for (size_t i = 264 + cert_len; i < kIdentitySize; ++i)
+            if (identity[i] != 0) return false;
+    }
+    if ((view.length[Auth] || view.length[Identity]) &&
+        (!b || !b->validate_web ||
+         !b->validate_web(b->context, view.data[Auth], view.length[Auth],
+                          view.data[Identity], view.length[Identity]))) return false;
+    return true;
 }
 bool live_matches(const KatmedImportBackend *b, const uint8_t *stage,
-                  uint8_t *scratch) {
-    const size_t state_len = le16(stage), history_len = le16(stage + 2);
-    return same_blob(b, kLiveNs, kLiveKey, stage + 4, state_len, scratch,
-                     kStageMax) &&
-        (!history_len ||
-         same_blob(b, kLiveNs, kHistoryKey, stage + 4 + state_len,
-                   history_len, scratch, kStageMax));
+                  size_t n, uint8_t *scratch) {
+    StageView view{};
+    if (!stage_view(stage, n, &view)) return false;
+    for (unsigned i = 0; i < PartCount; ++i) {
+        if (view.length[i] &&
+            !same_blob(b, kLiveKeys[i].ns, kLiveKeys[i].key,
+                       view.data[i], view.length[i], scratch, kStageMax)) return false;
+    }
+    return true;
 }
 bool commit_live(const KatmedImportBackend *b, const uint8_t *stage,
-                 uint8_t *scratch) {
-    const size_t state_len = le16(stage), history_len = le16(stage + 2);
-    if (!b->write(b->context, kLiveNs, kLiveKey, stage + 4, state_len) ||
-        !same_blob(b, kLiveNs, kLiveKey, stage + 4, state_len, scratch,
-                   kStageMax)) return false;
-    if (history_len &&
-        (!b->write(b->context, kLiveNs, kHistoryKey, stage + 4 + state_len,
-                   history_len) ||
-         !same_blob(b, kLiveNs, kHistoryKey, stage + 4 + state_len,
-                    history_len, scratch, kStageMax))) return false;
+                 size_t n, uint8_t *scratch) {
+    StageView view{};
+    if (!stage_view(stage, n, &view)) return false;
+    constexpr unsigned order[] = {State, History, Identity, Auth, Reset};
+    for (unsigned i : order) {
+        if (view.length[i] &&
+            (!b->write(b->context, kLiveKeys[i].ns, kLiveKeys[i].key,
+                       view.data[i], view.length[i]) ||
+             !same_blob(b, kLiveKeys[i].ns, kLiveKeys[i].key,
+                        view.data[i], view.length[i], scratch, kStageMax))) return false;
+    }
     return true;
 }
 }
@@ -196,15 +267,15 @@ extern "C" bool katmed_import_resume(const KatmedImportBackend *b,
          * A crash after journal removal may leave a verified live copy. */
         if (absent(b, kImportNs, kStage)) ok = true;
         else if (read_blob(b, kImportNs, kStage, stage, kStageMax, &n) &&
-                 valid_stage(stage, n, local_device) &&
-                 live_matches(b, stage, check))
+                 valid_stage(stage, n, local_device, b) &&
+                 live_matches(b, stage, n, check))
             ok = b->erase(b->context, kImportNs, kStage);
     } else if (valid_journal(journal, jlen) &&
                read_blob(b, kImportNs, kStage, stage, kStageMax, &n) &&
                n == le16(journal + 6) &&
                crc(0, stage, n) == le32(journal + 8) &&
-               valid_stage(stage, n, local_device) &&
-               commit_live(b, stage, check) &&
+               valid_stage(stage, n, local_device, b) &&
+               commit_live(b, stage, n, check) &&
                b->erase(b->context, kImportNs, kJournal)) {
         /* A failed final cleanup is recoverable on the next boot. */
         ok = b->erase(b->context, kImportNs, kStage);
@@ -216,10 +287,10 @@ extern "C" bool katmed_import_resume(const KatmedImportBackend *b,
 }
 
 extern "C" bool katmed_import_abort(const KatmedImportBackend *b) {
-    return callbacks(b) && absent(b, kImportNs, kJournal) &&
-        absent(b, kLiveNs, kLiveKey) &&
-        absent(b, kLiveNs, kHistoryKey) &&
-        b->erase(b->context, kImportNs, kStage);
+    if (!callbacks(b) || !absent(b, kImportNs, kJournal)) return false;
+    for (const LiveKey &key : kLiveKeys)
+        if (!absent(b, key.ns, key.key)) return false;
+    return b->erase(b->context, kImportNs, kStage);
 }
 
 extern "C" bool katmed_import_apply(const KatmedImportInput *in,
@@ -237,10 +308,15 @@ extern "C" bool katmed_import_apply(const KatmedImportInput *in,
         std::calloc(le16(header + 8), 64));
     uint8_t *state = static_cast<uint8_t *>(std::malloc(KATMED_STORE_BLOB_MAX));
     uint8_t *history = static_cast<uint8_t *>(std::malloc(MESH_HISTORY_BLOB));
-    if (!names || !state || !history) {
-        std::free(names); std::free(state); std::free(history); return false;
+    uint8_t *auth = static_cast<uint8_t *>(std::malloc(kAuthSize));
+    uint8_t *identity = static_cast<uint8_t *>(std::malloc(kIdentitySize));
+    uint8_t reset[kResetSize]{};
+    if (!names || !state || !history || !auth || !identity) {
+        std::free(names); std::free(state); std::free(history);
+        std::free(auth); std::free(identity); return false;
     }
-    size_t at = 16, state_len = 0, history_len = 0, file_bytes = 0, nvs_bytes = 0;
+    size_t at = 16, state_len = 0, history_len = 0, auth_len = 0,
+           identity_len = 0, reset_len = 0, file_bytes = 0, nvs_bytes = 0;
     uint32_t overall = 0;
     bool supported = true, ok = true, have_state = false;
     uint8_t chunk[512];
@@ -277,6 +353,9 @@ extern "C" bool katmed_import_apply(const KatmedImportInput *in,
         }
         const bool this_state = std::strcmp(names[i], "nvs/katmed/state") == 0;
         const bool this_history = std::strcmp(names[i], "nvs/katmed/mesh_history") == 0;
+        const bool this_auth = std::strcmp(names[i], "nvs/katmed_web/auth") == 0;
+        const bool this_identity = std::strcmp(names[i], "nvs/katmed_web/identity") == 0;
+        const bool this_reset = std::strcmp(names[i], "nvs/katmed_reset/journal") == 0;
         if (this_state) {
             have_state = true;
             state_len = length;
@@ -286,6 +365,15 @@ extern "C" bool katmed_import_apply(const KatmedImportInput *in,
              * sizes still pass the mesh codec in valid_stage() below. */
             if (length != MESH_HISTORY_BLOB &&
                 length != MESH_HISTORY_LEGACY_BLOB) { ok = false; break; }
+        } else if (this_auth) {
+            auth_len = length;
+            if (length != kAuthSize) { ok = false; break; }
+        } else if (this_identity) {
+            identity_len = length;
+            if (length != kIdentitySize) { ok = false; break; }
+        } else if (this_reset) {
+            reset_len = length;
+            if (length != kResetSize) { ok = false; break; }
         } else supported = false;
         uint32_t item = 0;
         for (size_t off = 0; off < length && ok;) {
@@ -295,6 +383,9 @@ extern "C" bool katmed_import_apply(const KatmedImportInput *in,
             item = crc(item, chunk, n);
             if (this_state) std::memcpy(state + off, chunk, n);
             if (this_history) std::memcpy(history + off, chunk, n);
+            if (this_auth) std::memcpy(auth + off, chunk, n);
+            if (this_identity) std::memcpy(identity + off, chunk, n);
+            if (this_reset) std::memcpy(reset + off, chunk, n);
             off += n;
         }
         if (item != le32(record + 8)) ok = false;
@@ -306,20 +397,32 @@ extern "C" bool katmed_import_apply(const KatmedImportInput *in,
     if (ok) {
         ok = stage != nullptr;
         if (ok) {
-            put16(stage, uint16_t(state_len));
-            put16(stage + 2, uint16_t(history_len));
-            std::memcpy(stage + 4, state, state_len);
-            if (history_len) std::memcpy(stage + 4 + state_len, history, history_len);
-            ok = valid_stage(stage, 4 + state_len + history_len,
-                             in->expected_device);
+            std::memcpy(stage, "KMS2", 4);
+            const size_t lengths[PartCount] = {
+                state_len, history_len, auth_len, identity_len, reset_len
+            };
+            const uint8_t *values[PartCount] = {
+                state, history, auth, identity, reset
+            };
+            size_t packed = kStageHeader;
+            for (unsigned i = 0; i < PartCount; ++i) {
+                put16(stage + 4 + 2 * i, uint16_t(lengths[i]));
+                if (lengths[i]) std::memcpy(stage + packed, values[i], lengths[i]);
+                packed += lengths[i];
+            }
+            ok = valid_stage(stage, packed, in->expected_device, b);
         }
     }
     if (ok) {
         size_t free = 0;
-        const size_t stage_len = 4 + state_len + history_len;
+        const size_t stage_len = kStageHeader + state_len + history_len +
+            auth_len + identity_len + reset_len;
         const size_t entries = (stage_len + 31) / 32 + 4 +
             (state_len + 31) / 32 + 4 +
-            (history_len ? (history_len + 31) / 32 + 4 : 0);
+            (history_len ? (history_len + 31) / 32 + 4 : 0) +
+            (auth_len ? (auth_len + 31) / 32 + 4 : 0) +
+            (identity_len ? (identity_len + 31) / 32 + 4 : 0) +
+            (reset_len ? (reset_len + 31) / 32 + 4 : 0);
         ok = b->target_empty(b->context) &&
             absent(b, kImportNs, kStage) &&
             absent(b, kImportNs, kJournal) &&
@@ -328,7 +431,8 @@ extern "C" bool katmed_import_apply(const KatmedImportInput *in,
     }
     if (ok) {
         uint8_t journal[16];
-        const size_t stage_len = 4 + state_len + history_len;
+        const size_t stage_len = kStageHeader + state_len + history_len +
+            auth_len + identity_len + reset_len;
         make_journal(journal, stage_len, crc(0, stage, stage_len));
         uint8_t *check = static_cast<uint8_t *>(std::malloc(kStageMax));
         ok = check &&
@@ -344,8 +448,12 @@ extern "C" bool katmed_import_apply(const KatmedImportInput *in,
     }
     wipe(state, KATMED_STORE_BLOB_MAX);
     wipe(history, MESH_HISTORY_BLOB);
+    wipe(auth, kAuthSize);
+    wipe(identity, kIdentitySize);
+    wipe(reset, sizeof(reset));
     wipe(chunk, sizeof(chunk));
     if (stage) wipe(stage, kStageMax);
-    std::free(state); std::free(history); std::free(stage); std::free(names);
+    std::free(state); std::free(history); std::free(auth);
+    std::free(identity); std::free(stage); std::free(names);
     return ok;
 }

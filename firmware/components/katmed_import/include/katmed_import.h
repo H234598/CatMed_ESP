@@ -39,10 +39,13 @@ typedef struct {
     /* Enumerate the entire target NVS, including unknown SDK/application keys. */
     bool (*target_empty)(void *);
     bool (*free_entries)(void *, size_t *);
+    /* IDF implementation uses the product Web X.509/key-pair validator. */
+    bool (*validate_web)(void *, const uint8_t *auth, size_t auth_len,
+                         const uint8_t *identity, size_t identity_len);
 } KatmedImportBackend;
 
-/* Currently accepts only canonical katmed/state and optional mesh_history.
- * Other known classes are scanned but fail closed before target mutation. */
+/* Accepts canonical state, optional mesh_history, Web identity/auth and a
+ * non-pending physical reset journal. Files still fail closed. */
 bool katmed_import_apply(const KatmedImportInput *input,
                          const KatmedImportBackend *backend);
 /* Called before Store/Web/mesh startup with the locally read device ID.

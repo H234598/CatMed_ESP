@@ -146,19 +146,25 @@ def validated_state(files, bridge):
 
 def validate_other(files):
     auth = files.get("nvs/katmed_web/auth")
+    identity = files.get("nvs/katmed_web/identity")
+    if auth is not None and identity is None:
+        raise Invalid()  # Never silently replace the server identity of a configured Web account.
     if auth is not None:
         if len(auth) != 1112 or struct.unpack_from("<I", auth)[0] != 0x4b574131 or \
                 struct.unpack_from("<H", auth, 4)[0] != 1:
             raise Invalid()
         cert_len = struct.unpack_from("<H", auth, 6)[0]
-        if cert_len > 1024 or any(auth[88 + cert_len:]):
+        if cert_len > 1024 or any(auth[88 + cert_len:]) or \
+                (cert_len == 0 and any(auth[56:88])) or \
+                (cert_len != 0 and hashlib.sha256(auth[88:88 + cert_len]).digest() != auth[56:88]):
             raise Invalid()
-    identity = files.get("nvs/katmed_web/identity")
     if identity is not None:
         if len(identity) != 1288 or struct.unpack_from("<I", identity)[0] != 0x4b574931:
             raise Invalid()
         key_len, cert_len = struct.unpack_from("<HH", identity, 4)
         if not (0 < key_len <= 256 and 0 < cert_len <= 1024):
+            raise Invalid()
+        if any(identity[8 + key_len:264]) or any(identity[264 + cert_len:]):
             raise Invalid()
     journal = files.get("nvs/katmed_reset/journal")
     if journal is not None and (len(journal) != 2 or journal[0] != 0 or journal[1] > 5):

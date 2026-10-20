@@ -1,14 +1,19 @@
 #include "katmed_web_identity.h"
+#include "katmed_web_import.h"
+#include "katmed_web_auth.h"
 
 #include <stdio.h>
 #include <string.h>
 #include "esp_mac.h"
 #include "esp_random.h"
 #include "mbedtls/pk.h"
+#include "mbedtls/md.h"
 #include "mbedtls/x509_crt.h"
 #include "psa/crypto.h"
 
 #define IDENTITY_MAGIC 0x4b574931u /* KWI1 */
+_Static_assert(sizeof(KatmedWebAuthRecord) == 1112, "Web auth NVS format changed");
+_Static_assert(sizeof(KatmedWebIdentity) == 1288, "Web identity NVS format changed");
 
 static void wipe(void *ptr, size_t len)
 {
@@ -62,6 +67,62 @@ static bool identity_valid(const KatmedWebIdentity *identity)
     mbedtls_pk_free(&key);
     if (imported) (void)psa_destroy_key(psa_key);
     return pair_result == 0;
+}
+
+bool katmed_web_import_records_valid(const uint8_t *auth_bytes, size_t auth_len,
+                                     const uint8_t *identity_bytes, size_t identity_len)
+{
+    if ((auth_len && (!auth_bytes || !identity_len)) ||
+        (identity_len && !identity_bytes) ||
+        (auth_len && auth_len != sizeof(KatmedWebAuthRecord)) ||
+        (identity_len && identity_len != sizeof(KatmedWebIdentity))) return false;
+    bool ok = true;
+    if (auth_len) {
+        KatmedWebAuthRecord auth;
+        memcpy(&auth, auth_bytes, sizeof(auth));
+        ok = auth.magic == 0x4b574131u && auth.version == 1 &&
+             auth.cert_len <= KATMED_WEB_CERT_MAX;
+        if (ok) {
+            for (size_t i = auth.cert_len; i < KATMED_WEB_CERT_MAX; ++i)
+                if (auth.client_cert[i] != 0) ok = false;
+        }
+        if (ok && auth.cert_len == 0) {
+            for (size_t i = 0; i < sizeof(auth.client_fingerprint); ++i)
+                if (auth.client_fingerprint[i] != 0) ok = false;
+        }
+        if (ok && auth.cert_len) {
+            mbedtls_x509_crt cert;
+            mbedtls_x509_crt_init(&cert);
+            uint8_t digest[32] = {0};
+            const mbedtls_md_info_t *md = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
+            ok = md && mbedtls_x509_crt_parse_der(&cert, auth.client_cert,
+                                                  auth.cert_len) == 0 &&
+                 mbedtls_md(md, auth.client_cert, auth.cert_len, digest) == 0;
+            uint8_t difference = 0;
+            if (ok) for (size_t i = 0; i < sizeof(digest); ++i)
+                difference |= digest[i] ^ auth.client_fingerprint[i];
+            ok = ok && difference == 0;
+            wipe(digest, sizeof(digest));
+            mbedtls_x509_crt_free(&cert);
+        }
+        wipe(&auth, sizeof(auth));
+    }
+    if (ok && identity_len) {
+        KatmedWebIdentity identity;
+        memcpy(&identity, identity_bytes, sizeof(identity));
+        ok = identity.magic == IDENTITY_MAGIC &&
+             identity.key_len > 0 && identity.key_len <= KATMED_WEB_KEY_MAX &&
+             identity.cert_len > 0 && identity.cert_len <= KATMED_WEB_SERVER_CERT_MAX;
+        if (ok) {
+            for (size_t i = identity.key_len; i < KATMED_WEB_KEY_MAX; ++i)
+                if (identity.key[i] != 0) ok = false;
+            for (size_t i = identity.cert_len; i < KATMED_WEB_SERVER_CERT_MAX; ++i)
+                if (identity.cert[i] != 0) ok = false;
+        }
+        if (ok) ok = identity_valid(&identity);
+        wipe(&identity, sizeof(identity));
+    }
+    return ok;
 }
 
 static bool identity_create(KatmedWebIdentity *out)

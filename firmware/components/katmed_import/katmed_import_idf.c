@@ -4,6 +4,7 @@
 #include "nvs.h"
 #include "nvs_flash.h"
 #include "sdkconfig.h"
+#include "katmed_web_import.h"
 
 #if CONFIG_NVS_ENCRYPTION
 /* Factory MAC is the same read-only local identity used by boot_identity().
@@ -80,12 +81,19 @@ static bool free_entries(void *context, size_t *out)
     return true;
 }
 
+static bool validate_web(void *context, const uint8_t *auth, size_t auth_len,
+                         const uint8_t *identity, size_t identity_len)
+{
+    (void)context;
+    return katmed_web_import_records_valid(auth, auth_len, identity, identity_len);
+}
+
 static KatmedImportBackend backend(void)
 {
     KatmedImportBackend b = {
         .context = NULL, .read = read_blob, .write = write_blob,
         .erase = erase_blob, .target_empty = target_empty,
-        .free_entries = free_entries
+        .free_entries = free_entries, .validate_web = validate_web
     };
     return b;
 }

@@ -17,6 +17,9 @@ struct Memory {
     bool fail_journal_once = false;
     bool fail_erase_once = false;
     bool fail_stage_erase_once = false;
+    bool reject_web_once = false;
+    std::string fail_write_key_once;
+    std::string fail_read_key_once;
     size_t available_entries = 600;
     unsigned writes = 0;
     unsigned erases = 0;
@@ -33,6 +36,10 @@ static bool input_read(void *context, size_t at, uint8_t *out, size_t n) {
 static KatmedImportRead read_blob(void *context, const char *ns, const char *key,
                                   uint8_t *out, size_t *n) {
     auto &m = *static_cast<Memory *>(context);
+    if (out && m.fail_read_key_once == id(ns, key)) {
+        m.fail_read_key_once.clear();
+        return KATMED_IMPORT_READ_ERROR;
+    }
     if (m.fail_live_read_once && id(ns, key) == "katmed/state" && out) {
         m.fail_live_read_once = false;
         return KATMED_IMPORT_READ_ERROR;
@@ -47,6 +54,10 @@ static KatmedImportRead read_blob(void *context, const char *ns, const char *key
 static bool write_blob(void *context, const char *ns, const char *key,
                        const uint8_t *data, size_t n) {
     auto &m = *static_cast<Memory *>(context);
+    if (m.fail_write_key_once == id(ns, key)) {
+        m.fail_write_key_once.clear();
+        return false;
+    }
     if (m.fail_live_once && id(ns, key) == "katmed/state") {
         m.fail_live_once = false; return false;
     }
@@ -77,14 +88,23 @@ static bool free_entries(void *context, size_t *out) {
     *out = static_cast<Memory *>(context)->available_entries;
     return true;
 }
+static bool validate_web(void *context, const uint8_t *auth, size_t auth_len,
+                         const uint8_t *identity, size_t identity_len) {
+    auto &m = *static_cast<Memory *>(context);
+    if (m.reject_web_once) { m.reject_web_once = false; return false; }
+    return (!auth_len || (auth && auth_len == 1112)) &&
+        (!identity_len || (identity && identity_len == 1288)) &&
+        (!auth_len || identity_len);
+}
 static KatmedImportBackend backend(Memory &m) {
-    return {&m, read_blob, write_blob, erase_blob, target_empty, free_entries};
+    return {&m, read_blob, write_blob, erase_blob, target_empty, free_entries,
+            validate_web};
 }
 static KatmedImportInput input(Memory &m) {
     return {&m, m.capsule.size(), 1, input_read};
 }
 int main(int argc, char **argv) {
-    if (argc != 3) return 2;
+    if (argc != 3 && argc != 4) return 2;
     std::ifstream file(argv[1], std::ios::binary);
     if (!file) return 2;
     Memory m;
@@ -130,6 +150,88 @@ int main(int argc, char **argv) {
             m.values.count("katmed/state") == 1 &&
             m.values.count("katmed/mesh_history") == 1 &&
             m.values.count("katmed_imp/journal") == 0;
+    } else if (mode == "full_nvs") {
+        ok = katmed_import_apply(&in, &b) &&
+            m.values.count("katmed/state") == 1 &&
+            m.values.count("katmed/mesh_history") == 1 &&
+            m.values.count("katmed_web/identity") == 1 &&
+            m.values.count("katmed_web/auth") == 1 &&
+            m.values.count("katmed_reset/journal") == 1 &&
+            m.values.at("katmed_web/auth")[8] == 0 &&
+            m.values.at("katmed_web/auth")[24] == 'V' &&
+            m.values.at("katmed_web/identity")[8] == 'K' &&
+            m.values.at("katmed_web/identity")[264] == 'C' &&
+            m.values.count("katmed_imp/journal") == 0 &&
+            m.values.count("katmed_imp/stage") == 0 &&
+            katmed_import_resume(&b, 1);
+    } else if (mode == "identity_only") {
+        ok = katmed_import_apply(&in, &b) &&
+            m.values.count("katmed_web/identity") == 1 &&
+            m.values.count("katmed_web/auth") == 0 &&
+            m.values.count("katmed_reset/journal") == 0 &&
+            m.values.count("katmed_imp/journal") == 0;
+    } else if (mode == "legacy_cleanup") {
+        const size_t path_len = size_t(m.capsule[16]) | size_t(m.capsule[17]) << 8;
+        const size_t data_len = size_t(m.capsule[20]) |
+            size_t(m.capsule[21]) << 8 | size_t(m.capsule[22]) << 16 |
+            size_t(m.capsule[23]) << 24;
+        const size_t data_at = 16 + 12 + path_len;
+        if (data_len > 4096 || data_at + data_len != m.capsule.size()) return 2;
+        const std::vector<uint8_t> state(m.capsule.begin() + data_at,
+                                         m.capsule.end());
+        std::vector<uint8_t> stage = {
+            uint8_t(data_len), uint8_t(data_len >> 8), 0, 0,
+        };
+        stage.insert(stage.end(), state.begin(), state.end());
+        m.values["katmed/state"] = state;
+        m.values["katmed_imp/stage"] = stage;
+        ok = katmed_import_resume(&b, 1) &&
+            m.values.count("katmed/state") == 1 &&
+            m.values.count("katmed_imp/stage") == 0;
+    } else if (mode == "full_space") {
+        m.available_entries = 589;
+        ok = !katmed_import_apply(&in, &b) &&
+            m.writes == 0 && m.erases == 0 && m.values.empty();
+    } else if (mode == "reject_web") {
+        m.reject_web_once = true;
+        ok = !katmed_import_apply(&in, &b) &&
+            m.writes == 0 && m.erases == 0 && m.values.empty();
+    } else if (mode == "full_wrong_replay_id") {
+        m.fail_write_key_once = "katmed_web/auth";
+        ok = !katmed_import_apply(&in, &b) &&
+            m.values.count("katmed_imp/journal") == 1 &&
+            m.values.count("katmed_web/identity") == 1 &&
+            m.values.count("katmed_web/auth") == 0;
+        const unsigned writes = m.writes, erases = m.erases;
+        ok = ok && !katmed_import_resume(&b, 2) &&
+            m.writes == writes && m.erases == erases &&
+            m.values.count("katmed_imp/journal") == 1 &&
+            katmed_import_resume(&b, 1) &&
+            m.values.count("katmed_web/auth") == 1 &&
+            m.values.count("katmed_reset/journal") == 1 &&
+            m.values.count("katmed_imp/journal") == 0;
+    } else if (mode == "fail_write" || mode == "fail_readback") {
+        if (argc != 4) return 2;
+        const std::string key = argv[3];
+        if (mode == "fail_write") m.fail_write_key_once = key;
+        else m.fail_read_key_once = key;
+        ok = !katmed_import_apply(&in, &b);
+        const bool live = key != "katmed_imp/stage" &&
+                          key != "katmed_imp/journal";
+        if (live || (mode == "fail_readback" &&
+                     key == "katmed_imp/journal")) {
+            ok = ok && m.values.count("katmed_imp/journal") == 1 &&
+                katmed_import_resume(&b, 1) &&
+                m.values.count("katmed_web/auth") == 1 &&
+                m.values.count("katmed_web/identity") == 1 &&
+                m.values.count("katmed_reset/journal") == 1 &&
+                m.values.count("katmed_imp/journal") == 0;
+        } else {
+            ok = ok && m.values.count("katmed_imp/journal") == 0 &&
+                m.values.count("katmed/state") == 0 &&
+                m.values.count("katmed_web/auth") == 0 &&
+                katmed_import_resume(&b, 1);
+        }
     } else if (mode == "replay_history") {
         m.fail_history_once = true;
         ok = !katmed_import_apply(&in, &b) &&
