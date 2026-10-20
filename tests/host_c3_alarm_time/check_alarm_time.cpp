@@ -118,6 +118,9 @@ void stable_origin_and_domains() {
 
 void actual_due_and_clipped_snapshot_age() {
     AppState state = boot();
+    state.start_reason = START_SETTINGS;
+    state.deadline.regular_monotonic_ms = state.clock.monotonic_ms;
+    state.deadline.effective_monotonic_ms = state.clock.monotonic_ms;
     auto confirmation = clock_at(2000);
     AppEvent event{};
     event.kind = EVENT_CONFIRM;

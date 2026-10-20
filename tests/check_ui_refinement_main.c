@@ -18,8 +18,7 @@ void refinement_init(const uint8_t *catalog, uint32_t count)
     assert(app_init(&runtime.state,&recovery.shared,&now,runtime.boot,count,catalog)==APP_OK);
     runtime.mesh_started=true; fake_mesh_coordinator=true; fake_mesh_connected=false;
     fake_mesh_result=MESH_ACCEPTED;
-    UiRequest confirm={.kind=UI_REQUEST_CONFIRM};
-    assert(submit_ui(&runtime,&confirm)==UI_SUBMIT_PENDING);
+    assert(submit_due_confirm()==UI_SUBMIT_PENDING);
 }
 UiServices refinement_services(void) { return (UiServices){.context=&runtime,.submit=submit_ui,.read_model=read_ui_model}; }
 const AppState *refinement_state(void) { return &runtime.state; }
@@ -65,8 +64,7 @@ void refinement_index_contract(void)
         assert(settings.medication_seconds==runtime.state.settings.medication_seconds &&
                settings.image_seconds==runtime.state.settings.image_seconds &&
                settings.rotation==runtime.state.settings.rotation);
-        UiRequest confirm={.kind=UI_REQUEST_CONFIRM};
-        assert(submit_ui(&runtime,&confirm)==UI_SUBMIT_PENDING);
+        assert(submit_due_confirm()==UI_SUBMIT_PENDING);
         assert(refinement_image(old_ids[i])==APP_INVALID);
         assert(refinement_image(UINT16_MAX)==APP_INVALID);
         assert(refinement_image(UINT32_MAX)==APP_INVALID);

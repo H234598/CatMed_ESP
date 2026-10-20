@@ -17,6 +17,10 @@ AppResult app_init(AppState *state, const SharedSettings *settings,
 AppResult app_apply_event(AppState *state, const AppEvent *event,
                           const ClockSample *now, AppEffects *effects);
 AppResult app_tick(AppState *state, const ClockSample *now, AppEffects *effects);
+/* Close only the transient boot notice. This never records a medication dose,
+ * changes a deadline, or requests persistence or a mesh broadcast. */
+AppResult app_dismiss_boot_alarm(AppState *state, const ClockSample *now,
+                                 AppEffects *effects);
 AppResult app_make_snapshot(const AppState *state, const ClockSample *now,
                             StateSnapshot *snapshot);
 AppResult app_calculate_deadline(const ClockSample *start, uint32_t seconds,

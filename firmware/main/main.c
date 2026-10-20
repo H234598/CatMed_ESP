@@ -439,8 +439,14 @@ static UiSubmitResult submit_ui_with_id(void *context, const UiRequest *request,
                                        const EventId *retry_id)
 {
     Runtime *rt = (Runtime *)context;
-    if (rt == NULL || request == NULL || !rt->store_ready || rt->reboot_required)
+    if (rt == NULL || request == NULL || rt->reboot_required)
         return UI_SUBMIT_UNAVAILABLE;
+    if (request->kind == UI_REQUEST_DISMISS_BOOT) {
+        const ClockSample now = clock_sample(rt->boot_domain);
+        return app_dismiss_boot_alarm(&rt->state, &now, NULL) == APP_OK
+            ? UI_SUBMIT_DISMISSED : UI_SUBMIT_STALE;
+    }
+    if (!rt->store_ready) return UI_SUBMIT_UNAVAILABLE;
     /* A failed NVS commit may have persisted the candidate while leaving the
      * active copy unchanged. Even a matching local request is not a success
      * until the store is reopened and the durable value is known. */
@@ -471,6 +477,7 @@ static UiSubmitResult submit_ui_with_id(void *context, const UiRequest *request,
         return UI_SUBMIT_COMMITTED;
     }
     if (request->kind == UI_REQUEST_CONFIRM) {
+        if (rt->state.start_reason == START_BOOT) return UI_SUBMIT_STALE;
         const bool coordinator = rt->mesh_started && katmed_mesh_connected() &&
                                  katmed_mesh_is_coordinator();
         uint8_t pending = 0;
@@ -822,10 +829,10 @@ static void restore_manual_if_ready(Runtime *rt, const ClockSample *now)
         }
         return;
     }
-    /* A boot alarm must be confirmed before a former manual deadline can
-     * resume. No wall-clock estimate can waive that local safety gate. */
-    if (rt->state.alarm_active || rt->state.start_reason==START_BOOT ||
-        rt->state.start_reason==START_MANUAL || !rt->mesh_started) return;
+    /* Only a closed boot notice permits restoration. Closing that notice
+     * cannot itself create a confirmation or restart the medication clock. */
+    if (rt->state.alarm_active || rt->state.start_reason==START_MANUAL ||
+        !rt->mesh_started) return;
     ManualTimePreview preview;
     if (app_preview_local_time(now,intent.hour,intent.minute,&preview)!=APP_OK ||
         preview.regular_utc.ms!=intent.regular_utc.ms ||

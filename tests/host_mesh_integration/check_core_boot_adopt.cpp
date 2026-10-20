@@ -42,6 +42,26 @@ int main() {
            leaf.deadline.effective_monotonic_ms==0 &&
            !leaf.has_last_confirmation && !effects.alarm_ended);
 
+    leaf=boot(11,7,utc_ms);
+    assert(app_dismiss_boot_alarm(&leaf,&captured,&effects)==APP_INVALID);
+    ClockSample local_close{1000,7,utc_ms,true,CLOCK_SYNCHRONIZED};
+    assert(app_dismiss_boot_alarm(&leaf,&local_close,&effects)==APP_OK);
+    assert(!effects.persistence_required && !effects.broadcast_required);
+    event=adoption(leaf,snapshot,received,6);
+    assert(app_apply_event(&leaf,&event,&received,&effects)==APP_OK);
+    assert(!leaf.alarm_active && leaf.start_reason==START_BOOT &&
+           leaf.deadline.effective_monotonic_ms==0 && !leaf.has_last_confirmation);
+
+    root=boot(99,99,utc_ms);
+    ClockSample root_close{1000,99,utc_ms,true,CLOCK_SYNCHRONIZED};
+    assert(app_dismiss_boot_alarm(&root,&root_close,&effects)==APP_OK);
+    assert(app_make_snapshot(&root,&root_close,&snapshot)==APP_OK);
+    leaf=boot(11,7,utc_ms);
+    event=adoption(leaf,snapshot,received,7);
+    assert(app_apply_event(&leaf,&event,&received,&effects)==APP_OK);
+    assert(leaf.alarm_active && leaf.start_reason==START_BOOT &&
+           !leaf.has_last_confirmation);
+
     /* A Boot snapshot across unrelated clocks needs UTC. */
     root=boot(99,99,0);leaf=boot(11,7,0);
     captured={1000,99,0,false,CLOCK_UNAVAILABLE};

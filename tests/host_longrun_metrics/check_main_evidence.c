@@ -22,9 +22,8 @@ int main(void)
            sample.start_domain==runtime.state.countdown_started.domain &&
            sample.deadline_local==1 && sample.utc_source==0 &&
            sample.image_id==runtime.state.image_id);
-    UiRequest confirm={.kind=UI_REQUEST_CONFIRM};
     fake_microseconds=2000000;
-    assert(submit_ui(&runtime,&confirm)==UI_SUBMIT_PENDING);
+    assert(submit_due_confirm()==UI_SUBMIT_PENDING);
     now=clock_sample(runtime.boot_domain);
     sample=evidence_state(&runtime,&now,2);
     assert(sample.alarm==0 && sample.origin_sequence==runtime.state.countdown_origin.sequence &&

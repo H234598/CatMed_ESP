@@ -116,7 +116,7 @@ int main(void)
 
     UiRequest confirm={.kind=UI_REQUEST_CONFIRM};
     fake_microseconds=2000000;
-    assert(submit_ui(&runtime,&confirm)==UI_SUBMIT_PENDING);
+    assert(submit_due_confirm()==UI_SUBMIT_PENDING);
     assert(!runtime.state.alarm_active && runtime.store.record.pending_count==1);
 
     runtime.mesh_started=true;
@@ -159,7 +159,7 @@ int main(void)
 
     reset_test_backend();
     fake_microseconds=2000000;
-    assert(submit_ui(&runtime,&confirm)==UI_SUBMIT_PENDING);
+    assert(submit_due_confirm()==UI_SUBMIT_PENDING);
     assert(runtime.store.record.pending_count==1);
     assert(runtime.store.record.group_origin==STORE_GROUP_ORIGIN_FRESH_UNBOUND);
     const StorePendingConfirm local_event=runtime.store.record.pending[0];
@@ -200,7 +200,7 @@ int main(void)
     fake_mesh_connected=true;
     fake_mesh_coordinator=false;
     fake_microseconds=3000000;
-    assert(submit_ui(&runtime,&confirm)==UI_SUBMIT_PENDING);
+    assert(submit_due_confirm()==UI_SUBMIT_PENDING);
     assert(runtime.store.record.pending_count==1 && !runtime.state.alarm_active);
     queue_provision(0x55,0x66);
     const unsigned old_group_writes=writes;
@@ -253,7 +253,7 @@ int main(void)
     const AlarmRoundId old_round=runtime.state.round;
     const StateRevision root_revision=runtime.state.revision;
     fake_microseconds=2000000;
-    assert(submit_ui(&runtime,&confirm)==UI_SUBMIT_PENDING);
+    assert(submit_due_confirm()==UI_SUBMIT_PENDING);
     fake_microseconds=3000000;
     ClockSample conflict_now=clock_sample(runtime.boot_domain);
     StorePendingConfirm rejected={{99,5,2},99,old_round,root_revision,

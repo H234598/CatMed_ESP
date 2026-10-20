@@ -129,7 +129,7 @@ int main(void)
     ClockSample clock = {.monotonic_ms = 1000, .domain = 1};
     LocalSettings local = {.orientation = ORIENTATION_0,
                            .clock_style = DIGITAL_LARGE};
-    AppState state = {.image_id = 0};
+    AppState state = {.image_id = 0, .start_reason = START_SETTINGS};
     ui_render(&state, &local, BACKGROUND, &clock);
     swipe(150, 60, 1100);
     ui_render(&state, &local, ui_current_view(), &clock);

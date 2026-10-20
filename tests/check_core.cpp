@@ -67,7 +67,20 @@ AppEvent event(const AppState &s, AppEventKind kind, ClockSample when, bool acce
     e.coordinator_accepted = accepted;
     return e;
 }
+void restored_due(AppState &s, ClockSample due) {
+    CHECK(s.start_reason == START_BOOT && s.alarm_active);
+    s.start_reason = START_SETTINGS;
+    s.clock = due;
+    s.countdown_started = due;
+    s.deadline.regular_monotonic_ms = due.monotonic_ms;
+    s.deadline.effective_monotonic_ms = due.monotonic_ms;
+    if (due.utc_valid) {
+        s.deadline.regular_utc = {true, due.utc_ms};
+        s.deadline.effective_utc = {true, due.utc_ms};
+    }
+}
 AppEvent confirm(AppState &s, ClockSample when, bool accepted = true) {
+    if (s.start_reason == START_BOOT) restored_due(s, when);
     AppEvent e = event(s, EVENT_CONFIRM, when, accepted);
     AppEffects fx{};
     OK(app_apply_event(&s, &e, &when, &fx));
@@ -282,6 +295,18 @@ void lifecycle_tests() {
     ClockSample first = later(now,3000);
     tick(s,first);
     CHECK(s.alarm_active && s.image_remaining_ms == 21600000);
+    AppEvent synthetic = event(s, EVENT_CONFIRM, first, false);
+    unchanged(s, synthetic, first, APP_STALE);
+    const AppState before_dismiss = s;
+    AppEffects dismiss_effects{};
+    OK(app_dismiss_boot_alarm(&s, &first, &dismiss_effects));
+    CHECK(!s.alarm_active && !s.has_last_confirmation &&
+          s.deadline.effective_monotonic_ms == before_dismiss.deadline.effective_monotonic_ms &&
+          !dismiss_effects.persistence_required && !dismiss_effects.broadcast_required);
+    CHECK(app_dismiss_boot_alarm(&s, &first, &dismiss_effects) == APP_STALE);
+    tick(s, later(first, 1000));
+    CHECK(!s.alarm_active);
+    s = before_dismiss;
     AppEvent c = confirm(s,first,false);
     CHECK(!s.alarm_active && s.has_last_confirmation && s.confirmation_pending_sync);
     CHECK(s.last_confirmation.utc_ms == utc(2026,1,15,8,0,3));
@@ -733,6 +758,7 @@ void snapshot_tests() {
 void delayed_event_tests() {
     ClockSample origin = unknown(1000);
     AppState s = boot(origin,10,100);
+    restored_due(s, later(origin,1000));
     AppEvent first = event(s,EVENT_CONFIRM,later(origin,1000));
     ClockSample received = later(origin,100000);
     AppEffects fx{};
@@ -763,6 +789,7 @@ void delayed_event_tests() {
 
     origin = unknown(1000);
     s = boot(origin);
+    restored_due(s, origin);
     AppEvent no_utc_confirmation = event(s,EVENT_CONFIRM,origin);
     received = known(utc(2026,1,15,23,30),36001000);
     OK(app_apply_event(&s,&no_utc_confirmation,&received,nullptr));
@@ -774,11 +801,40 @@ void delayed_event_tests() {
     // existed then and is correctly overdue at delivery.
     real = known(utc(2026,1,15,13,30),1000);
     s = boot(real);
+    restored_due(s, real);
     AppEvent with_utc_confirmation = event(s,EVENT_CONFIRM,real);
     OK(app_apply_event(&s,&with_utc_confirmation,&received,nullptr));
     CHECK(s.alarm_active && s.deadline.night_advanced);
     CHECK(s.deadline.effective_utc.ms == utc(2026,1,15,23));
     group("Verspätete Gabe mit erster UTC: keine rückwirkende Nachtvorziehung; damals belegte UTC-Fälligkeit bleibt gültig");
+}
+
+void restored_due_tests() {
+    const ClockSample origin = known(utc(2026,1,15,8),1000,1);
+    AppState source = boot(origin,10);
+    confirm(source,origin); /* A genuine earlier dose, not the boot notice. */
+    const ClockSample due = later(origin,10000);
+    tick(source,due);
+    CHECK(source.alarm_active && source.start_reason == START_CONFIRMATION);
+    StateSnapshot snapshot{};
+    OK(app_make_snapshot(&source,&due,&snapshot));
+
+    const ClockSample receiving = known(due.utc_ms + 2000,2000,2);
+    AppState receiver = boot(receiving,10,21600,ROTATION_NAME_ORDER,20);
+    AppEvent old_boot_ack = event(receiver,EVENT_CONFIRM,receiving);
+    unchanged(receiver,old_boot_ack,receiving,APP_STALE);
+    AppEvent adoption = event(receiver,EVENT_ADOPT_SNAPSHOT,receiving);
+    adoption.value.snapshot = &snapshot;
+    OK(app_apply_event(&receiver,&adoption,&receiving,nullptr));
+    CHECK(receiver.alarm_active && receiver.start_reason == START_CONFIRMATION &&
+          receiver.has_last_confirmation && receiver.round.ordinal == source.round.ordinal);
+    const EventId previous_dose = receiver.last_confirmation_id;
+    AppEvent acknowledged = confirm(receiver,receiving);
+    CHECK(!receiver.alarm_active && receiver.has_last_confirmation &&
+          receiver.last_confirmation_id.sequence == acknowledged.id.sequence &&
+          receiver.last_confirmation_id.sequence != previous_dose.sequence);
+    unchanged(receiver,acknowledged,receiving,APP_DUPLICATE);
+    group("Restaurierte echte Fälligkeit bleibt bestätigbar; Boot-ACK bleibt wirkungslos");
 }
 
 void bounds_tests() {
@@ -816,6 +872,7 @@ void bounds_tests() {
     corrupt = s; corrupt.deadline.effective_monotonic_ms = 1; unchanged(corrupt,c,now,APP_INVALID);
     corrupt = s; corrupt.image_remaining_ms = UINT64_MAX; unchanged(corrupt,c,now,APP_INVALID);
     corrupt = s; corrupt.revision.number = UINT64_MAX;
+    restored_due(corrupt, now);
     c = event(corrupt,EVENT_CONFIRM,now); unchanged(corrupt,c,now,APP_OVERFLOW);
     corrupt = s;
     confirm(corrupt,now);
@@ -846,6 +903,7 @@ int main() {
     sync_tests();
     image_tests();
     snapshot_tests();
+    restored_due_tests();
     delayed_event_tests();
     bounds_tests();
     std::printf("Core: %u Gruppen, %u explizite Assertions erfolgreich.\n",groups,assertions);

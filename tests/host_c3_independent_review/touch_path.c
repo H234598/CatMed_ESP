@@ -25,9 +25,9 @@ void lvgl_port_unlock(void) {}
 static UiSubmitResult independent_submit(void *context, const UiRequest *request)
 {
     (void)context;
-    assert(request->kind == UI_REQUEST_CONFIRM);
+    assert(request->kind == UI_REQUEST_DISMISS_BOOT);
     ++confirmation_calls;
-    return UI_SUBMIT_PENDING;
+    return UI_SUBMIT_DISMISSED;
 }
 
 KatmedImageStatus katmed_images_present(lv_obj_t *image, lv_obj_t *fallback,
@@ -35,8 +35,8 @@ KatmedImageStatus katmed_images_present(lv_obj_t *image, lv_obj_t *fallback,
 {
     (void)image_id;
     (void)orientation;
-    lv_obj_add_flag(image, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_remove_flag(fallback, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_hidden(image, true);
+    lv_obj_set_hidden(fallback, false);
     return KATMED_IMAGE_OK;
 }
 

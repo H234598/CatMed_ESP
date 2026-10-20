@@ -273,6 +273,7 @@ static const char *result_text(UiSubmitResult result)
 {
     switch (result) {
     case UI_SUBMIT_COMMITTED: return "Gespeichert";
+    case UI_SUBMIT_DISMISSED: return "Hinweis geschlossen";
     case UI_SUBMIT_PENDING: return "Lokal gespeichert; Gruppe ausstehend";
     case UI_SUBMIT_PENDING_SHARED: return "Koordinator prüft Änderung";
     case UI_SUBMIT_REJECTED: return "Änderung abgelehnt";
@@ -293,15 +294,17 @@ static UiSubmitResult request_action(const UiRequest *request)
     UiSubmitResult result = submit(request);
     /* A locally committed confirmation may still await group adoption. Do not
      * allow another release of the same displayed round to submit it again. */
-    if (request->kind == UI_REQUEST_CONFIRM &&
-        (result == UI_SUBMIT_COMMITTED || result == UI_SUBMIT_PENDING)) {
+    if ((request->kind == UI_REQUEST_CONFIRM &&
+         (result == UI_SUBMIT_COMMITTED || result == UI_SUBMIT_PENDING)) ||
+        (request->kind == UI_REQUEST_DISMISS_BOOT && result == UI_SUBMIT_DISMISSED)) {
         ui.confirmed_round = true;
         ui.confirmed_id = ui.state.round;
         if (ui.morse_alarm_paused) ui.morse_alarm_confirmed = true;
     }
-    if (result == UI_SUBMIT_COMMITTED && ui.services.read_model) {
-        /* Copy only a successful durable model; never re-enter rendering from
-         * the live button callback or predict state from the request. */
+    if ((result == UI_SUBMIT_COMMITTED || result == UI_SUBMIT_DISMISSED) &&
+        ui.services.read_model) {
+        /* Copy the accepted model; never re-enter rendering from the live
+         * button callback or predict state from the request. */
         ui.services.read_model(ui.services.context, &ui.state, &ui.local, &ui.clock);
         if (ui.status) update_status();
     }
@@ -1772,7 +1775,8 @@ void ui_touch_sample(bool touched, int16_t x, int16_t y,
         if (ui.view == ALARM) {
             if (!ui.confirmed_round && !ui.reject_confirm_motion &&
                 duration <= 600 && abs(dx) < 20 && abs(dy) < 20) {
-                UiRequest request = {.kind = UI_REQUEST_CONFIRM};
+                UiRequest request = {.kind = ui.state.start_reason == START_BOOT
+                    ? UI_REQUEST_DISMISS_BOOT : UI_REQUEST_CONFIRM};
                 request_action(&request);
             }
             ui.reject_confirm_motion = false;

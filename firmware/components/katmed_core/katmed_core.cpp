@@ -136,9 +136,9 @@ bool state_valid(const AppState &s) {
         s.image_due_pending != (s.image_remaining_ms == 0) ||
         (s.image_count == 0 ? s.image_id != 0 : s.image_id >= s.image_count) ||
         (s.image_count == 0 && !s.catalog_mismatch) ||
-        (!s.alarm_active && s.start_reason == START_BOOT) ||
-        (!s.alarm_active && s.clock.monotonic_ms >= s.deadline.effective_monotonic_ms) ||
-        (s.start_reason != START_BOOT && !s.has_last_confirmation) ||
+        (!s.alarm_active && s.start_reason != START_BOOT &&
+         s.clock.monotonic_ms >= s.deadline.effective_monotonic_ms) ||
+        (s.start_reason == START_CONFIRMATION && !s.has_last_confirmation) ||
         (s.start_reason == START_BOOT && (s.has_last_confirmation || s.round.ordinal != 1)) ||
         (s.confirmation_pending_sync && !s.has_last_confirmation)) return false;
     if (s.countdown_started.domain == s.clock.domain &&
@@ -324,7 +324,8 @@ AppResult advance(AppState &s, const ClockSample &now, AppEffects &fx) {
     if (now.monotonic_ms < s.clock.monotonic_ms) return APP_STALE;
     AppResult r = reconcile_deadline(s, now);
     if (r != APP_OK) return r;
-    const bool becomes_due = !s.alarm_active && now.monotonic_ms >= s.deadline.effective_monotonic_ms;
+    const bool becomes_due = s.start_reason != START_BOOT && !s.alarm_active &&
+        now.monotonic_ms >= s.deadline.effective_monotonic_ms;
     if (!s.alarm_active && s.settings.rotation != ROTATION_OFF) {
         uint64_t until = now.monotonic_ms;
         if (becomes_due && s.deadline.effective_monotonic_ms < until)
@@ -423,8 +424,7 @@ AppResult adopt(AppState &local, const StateSnapshot &snap, const ClockSample &n
      * authenticated coordinator snapshot, a fresh Boot alarm may join that
      * same alarm without manufacturing a confirmation or a new deadline. */
     const bool boot_convergence = local.start_reason == START_BOOT &&
-        remote.start_reason == START_BOOT && local.alarm_active &&
-        remote.alarm_active && !local.has_last_confirmation &&
+        remote.start_reason == START_BOOT && !local.has_last_confirmation &&
         !remote.has_last_confirmation &&
         !id_equal(local.round.origin,remote.round.origin);
     if (remote.revision.number < local.revision.number) return APP_STALE;
@@ -472,6 +472,9 @@ AppResult adopt(AppState &local, const StateSnapshot &snap, const ClockSample &n
     AppResult r = elapsed(snap.captured_at, now, age);
     if (r != APP_OK) return r;
     AppState next = remote;
+    /* The boot notice is local presentation. Group convergence preserves
+     * whether this device has already closed its own notice. */
+    if (boot_convergence) next.alarm_active = local.alarm_active;
     if (remote.start_reason == START_BOOT) {
         /* Boot has no medicine deadline. Rebasing its zero remaining time to
          * the receiver's current monotonic value would forge one. */
@@ -752,6 +755,22 @@ AppResult app_tick(AppState *state, const ClockSample *now, AppEffects *effects)
     return finish(state, next, effects, fx, false);
 }
 
+AppResult app_dismiss_boot_alarm(AppState *state, const ClockSample *now,
+                                 AppEffects *effects) {
+    if (effects) *effects = {};
+    if (!state || !now || !state_valid(*state) || !clock_valid(*now) ||
+        now->domain != state->clock.domain) return APP_INVALID;
+    if (!state->alarm_active || state->start_reason != START_BOOT) return APP_STALE;
+    AppState next = *state;
+    AppEffects fx{};
+    const AppResult advanced = advance(next, *now, fx);
+    if (advanced != APP_OK) return advanced;
+    next.alarm_active = false;
+    fx.alarm_ended = true;
+    fx.broadcast_required = false;
+    return finish(state, next, effects, fx, false);
+}
+
 AppResult app_make_snapshot(const AppState *state, const ClockSample *now, StateSnapshot *snapshot) {
     if (!state || !now || !snapshot || !state_valid(*state)) return APP_INVALID;
     AppState next = *state;
@@ -826,10 +845,12 @@ AppResult app_apply_event(AppState *state, const AppEvent *event,
     bool revision_change = true;
     switch (event->kind) {
     case EVENT_CONFIRM: {
+        /* A boot notice has no medication deadline. Old or delayed confirm
+         * packets must not turn it into a dose on any receiving device. */
+        if (next.start_reason == START_BOOT) return APP_STALE;
         if (!next.alarm_active) return APP_STALE;
         if (next.round.ordinal == UINT64_MAX) return APP_OVERFLOW;
-        const uint64_t due = next.start_reason == START_BOOT
-            ? next.countdown_started.monotonic_ms : next.deadline.effective_monotonic_ms;
+        const uint64_t due = next.deadline.effective_monotonic_ms;
         if (event_age > processing.monotonic_ms || processing.monotonic_ms - event_age < due)
             return APP_STALE;
         r = start_deadline(next, event->occurred_at, processing, next.settings.medication_seconds);

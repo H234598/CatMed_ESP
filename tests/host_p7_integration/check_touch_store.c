@@ -12,6 +12,9 @@
 static uint8_t durable[KATMED_STORE_BLOB_MAX];
 static size_t durable_length;
 static unsigned writes;
+static unsigned mesh_notifications;
+static bool mesh_connected;
+static bool mesh_coordinator;
 static int64_t microseconds;
 static BoardTouchBuffer samples;
 static uint16_t pixels[240 * 16];
@@ -43,9 +46,9 @@ bool board_touch_sampler_take(BoardTouch *sample, BoardResult *result)
 { return board_touch_buffer_take(&samples, sample, result); }
 BoardResult board_set_orientation(Orientation value)
 { (void)value; return BOARD_OK; }
-bool katmed_mesh_connected(void) { return false; }
-bool katmed_mesh_is_coordinator(void) { return false; }
-void katmed_mesh_notify_local_commit(void) {}
+bool katmed_mesh_connected(void) { return mesh_connected; }
+bool katmed_mesh_is_coordinator(void) { return mesh_coordinator; }
+void katmed_mesh_notify_local_commit(void) { ++mesh_notifications; }
 KatmedMeshResult katmed_mesh_submit_shared(const AppEvent *event,
                                             const ClockSample *now,
                                             AppEffects *effects)
@@ -54,8 +57,8 @@ KatmedImageStatus katmed_images_present(lv_obj_t *image, lv_obj_t *fallback,
                                          uint32_t image_id, Orientation orientation)
 {
     (void)image_id; (void)orientation;
-    lv_obj_add_flag(image, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_remove_flag(fallback, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_hidden(image, true);
+    lv_obj_set_hidden(fallback, false);
     return KATMED_IMAGE_OK;
 }
 static void flush(lv_display_t *display, const lv_area_t *area, uint8_t *map)
@@ -87,6 +90,7 @@ int main(void)
     assert(store_open(&runtime.store, backend, UINT64_C(0xAC276E46BC2C),
                       catalog, 75, &recovery) == STORE_OK);
     runtime.store_ready = true;
+    runtime.mesh_started = true; /* Exercise the production Mesh notification adapter. */
     runtime.boot = recovery.boot_identity;
     runtime.boot_domain = UINT64_C(0x456789abc);
     katmed_time_init(&runtime.time, runtime.boot_domain);
@@ -109,13 +113,43 @@ int main(void)
 
     sample(1200, true, BOARD_OK);
     sample(1280, false, BOARD_OK);
-    assert(writes > initial_writes);
-    assert(!runtime.state.alarm_active && runtime.state.has_last_confirmation);
+    assert(writes == initial_writes && mesh_notifications == 0);
+    assert(!runtime.state.alarm_active && runtime.state.start_reason == START_BOOT);
+    assert(!runtime.state.has_last_confirmation &&
+           runtime.state.deadline.effective_monotonic_ms == 0);
     StoreRecovery after = {0};
     assert(store_get_recovery(&runtime.store, &after) == STORE_OK);
-    assert(after.pending_count == 1 && after.has_last_confirmation);
-    assert(after.last_confirmation_id.device == runtime.boot.device);
-    printf("P7 touch/error/main/core/store: failed contact has no write; fresh tap is durable and pending\n");
+    assert(after.pending_count == 0 && !after.has_last_confirmation &&
+           !runtime.store.record.has_history);
+    sample(1360, true, BOARD_OK);
+    sample(1440, false, BOARD_OK);
+    assert(writes == initial_writes && mesh_notifications == 0);
+
+    /* A coordinator-created schedule yields a genuine due alarm. Its touch
+     * still takes the full Core/Store/Mesh-adapter confirmation path. */
+    ClockSample scheduled = clock_sample(runtime.boot_domain);
+    EventId scheduled_id;
+    assert(store_next_event_id(&runtime.store, &scheduled_id) == STORE_OK);
+    AppEvent set_interval = {.kind = EVENT_SET_MEDICATION_INTERVAL,
+        .id = scheduled_id, .sender = scheduled_id.device,
+        .round = runtime.state.round, .parent_revision = runtime.state.revision,
+        .occurred_at = scheduled, .coordinator_accepted = true};
+    set_interval.value.interval_seconds = 1;
+    AppEffects effects = {0};
+    AppResult core_result = APP_INVALID;
+    assert(store_apply_event(&runtime.store, &runtime.state, &set_interval,
+                             &scheduled, false, &effects, &core_result) == STORE_OK);
+    microseconds += 1000000;
+    ClockSample due = clock_sample(runtime.boot_domain);
+    assert(app_tick(&runtime.state, &due, &effects) == APP_OK);
+    assert(runtime.state.alarm_active && runtime.state.start_reason == START_SETTINGS);
+    ui_render(&runtime.state, &runtime.local, ALARM, &due);
+    sample(due.monotonic_ms + 30, false, BOARD_OK);
+    sample(due.monotonic_ms + 80, true, BOARD_OK);
+    sample(due.monotonic_ms + 160, false, BOARD_OK);
+    assert(!runtime.state.alarm_active && runtime.state.has_last_confirmation);
+    assert(runtime.store.record.pending_count == 1 && mesh_notifications == 1);
+    printf("P7 touch/main/core/store/mesh adapter: boot notice only closes; due reminder confirms\n");
     lv_display_delete(display);
     lv_deinit();
     return 0;

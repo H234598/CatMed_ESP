@@ -13,6 +13,8 @@ flags=(-std=c11 -Wall -Wextra -Werror -Wno-unused-variable -ffunction-sections -
     "-I${repo}/tests/host_store/stubs" "-I${repo}/tests/host_main/stubs"
     "-I${repo}/firmware/components/board/include" "-I${repo}/firmware/components/katmed_ui/include"
     "-I${repo}/firmware/components/katmed_config_bridge/include"
+    "-I${repo}/firmware/components/katmed_reset/include"
+    "-I${repo}/firmware/components/katmed_acme/include"
     "-I${repo}/firmware/components/katmed_web/include"
     "-I${repo}/firmware/components/katmed_core/include" "-I${repo}/firmware/components/katmed_store/include"
     "-I${repo}/firmware/components/katmed_mesh/include" "-I${repo}/firmware/components/katmed_time/include"
@@ -26,9 +28,9 @@ obj="${build}/CMakeFiles/check_ui_surface.dir${repo}/firmware/components"
 objects=("${obj}/katmed_ui/navigation.c.o" "${obj}/katmed_ui/clock_view.c.o"
     "${obj}/katmed_ui/katmed_font_10.c.o" "${obj}/katmed_ui/katmed_font_12.c.o"
     "${obj}/katmed_ui/katmed_font_14.c.o" "${obj}/katmed_ui/katmed_font_26.c.o"
-    "${obj}/katmed_core/katmed_core.cpp.o")
+    "${obj}/katmed_ui/morse.c.o" "${obj}/katmed_core/katmed_core.cpp.o")
 g++ -Wl,--gc-sections "${build}/c3-repro/repro.o" "${build}/c3-repro/ui.o" "${build}/c3-repro/board_touch_buffer.o" \
-    "${objects[@]}" "${build}/lvgl/lib/liblvgl.a" -lm -o "${build}/c3-repro/repro"
+    "${objects[@]}" "${build}/lvgl/liblvgl.a" -lm -o "${build}/c3-repro/repro"
 if (( $# == 0 )); then set -- lock_tap lock_swipe old_round_tap overflow bar_pixels fallback; fi
 for mode in "$@"; do
     "${build}/c3-repro/repro" "$mode"

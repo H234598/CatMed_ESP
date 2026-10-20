@@ -23,16 +23,16 @@ void lvgl_port_unlock(void) {}
 static UiSubmitResult submit(void *ctx, const UiRequest *req)
 {
     (void)ctx;
-    assert(req->kind == UI_REQUEST_CONFIRM);
+    assert(req->kind == UI_REQUEST_DISMISS_BOOT);
     ++confirms;
-    return UI_SUBMIT_PENDING;
+    return UI_SUBMIT_DISMISSED;
 }
 KatmedImageStatus katmed_images_present(lv_obj_t *image, lv_obj_t *fallback,
                                         uint32_t id, Orientation orientation)
 {
     (void)id; (void)orientation;
-    lv_obj_add_flag(image, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_remove_flag(fallback, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_hidden(image, true);
+    lv_obj_set_hidden(fallback, false);
     return KATMED_IMAGE_OK;
 }
 static void flush(lv_display_t *display, const lv_area_t *area, uint8_t *map)
@@ -132,11 +132,11 @@ int main(int argc, char **argv)
         assert(bar);
         ClockSample foreign = {.monotonic_ms = 100000, .domain = 2};
         ui_render(&state, &local, ALARM, &foreign);
-        assert(!lv_obj_has_flag(bar, LV_OBJ_FLAG_HIDDEN));
+        assert(!lv_obj_is_hidden(bar));
         assert(lv_color_eq(lv_obj_get_style_bg_color(bar, 0), lv_color_hex(0x1565c0)));
         clock.monotonic_ms = 100000;
         ui_render(&state, &local, ALARM, &clock);
-        assert(lv_obj_has_flag(bar, LV_OBJ_FLAG_HIDDEN));
+        assert(lv_obj_is_hidden(bar));
         fprintf(stderr, "fallback static_blue_then_original_round=PASS\n");
     }
     else assert(0);

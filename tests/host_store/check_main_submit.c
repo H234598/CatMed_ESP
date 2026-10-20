@@ -16,6 +16,7 @@ static bool fake_mesh_connected;
 static bool fake_mesh_coordinator;
 static KatmedMeshResult fake_mesh_result = MESH_UNAVAILABLE;
 static unsigned fake_shared_calls;
+static unsigned fake_mesh_notifications;
 static AppEvent fake_shared_event;
 static uint32_t fake_random_counter=UINT32_C(0x12345678);
 
@@ -43,7 +44,7 @@ int64_t esp_timer_get_time(void) { return fake_microseconds; }
 BoardResult board_set_orientation(Orientation o) { board_orientation=o; return BOARD_OK; }
 bool katmed_mesh_connected(void) { return fake_mesh_connected; }
 bool katmed_mesh_is_coordinator(void) { return fake_mesh_coordinator; }
-void katmed_mesh_notify_local_commit(void) {}
+void katmed_mesh_notify_local_commit(void) { ++fake_mesh_notifications; }
 KatmedMeshResult katmed_mesh_submit_shared(const AppEvent *event,
                                             const ClockSample *now,
                                             AppEffects *effects) {
@@ -76,6 +77,27 @@ static void initialize_runtime(void)
     runtime.state.divergent=store_durable_divergent(&runtime.store);
 }
 
+/* Existing tests of genuine due confirmations must no longer use START_BOOT
+ * as their fixture: that notice has no medication deadline. */
+static UiSubmitResult submit_due_confirm(void)
+{
+    if (runtime.state.start_reason == START_BOOT) {
+        const ClockSample due = clock_sample(runtime.boot_domain);
+        runtime.state.start_reason = START_SETTINGS;
+        runtime.state.alarm_active = true;
+        runtime.state.clock = due;
+        runtime.state.countdown_started = due;
+        runtime.state.deadline.regular_monotonic_ms = due.monotonic_ms;
+        runtime.state.deadline.effective_monotonic_ms = due.monotonic_ms;
+        if (due.utc_valid) {
+            runtime.state.deadline.regular_utc = (UtcInstant){true,due.utc_ms};
+            runtime.state.deadline.effective_utc = (UtcInstant){true,due.utc_ms};
+        }
+    }
+    const UiRequest confirm = {.kind=UI_REQUEST_CONFIRM};
+    return submit_ui(&runtime,&confirm);
+}
+
 int main(void)
 {
     fake_microseconds=1000000;
@@ -87,7 +109,20 @@ int main(void)
     assert(submit_ui(&runtime,&shared)==UI_SUBMIT_UNAVAILABLE && writes==before);
     UiRequest confirm = {.kind=UI_REQUEST_CONFIRM};
     fake_microseconds=2000000;
-    assert(submit_ui(&runtime,&confirm)==UI_SUBMIT_PENDING);
+    const UiRequest dismiss = {.kind=UI_REQUEST_DISMISS_BOOT};
+    const size_t boot_blob_length=committed_length;
+    uint8_t boot_blob[KATMED_STORE_BLOB_MAX];
+    memcpy(boot_blob,committed,boot_blob_length);
+    assert(submit_ui(&runtime,&dismiss)==UI_SUBMIT_DISMISSED);
+    assert(writes==before && committed_length==boot_blob_length &&
+           memcmp(committed,boot_blob,boot_blob_length)==0 &&
+           !runtime.state.has_last_confirmation &&
+           runtime.state.deadline.effective_monotonic_ms==0 &&
+           runtime.store.record.pending_count==0);
+    assert(submit_ui(&runtime,&dismiss)==UI_SUBMIT_STALE);
+    assert(submit_ui(&runtime,&confirm)==UI_SUBMIT_STALE);
+    assert(writes==before);
+    assert(submit_due_confirm()==UI_SUBMIT_PENDING);
     assert(!runtime.state.alarm_active && runtime.state.has_last_confirmation &&
            runtime.state.confirmation_pending_sync && runtime.store.record.pending_count==1);
     const EventId first=runtime.state.last_confirmation_id;
@@ -119,10 +154,38 @@ int main(void)
     assert(historical_confirmation(&runtime,&historical));
     assert(!historical.utc_valid && historical.domain!=runtime.state.clock.domain);
     assert(runtime.state.deadline.effective_monotonic_ms==0);
+    const StoreRecord preserved=runtime.store.record;
+    const size_t preserved_length=committed_length;
+    uint8_t preserved_blob[KATMED_STORE_BLOB_MAX];
+    memcpy(preserved_blob,committed,preserved_length);
+    const unsigned before_reboot_dismiss=writes;
+    runtime.mesh_started=true;
+    fake_mesh_connected=true; /* Group transport is available on this boot. */
+    fake_mesh_coordinator=false;
+    assert(submit_ui(&runtime,&dismiss)==UI_SUBMIT_DISMISSED);
+    assert(writes==before_reboot_dismiss && fake_mesh_notifications==0 &&
+           committed_length==preserved_length &&
+           memcmp(committed,preserved_blob,preserved_length)==0 &&
+           memcmp(&runtime.store.record,&preserved,sizeof(preserved))==0);
+    assert(submit_ui(&runtime,&dismiss)==UI_SUBMIT_STALE);
+    assert(submit_ui(&runtime,&confirm)==UI_SUBMIT_STALE);
+    assert(store_ack_pending(&runtime.store,&runtime.state,
+           (EventId){runtime.boot.device,runtime.boot.epoch,2},true)==STORE_NOT_FOUND);
+    assert(writes==before_reboot_dismiss && fake_mesh_notifications==0 &&
+           runtime.store.record.pending_count==1 &&
+           runtime.store.record.last_confirmation.valid &&
+           runtime.store.record.history.deadline.effective_monotonic_ms==
+               preserved.history.deadline.effective_monotonic_ms);
+    initialize_runtime();
+    assert(runtime.state.alarm_active && runtime.state.start_reason==START_BOOT &&
+           runtime.store.record.pending_count==1 &&
+           runtime.store.record.last_confirmation.valid &&
+           runtime.store.record.history.deadline.effective_monotonic_ms==
+               preserved.history.deadline.effective_monotonic_ms);
     fail_commit=true;
     const AppState before_state=runtime.state;
     fake_microseconds+=1000000;
-    assert(submit_ui(&runtime,&confirm)==UI_SUBMIT_UNAVAILABLE);
+    assert(submit_due_confirm()==UI_SUBMIT_UNAVAILABLE);
     assert(runtime.state.alarm_active==before_state.alarm_active &&
            runtime.state.round.ordinal==before_state.round.ordinal && !storage_ready(&runtime));
     /* Real board callback + Core + durable Store, with no authenticated peer.
@@ -145,7 +208,7 @@ int main(void)
     katmed_time_init(&runtime.time,runtime.boot_domain);
     assert(katmed_time_accept_utc(&runtime.time,(uint64_t)(fake_microseconds/1000),INT64_C(1792400400000),CLOCK_SYNCHRONIZED));
     fake_microseconds+=1000000;
-    assert(submit_ui(&runtime,&confirm)==UI_SUBMIT_PENDING);
+    assert(submit_due_confirm()==UI_SUBMIT_PENDING);
     KatmedConfigRequest web={.operation=KATMED_CONFIG_GET};
     KatmedConfigResponse web_reply={0};
     config_execute(&runtime,&web,&web_reply);
@@ -221,7 +284,7 @@ int main(void)
     restore_manual_if_ready(&runtime,&restore_now);
     assert(runtime.state.alarm_active && runtime.store.record.manual_intent.pending);
     fake_microseconds+=1000000;
-    assert(submit_ui(&runtime,&confirm)==UI_SUBMIT_COMMITTED);
+    assert(submit_ui(&runtime,&dismiss)==UI_SUBMIT_DISMISSED);
     restore_now=clock_sample(runtime.boot_domain);
     restore_manual_if_ready(&runtime,&restore_now);
     assert(runtime.state.start_reason==START_MANUAL &&
@@ -239,7 +302,7 @@ int main(void)
     assert(apply_time_sample(&runtime,&rejected_now));
     assert(runtime.state.alarm_active && runtime.store.record.manual_intent.pending);
     fake_microseconds+=1000000;
-    assert(submit_ui(&runtime,&confirm)==UI_SUBMIT_COMMITTED);
+    assert(submit_ui(&runtime,&dismiss)==UI_SUBMIT_DISMISSED);
     fake_mesh_result=MESH_REJECTED;
     rejected_now=clock_sample(runtime.boot_domain);
     restore_manual_if_ready(&runtime,&rejected_now);
@@ -266,7 +329,7 @@ int main(void)
     fake_mesh_connected=true;
     fake_mesh_result=MESH_PENDING;
     fake_microseconds+=1000000;
-    assert(submit_ui(&runtime,&confirm)==UI_SUBMIT_PENDING);
+    assert(submit_ui(&runtime,&dismiss)==UI_SUBMIT_DISMISSED);
     delayed_now=clock_sample(runtime.boot_domain);
     restore_manual_if_ready(&runtime,&delayed_now);
     assert(runtime.manual_restore_waiting && runtime.shared_pending &&
@@ -289,7 +352,7 @@ int main(void)
     assert(apply_time_sample(&runtime,&timeout_now));
     fake_mesh_result=MESH_PENDING;
     fake_microseconds+=1000000;
-    assert(submit_ui(&runtime,&confirm)==UI_SUBMIT_PENDING);
+    assert(submit_ui(&runtime,&dismiss)==UI_SUBMIT_DISMISSED);
     timeout_now=clock_sample(runtime.boot_domain);
     restore_manual_if_ready(&runtime,&timeout_now);
     const EventId timed_out_id=runtime.shared_id;
@@ -386,6 +449,32 @@ int main(void)
     assert(submit_ui(&runtime,&image)==UI_SUBMIT_UNAVAILABLE);
     assert(runtime.state.settings.image_seconds==stable.settings.image_seconds &&
            runtime.state.revision.number==stable.revision.number);
+
+    /* A synthetic persisted group identity without a clock still has only a
+     * boot notice. No credential, network, or physical device is involved. */
+    fail_commit=false;
+    committed_length=0;
+    initialize_runtime();
+    runtime.store.record.group_origin=STORE_GROUP_ORIGIN_FIRST_BOUND;
+    runtime.store.record.bound_group[0]=1;
+    LocalSettings bound_local=runtime.local;
+    bound_local.clock_style=ANALOG;
+    assert(store_set_local(&runtime.store,&runtime.local,&bound_local)==STORE_OK);
+    initialize_runtime();
+    assert(runtime.store.record.group_origin==STORE_GROUP_ORIGIN_FIRST_BOUND &&
+           runtime.store.record.bound_group[0]==1 &&
+           !runtime.state.clock.utc_valid && !runtime.state.has_last_confirmation);
+    runtime.mesh_started=true;
+    fake_mesh_connected=true;
+    fake_mesh_coordinator=true;
+    const StoreRecord bound_before=runtime.store.record;
+    const unsigned bound_writes=writes;
+    const unsigned bound_notifications=fake_mesh_notifications;
+    assert(submit_ui(&runtime,&dismiss)==UI_SUBMIT_DISMISSED);
+    assert(writes==bound_writes && fake_mesh_notifications==bound_notifications &&
+           memcmp(&runtime.store.record,&bound_before,sizeof(bound_before))==0 &&
+           runtime.store.record.pending_count==0 &&
+           runtime.state.deadline.effective_monotonic_ms==0);
     puts("main solo-root settings: image persistence, next-time history, follower/unstarted and commit failure OK");
     puts("main submit/reboot regression passed");
     return 0;

@@ -95,8 +95,7 @@ int main(int argc, char **argv)
     katmed_time_init(&runtime.time, runtime.boot_domain);
     assert(katmed_time_accept_utc(&runtime.time, 1000, INT64_C(1792400400000),
                                   CLOCK_SYNCHRONIZED));
-    UiRequest confirm = {.kind=UI_REQUEST_CONFIRM};
-    assert(submit_ui(&runtime, &confirm) == UI_SUBMIT_PENDING);
+    assert(submit_due_confirm() == UI_SUBMIT_PENDING);
     UiRequest image = {.kind=UI_REQUEST_SET_IMAGE_SECONDS};
     image.value.seconds = 5400;
     assert(submit_ui(&runtime, &image) == UI_SUBMIT_COMMITTED);
@@ -107,7 +106,7 @@ int main(int argc, char **argv)
     katmed_time_init(&runtime.time, runtime.boot_domain);
     assert(katmed_time_accept_utc(&runtime.time, 1000, INT64_C(1792400400000),
                                   CLOCK_SYNCHRONIZED));
-    assert(submit_ui(&runtime, &confirm) == UI_SUBMIT_PENDING);
+    assert(submit_due_confirm() == UI_SUBMIT_PENDING);
     UiRequest medication = {.kind=UI_REQUEST_SET_MEDICATION_SECONDS};
     medication.value.seconds = 7200;
     assert(submit_ui(&runtime, &medication) == UI_SUBMIT_COMMITTED);

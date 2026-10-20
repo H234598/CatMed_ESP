@@ -175,6 +175,11 @@ static void test_core_correction(void)
     uint8_t catalog[KATMED_CATALOG_BYTES] = {1};
     AppState state;
     assert(app_init(&state, &settings, &now, (EventId){10,1,1}, 3, catalog) == APP_OK);
+    state.start_reason = START_SETTINGS;
+    state.deadline.regular_monotonic_ms = now.monotonic_ms;
+    state.deadline.effective_monotonic_ms = now.monotonic_ms;
+    state.deadline.regular_utc = (UtcInstant){true,now.utc_ms};
+    state.deadline.effective_utc = (UtcInstant){true,now.utc_ms};
     AppEvent confirm = {
         .kind = EVENT_CONFIRM, .id = {10,1,2}, .sender = 10,
         .round = state.round, .parent_revision = state.revision,

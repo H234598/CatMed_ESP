@@ -336,6 +336,7 @@ int main(int argc, char **argv)
                          .quality = CLOCK_SYNCHRONIZED};
     AppState state = {0};
     state.alarm_active = true;
+    state.start_reason = START_SETTINGS; /* Synthetic fixture is a due reminder. */
     state.image_id = 0;
     state.round.origin = (EventId){.device = 1, .epoch = 1, .sequence = 1};
     state.round.ordinal = 1;

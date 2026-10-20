@@ -196,6 +196,7 @@ int main(int argc, char **argv)
     UiServices services = {.submit = submit};
     ui_set_services(&services);
     state.alarm_active = alarm;
+    state.start_reason = START_SETTINGS;
     state.round.origin = (EventId){1, 1, 1};
     state.round.ordinal = 1;
     local.clock_style = DIGITAL_LARGE;

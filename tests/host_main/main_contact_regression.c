@@ -167,6 +167,7 @@ int main(int argc, char **argv) {
     UiServices services = {.submit = submit};
     ui_set_services(&services);
     test_state.alarm_active = true;
+    test_state.start_reason = START_SETTINGS;
     test_state.round.origin = (EventId){1, 1, 1};
     test_state.round.ordinal = 1;
     test_local.clock_style = DIGITAL_LARGE;

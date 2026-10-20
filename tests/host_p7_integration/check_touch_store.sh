@@ -17,6 +17,8 @@ flags=(-std=c11 -Wall -Wextra -Werror -Wno-unused-variable
     "-I$repo/firmware/components/board/include"
     "-I$repo/firmware/components/katmed_ui/include"
     "-I$repo/firmware/components/katmed_config_bridge/include"
+    "-I$repo/firmware/components/katmed_reset/include"
+    "-I$repo/firmware/components/katmed_acme/include"
     "-I$repo/firmware/components/katmed_web/include"
     "-I$repo/firmware/components/katmed_core/include"
     "-I$repo/firmware/components/katmed_store/include"
@@ -39,7 +41,8 @@ g++ -Wl,--gc-sections "$out/repro.o" "$out/ui.o" "$out/buffer.o" \
     "$objects/katmed_ui/navigation.c.o" "$objects/katmed_ui/clock_view.c.o" \
     "$objects/katmed_ui/katmed_font_10.c.o" "$objects/katmed_ui/katmed_font_12.c.o" \
     "$objects/katmed_ui/katmed_font_14.c.o" "$objects/katmed_ui/katmed_font_26.c.o" \
-    "$objects/katmed_core/katmed_core.cpp.o" "$build/lvgl/lib/liblvgl.a" \
+    "$objects/katmed_ui/morse.c.o" "$objects/katmed_core/katmed_core.cpp.o" \
+    "$build/lvgl/liblvgl.a" \
     -lm -lz -o "$out/repro"
 ulimit -c 0
 "$out/repro"

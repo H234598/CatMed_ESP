@@ -57,6 +57,11 @@ int main(void)
     assert(app_init(&runtime.state, &recovery.shared, &now, runtime.boot,
                     75, catalog) == APP_OK);
     assert(runtime.state.alarm_active && writes == 1);
+    /* The uncertain commit concerns a real due reminder, not the boot notice. */
+    runtime.state.start_reason = START_SETTINGS;
+    runtime.state.countdown_started = now;
+    runtime.state.deadline.regular_monotonic_ms = now.monotonic_ms;
+    runtime.state.deadline.effective_monotonic_ms = now.monotonic_ms;
     UiRequest request = {.kind = UI_REQUEST_CONFIRM};
     microseconds = 2000000;
     unknown_on_write = 3;

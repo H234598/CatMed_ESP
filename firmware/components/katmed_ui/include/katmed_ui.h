@@ -16,6 +16,7 @@ void ui_grid_move(UiGrid *grid, int horizontal, int vertical);
 /* UI state is local and transient, never part of shared snapshots. */
 typedef enum {
     UI_REQUEST_CONFIRM,
+    UI_REQUEST_DISMISS_BOOT,
     UI_REQUEST_SET_MEDICATION_SECONDS,
     UI_REQUEST_SET_IMAGE_SECONDS,
     UI_REQUEST_SET_NEXT_LOCAL_TIME,
@@ -43,7 +44,8 @@ typedef enum {
     UI_SUBMIT_PENDING_SHARED, /* Awaiting authenticated coordinator result. */
     UI_SUBMIT_REJECTED,
     UI_SUBMIT_UNAVAILABLE,
-    UI_SUBMIT_STALE
+    UI_SUBMIT_STALE,
+    UI_SUBMIT_DISMISSED /* Transient boot notice closed; no durable mutation. */
 } UiSubmitResult;
 typedef struct {
     EventId id;

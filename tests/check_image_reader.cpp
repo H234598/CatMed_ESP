@@ -261,6 +261,9 @@ int main(int argc, char **argv)
         expect(app_init(&state, &settings, &clock, boot, katmed_images_count(),
                         katmed_images_catalog_sha256()) == APP_OK && state.alarm_active,
                "core did not establish boot alarm");
+        state.start_reason = START_SETTINGS;
+        state.deadline.regular_monotonic_ms = clock.monotonic_ms;
+        state.deadline.effective_monotonic_ms = clock.monotonic_ms;
         AppEvent confirmation{};
         confirmation.kind = EVENT_CONFIRM;
         confirmation.id = {1, 1, 2};
