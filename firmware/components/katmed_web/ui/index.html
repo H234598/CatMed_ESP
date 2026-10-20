@@ -183,7 +183,8 @@
       </section>
 
       <dialog id="factory-reset-dialog" aria-labelledby="factory-reset-heading">
-        <h2 id="factory-reset-heading">Factory-Reset bestätigen?</h2>
+        <h2 id="factory-reset-heading">Reset vorbereiten</h2>
+        <p>Wenn die Kachel offen ist, drücken Sie RESET links oben auf der Rückseite. Nach dem Neustart erscheint die Warnfrage. Nur ein neues Ja am Display löscht Daten.</p>
         <div class="reset-warning">
           <p>Dieser Vorgang löscht WLAN-Profile, persönliche Laufzeittexte und Einstellungen, gespeicherte Mesh-Bindungen, Alarm- und Bestätigungszustände samt Historie, Webanmeldung und Sitzungen, private Zertifikats-/ACME-Zustände, eigene Uploads und veränderbare Caches.</p>
           <p>Die Firmware und unveränderliche Standardbilder bleiben erhalten. In einem ausdrücklich gewählten privaten Build bleiben einkompilierte private Vorgaben Teil der Firmware; der Datenreset entfernt sie nicht.</p>
@@ -191,7 +192,7 @@
         <p id="reset-status" role="status" aria-live="polite"></p>
         <div class="reset-actions">
           <button id="factory-reset-no" class="secondary reset-no" type="button" autofocus>Nein, abbrechen</button>
-          <button id="factory-reset-yes" class="danger reset-yes" type="button">Ja, Daten zurücksetzen</button>
+          <button id="factory-reset-status" class="secondary" type="button">Gerätestatus aktualisieren</button>
         </div>
       </dialog>
     </div>

@@ -71,6 +71,7 @@ typedef struct {
     bool preview_valid;
     bool advanced_open;
     bool reset_dialog_pressed;
+    uint8_t reset_stage; /* 0 idle, 1 physical button tile, 2 warning. */
     char reset_token[33];
     size_t reset_token_length;
     bool shared_pending;
@@ -202,6 +203,7 @@ static void reset_open(lv_event_t *event);
 static void reset_cancel(lv_event_t *event);
 static void reset_execute(lv_event_t *event);
 static void reset_dialog_press(lv_event_t *event);
+static bool reset_abandon(void);
 static void build_page(void);
 static void return_to_settings(uint64_t now);
 
@@ -900,22 +902,35 @@ static void reset_dialog_close(void)
     if (ui.reset_dialog) lv_obj_delete(ui.reset_dialog);
     ui.reset_dialog = NULL;
     ui.reset_dialog_pressed = false;
+    ui.reset_stage = 0;
     volatile char *token = ui.reset_token;
     for (size_t i = 0; i < sizeof(ui.reset_token); ++i) token[i] = '\0';
     ui.reset_token_length = 0;
+}
+
+static bool reset_abandon(void)
+{
+    if (!ui.reset_stage) return true;
+    if (ui.services.reset_cancel &&
+        !ui.services.reset_cancel(ui.services.context)) return false;
+    reset_dialog_close();
+    return true;
 }
 
 static void reset_cancel(lv_event_t *event)
 {
     (void)event;
     if (!ui.reset_dialog_pressed) return;
-    reset_dialog_close();
+    if (!reset_abandon()) {
+        show_feedback("Abbruch konnte nicht gespeichert werden");
+        return;
+    }
 }
 
 static void reset_execute(lv_event_t *event)
 {
     (void)event;
-    if (!ui.reset_dialog_pressed) return;
+    if (!ui.reset_dialog_pressed || ui.reset_stage != 2) return;
     const int result = ui.services.reset_confirm
         ? ui.services.reset_confirm(ui.services.context, ui.reset_token,
                                     ui.reset_token_length) : 2;
@@ -928,11 +943,51 @@ static void reset_execute(lv_event_t *event)
 static void reset_open(lv_event_t *event)
 {
     (void)event;
-    if (!ui.screen || ui.reset_dialog || !ui.services.reset_prepare ||
-        !ui.services.reset_confirm) {
+    if (!ui.screen || ui.state.alarm_active || ui.reset_dialog || !ui.services.reset_arm ||
+        !ui.services.reset_cancel) {
         show_feedback("Reset nicht verfügbar");
         return;
     }
+    ui.reset_dialog = lv_obj_create(ui.screen);
+    lv_obj_set_size(ui.reset_dialog, ui.width, ui.height);
+    lv_obj_center(ui.reset_dialog);
+    lv_obj_set_style_bg_color(ui.reset_dialog, lv_color_hex(0x172b38), 0);
+    lv_obj_set_style_bg_opa(ui.reset_dialog, LV_OPA_COVER, 0);
+    lv_obj_set_style_pad_all(ui.reset_dialog, 12, 0);
+    lv_obj_set_scrollable(ui.reset_dialog, false);
+    lv_obj_set_flex_flow(ui.reset_dialog, LV_FLEX_FLOW_COLUMN);
+    label(ui.reset_dialog, "Factory Reset vorbereiten", ui.width - 32);
+    label(ui.reset_dialog,
+          "Um den Factory Reset durchzuführen, bitte die RESET-Taste links oben auf der Rückseite des Displays drücken, während diese Kachel offen ist.",
+          ui.width - 32);
+    lv_obj_t *cancel = button(ui.reset_dialog, "Abbrechen", ui.width - 36,
+                              42, reset_cancel, NULL);
+    lv_obj_add_event_cb(cancel, reset_dialog_press, LV_EVENT_PRESSED, NULL);
+    lv_obj_move_foreground(ui.reset_dialog);
+    if (!ui.services.reset_arm(ui.services.context)) {
+        reset_dialog_close();
+        show_feedback("Resetvorbereitung nicht verfügbar");
+        return;
+    }
+    ui.reset_stage = 1;
+}
+
+bool ui_reset_offer_from_web(void)
+{
+    if (ui.reset_dialog) return false;
+    reset_open(NULL);
+    return ui.reset_stage == 1;
+}
+
+void ui_reset_close_remote(void)
+{
+    if (ui.reset_dialog) reset_dialog_close();
+}
+
+void ui_reset_show_warning(void)
+{
+    if (!ui.screen || ui.reset_dialog || !ui.services.reset_prepare ||
+        !ui.services.reset_confirm) return;
     size_t token_length = 0;
     if (!ui.services.reset_prepare(ui.services.context, ui.reset_token,
                                    sizeof(ui.reset_token), &token_length) ||
@@ -942,6 +997,7 @@ static void reset_open(lv_event_t *event)
         return;
     }
     ui.reset_token_length = token_length;
+    ui.reset_stage = 2;
     ui.reset_dialog = lv_obj_create(ui.screen);
     lv_obj_set_size(ui.reset_dialog, ui.width - 16, ui.height - 24);
     lv_obj_center(ui.reset_dialog);
@@ -1335,6 +1391,7 @@ static void delete_page(void)
 
 static void change_page(int horizontal, int vertical, uint64_t now)
 {
+    if (!reset_abandon()) return;
     if (ui.view == UI_VIEW_INTERACTION) {
         interaction_cancel(now);
         interaction_input(KATMED_INTERACTION_LEAVE, 0, 0, 0, now);
@@ -1605,9 +1662,10 @@ bool ui_lvgl_touch_allowed(bool down, int16_t x, int16_t y, bool valid, uint64_t
         ui.lv_contact = true;
         ui.lv_start_x = x; ui.lv_start_y = y;
         ui.lv_overlay_generation = ui.overlay_generation;
-        ui.lv_blocked = ui.state.alarm_active || notice_kind() ||
-            ui.view == MORSE || ui.view == UI_VIEW_INTERACTION || at_edge(y) ||
-            (ui.view != SETTINGS && ui.view != UI_VIEW_STATUS);
+        ui.lv_blocked = !ui.reset_stage &&
+            (ui.state.alarm_active || notice_kind() ||
+             ui.view == MORSE || ui.view == UI_VIEW_INTERACTION || at_edge(y) ||
+             (ui.view != SETTINGS && ui.view != UI_VIEW_STATUS));
     }
     if (ui.lv_overlay_generation != ui.overlay_generation ||
         (abs(x-ui.lv_start_x) >= 40 && abs(x-ui.lv_start_x) >= 2*abs(y-ui.lv_start_y)))
@@ -1631,6 +1689,7 @@ static void finish_morse_start_contact(void)
 void ui_touch_sample(bool touched, int16_t x, int16_t y,
                      bool valid, uint64_t monotonic_ms)
 {
+    if (ui.reset_stage) return;
     unsigned modal = notice_kind();
     if (modal) {
         if (!valid) { ui.reject_contact = true; ui.overlay_contact = false; return; }
@@ -1901,6 +1960,7 @@ void ui_render(const AppState *state, const LocalSettings *local,
 {
     if (!state || !local || !clock) return;
     bool alarm_started = state->alarm_active && ui.view != ALARM;
+    if (alarm_started && ui.reset_stage && !reset_abandon()) return;
     bool round_changed = ui.have_state && ui.state.alarm_active && state->alarm_active &&
                          !same_round(ui.state.round, state->round);
     if (round_changed && ui.touch_down) ui.reject_contact = true;

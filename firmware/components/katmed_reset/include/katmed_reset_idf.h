@@ -8,6 +8,11 @@ extern "C" {
 #endif
 
 KatmedResetJournalBackend katmed_reset_idf_backend(void);
+/* A preparation is a non-destructive, one-boot marker. It is consumed before
+ * normal UI startup; it never starts the reset journal. */
+bool katmed_reset_idf_prepare(void);
+bool katmed_reset_idf_cancel_preparation(void);
+bool katmed_reset_idf_take_preparation(bool *prepared);
 
 #ifdef __cplusplus
 }

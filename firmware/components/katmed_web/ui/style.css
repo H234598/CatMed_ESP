@@ -50,7 +50,6 @@ dialog::backdrop{background:#000a}
 .reset-warning p:last-child{margin-bottom:0}
 .reset-actions{display:flex;flex-direction:column;align-items:center;gap:14px;margin-top:22px}
 .reset-no{width:100%;height:72px;min-height:72px;font-size:1.15rem}
-.reset-yes{width:70%;height:50.4px;min-height:50.4px;margin:0!important}
 .reset-actions button{max-width:100%}
 .check-row{display:flex;align-items:center;gap:10px;margin:10px 0}
 .check-row input{width:auto;min-height:auto}

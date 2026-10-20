@@ -3,7 +3,7 @@
 (() => {
   const $ = (id) => document.getElementById(id);
   const state = { bootstrap: null, config: null, preview: null, wifiProfiles: [],
-    wifiLimit: 0, advancedScrollY: 0, resetToken: null,
+    wifiLimit: 0, advancedScrollY: 0,
     catalogOffset: 0, catalogCount: 0 };
   const views = ["setup-view", "login-view", "private-view"];
   const fields = ["medication_hours", "image_hours", "next_due_hhmm", "clock_style", "orientation", "rotation"];
@@ -22,8 +22,20 @@
   }
 
   function show(view) {
+    if (view !== "private-view" && $("factory-reset-dialog")?.open) {
+      api("/api/factory-reset/cancel", "POST", {}).catch(() => {});
+      $("factory-reset-dialog").close();
+    }
     for (const id of views) $(id).hidden = id !== view;
   }
+
+  window.addEventListener("pagehide", () => {
+    if (!$("factory-reset-dialog")?.open || !state.bootstrap?.csrf_token) return;
+    fetch("/api/factory-reset/cancel", {
+      method: "POST", credentials: "same-origin", keepalive: true,
+      headers: {"X-Katmed-CSRF": state.bootstrap.csrf_token}
+    }).catch(() => {});
+  });
 
   function renderDeviceName(name) {
     if (typeof name !== "string" || !name || !$("device-info")) return;
@@ -634,16 +646,10 @@
   $("factory-reset-start").addEventListener("click", async () => {
     const dialog = $("factory-reset-dialog");
     const status = $("reset-status");
-    const confirm = $("factory-reset-yes");
-    confirm.disabled = true;
-    state.resetToken = null;
-    status.textContent = "Bestätigung wird vorbereitet; es werden noch keine Daten gelöscht.";
+    status.textContent = "Reset-Kachel wird am Display geöffnet.";
     try {
-      const prepared = await api("/api/factory-reset/prepare", "POST", {});
-      if (!prepared || typeof prepared.confirmation !== "string" || !prepared.confirmation)
-        throw new Error("Invalid reset confirmation");
-      state.resetToken = prepared.confirmation;
-      status.textContent = "Dies ist nur die Warnung. Zum Abbrechen Nein wählen; Ja erfordert danach eine getrennte Bestätigung.";
+      await api("/api/factory-reset/prepare", "POST", {});
+      status.textContent = "RESET-Taste drücken, solange die Kachel offen ist.";
     } catch (error) {
       status.textContent = errorText(error);
       notice(errorText(error), true);
@@ -651,13 +657,16 @@
     }
     dialog.showModal();
     $("factory-reset-no").focus();
-    confirm.disabled = false;
   });
 
-  $("factory-reset-no").addEventListener("click", () => {
-    state.resetToken = null;
-    $("factory-reset-dialog").close();
-    $("reset-status").textContent = "Abgebrochen. Es wurden keine Daten geändert.";
+  $("factory-reset-no").addEventListener("click", async () => {
+    try {
+      await api("/api/factory-reset/cancel", "POST", {});
+      $("factory-reset-dialog").close();
+      $("reset-status").textContent = "Abgebrochen. Keine Daten gelöscht.";
+    } catch (error) {
+      $("reset-status").textContent = errorText(error);
+    }
   });
 
   $("factory-reset-dialog").addEventListener("cancel", (event) => {
@@ -665,20 +674,17 @@
     $("factory-reset-no").click();
   });
 
-  $("factory-reset-yes").addEventListener("click", async (event) => {
-    const button = event.currentTarget;
-    if (!state.resetToken || button.disabled) return;
-    button.disabled = true;
-    $("factory-reset-no").disabled = true;
-    $("reset-status").textContent = "Getrennte Bestätigung wird verarbeitet …";
+  $("factory-reset-status").addEventListener("click", async () => {
     try {
-      await api("/api/factory-reset/confirm", "POST", {confirmation: state.resetToken});
-      state.resetToken = null;
-      $("reset-status").textContent = "Reset angenommen. Der Webdienst kann neu starten.";
+      const status = await api("/api/factory-reset/status");
+      $("reset-status").textContent = status.display === "press_reset" ?
+        "Kachel offen: Physische RESET-Taste drücken." :
+        status.display === "confirm_on_display" ?
+        "Warnfrage: Am Display Nein oder neu Ja wählen." :
+        status.display === "preparing" ? "Kachel öffnet." :
+        "Kein Reset aktiv.";
     } catch (error) {
-      state.resetToken = null;
-      $("reset-status").textContent = errorText(error) + " Vor einem erneuten Versuch muss die Warnung neu geöffnet werden.";
-      $("factory-reset-no").disabled = false;
+      $("reset-status").textContent = errorText(error);
     }
   });
 

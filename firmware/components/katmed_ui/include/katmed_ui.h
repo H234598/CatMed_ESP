@@ -86,8 +86,10 @@ typedef struct {
     bool (*durable_divergence)(void *context);
     uint8_t (*conflict_count)(void *context);
     bool (*conflict_at)(void *context, size_t index, UiConflict *conflict);
-    /* UI reset is a separate confirmation action. Prepare only creates a
-     * short-lived one-use token; confirm queues the reset for the main loop. */
+    /* Arm only while the physical-RESET instruction tile is displayed.
+     * Confirmation is generated only after the next boot and stays local. */
+    bool (*reset_arm)(void *context);
+    bool (*reset_cancel)(void *context);
     bool (*reset_prepare)(void *context, char *token, size_t capacity,
                           size_t *length);
     int (*reset_confirm)(void *context, const char *token, size_t length);
@@ -124,6 +126,9 @@ void ui_shared_result(bool accepted);
 void ui_shared_timeout(void);
 void ui_touch_sample(bool touched, int16_t x, int16_t y,
                      bool valid, uint64_t monotonic_ms);
+bool ui_reset_offer_from_web(void);
+void ui_reset_show_warning(void);
+void ui_reset_close_remote(void);
 UiView ui_current_view(void);
 UiView ui_next_view(UiView current, UiGesture gesture, bool alarm_active);
 void ui_render(const AppState *state, const LocalSettings *local,

@@ -67,6 +67,11 @@ typedef struct {
     EventId manual_restore_event_id;
     KatmedRestoreStatus manual_restore_status;
     KatmedResetConfirmation reset_confirmation;
+    bool reset_prepared;
+    bool reset_warning_ready;
+    bool reset_web_offer;
+    bool reset_web_close;
+    uint64_t reset_prepared_at_ms;
     bool reset_requested;
     bool reset_active;
     uint64_t reset_retry_due_ms;
@@ -88,13 +93,62 @@ static bool reset_random_bytes(void *context,uint8_t *out,size_t length)
     return true;
 }
 
-/* Injected into KatmedWebResetServices by the separate web integration. */
+static bool reset_reason_allows_warning(esp_reset_reason_t reason)
+{
+    return reason==ESP_RST_EXT || reason==ESP_RST_POWERON;
+}
+
+static bool physical_reset_board_supported(void)
+{
+#if defined(ESP_PLATFORM) && !defined(CONFIG_IDF_TARGET_ESP32C6)
+    /* The C3 PCB revision and its RESET wiring have not been proven. */
+    return false;
+#else
+    return true;
+#endif
+}
+
+static bool katmed_runtime_reset_arm(void *context)
+{
+    Runtime *rt=context;
+    if (!rt || !reset_mutex || xSemaphoreTake(reset_mutex,pdMS_TO_TICKS(1000))!=pdTRUE)
+        return false;
+    const bool ok=physical_reset_board_supported() &&
+        !rt->reset_active && !rt->reset_requested &&
+        !rt->reset_warning_ready && !rt->reset_prepared &&
+        katmed_reset_idf_prepare();
+    if (ok) {
+        rt->reset_prepared=true;
+        rt->reset_prepared_at_ms=monotonic_ms();
+    }
+    xSemaphoreGive(reset_mutex);
+    return ok;
+}
+
+static bool katmed_runtime_reset_cancel(void *context)
+{
+    Runtime *rt=context;
+    if (!rt || !reset_mutex || xSemaphoreTake(reset_mutex,pdMS_TO_TICKS(1000))!=pdTRUE)
+        return false;
+    const bool ok=katmed_reset_idf_cancel_preparation();
+    if (ok) {
+        rt->reset_prepared=false;
+        rt->reset_warning_ready=false;
+        rt->reset_web_offer=false;
+        rt->reset_confirmation.valid=false;
+        memset(&rt->reset_confirmation,0,sizeof(rt->reset_confirmation));
+    }
+    xSemaphoreGive(reset_mutex);
+    return ok;
+}
+
+/* Only the display calls this after a consumed one-boot preparation. */
 bool katmed_runtime_reset_prepare(void *context,char *out,size_t capacity,size_t *length)
 {
     Runtime *rt=context;
     if (!rt || !reset_mutex || xSemaphoreTake(reset_mutex,pdMS_TO_TICKS(1000))!=pdTRUE)
         return false;
-    const bool ok=!rt->reset_active && !rt->reset_requested &&
+    const bool ok=rt->reset_warning_ready && !rt->reset_active && !rt->reset_requested &&
         katmed_reset_confirmation_prepare(&rt->reset_confirmation,reset_random_bytes,NULL,
             monotonic_ms(),90000u,out,capacity,length);
     xSemaphoreGive(reset_mutex);
@@ -108,9 +162,13 @@ int katmed_runtime_reset_confirm(void *context,const char *token,size_t length)
     Runtime *rt=context;
     if (!rt || !reset_mutex || xSemaphoreTake(reset_mutex,pdMS_TO_TICKS(1000))!=pdTRUE)
         return 2;
-    const bool valid=katmed_reset_confirmation_consume(&rt->reset_confirmation,
+    const bool valid=rt->reset_warning_ready &&
+        katmed_reset_confirmation_consume(&rt->reset_confirmation,
         token,length,monotonic_ms());
-    if (valid) rt->reset_requested=true;
+    if (valid) {
+        rt->reset_warning_ready=false;
+        rt->reset_requested=true;
+    }
     xSemaphoreGive(reset_mutex);
     return valid ? 0 : 1;
 }
@@ -1035,13 +1093,39 @@ static bool web_wifi_schedule_reconnect(void *context)
     return rt && rt->mesh_started && katmed_mesh_schedule_reconnect();
 }
 
-static KatmedWebResetResult web_reset_confirm(void *context, const char *token,
-                                               size_t length)
+static bool web_reset_offer(void *context)
 {
-    const int result = katmed_runtime_reset_confirm(context, token, length);
-    if (result == KATMED_WEB_RESET_ACCEPTED) return KATMED_WEB_RESET_ACCEPTED;
-    if (result == KATMED_WEB_RESET_STALE) return KATMED_WEB_RESET_STALE;
-    return KATMED_WEB_RESET_FAILED;
+    Runtime *rt=context;
+    if (!rt || !reset_mutex || xSemaphoreTake(reset_mutex,pdMS_TO_TICKS(1000))!=pdTRUE)
+        return false;
+    const bool ok=physical_reset_board_supported() &&
+        !rt->reset_active && !rt->reset_requested &&
+        !rt->reset_warning_ready && !rt->reset_prepared && !rt->reset_web_offer;
+    if (ok) rt->reset_web_offer=true;
+    xSemaphoreGive(reset_mutex);
+    return ok;
+}
+
+static KatmedWebResetStatus web_reset_status(void *context)
+{
+    Runtime *rt=context;
+    if (!rt || !reset_mutex || xSemaphoreTake(reset_mutex,pdMS_TO_TICKS(1000))!=pdTRUE)
+        return KATMED_WEB_RESET_IDLE;
+    const KatmedWebResetStatus status=rt->reset_warning_ready ? KATMED_WEB_RESET_WARNING :
+        rt->reset_prepared ? KATMED_WEB_RESET_PREPARED :
+        rt->reset_web_offer ? KATMED_WEB_RESET_PREPARING : KATMED_WEB_RESET_IDLE;
+    xSemaphoreGive(reset_mutex);
+    return status;
+}
+
+static bool web_reset_cancel(void *context)
+{
+    Runtime *rt=context;
+    if (!rt || !katmed_runtime_reset_cancel(rt)) return false;
+    if (xSemaphoreTake(reset_mutex,pdMS_TO_TICKS(1000))!=pdTRUE) return false;
+    rt->reset_web_close=true;
+    xSemaphoreGive(reset_mutex);
+    return true;
 }
 
 static bool web_device_info(void *context, KatmedWebDeviceInfo *out)
@@ -1426,6 +1510,19 @@ void app_main(void)
         return;
     }
 
+    /* Consume the marker before any later board or Store failure can cause a
+     * second boot to reuse an old preparation. No user data is touched here. */
+    if (!katmed_reset_idf_take_preparation(&runtime.reset_warning_ready)) {
+        ESP_LOGE(tag,"reset preparation could not be consumed; normal startup is held");
+        return;
+    }
+    /* CHIP_PU/ESP_RST may be reported as external or power-on reset. Power
+     * restoration cannot be distinguished reliably here; it can only show
+     * the warning and never starts the destructive journal. */
+    const esp_reset_reason_t reset_reason=esp_reset_reason();
+    if (!reset_reason_allows_warning(reset_reason))
+        runtime.reset_warning_ready=false;
+
     if (!boot_identity(&runtime.boot)) {
         ESP_LOGE(tag, "read-only device identity unavailable");
         return;
@@ -1454,7 +1551,6 @@ void app_main(void)
         ESP_LOGE(tag,"reset journal unavailable; normal startup is held");
         return;
     }
-
     SharedSettings settings = app_default_settings();
     const uint32_t image_count = image_status == KATMED_IMAGE_OK ? katmed_images_count() : 0;
     runtime.local = (LocalSettings){
@@ -1521,12 +1617,15 @@ void app_main(void)
         .durable_divergence = durable_divergence,
         .conflict_count = conflict_count,
         .conflict_at = conflict_at,
+        .reset_arm = katmed_runtime_reset_arm,
+        .reset_cancel = katmed_runtime_reset_cancel,
         .reset_prepare = katmed_runtime_reset_prepare,
         .reset_confirm = katmed_runtime_reset_confirm,
     };
     ui_set_services(&services);
     board_set_touch_filter(ui_lvgl_touch_allowed);
     ui_render(&runtime.state, &runtime.local, ui_current_view(), &now);
+    if (runtime.reset_warning_ready) ui_reset_show_warning();
     lvgl_port_unlock();
 
     if (board_touch_sampler_start() != BOARD_OK) {
@@ -1575,8 +1674,9 @@ void app_main(void)
                 .schedule_reconnect = web_wifi_schedule_reconnect,
             },
             .reset = {
-                .prepare_confirmation = katmed_runtime_reset_prepare,
-                .confirm_and_reset = web_reset_confirm,
+                .offer_on_display = web_reset_offer,
+                .status = web_reset_status,
+                .cancel_on_display = web_reset_cancel,
             },
         };
         if (!katmed_web_start(&web_services))
@@ -1622,6 +1722,34 @@ void app_main(void)
         restore_manual_if_ready(&runtime,&now);
         katmed_config_poll(config_execute,&runtime);
         katmed_web_poll(now.monotonic_ms);
+        bool reset_offer=false, reset_close=false, reset_expired=false;
+        if (xSemaphoreTake(reset_mutex,pdMS_TO_TICKS(100))==pdTRUE) {
+            reset_offer=runtime.reset_web_offer;
+            reset_close=runtime.reset_web_close;
+            reset_expired=runtime.reset_prepared &&
+                now.monotonic_ms-runtime.reset_prepared_at_ms>90000u;
+            runtime.reset_web_offer=false;
+            runtime.reset_web_close=false;
+            xSemaphoreGive(reset_mutex);
+        }
+        if (reset_offer || reset_close || reset_expired) {
+            if (lvgl_port_lock(100)) {
+                if (reset_close) {
+                    ui_reset_close_remote();
+                }
+                if (reset_expired &&
+                    katmed_runtime_reset_cancel(&runtime))
+                    ui_reset_close_remote();
+                if (reset_offer) {
+                    ui_reset_offer_from_web();
+                }
+                lvgl_port_unlock();
+            } else if (xSemaphoreTake(reset_mutex,pdMS_TO_TICKS(100))==pdTRUE) {
+                runtime.reset_web_offer |= reset_offer;
+                runtime.reset_web_close |= reset_close;
+                xSemaphoreGive(reset_mutex);
+            }
+        }
         char pairing_code[7] = {0};
         bool pairing_visible = katmed_web_pairing_code(pairing_code);
         if (lvgl_port_lock(10)) {

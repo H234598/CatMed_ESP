@@ -11,6 +11,50 @@ static bool nvs_ready(void)
     return result==ESP_OK || result==ESP_ERR_INVALID_STATE;
 }
 
+bool katmed_reset_idf_prepare(void)
+{
+    if (!nvs_ready()) return false;
+    nvs_handle_t handle;
+    if (nvs_open("katmed_reset", NVS_READWRITE, &handle) != ESP_OK) return false;
+    esp_err_t result = nvs_set_u8(handle, "prepared", 1);
+    if (result == ESP_OK) result = nvs_commit(handle);
+    nvs_close(handle);
+    return result == ESP_OK;
+}
+
+bool katmed_reset_idf_cancel_preparation(void)
+{
+    if (!nvs_ready()) return false;
+    nvs_handle_t handle;
+    if (nvs_open("katmed_reset", NVS_READWRITE, &handle) != ESP_OK) return false;
+    esp_err_t result = nvs_erase_key(handle, "prepared");
+    if (result == ESP_ERR_NVS_NOT_FOUND) result = ESP_OK;
+    if (result == ESP_OK) result = nvs_commit(handle);
+    nvs_close(handle);
+    return result == ESP_OK;
+}
+
+bool katmed_reset_idf_take_preparation(bool *prepared)
+{
+    if (!prepared || !nvs_ready()) return false;
+    *prepared = false;
+    nvs_handle_t handle;
+    if (nvs_open("katmed_reset", NVS_READWRITE, &handle) != ESP_OK) return false;
+    uint8_t value = 0;
+    esp_err_t result = nvs_get_u8(handle, "prepared", &value);
+    if (result == ESP_ERR_NVS_NOT_FOUND) {
+        nvs_close(handle);
+        return true;
+    }
+    if (result != ESP_OK) { nvs_close(handle); return false; }
+    result = nvs_erase_key(handle, "prepared");
+    if (result == ESP_OK) result = nvs_commit(handle);
+    nvs_close(handle);
+    if (result != ESP_OK) return false;
+    *prepared = value == 1;
+    return true;
+}
+
 static bool journal_load(void *context,KatmedResetJournal *out)
 {
     (void)context;

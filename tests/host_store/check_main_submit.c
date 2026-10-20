@@ -19,8 +19,22 @@ static unsigned fake_shared_calls;
 static unsigned fake_mesh_notifications;
 static AppEvent fake_shared_event;
 static uint32_t fake_random_counter=UINT32_C(0x12345678);
+static bool reset_marker;
 
 uint32_t esp_random(void) { return ++fake_random_counter; }
+void esp_fill_random(void *out,size_t length)
+{
+    unsigned char *bytes=out;
+    for (size_t i=0;i<length;i++) bytes[i]=(unsigned char)(i+1);
+}
+bool katmed_reset_idf_prepare(void) { reset_marker=true; return true; }
+bool katmed_reset_idf_cancel_preparation(void) { reset_marker=false; return true; }
+bool katmed_reset_idf_take_preparation(bool *prepared)
+{
+    *prepared=reset_marker;
+    reset_marker=false;
+    return true;
+}
 
 static StoreResult test_read(void *context, uint8_t *out, size_t *length)
 {
@@ -523,7 +537,39 @@ int main(void)
            memcmp(&runtime.store.record,&bound_before,sizeof(bound_before))==0 &&
            runtime.store.record.pending_count==0 &&
            runtime.state.deadline.effective_monotonic_ms==0);
+    /* Neither an HTTP offer nor a prepared reboot can enter the journal.
+     * Only a new display token after the one-boot marker may request it. */
+    memset(&runtime,0,sizeof(runtime));
+    reset_mutex=xSemaphoreCreateMutexStatic(&reset_mutex_storage);
+    fake_microseconds=1000000;
+    char reset_token[33]={0};size_t reset_length=0;
+    assert(!katmed_runtime_reset_prepare(&runtime,reset_token,sizeof(reset_token),&reset_length));
+    assert(web_reset_offer(&runtime) && runtime.reset_web_offer && !reset_marker);
+    runtime.reset_web_offer=false;
+    assert(katmed_runtime_reset_arm(&runtime) && reset_marker);
+    assert(katmed_runtime_reset_confirm(&runtime,"stale",5)==1 && !runtime.reset_requested);
+    assert(katmed_runtime_reset_cancel(&runtime) && !reset_marker);
+    assert(katmed_reset_idf_take_preparation(&runtime.reset_warning_ready) &&
+           !runtime.reset_warning_ready);
+    assert(katmed_runtime_reset_arm(&runtime) && reset_marker);
+    memset(&runtime,0,sizeof(runtime)); /* next boot */
+    assert(katmed_reset_idf_take_preparation(&runtime.reset_warning_ready) &&
+           runtime.reset_warning_ready && !reset_marker);
+    assert(katmed_reset_idf_take_preparation(&reset_marker) && !reset_marker);
+    assert(!reset_reason_allows_warning(ESP_RST_SW));
+    assert(!reset_reason_allows_warning(ESP_RST_WDT));
+    assert(!reset_reason_allows_warning(ESP_RST_BROWNOUT));
+    assert(!reset_reason_allows_warning(ESP_RST_UNKNOWN));
+    assert(reset_reason_allows_warning(ESP_RST_EXT));
+    assert(reset_reason_allows_warning(ESP_RST_POWERON));
+    assert(katmed_runtime_reset_prepare(&runtime,reset_token,sizeof(reset_token),&reset_length));
+    assert(reset_length==32 && !runtime.reset_requested);
+    assert(katmed_runtime_reset_confirm(&runtime,"stale",5)==1 && !runtime.reset_requested);
+    assert(katmed_runtime_reset_confirm(&runtime,reset_token,reset_length)==0 &&
+           runtime.reset_requested && !runtime.reset_warning_ready);
+    assert(katmed_runtime_reset_confirm(&runtime,reset_token,reset_length)==1);
     puts("main solo-root settings: image persistence, next-time history, follower/unstarted and commit failure OK");
+    puts("physical reset runtime: offer, cancel, one-boot marker, warning, fresh one-use confirmation OK");
     puts("main submit/reboot regression passed");
     return 0;
 }

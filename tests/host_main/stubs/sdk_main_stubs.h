@@ -18,4 +18,9 @@ void lvgl_port_unlock(void);
 void vTaskDelay(unsigned);
 void esp_mesh_lite_start(void);
 void esp_restart(void);
+typedef enum {
+    ESP_RST_UNKNOWN = 0, ESP_RST_POWERON = 1, ESP_RST_EXT = 2,
+    ESP_RST_SW = 3, ESP_RST_WDT = 4, ESP_RST_BROWNOUT = 5
+} esp_reset_reason_t;
+static inline esp_reset_reason_t esp_reset_reason(void) { return ESP_RST_POWERON; }
 #endif

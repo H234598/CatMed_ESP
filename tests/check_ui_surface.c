@@ -18,7 +18,45 @@ typedef struct {
     UiSubmitResult result;
     UiRequest last_request;
     UiNetworkStatus network;
+    bool reset_prepared, reset_warning;
+    unsigned reset_arms, reset_cancels, reset_confirms;
 } Host;
+
+static bool reset_arm(void *context)
+{
+    Host *host = context;
+    if (host->reset_prepared || host->reset_warning) return false;
+    host->reset_prepared = true;
+    ++host->reset_arms;
+    return true;
+}
+
+static bool reset_cancel(void *context)
+{
+    Host *host = context;
+    host->reset_prepared = host->reset_warning = false;
+    ++host->reset_cancels;
+    return true;
+}
+
+static bool reset_prepare_warning(void *context, char *out, size_t capacity, size_t *length)
+{
+    Host *host = context;
+    if (!host->reset_warning || capacity < 33) return false;
+    memcpy(out, "0123456789abcdef0123456789abcdef", 33);
+    *length = 32;
+    return true;
+}
+
+static int reset_confirm(void *context, const char *token, size_t length)
+{
+    Host *host = context;
+    if (!host->reset_warning || length != 32 ||
+        memcmp(token, "0123456789abcdef0123456789abcdef", 32)) return 1;
+    host->reset_warning = false;
+    ++host->reset_confirms;
+    return 0;
+}
 
 static uint16_t test_image[320 * 320];
 static lv_image_dsc_t image_dsc;
@@ -1159,6 +1197,68 @@ int main(int argc, char **argv)
     click_label(screen, "Zurück");
     assert(ui_current_view() == BACKGROUND && !find_label(screen, "Status"));
     assert(!find_label(screen, "Einstellungen"));
+
+    /* Physical reset: preparing a tile never confirms, and an unrelated
+     * page gesture cannot turn the first contact into a destructive click. */
+    services.reset_arm = reset_arm;
+    services.reset_cancel = reset_cancel;
+    services.reset_prepare = reset_prepare_warning;
+    services.reset_confirm = reset_confirm;
+    ui_set_services(&services);
+    ui_render(&state, &local, SETTINGS, &clock);
+    click_label(screen, "Werkseinstellungen zurücksetzen");
+    assert(host.reset_arms == 1 && host.reset_confirms == 0);
+    assert(find_label_prefix(screen, "Um den Factory Reset durchzuführen"));
+    swipe(100, 30, clock.monotonic_ms + 1000);
+    assert(ui_current_view() == SETTINGS && host.reset_confirms == 0);
+    lv_obj_t *cancel_button = lv_obj_get_parent(find_label(screen, "Abbrechen"));
+    lv_obj_send_event(cancel_button, LV_EVENT_PRESSED, NULL);
+    lv_obj_send_event(cancel_button, LV_EVENT_CLICKED, NULL);
+    assert(host.reset_cancels == 1 && !host.reset_prepared);
+
+    assert(ui_reset_offer_from_web());
+    assert(host.reset_arms == 2 && host.reset_confirms == 0);
+    ui_reset_close_remote(); /* Simulated hardware reboot destroys the old tile. */
+    host.reset_prepared = false;
+    host.reset_warning = true; /* One-boot NVS marker was consumed. */
+    ui_reset_show_warning();
+    lv_obj_t *yes = lv_obj_get_parent(find_label(screen, "Ja, zurücksetzen"));
+    lv_obj_t *no = lv_obj_get_parent(find_label(screen, "Nein"));
+    assert(lv_obj_get_width(yes) * 10 <= lv_obj_get_width(no) * 7 + 9);
+    assert(lv_obj_get_height(yes) * 10 <= lv_obj_get_height(no) * 7 + 9);
+    assert(lv_obj_has_state(no, LV_STATE_FOCUSED));
+    lv_obj_send_event(yes, LV_EVENT_CLICKED, NULL);
+    assert(host.reset_confirms == 0); /* No touch-through into Ja. */
+    lv_obj_send_event(no, LV_EVENT_PRESSED, NULL);
+    lv_obj_send_event(no, LV_EVENT_CLICKED, NULL);
+    assert(host.reset_confirms == 0 && !host.reset_warning);
+
+    assert(ui_reset_offer_from_web());
+    ui_reset_close_remote();
+    host.reset_prepared = false;
+    host.reset_warning = true;
+    ui_reset_show_warning();
+    yes = lv_obj_get_parent(find_label(screen, "Ja, zurücksetzen"));
+    lv_obj_send_event(yes, LV_EVENT_PRESSED, NULL);
+    lv_obj_send_event(yes, LV_EVENT_CLICKED, NULL);
+    assert(host.reset_confirms == 1);
+
+    /* A boot alarm may be active when the one-boot warning appears. Its
+     * gesture path stays blocked, while the warning's Nein remains usable. */
+    state.alarm_active = true;
+    state.start_reason = START_BOOT;
+    clock.monotonic_ms += 1000;
+    ui_render(&state, &local, ui_current_view(), &clock);
+    host.reset_warning = true;
+    ui_reset_show_warning();
+    assert(ui_lvgl_touch_allowed(true, host.width / 2, host.height / 2,
+                                 true, clock.monotonic_ms));
+    assert(ui_lvgl_touch_allowed(false, host.width / 2, host.height / 2,
+                                 true, clock.monotonic_ms + 30));
+    no = lv_obj_get_parent(find_label(screen, "Nein"));
+    lv_obj_send_event(no, LV_EVENT_PRESSED, NULL);
+    lv_obj_send_event(no, LV_EVENT_CLICKED, NULL);
+    assert(host.reset_confirms == 1 && !host.reset_warning);
 
     lv_display_delete(display);
     lv_deinit();

@@ -97,23 +97,31 @@ async function submit(id) {
   assert.equal(element("advanced-view").hidden, true);
   assert.equal(window.scrollY, 130);
 
-  // First action only obtains an expiring confirmation and opens warning.
-  replies.push({status: 200, body: {confirmation: "synthetic-one-shot"}});
+  // Web may only open the physical-button tile, inspect status, or cancel.
+  replies.push({status: 202, body: {display: "preparing"}});
   await invoke("factory-reset-start");
   assert.equal(element("factory-reset-dialog").open, true);
   assert.equal(document.activeElement, element("factory-reset-no"));
   assert.equal(calls.at(-1).url, "/api/factory-reset/prepare");
   assert.equal(calls.some((call) => call.url === "/api/factory-reset/confirm"), false);
+  replies.push({status: 200, body: {display: "idle"}});
   await invoke("factory-reset-no");
   assert.equal(element("factory-reset-dialog").open, false);
   assert.equal(calls.some((call) => call.url === "/api/factory-reset/confirm"), false);
 
-  replies.push({status: 200, body: {confirmation: "synthetic-second"}});
+  replies.push({status: 200, body: {display: "press_reset"}});
+  await invoke("factory-reset-status");
+  assert.match(element("reset-status").textContent, /RESET-Taste/);
+  replies.push({status: 202, body: {display: "preparing"}});
   await invoke("factory-reset-start");
-  replies.push({status: 202, body: {accepted: true}});
-  await invoke("factory-reset-yes");
-  assert.equal(calls.at(-1).url, "/api/factory-reset/confirm");
+  replies.push({status: 200, body: {display: "confirm_on_display"}});
+  await invoke("factory-reset-status");
+  assert.match(element("reset-status").textContent, /neu Ja/);
+  replies.push({status: 200, body: {display: "idle"}});
+  await invoke("factory-reset-no");
+  assert.equal(calls.at(-1).url, "/api/factory-reset/cancel");
   assert.equal(calls.at(-1).options.headers["X-Katmed-CSRF"], undefined);
+  assert.equal(calls.some((call) => call.url === "/api/factory-reset/confirm"), false);
   assert.equal(replies.length, 0);
-  console.log("async buttons, Advanced scroll restore and two-stage reset: OK");
+  console.log("async buttons, Advanced scroll restore and physical reset web flow: OK");
 })().catch((error) => { console.error(error); process.exitCode = 1; });
