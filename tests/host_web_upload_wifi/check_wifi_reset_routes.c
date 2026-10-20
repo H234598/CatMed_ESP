@@ -58,7 +58,7 @@ static bool delete_profile(void *ctx,uint32_t id){FakeWifi*f=ctx;f->delete_calls
 static bool reconnect(void *ctx){((FakeWifi*)ctx)->reconnect_calls++;return true;}
 static bool prepare(void *ctx){FakeReset*f=ctx;f->prepare_calls++;if(f->state!=KATMED_WEB_RESET_IDLE)return false;f->state=KATMED_WEB_RESET_PREPARING;return true;}
 static KatmedWebResetStatus status(void *ctx){return ((FakeReset*)ctx)->state;}
-static bool cancel_reset(void *ctx){FakeReset*f=ctx;f->cancel_calls++;f->state=KATMED_WEB_RESET_IDLE;return true;}
+static KatmedWebResetCancelResult cancel_reset(void *ctx){FakeReset*f=ctx;f->cancel_calls++;if(f->state==KATMED_WEB_RESET_COMMITTED)return KATMED_WEB_RESET_CANCEL_TOO_LATE;if(f->state==KATMED_WEB_RESET_UNAVAILABLE)return KATMED_WEB_RESET_CANCEL_UNAVAILABLE;f->state=KATMED_WEB_RESET_IDLE;return KATMED_WEB_RESET_CANCELLED;}
 static void fill_profiles(char *body,size_t cap,size_t n){size_t at=(size_t)snprintf(body,cap,"{\"profiles\":[");for(size_t i=0;i<n;i++){at+=(size_t)snprintf(body+at,cap-at,"%s{\"ssid\":\"network-%zu\",\"priority\":1,\"credential\":\"open\",\"password\":\"\"}",i?",":"",i);}snprintf(body+at,cap-at,"]}");}
 
 int main(void){
@@ -92,7 +92,13 @@ int main(void){
  req_init(&req,NULL);assert(route("/api/factory-reset/status",HTTP_GET)(&req)==ESP_OK);assert(strstr(req.response,"preparing"));
  reset.state=KATMED_WEB_RESET_PREPARED;req_init(&req,NULL);assert(route("/api/factory-reset/status",HTTP_GET)(&req)==ESP_OK);assert(strstr(req.response,"press_reset"));
  reset.state=KATMED_WEB_RESET_WARNING;req_init(&req,NULL);assert(route("/api/factory-reset/status",HTTP_GET)(&req)==ESP_OK);assert(strstr(req.response,"confirm_on_display"));
- req_init(&req,NULL);req.csrf_ok=false;assert(route("/api/factory-reset/cancel",HTTP_POST)(&req)==ESP_OK);assert(!strcmp(req.response_status,"403 Forbidden"));assert(reset.cancel_calls==0);
- req_init(&req,NULL);assert(route("/api/factory-reset/cancel",HTTP_POST)(&req)==ESP_OK);assert(reset.cancel_calls==1&&reset.state==KATMED_WEB_RESET_IDLE);
+ reset.state=KATMED_WEB_RESET_UNAVAILABLE;req_init(&req,NULL);assert(route("/api/factory-reset/status",HTTP_GET)(&req)==ESP_OK);assert(strstr(req.response,"unavailable"));
+ reset.state=KATMED_WEB_RESET_COMMITTED;req_init(&req,NULL);assert(route("/api/factory-reset/status",HTTP_GET)(&req)==ESP_OK);assert(strstr(req.response,"reset_committed"));
+ req_init(&req,NULL);assert(route("/api/factory-reset/cancel",HTTP_POST)(&req)==ESP_OK);assert(!strcmp(req.response_status,"409 Conflict"));assert(strstr(req.response,"reset_already_confirmed"));assert(reset.state==KATMED_WEB_RESET_COMMITTED);
+ reset.state=KATMED_WEB_RESET_UNAVAILABLE;req_init(&req,NULL);assert(route("/api/factory-reset/cancel",HTTP_POST)(&req)==ESP_OK);assert(!strcmp(req.response_status,"409 Conflict"));
+ reset.state=KATMED_WEB_RESET_WARNING;
+ const unsigned cancel_before_auth=reset.cancel_calls;
+ req_init(&req,NULL);req.csrf_ok=false;assert(route("/api/factory-reset/cancel",HTTP_POST)(&req)==ESP_OK);assert(!strcmp(req.response_status,"403 Forbidden"));assert(reset.cancel_calls==cancel_before_auth);
+ req_init(&req,NULL);assert(route("/api/factory-reset/cancel",HTTP_POST)(&req)==ESP_OK);assert(reset.cancel_calls==cancel_before_auth+1&&reset.state==KATMED_WEB_RESET_IDLE);
  return 0;
 }

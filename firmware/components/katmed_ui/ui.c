@@ -942,7 +942,6 @@ static void reset_execute(lv_event_t *event)
 
 static void reset_open(lv_event_t *event)
 {
-    (void)event;
     if (!ui.screen || ui.state.alarm_active || ui.reset_dialog || !ui.services.reset_arm ||
         !ui.services.reset_cancel) {
         show_feedback("Reset nicht verfügbar");
@@ -964,7 +963,7 @@ static void reset_open(lv_event_t *event)
                               42, reset_cancel, NULL);
     lv_obj_add_event_cb(cancel, reset_dialog_press, LV_EVENT_PRESSED, NULL);
     lv_obj_move_foreground(ui.reset_dialog);
-    if (!ui.services.reset_arm(ui.services.context)) {
+    if (!ui.services.reset_arm(ui.services.context, event == NULL)) {
         reset_dialog_close();
         show_feedback("Resetvorbereitung nicht verfügbar");
         return;

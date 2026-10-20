@@ -545,13 +545,14 @@ int main(void)
     char reset_token[33]={0};size_t reset_length=0;
     assert(!katmed_runtime_reset_prepare(&runtime,reset_token,sizeof(reset_token),&reset_length));
     assert(web_reset_offer(&runtime) && runtime.reset_web_offer && !reset_marker);
-    runtime.reset_web_offer=false;
-    assert(katmed_runtime_reset_arm(&runtime) && reset_marker);
+    assert(web_reset_status(&runtime)==KATMED_WEB_RESET_PREPARING);
+    assert(katmed_runtime_reset_arm(&runtime,true) && reset_marker);
+    assert(web_reset_status(&runtime)==KATMED_WEB_RESET_PREPARED);
     assert(katmed_runtime_reset_confirm(&runtime,"stale",5)==1 && !runtime.reset_requested);
     assert(katmed_runtime_reset_cancel(&runtime) && !reset_marker);
     assert(katmed_reset_idf_take_preparation(&runtime.reset_warning_ready) &&
            !runtime.reset_warning_ready);
-    assert(katmed_runtime_reset_arm(&runtime) && reset_marker);
+    assert(katmed_runtime_reset_arm(&runtime,false) && reset_marker);
     memset(&runtime,0,sizeof(runtime)); /* next boot */
     assert(katmed_reset_idf_take_preparation(&runtime.reset_warning_ready) &&
            runtime.reset_warning_ready && !reset_marker);
@@ -568,6 +569,36 @@ int main(void)
     assert(katmed_runtime_reset_confirm(&runtime,reset_token,reset_length)==0 &&
            runtime.reset_requested && !runtime.reset_warning_ready);
     assert(katmed_runtime_reset_confirm(&runtime,reset_token,reset_length)==1);
+    assert(web_reset_status(&runtime)==KATMED_WEB_RESET_COMMITTED);
+    assert(web_reset_cancel(&runtime)==KATMED_WEB_RESET_CANCEL_TOO_LATE);
+    assert(runtime.reset_requested && !runtime.reset_web_close);
+    runtime.reset_requested=false;runtime.reset_active=true;
+    assert(web_reset_cancel(&runtime)==KATMED_WEB_RESET_CANCEL_TOO_LATE);
+    assert(web_reset_status(&runtime)==KATMED_WEB_RESET_COMMITTED);
+    runtime.reset_active=false;
+
+    /* A queued close belongs to its old tile, even if local preparation
+     * writes a fresh NVS marker before the main loop can close it. */
+    assert(web_reset_offer(&runtime));
+    assert(katmed_runtime_reset_arm(&runtime,true) && reset_marker);
+    assert(web_reset_cancel(&runtime)==KATMED_WEB_RESET_CANCELLED);
+    const uint64_t old_close=runtime.reset_web_close_generation;
+    assert(reset_close_matches_locked(&runtime,old_close));
+    assert(katmed_runtime_reset_arm(&runtime,false) && reset_marker);
+    assert(!reset_close_matches_locked(&runtime,old_close));
+    assert(web_reset_status(&runtime)==KATMED_WEB_RESET_PREPARED);
+    assert(web_reset_cancel(&runtime)==KATMED_WEB_RESET_CANCELLED);
+    assert(!reset_marker);
+
+    assert(web_reset_offer(&runtime));
+    const uint64_t rejected_epoch=runtime.reset_web_offer_epoch;
+    reset_web_offer_complete(&runtime,rejected_epoch,false); /* Alarm/UI refusal. */
+    assert(web_reset_status(&runtime)==KATMED_WEB_RESET_UNAVAILABLE);
+    assert(!reset_marker && !runtime.reset_web_offer);
+    assert(web_reset_offer(&runtime));
+    reset_web_offer_complete(&runtime,rejected_epoch,false); /* stale result */
+    assert(web_reset_status(&runtime)==KATMED_WEB_RESET_PREPARING);
+    assert(web_reset_cancel(&runtime)==KATMED_WEB_RESET_CANCELLED);
     puts("main solo-root settings: image persistence, next-time history, follower/unstarted and commit failure OK");
     puts("physical reset runtime: offer, cancel, one-boot marker, warning, fresh one-use confirmation OK");
     puts("main submit/reboot regression passed");

@@ -18,6 +18,7 @@ function element(id) {
 }
 const replies = [];
 const calls = [];
+const timers = [];
 const document = {
   getElementById: element,
   querySelectorAll() { return []; },
@@ -32,11 +33,13 @@ const script = fs.readFileSync(path.join(__dirname,
   "../../firmware/components/katmed_web/ui/app.js"), "utf8");
 vm.runInNewContext(script, {
   document, window, history, location,
+  setTimeout: (callback) => { timers.push(callback); },
   fetch: async (url, options) => {
     calls.push({url, options});
     const reply = replies.shift();
     assert.ok(reply, "unexpected request");
     await Promise.resolve();
+    if (reply.network) throw new TypeError("synthetic reboot disconnect");
     return { ok: reply.status < 400, status: reply.status,
       headers: { get: () => "application/json" }, json: async () => reply.body };
   }
@@ -98,11 +101,16 @@ async function submit(id) {
   assert.equal(window.scrollY, 130);
 
   // Web may only open the physical-button tile, inspect status, or cancel.
-  replies.push({status: 202, body: {display: "preparing"}});
+  replies.push({status: 202, body: {display: "preparing"}},
+    {status: 200, body: {display: "preparing"}});
   await invoke("factory-reset-start");
   assert.equal(element("factory-reset-dialog").open, true);
   assert.equal(document.activeElement, element("factory-reset-no"));
-  assert.equal(calls.at(-1).url, "/api/factory-reset/prepare");
+  assert.equal(calls.at(-1).url, "/api/factory-reset/status");
+  assert.doesNotMatch(element("reset-status").textContent, /RESET-Taste/);
+  replies.push({status: 200, body: {display: "press_reset"}});
+  await timers.shift()();
+  assert.match(element("reset-status").textContent, /RESET-Taste/);
   assert.equal(calls.some((call) => call.url === "/api/factory-reset/confirm"), false);
   replies.push({status: 200, body: {display: "idle"}});
   await invoke("factory-reset-no");
@@ -112,15 +120,34 @@ async function submit(id) {
   replies.push({status: 200, body: {display: "press_reset"}});
   await invoke("factory-reset-status");
   assert.match(element("reset-status").textContent, /RESET-Taste/);
-  replies.push({status: 202, body: {display: "preparing"}});
+  replies.push({status: 202, body: {display: "preparing"}},
+    {status: 200, body: {display: "preparing"}});
   await invoke("factory-reset-start");
   replies.push({status: 200, body: {display: "confirm_on_display"}});
-  await invoke("factory-reset-status");
+  await timers.shift()();
   assert.match(element("reset-status").textContent, /neu Ja/);
-  replies.push({status: 200, body: {display: "idle"}});
+  replies.push({status: 409, body: {error: "reset_already_confirmed"}});
   await invoke("factory-reset-no");
-  assert.equal(calls.at(-1).url, "/api/factory-reset/cancel");
-  assert.equal(calls.at(-1).options.headers["X-Katmed-CSRF"], undefined);
+  assert.equal(element("factory-reset-dialog").open, true);
+  assert.match(element("reset-status").textContent, /Löschung/);
+  assert.doesNotMatch(element("reset-status").textContent, /Keine Daten gelöscht/);
+  replies.push({status: 200, body: {display: "reset_committed"}});
+  await invoke("factory-reset-status");
+  assert.match(element("reset-status").textContent, /Löschung/);
+  assert.equal(calls.at(-1).url, "/api/factory-reset/status");
+  element("factory-reset-dialog").close();
+  replies.push({status: 202, body: {display: "preparing"}},
+    {status: 200, body: {display: "unavailable"}});
+  await invoke("factory-reset-start");
+  assert.match(element("reset-status").textContent, /nicht geöffnet/);
+  assert.doesNotMatch(element("reset-status").textContent, /RESET-Taste/);
+  replies.push({status: 409, body: {error: "reset_not_prepared"}});
+  await invoke("factory-reset-no");
+  assert.match(element("reset-status").textContent, /Keine aktive Resetvorbereitung/);
+  element("factory-reset-dialog").close();
+  replies.push({status: 202, body: {display: "preparing"}}, {network: true});
+  await invoke("factory-reset-start");
+  assert.match(element("reset-status").textContent, /nicht erreichbar/);
   assert.equal(calls.some((call) => call.url === "/api/factory-reset/confirm"), false);
   assert.equal(replies.length, 0);
   console.log("async buttons, Advanced scroll restore and physical reset web flow: OK");

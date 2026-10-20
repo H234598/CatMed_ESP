@@ -22,9 +22,10 @@ typedef struct {
     unsigned reset_arms, reset_cancels, reset_confirms;
 } Host;
 
-static bool reset_arm(void *context)
+static bool reset_arm(void *context, bool from_web)
 {
     Host *host = context;
+    (void)from_web;
     if (host->reset_prepared || host->reset_warning) return false;
     host->reset_prepared = true;
     ++host->reset_arms;
@@ -1216,6 +1217,11 @@ int main(int argc, char **argv)
     lv_obj_send_event(cancel_button, LV_EVENT_CLICKED, NULL);
     assert(host.reset_cancels == 1 && !host.reset_prepared);
 
+    state.alarm_active = true;
+    ui_render(&state, &local, SETTINGS, &clock);
+    assert(!ui_reset_offer_from_web() && host.reset_arms == 1);
+    state.alarm_active = false;
+    ui_render(&state, &local, SETTINGS, &clock);
     assert(ui_reset_offer_from_web());
     assert(host.reset_arms == 2 && host.reset_confirms == 0);
     ui_reset_close_remote(); /* Simulated hardware reboot destroys the old tile. */

@@ -35,6 +35,10 @@ static esp_err_t reset_status(httpd_req_t *req)
         return reply(req, "200 OK", "{\"display\":\"press_reset\"}");
     case KATMED_WEB_RESET_WARNING:
         return reply(req, "200 OK", "{\"display\":\"confirm_on_display\"}");
+    case KATMED_WEB_RESET_UNAVAILABLE:
+        return reply(req, "200 OK", "{\"display\":\"unavailable\"}");
+    case KATMED_WEB_RESET_COMMITTED:
+        return reply(req, "200 OK", "{\"display\":\"reset_committed\"}");
     default:
         return reply(req, "200 OK", "{\"display\":\"idle\"}");
     }
@@ -43,9 +47,17 @@ static esp_err_t reset_status(httpd_req_t *req)
 static esp_err_t reset_cancel(httpd_req_t *req)
 {
     if (!authorize(req, true)) return ESP_OK;
-    if (!reset_services.cancel_on_display(reset_services.context))
+    switch (reset_services.cancel_on_display(reset_services.context)) {
+    case KATMED_WEB_RESET_CANCEL_TOO_LATE:
+        return reply(req, "409 Conflict", "{\"error\":\"reset_already_confirmed\"}");
+    case KATMED_WEB_RESET_CANCEL_UNAVAILABLE:
+        return reply(req, "409 Conflict", "{\"error\":\"reset_not_prepared\"}");
+    case KATMED_WEB_RESET_CANCEL_FAILED:
         return reply(req, "503 Service Unavailable", "{\"error\":\"reset_cancel_failed\"}");
-    return reply(req, "200 OK", "{\"display\":\"idle\"}");
+    case KATMED_WEB_RESET_CANCELLED:
+        return reply(req, "200 OK", "{\"display\":\"idle\"}");
+    }
+    return reply(req, "503 Service Unavailable", "{\"error\":\"reset_cancel_failed\"}");
 }
 
 bool katmed_web_reset_register(httpd_handle_t server,

@@ -88,7 +88,7 @@ typedef struct {
     bool (*conflict_at)(void *context, size_t index, UiConflict *conflict);
     /* Arm only while the physical-RESET instruction tile is displayed.
      * Confirmation is generated only after the next boot and stays local. */
-    bool (*reset_arm)(void *context);
+    bool (*reset_arm)(void *context, bool from_web);
     bool (*reset_cancel)(void *context);
     bool (*reset_prepare)(void *context, char *token, size_t capacity,
                           size_t *length);

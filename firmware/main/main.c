@@ -70,7 +70,11 @@ typedef struct {
     bool reset_prepared;
     bool reset_warning_ready;
     bool reset_web_offer;
+    uint64_t reset_web_offer_epoch;
+    bool reset_web_rejected;
     bool reset_web_close;
+    uint64_t reset_generation;
+    uint64_t reset_web_close_generation;
     uint64_t reset_prepared_at_ms;
     bool reset_requested;
     bool reset_active;
@@ -108,7 +112,7 @@ static bool physical_reset_board_supported(void)
 #endif
 }
 
-static bool katmed_runtime_reset_arm(void *context)
+static bool katmed_runtime_reset_arm(void *context,bool from_web)
 {
     Runtime *rt=context;
     if (!rt || !reset_mutex || xSemaphoreTake(reset_mutex,pdMS_TO_TICKS(1000))!=pdTRUE)
@@ -116,12 +120,31 @@ static bool katmed_runtime_reset_arm(void *context)
     const bool ok=physical_reset_board_supported() &&
         !rt->reset_active && !rt->reset_requested &&
         !rt->reset_warning_ready && !rt->reset_prepared &&
+        (from_web ? rt->reset_web_offer : !rt->reset_web_offer) &&
         katmed_reset_idf_prepare();
     if (ok) {
+        ++rt->reset_generation;
         rt->reset_prepared=true;
         rt->reset_prepared_at_ms=monotonic_ms();
+        rt->reset_web_offer=false;
+        rt->reset_web_rejected=false;
     }
     xSemaphoreGive(reset_mutex);
+    return ok;
+}
+
+static bool reset_cancel_locked(Runtime *rt)
+{
+    const bool ok=!rt->reset_requested && !rt->reset_active &&
+        katmed_reset_idf_cancel_preparation();
+    if (ok) {
+        rt->reset_prepared=false;
+        rt->reset_warning_ready=false;
+        rt->reset_web_offer=false;
+        rt->reset_web_rejected=false;
+        rt->reset_confirmation.valid=false;
+        memset(&rt->reset_confirmation,0,sizeof(rt->reset_confirmation));
+    }
     return ok;
 }
 
@@ -130,14 +153,7 @@ static bool katmed_runtime_reset_cancel(void *context)
     Runtime *rt=context;
     if (!rt || !reset_mutex || xSemaphoreTake(reset_mutex,pdMS_TO_TICKS(1000))!=pdTRUE)
         return false;
-    const bool ok=katmed_reset_idf_cancel_preparation();
-    if (ok) {
-        rt->reset_prepared=false;
-        rt->reset_warning_ready=false;
-        rt->reset_web_offer=false;
-        rt->reset_confirmation.valid=false;
-        memset(&rt->reset_confirmation,0,sizeof(rt->reset_confirmation));
-    }
+    const bool ok=reset_cancel_locked(rt);
     xSemaphoreGive(reset_mutex);
     return ok;
 }
@@ -1101,7 +1117,11 @@ static bool web_reset_offer(void *context)
     const bool ok=physical_reset_board_supported() &&
         !rt->reset_active && !rt->reset_requested &&
         !rt->reset_warning_ready && !rt->reset_prepared && !rt->reset_web_offer;
-    if (ok) rt->reset_web_offer=true;
+    if (ok) {
+        rt->reset_web_offer=true;
+        ++rt->reset_web_offer_epoch;
+    }
+    if (ok) rt->reset_web_rejected=false;
     xSemaphoreGive(reset_mutex);
     return ok;
 }
@@ -1110,22 +1130,54 @@ static KatmedWebResetStatus web_reset_status(void *context)
 {
     Runtime *rt=context;
     if (!rt || !reset_mutex || xSemaphoreTake(reset_mutex,pdMS_TO_TICKS(1000))!=pdTRUE)
-        return KATMED_WEB_RESET_IDLE;
-    const KatmedWebResetStatus status=rt->reset_warning_ready ? KATMED_WEB_RESET_WARNING :
+        return KATMED_WEB_RESET_UNAVAILABLE;
+    const KatmedWebResetStatus status=rt->reset_requested || rt->reset_active ?
+        KATMED_WEB_RESET_COMMITTED : rt->reset_warning_ready ? KATMED_WEB_RESET_WARNING :
         rt->reset_prepared ? KATMED_WEB_RESET_PREPARED :
-        rt->reset_web_offer ? KATMED_WEB_RESET_PREPARING : KATMED_WEB_RESET_IDLE;
+        rt->reset_web_offer ? KATMED_WEB_RESET_PREPARING :
+        rt->reset_web_rejected ? KATMED_WEB_RESET_UNAVAILABLE : KATMED_WEB_RESET_IDLE;
     xSemaphoreGive(reset_mutex);
     return status;
 }
 
-static bool web_reset_cancel(void *context)
+static KatmedWebResetCancelResult web_reset_cancel(void *context)
 {
     Runtime *rt=context;
-    if (!rt || !katmed_runtime_reset_cancel(rt)) return false;
-    if (xSemaphoreTake(reset_mutex,pdMS_TO_TICKS(1000))!=pdTRUE) return false;
+    if (!rt || !reset_mutex || xSemaphoreTake(reset_mutex,pdMS_TO_TICKS(1000))!=pdTRUE)
+        return KATMED_WEB_RESET_CANCEL_FAILED;
+    if (rt->reset_requested || rt->reset_active) {
+        xSemaphoreGive(reset_mutex);
+        return KATMED_WEB_RESET_CANCEL_TOO_LATE;
+    }
+    if (!rt->reset_prepared && !rt->reset_warning_ready && !rt->reset_web_offer) {
+        xSemaphoreGive(reset_mutex);
+        return KATMED_WEB_RESET_CANCEL_UNAVAILABLE;
+    }
+    if (!reset_cancel_locked(rt)) {
+        xSemaphoreGive(reset_mutex);
+        return KATMED_WEB_RESET_CANCEL_FAILED;
+    }
+    rt->reset_web_close_generation=rt->reset_generation;
     rt->reset_web_close=true;
     xSemaphoreGive(reset_mutex);
-    return true;
+    return KATMED_WEB_RESET_CANCELLED;
+}
+
+static bool reset_close_matches_locked(const Runtime *rt,uint64_t generation)
+{
+    return rt->reset_generation==generation && !rt->reset_prepared &&
+        !rt->reset_warning_ready && !rt->reset_requested && !rt->reset_active;
+}
+
+static void reset_web_offer_complete(Runtime *rt,uint64_t epoch,bool opened)
+{
+    if (!opened && xSemaphoreTake(reset_mutex,pdMS_TO_TICKS(100))==pdTRUE) {
+        if (rt->reset_web_offer && rt->reset_web_offer_epoch==epoch) {
+            rt->reset_web_offer=false;
+            rt->reset_web_rejected=true;
+        }
+        xSemaphoreGive(reset_mutex);
+    }
 }
 
 static bool web_device_info(void *context, KatmedWebDeviceInfo *out)
@@ -1723,29 +1775,43 @@ void app_main(void)
         katmed_config_poll(config_execute,&runtime);
         katmed_web_poll(now.monotonic_ms);
         bool reset_offer=false, reset_close=false, reset_expired=false;
+        uint64_t reset_close_generation=0, reset_expired_generation=0;
+        uint64_t reset_offer_epoch=0;
         if (xSemaphoreTake(reset_mutex,pdMS_TO_TICKS(100))==pdTRUE) {
             reset_offer=runtime.reset_web_offer;
+            reset_offer_epoch=runtime.reset_web_offer_epoch;
             reset_close=runtime.reset_web_close;
+            reset_close_generation=runtime.reset_web_close_generation;
             reset_expired=runtime.reset_prepared &&
                 now.monotonic_ms-runtime.reset_prepared_at_ms>90000u;
-            runtime.reset_web_offer=false;
+            reset_expired_generation=runtime.reset_generation;
             runtime.reset_web_close=false;
             xSemaphoreGive(reset_mutex);
         }
         if (reset_offer || reset_close || reset_expired) {
             if (lvgl_port_lock(100)) {
                 if (reset_close) {
-                    ui_reset_close_remote();
+                    if (xSemaphoreTake(reset_mutex,pdMS_TO_TICKS(100))==pdTRUE) {
+                        const bool current=reset_close_matches_locked(&runtime,
+                            reset_close_generation);
+                        if (current) ui_reset_close_remote();
+                        xSemaphoreGive(reset_mutex);
+                    }
                 }
-                if (reset_expired &&
-                    katmed_runtime_reset_cancel(&runtime))
-                    ui_reset_close_remote();
+                if (reset_expired && xSemaphoreTake(reset_mutex,pdMS_TO_TICKS(100))==pdTRUE) {
+                    const bool current=runtime.reset_generation==reset_expired_generation &&
+                        runtime.reset_prepared;
+                    const bool cancelled=current && reset_cancel_locked(&runtime);
+                    xSemaphoreGive(reset_mutex);
+                    if (cancelled)
+                        ui_reset_close_remote();
+                }
                 if (reset_offer) {
-                    ui_reset_offer_from_web();
+                    reset_web_offer_complete(&runtime,reset_offer_epoch,
+                        ui_reset_offer_from_web());
                 }
                 lvgl_port_unlock();
             } else if (xSemaphoreTake(reset_mutex,pdMS_TO_TICKS(100))==pdTRUE) {
-                runtime.reset_web_offer |= reset_offer;
                 runtime.reset_web_close |= reset_close;
                 xSemaphoreGive(reset_mutex);
             }
