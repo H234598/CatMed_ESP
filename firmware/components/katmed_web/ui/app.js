@@ -14,6 +14,7 @@
   };
   let advancedTouchStart = null;
   let resetPoll = 0;
+  let resetPending = false, resetLeaving = false;
 
   function notice(message, error = false) {
     const node = $("notice");
@@ -31,13 +32,21 @@
     for (const id of views) $(id).hidden = id !== view;
   }
 
-  window.addEventListener("pagehide", () => {
-    if (!$("factory-reset-dialog")?.open || !state.bootstrap?.csrf_token) return;
+  function cancelResetOnLeave() {
+    if (!state.bootstrap?.csrf_token) return;
     fetch("/api/factory-reset/cancel", {
       method: "POST", credentials: "same-origin", keepalive: true,
       headers: {"X-Katmed-CSRF": state.bootstrap.csrf_token}
     }).catch(() => {});
+  }
+
+  window.addEventListener("pagehide", () => {
+    if (!resetPending && !$("factory-reset-dialog")?.open) return;
+    resetLeaving = true;
+    ++resetPoll;
+    cancelResetOnLeave();
   });
+  window.addEventListener("pageshow", () => { if (!resetPending) resetLeaving = false; });
 
   function renderDeviceName(name) {
     if (typeof name !== "string" || !name || !$("device-info")) return;
@@ -646,23 +655,31 @@
   });
 
   $("factory-reset-start").addEventListener("click", async () => {
+    if (resetPending) return;
     const dialog = $("factory-reset-dialog");
     const status = $("reset-status");
     const poll = ++resetPoll;
-    status.textContent = "Reset-Kachel wird am Display geöffnet.";
+    status.textContent = "Displaykachel öffnet.";
+    resetPending = true;
     try {
       await api("/api/factory-reset/prepare", "POST", {});
     } catch (error) {
+      resetPending = false;
+      if (resetLeaving) { resetLeaving = false; return; }
       status.textContent = errorText(error);
       notice(errorText(error), true);
       return;
     }
+    resetPending = false;
+    if (resetLeaving) { cancelResetOnLeave(); resetLeaving = false; return; }
+    if (poll !== resetPoll) return;
     dialog.showModal();
     $("factory-reset-no").focus();
     await refreshResetStatus(poll);
   });
 
   async function refreshResetStatus(poll = resetPoll) {
+    if (poll !== resetPoll) return;
     try {
       const result = await api("/api/factory-reset/status");
       if (poll !== resetPoll) return;
@@ -671,10 +688,11 @@
         "Kachel offen: Physische RESET-Taste drücken." :
         display === "confirm_on_display" ? "Warnfrage: Am Display Nein oder neu Ja wählen." :
         display === "reset_committed" ? "Reset bestätigt; Löschung läuft oder steht an." :
-        display === "preparing" ? "Reset-Kachel wird geöffnet." :
-        "Reset-Kachel konnte nicht geöffnet werden. Bitte am Display prüfen.";
-      if (display === "preparing" && $("factory-reset-dialog").open)
-        setTimeout(() => refreshResetStatus(poll), 500);
+        display === "preparing" ? "Displaykachel öffnet." :
+        display === "idle" ? "Keine aktive Resetvorbereitung." :
+        "Kachel nicht geöffnet. Display prüfen.";
+      if (["preparing", "press_reset", "confirm_on_display"].includes(display) && $("factory-reset-dialog").open)
+        setTimeout(() => refreshResetStatus(poll), display === "preparing" ? 500 : 5000);
     } catch (error) {
       if (poll === resetPoll) $("reset-status").textContent = errorText(error);
     }
