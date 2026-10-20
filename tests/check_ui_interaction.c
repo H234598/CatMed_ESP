@@ -55,6 +55,7 @@ int main(int argc, char **argv)
     UiServices services = {.context = &host, .submit = submit,
         .interaction_input = fake_input, .interaction_status = fake_status};
     ui_set_services(&services);
+    katmed_i18n_select(KATMED_LANG_DE);
     AppState state = {0};
     LocalSettings local = {.clock_style = ANALOG};
     ClockSample clock = {.domain = 1, .quality = CLOCK_UNAVAILABLE, .monotonic_ms = 1000};

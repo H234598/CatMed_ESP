@@ -311,6 +311,27 @@ static void pointer_read(lv_indev_t *indev, lv_indev_data_t *data)
     data->point = pointer_point;
 }
 
+static void pointer_click(lv_display_t *display, lv_obj_t *target)
+{
+    lv_obj_update_layout(lv_screen_active());
+    lv_area_t area;
+    lv_obj_get_coords(target, &area);
+    pointer_point.x = (area.x1 + area.x2) / 2;
+    pointer_point.y = (area.y1 + area.y2) / 2;
+    lv_indev_t *pointer = lv_indev_create();
+    assert(pointer);
+    lv_indev_set_type(pointer, LV_INDEV_TYPE_POINTER);
+    lv_indev_set_display(pointer, display);
+    lv_indev_set_read_cb(pointer, pointer_read);
+    pointer_down = true;
+    lv_indev_read(pointer);
+    lv_tick_inc(60);
+    pointer_down = false;
+    lv_indev_read(pointer);
+    lv_indev_reset(pointer, NULL);
+    lv_indev_delete(pointer);
+}
+
 static void click_label(lv_obj_t *screen, const char *text)
 {
     if ((strcmp(text, "Status") == 0 && ui_current_view() == SETTINGS && !find_label(screen, text)) ||
@@ -1268,8 +1289,92 @@ int main(int argc, char **argv)
     reset_simulate_hardware_boot(&host, true);
     assert(host.reset_warning && !host.reset_marker);
     ui_reset_show_warning();
-    lv_obj_t *yes = lv_obj_get_parent(find_label(screen, "Ja, zurücksetzen"));
-    lv_obj_t *no = lv_obj_get_parent(find_label(screen, "Nein"));
+    lv_obj_t *warning = find_label_prefix(screen, "WARNUNG: Löscht");
+    assert(warning);
+    char reset_stress[258];
+    const char *stress_unit = "Safety warning: stored settings, alarm history and sessions are erased. ";
+    for (size_t i = 0; i < sizeof(reset_stress) - 1; ++i)
+        reset_stress[i] = stress_unit[i % strlen(stress_unit)];
+    reset_stress[sizeof(reset_stress) - 1] = '\0';
+    const char *reset_text = getenv("KATMED_TEST_RESET_WARNING");
+    if (!reset_text) reset_text = reset_stress;
+    assert(*reset_text);
+    lv_label_set_text(warning, reset_text);
+    lv_obj_t *yes_text = find_label(screen, "Ja, zurücksetzen");
+    assert(yes_text);
+    const char *translated_yes = getenv("KATMED_TEST_RESET_YES");
+    if (translated_yes) lv_label_set_text(yes_text, translated_yes);
+    lv_obj_t *no_text = find_label(screen, "Nein");
+    assert(no_text);
+    const char *translated_no = getenv("KATMED_TEST_RESET_NO");
+    if (translated_no) lv_label_set_text(no_text, translated_no);
+    lv_obj_update_layout(screen);
+    lv_obj_t *yes = lv_obj_get_parent(yes_text);
+    lv_obj_t *no = lv_obj_get_parent(no_text);
+    lv_obj_t *warning_view = lv_obj_get_parent(warning);
+    lv_area_t warning_area, warning_view_area, yes_area, yes_text_area,
+              no_area, no_text_area, dialog_area;
+    lv_obj_get_coords(warning, &warning_area);
+    lv_obj_get_coords(warning_view, &warning_view_area);
+    lv_obj_get_coords(yes, &yes_area);
+    lv_obj_get_coords(yes_text, &yes_text_area);
+    lv_obj_get_coords(no, &no_area);
+    lv_obj_get_coords(no_text, &no_text_area);
+    lv_obj_get_coords(lv_obj_get_parent(no), &dialog_area);
+    assert(lv_obj_is_scrollable(warning_view));
+    assert(!lv_obj_is_scrollable(lv_obj_get_parent(no)));
+    assert(yes_area.x2 > yes_area.x1 && yes_area.y2 > yes_area.y1);
+    assert(no_area.x2 > no_area.x1 && no_area.y2 > no_area.y1);
+    assert(yes_text_area.x1 >= yes_area.x1 && yes_text_area.x2 <= yes_area.x2 &&
+           yes_text_area.y1 >= yes_area.y1 && yes_text_area.y2 <= yes_area.y2);
+    assert(no_text_area.x1 >= no_area.x1 && no_text_area.x2 <= no_area.x2 &&
+           no_text_area.y1 >= no_area.y1 && no_text_area.y2 <= no_area.y2);
+    assert(lv_obj_get_width(yes) == lv_obj_get_width(no) * 7 / 10);
+    assert(lv_obj_get_height(yes) == lv_obj_get_height(no) * 7 / 10);
+    assert(warning_view_area.y1 >= dialog_area.y1 &&
+           warning_view_area.y2 < yes_area.y1 &&
+           yes_area.y2 < no_area.y1 && no_area.y2 < dialog_area.y2);
+    int32_t scroll_needed = lv_obj_get_scroll_bottom(warning_view);
+    if (warning_area.y2 > warning_view_area.y2)
+        assert(scroll_needed > 0);
+    lv_refr_now(display);
+    snprintf(name, sizeof(name), "%s-reset-warning-top", prefix);
+    snapshot(&host, dir, name);
+    lv_indev_t *reset_pointer = NULL;
+    if (scroll_needed > 16) {
+        reset_pointer = lv_indev_create();
+        assert(reset_pointer);
+        lv_indev_set_type(reset_pointer, LV_INDEV_TYPE_POINTER);
+        lv_indev_set_display(reset_pointer, display);
+        lv_indev_set_read_cb(reset_pointer, pointer_read);
+        pointer_point.x = (warning_view_area.x1 + warning_view_area.x2) / 2;
+        pointer_point.y = warning_view_area.y2 - 10;
+        pointer_down = true;
+        lv_indev_read(reset_pointer);
+        lv_tick_inc(80);
+        pointer_point.y = warning_view_area.y1 + 10;
+        lv_indev_read(reset_pointer);
+        pointer_down = false;
+        lv_indev_read(reset_pointer);
+        assert(lv_obj_get_scroll_y(warning_view) > 0);
+        /* Finish pending invalidations before deleting this input device. */
+    }
+    lv_obj_scroll_to_y(warning_view, 10000, LV_ANIM_OFF);
+    lv_obj_update_layout(screen);
+    lv_obj_get_coords(warning, &warning_area);
+    assert(lv_obj_get_scroll_bottom(warning_view) <= 0);
+    assert(warning_area.y2 <= warning_view_area.y2);
+    lv_area_t scrolled_no_area;
+    lv_obj_get_coords(no, &scrolled_no_area);
+    assert(scrolled_no_area.y1 == no_area.y1 && scrolled_no_area.y2 == no_area.y2);
+    assert(host.reset_confirms == 0);
+    lv_refr_now(display);
+    snprintf(name, sizeof(name), "%s-reset-warning-bottom", prefix);
+    snapshot(&host, dir, name);
+    fprintf(stderr, "reset-long geometry %dx%d: text=%zu scroll=%ld view=%d..%d yes=%d..%d no=%d..%d dialog bottom=%d\n",
+            host.width, host.height, strlen(reset_text), (long)scroll_needed,
+            warning_view_area.y1, warning_view_area.y2, yes_area.y1, yes_area.y2,
+            no_area.y1, no_area.y2, dialog_area.y2);
     assert(lv_obj_get_width(yes) * 10 <= lv_obj_get_width(no) * 7 + 9);
     assert(lv_obj_get_height(yes) * 10 <= lv_obj_get_height(no) * 7 + 9);
     assert(lv_obj_has_state(no, LV_STATE_FOCUSED));
@@ -1277,8 +1382,7 @@ int main(int argc, char **argv)
     assert(host.reset_confirms == 0); /* No touch-through into Ja. */
     char cancelled_token[33];
     memcpy(cancelled_token, host.reset_confirmation.token, sizeof(cancelled_token));
-    lv_obj_send_event(no, LV_EVENT_PRESSED, NULL);
-    lv_obj_send_event(no, LV_EVENT_CLICKED, NULL);
+    pointer_click(display, no);
     assert(host.reset_confirms == 0 && !host.reset_warning &&
            !host.reset_confirmation.valid);
     assert(reset_confirm(&host, cancelled_token, 32) == 1);
@@ -1300,8 +1404,7 @@ int main(int argc, char **argv)
     char accepted_token[33];
     memcpy(accepted_token, host.reset_confirmation.token, sizeof(accepted_token));
     yes = lv_obj_get_parent(find_label(screen, "Ja, zurücksetzen"));
-    lv_obj_send_event(yes, LV_EVENT_PRESSED, NULL);
-    lv_obj_send_event(yes, LV_EVENT_CLICKED, NULL);
+    pointer_click(display, yes);
     assert(host.reset_confirms == 1 && !host.reset_warning &&
            !host.reset_confirmation.valid);
     assert(reset_confirm(&host, accepted_token, 32) == 1);
@@ -1407,11 +1510,12 @@ int main(int argc, char **argv)
     assert(strcmp(localized_date, "20.10.2026") == 0);
     katmed_i18n_select(KATMED_LANG_EN);
 
+    if (reset_pointer) lv_indev_delete(reset_pointer);
     lv_display_delete(display);
     lv_deinit();
     free(draw_buffer);
     free(host.frame);
-    printf("layout=%dx%d orientation=%d touch/store=%d network=%d artifacts=19\n",
+    printf("layout=%dx%d orientation=%d touch/store=%d network=%d artifacts=21\n",
            host.width, host.height, orientation_index * 90,
            host.store_calls, host.network_calls);
     return 0;

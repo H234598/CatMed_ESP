@@ -1049,21 +1049,36 @@ void ui_reset_show_warning(void)
     lv_obj_set_scrollable(ui.reset_dialog, false);
     lv_obj_set_flex_flow(ui.reset_dialog, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_style_pad_row(ui.reset_dialog, 5, 0);
-    lv_obj_t *warning = label(ui.reset_dialog,
+    lv_obj_t *warning_view = lv_obj_create(ui.reset_dialog);
+    lv_obj_set_width(warning_view, ui.width - 40);
+    lv_obj_set_height(warning_view, 1);
+    lv_obj_set_flex_grow(warning_view, 1);
+    lv_obj_set_style_bg_opa(warning_view, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(warning_view, 0, 0);
+    lv_obj_set_style_pad_all(warning_view, 0, 0);
+    lv_obj_set_scrollable(warning_view, true);
+    lv_obj_set_scroll_dir(warning_view, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(warning_view, LV_SCROLLBAR_MODE_ACTIVE);
+    lv_obj_set_scroll_elastic(warning_view, false);
+    lv_obj_set_scroll_momentum(warning_view, false);
+    lv_obj_t *warning = label(warning_view,
         T("WARNUNG: Löscht WLAN, Laufzeittexte, Mesh, Alarm/Verlauf, Webzugang, Zertifikate/ACME, Uploads und Cache. Firmware und Standardbilder bleiben. In einem privaten Build bleiben einkompilierte private Vorgaben erhalten."),
         ui.width - 40);
     lv_obj_set_style_text_color(warning, lv_color_white(), 0);
     lv_obj_set_style_text_font(warning, &katmed_font_12, 0);
-    int action_width = (ui.width - 44) / 2;
-    int action_height = (ui.height - 24 - 30) / 3;
-    if (action_height > 46) action_height = 46;
-    if (action_height < 28) action_height = 28;
+    const int action_width = ui.width - 40;
+    const int action_height = 60;
+    const int yes_width = action_width * 7 / 10;
+    const int yes_height = action_height * 7 / 10;
     lv_obj_t *yes = button(ui.reset_dialog, T("Ja, zurücksetzen"),
                            action_width, action_height, reset_execute, NULL);
     lv_obj_t *no = button(ui.reset_dialog, T("Nein"),
                           action_width, action_height, reset_cancel, NULL);
-    lv_obj_set_width(yes, (lv_obj_get_width(no) * 7) / 10);
-    lv_obj_set_height(yes, (lv_obj_get_height(no) * 7) / 10);
+    lv_obj_set_size(yes, yes_width, yes_height);
+    lv_obj_t *yes_text = lv_obj_get_child(yes, 0);
+    lv_obj_set_width(yes_text, yes_width - 8);
+    lv_obj_set_style_text_font(yes_text, &katmed_font_12, 0);
+    lv_obj_center(yes_text);
     lv_obj_set_style_bg_color(yes, lv_color_hex(0xff3d00), LV_PART_MAIN);
     lv_obj_set_style_text_color(yes, lv_color_white(), LV_PART_MAIN);
     lv_obj_add_state(no, LV_STATE_FOCUSED);

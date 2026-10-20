@@ -14,17 +14,15 @@ set(CONFIG_LV_BUILD_DEMOS OFF CACHE BOOL "" FORCE)
 set(CONFIG_LV_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(CONFIG_LV_USE_THORVG_INTERNAL OFF CACHE BOOL "" FORCE)
 add_subdirectory("${ROOT}/firmware/managed_components/lvgl__lvgl" "${CMAKE_CURRENT_BINARY_DIR}/lvgl")
+set(KATMED_I18N_FONT_SOURCES
+    "${UI}/katmed_font_i18n_12.c" "${UI}/katmed_font_i18n_14.c")
 
 add_executable(check_ui_surface
     "${ROOT}/tests/check_ui_surface.c"
     "${UI}/navigation.c" "${UI}/clock_view.c" "${UI}/ui.c" "${UI}/morse.c" "${UI}/i18n_catalog.c" "${UI}/i18n_date.c"
     "${UI}/katmed_font_10.c" "${UI}/katmed_font_12.c"
     "${UI}/katmed_font_14.c" "${UI}/katmed_font_26.c"
-    "${UI}/katmed_font_i18n_12.c" "${UI}/katmed_font_i18n_14.c"
-    "${UI}/katmed_font_i18n_12.c" "${UI}/katmed_font_i18n_14.c"
-    "${UI}/katmed_font_i18n_12.c" "${UI}/katmed_font_i18n_14.c"
-    "${UI}/katmed_font_i18n_12.c" "${UI}/katmed_font_i18n_14.c"
-    "${UI}/katmed_font_i18n_12.c" "${UI}/katmed_font_i18n_14.c"
+    ${KATMED_I18N_FONT_SOURCES}
     "${ROOT}/firmware/components/katmed_reset/katmed_reset_journal.c"
     "${ROOT}/firmware/components/katmed_core/katmed_core.cpp")
 target_include_directories(check_ui_surface PRIVATE
@@ -43,6 +41,7 @@ add_executable(check_ui_morse
     "${UI}/navigation.c" "${UI}/clock_view.c" "${UI}/ui.c" "${UI}/morse.c" "${UI}/i18n_catalog.c" "${UI}/i18n_date.c"
     "${UI}/katmed_font_10.c" "${UI}/katmed_font_12.c"
     "${UI}/katmed_font_14.c" "${UI}/katmed_font_26.c"
+    ${KATMED_I18N_FONT_SOURCES}
     "${ROOT}/firmware/components/katmed_reset/katmed_reset_journal.c"
     "${ROOT}/firmware/components/katmed_core/katmed_core.cpp")
 target_include_directories(check_ui_morse PRIVATE
@@ -72,6 +71,7 @@ add_executable(check_ui_interaction
     "${UI}/navigation.c" "${UI}/clock_view.c" "${UI}/ui.c" "${UI}/morse.c" "${UI}/i18n_catalog.c" "${UI}/i18n_date.c"
     "${UI}/katmed_font_10.c" "${UI}/katmed_font_12.c"
     "${UI}/katmed_font_14.c" "${UI}/katmed_font_26.c"
+    ${KATMED_I18N_FONT_SOURCES}
     "${ROOT}/firmware/components/katmed_reset/katmed_reset_journal.c"
     "${ROOT}/firmware/components/katmed_core/katmed_core.cpp")
 target_include_directories(check_ui_interaction PRIVATE "${UI}/include"
@@ -88,6 +88,7 @@ add_executable(check_settings_values
     "${UI}/navigation.c" "${UI}/clock_view.c" "${UI}/ui.c" "${UI}/morse.c" "${UI}/i18n_catalog.c" "${UI}/i18n_date.c"
     "${UI}/katmed_font_10.c" "${UI}/katmed_font_12.c"
     "${UI}/katmed_font_14.c" "${UI}/katmed_font_26.c"
+    ${KATMED_I18N_FONT_SOURCES}
     "${ROOT}/firmware/components/katmed_core/katmed_core.cpp"
     "${ROOT}/firmware/components/katmed_store/katmed_store.cpp"
     "${ROOT}/firmware/components/katmed_time/katmed_time.c")
@@ -149,6 +150,7 @@ add_executable(check_ui_refinement
     "${UI}/navigation.c" "${UI}/clock_view.c" "${UI}/ui.c" "${UI}/morse.c" "${UI}/i18n_catalog.c" "${UI}/i18n_date.c"
     "${UI}/katmed_font_10.c" "${UI}/katmed_font_12.c"
     "${UI}/katmed_font_14.c" "${UI}/katmed_font_26.c"
+    ${KATMED_I18N_FONT_SOURCES}
     "${ROOT}/firmware/components/katmed_core/katmed_core.cpp"
     "${ROOT}/firmware/components/katmed_store/katmed_store.cpp"
     "${ROOT}/firmware/components/katmed_time/katmed_time.c")
