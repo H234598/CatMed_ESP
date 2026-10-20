@@ -202,7 +202,8 @@ int main(int argc, char **argv) {
         in.expected_device = 2;
         ok = !katmed_import_apply(&in, &b) && m.writes == 0;
     } else if (mode == "reject") {
-        ok = !katmed_import_apply(&in, &b) && m.writes == 0;
+        ok = !katmed_import_apply(&in, &b) &&
+            m.writes == 0 && m.erases == 0 && m.values.empty();
     }
     if (!ok) {
         std::fputs("synthetic import scenario failed\n", stderr);

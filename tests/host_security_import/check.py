@@ -7,6 +7,7 @@ from pathlib import Path
 import struct
 import subprocess
 import tempfile
+import zlib
 
 ROOT = Path(__file__).resolve().parents[2]
 spec = importlib.util.spec_from_file_location("migration", ROOT / "tools/security_migration.py")
@@ -81,6 +82,19 @@ with tempfile.TemporaryDirectory(prefix="katmed-import-test-") as temporary:
     raw_v10.write_bytes(migration.firmware_capsule({
         "nvs/katmed/state": legacy_state,
     }))
+    invalid_history = []
+    for label, history_bytes in (("empty", b""), ("short", b"x"),
+                                 ("bad-inner-crc", fixture[8 + length:-1] +
+                                  bytes([fixture[-1] ^ 1]))):
+        capsule = migration.firmware_capsule({
+            "nvs/katmed/state": state,
+            "nvs/katmed/mesh_history": history_bytes,
+        })
+        assert len(state) == 4065 and struct.unpack_from("<H", capsule, 8)[0] == 2
+        assert struct.unpack_from("<I", capsule, 12)[0] == zlib.crc32(capsule[16:])
+        path = root / f"invalid-history-{label}.bin"
+        path.write_bytes(capsule)
+        invalid_history.append(path)
     for mode in ("success", "replay", "replay_wrong_device", "readback",
                  "orphan", "cleanup", "cleanup_wrong_device", "bad_journal",
                  "space", "occupied", "corrupt", "version",
@@ -91,4 +105,6 @@ with tempfile.TemporaryDirectory(prefix="katmed-import-test-") as temporary:
     subprocess.run([str(binary), str(full), "reject"], check=True)
     subprocess.run([str(binary), str(renewal), "reject"], check=True)
     subprocess.run([str(binary), str(raw_v10), "reject"], check=True)
-print("synthetic product import: 18 cases passed")
+    for path in invalid_history:
+        subprocess.run([str(binary), str(path), "reject"], check=True)
+print("synthetic product import: 21 cases passed")

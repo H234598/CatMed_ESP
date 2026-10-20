@@ -28,6 +28,7 @@ IMAGE = re.compile(r"(?:img-[0-9a-f]{8}|cat-[0-9a-f]{2}-[01])\.jpg\Z")
 MAX_FILES = 128
 MAX_FILE = 128 * 1024
 MAX_CONTENT = 0x40000 - 8192  # preflight only; LittleFS metadata needs a later runtime test
+MESH_HISTORY_SIZES = (2080, 2152)  # MESH_HISTORY_LEGACY_BLOB, MESH_HISTORY_BLOB
 DIRECTORIES = {"nvs", "nvs/katmed", "nvs/katmed_web", "nvs/katmed_reset",
                "littlefs", "littlefs/user-images", "littlefs/acme"}
 
@@ -123,7 +124,11 @@ def compile_bridge(folder):
 
 def validated_state(files, bridge):
     state = files["nvs/katmed/state"]
-    history = files.get("nvs/katmed/mesh_history", b"")
+    history = files.get("nvs/katmed/mesh_history")
+    if history is not None and len(history) not in MESH_HISTORY_SIZES:
+        raise Invalid()
+    if history is None:
+        history = b""
     request = struct.pack("<I", len(state)) + state + struct.pack("<I", len(history)) + history
     result = subprocess.run([str(bridge), "validate"], input=request,
                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,

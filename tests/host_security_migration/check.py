@@ -3,6 +3,7 @@
 import json
 import importlib.util
 import errno
+import hashlib
 import os
 from pathlib import Path
 import stat
@@ -187,6 +188,42 @@ class MigrationContract(unittest.TestCase):
         put(self.source / "nvs/katmed/mesh_history", history)
         self.assertNotEqual(self.run_tool("export", self.source, self.package).returncode, 0)
         self.assertFalse(self.package.exists())
+
+    def test_missing_mesh_history_remains_optional(self):
+        (self.source / "nvs/katmed/mesh_history").unlink()
+        inventory = json.loads((self.source / "source-inventory.json").read_text())
+        inventory["nvs"].remove("nvs/katmed/mesh_history")
+        put(self.source / "source-inventory.json", json.dumps(inventory).encode())
+        self.assertEqual(self.run_tool("export", self.source, self.package).returncode, 0)
+        self.assertEqual(self.run_tool("import-stage", self.package, self.staged).returncode, 0)
+        self.assertFalse((self.staged / "nvs/katmed/mesh_history").exists())
+
+    def test_declared_invalid_mesh_history_length_rejected_at_both_boundaries(self):
+        spec = importlib.util.spec_from_file_location("migration", TOOL)
+        migration = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(migration)
+        path = "nvs/katmed/mesh_history"
+        for invalid in (b"", b"x"):
+            with self.subTest(length=len(invalid), boundary="export"):
+                put(self.source / path, invalid)
+                candidate = self.root / f"invalid-history-{len(invalid)}-package"
+                self.assertNotEqual(self.run_tool("export", self.source, candidate).returncode, 0)
+                self.assertFalse(candidate.exists())
+
+        put(self.source / path, self.history)
+        self.assertEqual(self.run_tool("export", self.source, self.package).returncode, 0)
+        for invalid in (b"", b"x"):
+            with self.subTest(length=len(invalid), boundary="import-stage"):
+                put(self.package / path, invalid)
+                manifest = json.loads((self.package / "manifest.json").read_text())
+                manifest["files"][path] = {
+                    "bytes": len(invalid), "sha256": hashlib.sha256(invalid).hexdigest(),
+                }
+                put(self.package / "manifest.json", json.dumps(manifest).encode())
+                self.assertEqual(manifest, migration.manifest(
+                    migration.inventory(self.package, package=True)))
+                self.assertNotEqual(self.run_tool("import-stage", self.package, self.staged).returncode, 0)
+                self.assertFalse(self.staged.exists())
 
     def test_unknown_key_rejected(self):
         put(self.source / "nvs/katmed/unknown", b"synthetic")

@@ -282,7 +282,10 @@ extern "C" bool katmed_import_apply(const KatmedImportInput *in,
             state_len = length;
         } else if (this_history) {
             history_len = length;
-            if (length > MESH_HISTORY_BLOB) { ok = false; break; }
+            /* A declared empty record is not an absent history. Both accepted
+             * sizes still pass the mesh codec in valid_stage() below. */
+            if (length != MESH_HISTORY_BLOB &&
+                length != MESH_HISTORY_LEGACY_BLOB) { ok = false; break; }
         } else supported = false;
         uint32_t item = 0;
         for (size_t off = 0; off < length && ok;) {
