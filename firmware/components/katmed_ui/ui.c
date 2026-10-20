@@ -1148,25 +1148,25 @@ static void update_status(void)
              network.device_name_uncertain ? T(" (Zuweisung unbestätigt)") : "");
     item = status_label(&next, line, text_w);
     if (ui.height < 200) lv_obj_set_style_text_font(item, &katmed_font_12, 0);
-    if (!ui.services.network_status) snprintf(line, sizeof(line), T("Mesh-Funkkanal: unbekannt"));
-    else if (!network.mesh_active) snprintf(line, sizeof(line), T("Mesh-Funkkanal: inaktiv"));
+    if (!ui.services.network_status) snprintf(line, sizeof(line), "%s", T("Mesh-Funkkanal: unbekannt"));
+    else if (!network.mesh_active) snprintf(line, sizeof(line), "%s", T("Mesh-Funkkanal: inaktiv"));
     else if (network.mesh_channel >= 1 && network.mesh_channel <= 14)
         snprintf(line, sizeof(line), T("Mesh-Funkkanal: %u"), network.mesh_channel);
-    else snprintf(line, sizeof(line), T("Mesh-Funkkanal: unbekannt"));
+    else snprintf(line, sizeof(line), "%s", T("Mesh-Funkkanal: unbekannt"));
     item = status_label(&next, line, text_w);
     if (ui.height < 200) lv_obj_set_style_text_font(item, &katmed_font_12, 0);
     const char *mesh_reason = (network.mesh_quality & 2u) ? T("Speicherfehler") :
         (network.mesh_quality & 1u) ? T("Speicher voll") :
         (network.mesh_quality & 8u) ? T("unvollständig") : T("Abgleich");
-    if (!network.mesh_active) snprintf(line, sizeof(line), T("Mesh aktuell (inkl. Gerät): inaktiv"));
-    else if (!network.mesh_current_valid) snprintf(line, sizeof(line), T("Mesh aktuell (inkl. Gerät): unbekannt"));
+    if (!network.mesh_active) snprintf(line, sizeof(line), "%s", T("Mesh aktuell (inkl. Gerät): inaktiv"));
+    else if (!network.mesh_current_valid) snprintf(line, sizeof(line), "%s", T("Mesh aktuell (inkl. Gerät): unbekannt"));
     else if (network.mesh_quality & (4u | 8u))
         snprintf(line, sizeof(line), T("Mesh aktuell (inkl. Gerät): mindestens %u (%s)"),
                  network.mesh_current_count, (network.mesh_quality & 8u) ? T("unvollständig") : T("Wiederaufbau"));
     else snprintf(line, sizeof(line), T("Mesh aktuell (inkl. Gerät): %u"), network.mesh_current_count);
     item = status_label(&next, line, text_w);
     if (ui.height < 200) lv_obj_set_style_text_font(item, &katmed_font_12, 0);
-    if (!network.mesh_active) snprintf(line, sizeof(line), T("Mesh bisher erfasst (ab Einführung): inaktiv"));
+    if (!network.mesh_active) snprintf(line, sizeof(line), "%s", T("Mesh bisher erfasst (ab Einführung): inaktiv"));
     else if (!network.mesh_history_complete)
         snprintf(line, sizeof(line), T("Mesh bisher erfasst (ab Einführung): mindestens %u (%s)"),
                  network.mesh_history_count, mesh_reason);
