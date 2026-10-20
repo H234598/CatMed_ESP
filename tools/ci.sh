@@ -13,6 +13,7 @@ if [[ "$mode" == dependencies || "$mode" == firmware ]]; then
         echo 'Synthetic firmware setup is restricted to disposable CI.' >&2
         exit 2
     fi
+    python3 tests/check_idf6_scope.py
     python3 tests/check_idf6_lwip_compat.py
     python tools/private_wifi_defaults.py \
         --output "$repo/firmware/build-$board/generated/private_wifi_defaults.h" \
