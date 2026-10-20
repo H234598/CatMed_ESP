@@ -1103,8 +1103,7 @@ static bool web_reset_offer(void *context)
     Runtime *rt=context;
     if (!rt || !reset_mutex || xSemaphoreTake(reset_mutex,pdMS_TO_TICKS(1000))!=pdTRUE)
         return false;
-    const bool ok=physical_reset_board_supported() &&
-        !rt->reset_active && !rt->reset_requested &&
+    const bool ok=!rt->reset_active && !rt->reset_requested &&
         !rt->reset_warning_ready && !rt->reset_prepared && !rt->reset_web_offer;
     if (ok) {
         rt->reset_web_offer=true;
