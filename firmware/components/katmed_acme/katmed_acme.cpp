@@ -2,6 +2,7 @@
 
 #include <Acme.h>
 #include <stddef.h>
+#include <string.h>
 #include <time.h>
 
 #include "esp_log.h"
@@ -20,6 +21,12 @@ bool katmed_acme_start(const KatmedAcmeConfig *config)
         config->identifier[0] == '\0' || config->email[0] == '\0' ||
         config->server[0] == '\0' || config->state_prefix[0] == '\0') {
         ESP_LOGI(TAG, "ACME disabled: secure configuration is not present");
+        return false;
+    }
+    /* The reset journal owns exactly this LittleFS subtree. An alternate
+     * prefix would leave private ACME state outside its cleanup contract. */
+    if (strcmp(config->state_prefix, "/katmed/acme") != 0) {
+        ESP_LOGE(TAG, "ACME refused: state directory is outside reset contract");
         return false;
     }
     httpd_handle_t server = katmed_web_acme_http_server();

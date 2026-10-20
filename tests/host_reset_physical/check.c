@@ -10,7 +10,8 @@ static bool prepared, staged_prepared;
 static bool journal_exists, staged_journal_exists;
 static uint8_t journal[2], staged_journal[2];
 static bool fail_commit;
-static unsigned image_clears, namespace_clears;
+static unsigned image_clears, acme_clears, namespace_clears;
+static bool fail_acme;
 
 esp_err_t nvs_flash_init(void) { return ESP_OK; }
 esp_err_t nvs_open(const char *name, int mode, nvs_handle_t *out)
@@ -78,6 +79,11 @@ KatmedImageStatus katmed_image_store_clear_user_data(void)
     ++image_clears;
     return KATMED_IMAGE_OK;
 }
+bool katmed_reset_acme_files(void)
+{
+    ++acme_clears;
+    return !fail_acme;
+}
 
 int main(void)
 {
@@ -104,9 +110,14 @@ int main(void)
     /* Only a separate, confirmed journal begin may touch user data. */
     KatmedResetJournalBackend backend = katmed_reset_idf_backend();
     assert(katmed_reset_begin(backend));
-    assert(journal_exists && journal[0] == 1 && image_clears == 0);
+    assert(journal_exists && journal[0] == 1 && image_clears == 0 && acme_clears == 0);
     bool pending = false;
+    fail_acme = true;
+    assert(!katmed_reset_resume(backend, &pending));
+    assert(journal[0] == 1 && journal[1] == KATMED_RESET_FILES);
+    assert(image_clears == 1 && acme_clears == 1 && namespace_clears == 0);
+    fail_acme = false;
     assert(katmed_reset_resume(backend, &pending) && !pending);
-    assert(image_clears == 1 && namespace_clears == 3);
+    assert(image_clears == 2 && acme_clears == 2 && namespace_clears == 3);
     return 0;
 }

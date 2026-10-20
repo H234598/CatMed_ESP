@@ -10,8 +10,10 @@ add_subdirectory("${ROOT}/firmware/managed_components/lvgl__lvgl" "${CMAKE_CURRE
 add_executable(check_reset_ui
     "${ROOT}/tests/check_ui_surface.c"
     "${UI}/navigation.c" "${UI}/clock_view.c" "${UI}/ui.c" "${UI}/morse.c"
+    "${UI}/i18n_catalog.c" "${UI}/i18n_date.c"
     "${UI}/katmed_font_10.c" "${UI}/katmed_font_12.c"
     "${UI}/katmed_font_14.c" "${UI}/katmed_font_26.c"
+    "${UI}/katmed_font_i18n_12.c" "${UI}/katmed_font_i18n_14.c"
     "${ROOT}/firmware/components/katmed_reset/katmed_reset_journal.c"
     "${ROOT}/firmware/components/katmed_core/katmed_core.cpp")
 target_include_directories(check_reset_ui PRIVATE

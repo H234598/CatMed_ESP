@@ -1,4 +1,5 @@
 #include "katmed_reset_idf.h"
+#include "katmed_reset_acme_files.h"
 
 #include "esp_err.h"
 #include "katmed_image_store.h"
@@ -99,7 +100,8 @@ static bool journal_run_stage(void *context,KatmedResetStage stage)
     (void)context;
     switch (stage) {
     case KATMED_RESET_FILES:
-        return katmed_image_store_clear_user_data()==KATMED_IMAGE_OK;
+        return katmed_image_store_clear_user_data()==KATMED_IMAGE_OK &&
+               katmed_reset_acme_files();
     case KATMED_RESET_KATMED_NVS:
         /* Contains app state, credentials, and the separate mesh_history key. */
         return clear_namespace("katmed");
