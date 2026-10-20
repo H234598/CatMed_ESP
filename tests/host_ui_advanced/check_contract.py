@@ -26,8 +26,9 @@ assert 'ui.view == SETTINGS && ui.advanced_open && dx >= 40' in touch
 assert 'remember_scroll(ui.settings, 9);' in touch
 assert 'ui.advanced_open = false;' in touch
 assert 'build_settings();' in touch
-assert not re.search(r'button\(ui\.settings,\s*"(?:Status|Zurück|Zuruck)', settings)
+navigation_caption = r'(?:T\(\s*"(?:Status|Zurück|Zuruck)"\s*\)|"(?:Status|Zurück|Zuruck)")'
+assert not re.search(r'button\(\s*ui\.settings\s*,\s*' + navigation_caption + r'\s*,', settings)
 status = source[source.index('static void status_button(lv_event_t *event)\n{'):]
 status = status[:status.index('/* Stable status rows')]
-assert not re.search(r'button\(ui\.status,\s*"(?:Status|Zurück|Zuruck)', status)
+assert not re.search(r'button\(\s*ui\.status\s*,\s*' + navigation_caption + r'\s*,', status)
 print("native Advanced heading/button, subpage, swipe, scroll retention and removed settings/status controls passed")
