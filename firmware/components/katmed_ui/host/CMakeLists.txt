@@ -38,10 +38,13 @@ add_executable(check_ui_morse
     "${UI}/navigation.c" "${UI}/clock_view.c" "${UI}/ui.c" "${UI}/morse.c"
     "${UI}/katmed_font_10.c" "${UI}/katmed_font_12.c"
     "${UI}/katmed_font_14.c" "${UI}/katmed_font_26.c"
+    "${ROOT}/firmware/components/katmed_reset/katmed_reset_journal.c"
     "${ROOT}/firmware/components/katmed_core/katmed_core.cpp")
 target_include_directories(check_ui_morse PRIVATE
+    "${ROOT}/firmware/boards"
     "${UI}/include"
     "${ROOT}/firmware/components/katmed_core/include"
+    "${ROOT}/firmware/components/katmed_reset/include"
     "${ROOT}/firmware/components/katmed_images/include")
 target_compile_definitions(check_ui_morse PRIVATE LV_LVGL_H_INCLUDE_SIMPLE)
 target_compile_options(check_ui_morse PRIVATE -Wall -Wextra -Werror)
@@ -136,6 +139,7 @@ add_executable(check_ui_refinement
     "${ROOT}/firmware/components/katmed_images/katmed_images_reader.c"
     "${ROOT}/firmware/components/katmed_images/katmed_images_lvgl.c"
     "${ROOT}/firmware/components/katmed_images/katmed_images_hash.c"
+    "${ROOT}/firmware/components/katmed_reset/katmed_reset_journal.c"
     "${CMAKE_CURRENT_BINARY_DIR}/refinement_catalog.c"
     "${UI}/navigation.c" "${UI}/clock_view.c" "${UI}/ui.c" "${UI}/morse.c"
     "${UI}/katmed_font_10.c" "${UI}/katmed_font_12.c"
@@ -145,6 +149,7 @@ add_executable(check_ui_refinement
     "${ROOT}/firmware/components/katmed_time/katmed_time.c")
 target_include_directories(check_ui_refinement PRIVATE
     "${ROOT}/tests/host_store/stubs" "${ROOT}/tests/host_main/stubs"
+    "${ROOT}/firmware/boards"
     "${ROOT}/firmware/components/katmed_config_bridge/include"
     "${ROOT}/firmware/components/katmed_web/include"
     "${ROOT}/firmware/main" "${ROOT}/firmware/components/board/include"
