@@ -60,7 +60,7 @@ def collect():
         "%s", "%lu", "OK", "Telacore", "Alarm", "IP: %s", "AP-IP: %s",
         "Gateway: %s", "DNS-IP: %s", "%c%c:%s",
         "English", "Deutsch", "Français", "Nederlands", "Español", "Esperanto",
-        "Українська", "العربية", "简体中文", "日本語",
+        "Українська", "العربية", "简体中文", "日本語", "Ostfränkisch", "tlhIngan Hol",
     } and not re.fullmatch(r"[%0-9.:usdlu\s-]+", s)]
     html = HtmlCopy()
     html.feed((WEB / "index.html").read_text())
@@ -68,7 +68,7 @@ def collect():
     static = [s for s in static if s not in {
         "KatMed", "0°", "90°", "180°", "270°", "SSID", "HH:MM",
         "English", "Deutsch", "Français", "Nederlands", "Español", "Esperanto",
-        "Українська", "العربية", "简体中文", "日本語",
+        "Українська", "العربية", "简体中文", "日本語", "Ostfränkisch", "tlhIngan Hol",
     }]
     js = unique(c_strings(WEB / "app.js"))
     js = [s for s in js if (" " in s or re.search(r"[ÄÖÜäöüß…]", s) or

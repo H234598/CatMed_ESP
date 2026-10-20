@@ -98,8 +98,9 @@ class RouteContractTests(unittest.TestCase):
         self.assertIn("einkompilierte private Vorgaben erhalten", (ROOT / "firmware/components/katmed_ui/ui.c").read_text(encoding="utf-8"))
         css = CSS.read_text(encoding="utf-8")
         self.assertIn(".reset-no{width:100%;height:72px", css)
-        self.assertIn("lv_obj_set_width(yes, (lv_obj_get_width(no) * 7) / 10)",
-                      (ROOT / "firmware/components/katmed_ui/ui.c").read_text(encoding="utf-8"))
+        ui = (ROOT / "firmware/components/katmed_ui/ui.c").read_text(encoding="utf-8")
+        self.assertIn("lv_obj_set_flex_grow(warning_view, 1)", ui)
+        self.assertIn("lv_obj_set_size(yes, yes_width, yes_height)", ui)
         self.assertIn("background:#ffec73", css)
         self.assertIn("dialog.showModal()", APP_JS.read_text(encoding="utf-8"))
         self.assertIn('$("factory-reset-no").focus()', APP_JS.read_text(encoding="utf-8"))

@@ -863,7 +863,8 @@ static void build_settings(void)
             {KATMED_LANG_FR, "Français"}, {KATMED_LANG_NL, "Nederlands"},
             {KATMED_LANG_UK, "Українська"}, {KATMED_LANG_AR, "العربية"},
             {KATMED_LANG_ZH_HANS, "简体中文"}, {KATMED_LANG_ES, "Español"},
-            {KATMED_LANG_JA, "日本語"}, {KATMED_LANG_EO, "Esperanto"},
+            {KATMED_LANG_JA, "日本語"}, {KATMED_LANG_BAR, "Ostfränkisch"},
+            {KATMED_LANG_EO, "Esperanto"}, {KATMED_LANG_TLH_LATN, "tlhIngan Hol"},
         };
         for (size_t i = 0; i < sizeof(languages)/sizeof(languages[0]); ++i) {
             lv_obj_t *choice=button(ui.settings,languages[i].name,row_w,34,
@@ -1066,7 +1067,8 @@ void ui_reset_show_warning(void)
         ui.width - 40);
     lv_obj_set_style_text_color(warning, lv_color_white(), 0);
     lv_obj_set_style_text_font(warning, &katmed_font_12, 0);
-    const int action_width = ui.width - 40;
+    /* Keep both pixel dimensions on an exact 7:10 grid. */
+    const int action_width = ((ui.width - 40) / 10) * 10;
     const int action_height = 60;
     const int yes_width = action_width * 7 / 10;
     const int yes_height = action_height * 7 / 10;

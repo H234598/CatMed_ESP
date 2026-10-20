@@ -584,14 +584,21 @@ void test_language_reboot_and_factory_default() {
     StoreRecovery initial{};
     assert(store_open(&first,backend(disk),kDevice,catalog,75,&initial)==STORE_OK);
     assert(initial.language==KATMED_LANG_EN && first.record.language==KATMED_LANG_EN);
-    assert(store_set_language(&first,KATMED_LANG_AR)==STORE_OK);
-    assert(disk.length>12 && disk.bytes[4]==11 && first.record.language==KATMED_LANG_AR);
-    assert(store_set_language(&first,KATMED_LANG_AR)==STORE_DUPLICATE);
+    for (uint8_t language=1; language<KATMED_LANGUAGE_COUNT; ++language) {
+        assert(store_set_language(&first,language)==STORE_OK);
+        assert(disk.length>12 && disk.bytes[4]==11 && first.record.language==language);
+        assert(store_set_language(&first,language)==STORE_DUPLICATE);
+        Store reboot{};
+        StoreRecovery restored{};
+        assert(store_open(&reboot,backend(disk),kDevice,catalog,75,&restored)==STORE_OK);
+        assert(restored.language==language && reboot.record.language==language);
+    }
     assert(store_set_language(&first,KATMED_LANGUAGE_COUNT)==STORE_INVALID);
+    assert(store_set_language(&first,KATMED_LANG_EN)==STORE_OK);
     Store reboot{};
     StoreRecovery restored{};
     assert(store_open(&reboot,backend(disk),kDevice,catalog,75,&restored)==STORE_OK);
-    assert(restored.language==KATMED_LANG_AR && reboot.record.language==KATMED_LANG_AR);
+    assert(restored.language==KATMED_LANG_EN && reboot.record.language==KATMED_LANG_EN);
     Fake wiped{}; /* Synthetic empty backend after a full factory wipe. */
     Store reset{};
     StoreRecovery fresh{};

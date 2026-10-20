@@ -5,6 +5,9 @@ const path = require("node:path");
 const vm = require("node:vm");
 
 const ui = path.resolve(__dirname, "../../firmware/components/katmed_web/ui");
+const html = fs.readFileSync(path.join(ui, "index.html"), "utf8");
+for (const code of ["bar", "tlh-Latn"])
+  assert.match(html, new RegExp(`<option value="${code}">`));
 const nodes = [{ nodeValue: " Einstellungen " }, { nodeValue: "My own alarm text" }];
 const fields = [{ attrs: { placeholder: "Passwort eingeben" },
   getAttribute(name) { return this.attrs[name] || null; },
@@ -37,6 +40,7 @@ const context = { window, document, NodeFilter: { SHOW_TEXT: 4 },
 vm.runInNewContext(fs.readFileSync(path.join(ui, "i18n.js"), "utf8"), context);
 const app = fs.readFileSync(path.join(ui, "app.js"), "utf8")
   .replace("function applyLocale(language) {", "window.__applyLocale = applyLocale; function applyLocale(language) {")
+  .replace("function trf(source, ...values) {", "window.__trf = trf; function trf(source, ...values) {")
   .replace("function formatPreviewDate(value) {", "window.__formatPreviewDate = formatPreviewDate; function formatPreviewDate(value) {")
   .replace("void start();", "");
 vm.runInNewContext(app, context);
@@ -44,6 +48,24 @@ assert.equal(document.documentElement.lang, "en");
 assert.equal(nodes[0].nodeValue.trim(), "Settings");
 assert.equal(nodes[1].nodeValue, "My own alarm text");
 assert.equal(window.__formatPreviewDate("20.10.2026 08:30 CEST"), "2026-10-20 08:30 CEST");
+const supported = ["en", "de", "fr", "nl", "uk", "ar", "zh-Hans", "es", "ja", "bar", "eo", "tlh-Latn"];
+assert.deepEqual(Object.keys(window.KATMED_I18N.values), supported);
+for (const code of supported) {
+  window.__applyLocale(code);
+  assert.equal(document.documentElement.lang, code);
+  assert.equal(document.documentElement.dir, code === "ar" ? "rtl" : "ltr");
+  assert.equal(nodes[0].nodeValue.trim(), window.KATMED_I18N.values[code][
+    window.KATMED_I18N.keys.indexOf("Einstellungen")]);
+  assert.equal(nodes[1].nodeValue, "My own alarm text");
+  assert.notEqual(nodes[0].nodeValue.trim(), "", code);
+  const dynamicKey = "Gerät: {0}";
+  const translatedDynamic = window.KATMED_I18N.values[code][
+    window.KATMED_I18N.keys.indexOf(dynamicKey)];
+  assert.equal(window.__trf(dynamicKey, "A/42"),
+    translatedDynamic.replace("{0}", "A/42"), code);
+  for (const value of window.KATMED_I18N.values[code])
+    assert.equal(typeof value, "string", code);
+}
 window.__applyLocale("ar");
 assert.equal(document.documentElement.dir, "rtl");
 assert.equal(nodes[0].nodeValue.trim(), window.KATMED_I18N.values.ar[
@@ -55,4 +77,4 @@ assert.notEqual(nodes[0].nodeValue.trim(), "Settings");
 window.__applyLocale("de");
 assert.equal(nodes[0].nodeValue, " Einstellungen ");
 assert.equal(nodes[1].nodeValue, "My own alarm text");
-console.log("Web locale, RTL, DOM text and user data: OK");
+console.log("All 12 Web locales, RTL, DOM text and user data: OK");

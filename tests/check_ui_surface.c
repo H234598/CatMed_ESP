@@ -989,6 +989,17 @@ int main(int argc, char **argv)
     clock.utc_ms = 1774744200000LL; /* 2026-03-29 01:30 CET. */
     ui_render(&state, &local, SETTINGS, &clock);
     click_label(screen, "Advanced");
+    assert(find_label(screen, "Ostfränkisch"));
+    assert(find_label(screen, "tlhIngan Hol"));
+    int before_language = host.submit_calls;
+    click_label(screen, "Ostfränkisch");
+    assert(host.submit_calls == before_language + 1 &&
+           host.last_request.kind == UI_REQUEST_SET_LANGUAGE &&
+           host.last_request.value.language == KATMED_LANG_BAR);
+    click_label(screen, "tlhIngan Hol");
+    assert(host.submit_calls == before_language + 2 &&
+           host.last_request.kind == UI_REQUEST_SET_LANGUAGE &&
+           host.last_request.value.language == KATMED_LANG_TLH_LATN);
     click_label(screen, "Nächste Fälligkeit HH:MM");
     report_memory("time-keypad");
     click_label(screen, "0");
@@ -1329,8 +1340,8 @@ int main(int argc, char **argv)
            yes_text_area.y1 >= yes_area.y1 && yes_text_area.y2 <= yes_area.y2);
     assert(no_text_area.x1 >= no_area.x1 && no_text_area.x2 <= no_area.x2 &&
            no_text_area.y1 >= no_area.y1 && no_text_area.y2 <= no_area.y2);
-    assert(lv_obj_get_width(yes) == lv_obj_get_width(no) * 7 / 10);
-    assert(lv_obj_get_height(yes) == lv_obj_get_height(no) * 7 / 10);
+    assert(lv_obj_get_width(yes) * 10 == lv_obj_get_width(no) * 7);
+    assert(lv_obj_get_height(yes) * 10 == lv_obj_get_height(no) * 7);
     assert(warning_view_area.y1 >= dialog_area.y1 &&
            warning_view_area.y2 < yes_area.y1 &&
            yes_area.y2 < no_area.y1 && no_area.y2 < dialog_area.y2);
@@ -1371,12 +1382,13 @@ int main(int argc, char **argv)
     lv_refr_now(display);
     snprintf(name, sizeof(name), "%s-reset-warning-bottom", prefix);
     snapshot(&host, dir, name);
-    fprintf(stderr, "reset-long geometry %dx%d: text=%zu scroll=%ld view=%d..%d yes=%d..%d no=%d..%d dialog bottom=%d\n",
+    fprintf(stderr, "reset-long geometry %dx%d: text=%zu scroll=%ld view=%d..%d yes=%d..%d no=%d..%d buttons=%dx%d/%dx%d dialog bottom=%d\n",
             host.width, host.height, strlen(reset_text), (long)scroll_needed,
             warning_view_area.y1, warning_view_area.y2, yes_area.y1, yes_area.y2,
-            no_area.y1, no_area.y2, dialog_area.y2);
-    assert(lv_obj_get_width(yes) * 10 <= lv_obj_get_width(no) * 7 + 9);
-    assert(lv_obj_get_height(yes) * 10 <= lv_obj_get_height(no) * 7 + 9);
+            no_area.y1, no_area.y2, lv_obj_get_width(yes), lv_obj_get_height(yes),
+            lv_obj_get_width(no), lv_obj_get_height(no), dialog_area.y2);
+    assert(lv_obj_get_width(yes) * 10 == lv_obj_get_width(no) * 7);
+    assert(lv_obj_get_height(yes) * 10 == lv_obj_get_height(no) * 7);
     assert(lv_obj_has_state(no, LV_STATE_FOCUSED));
     lv_obj_send_event(yes, LV_EVENT_CLICKED, NULL);
     assert(host.reset_confirms == 0); /* No touch-through into Ja. */
@@ -1429,19 +1441,24 @@ int main(int argc, char **argv)
 
     /* Real LVGL glyph lookup and framebuffer snapshots for non-Latin copy. */
     lv_font_glyph_dsc_t glyph = {0};
-    for (unsigned i = 0; i < 4; ++i) {
-        const uint32_t codepoint[] = {0x0627, 0xfe8d, 0x836f, 0x85ac};
-        assert(lv_font_get_glyph_dsc(&katmed_font_12, &glyph, codepoint[i], 0));
-        assert(glyph.adv_w > 0 && glyph.box_w > 0 && glyph.box_h > 0);
-        lv_draw_buf_t *bitmap = lv_draw_buf_create(glyph.box_w, glyph.box_h,
-                                                    LV_COLOR_FORMAT_A8, 0);
-        assert(bitmap && lv_font_get_glyph_bitmap(&glyph, bitmap));
-        bool drawn = false;
-        for (uint32_t byte = 0; byte < bitmap->data_size; ++byte)
-            if (((const uint8_t *)bitmap->data)[byte]) { drawn = true; break; }
-        assert(drawn);
-        lv_font_glyph_release_draw_data(&glyph);
-        lv_draw_buf_destroy(bitmap);
+    const uint32_t codepoint[] = {0x0627, 0xfe8d, 0x836f, 0x85ac,
+                                  0x0109, 0x011d, 0x0135, 0x015c, 0x015d,
+                                  0x0406, 0x0454, 0x0456, 0x0457};
+    for (unsigned font_index = 0; font_index < 2; ++font_index) {
+        const lv_font_t *font = font_index ? &katmed_font_14 : &katmed_font_12;
+        for (unsigned i = 0; i < sizeof(codepoint) / sizeof(codepoint[0]); ++i) {
+            assert(lv_font_get_glyph_dsc(font, &glyph, codepoint[i], 0));
+            assert(glyph.adv_w > 0 && glyph.box_w > 0 && glyph.box_h > 0);
+            lv_draw_buf_t *bitmap = lv_draw_buf_create(glyph.box_w, glyph.box_h,
+                                                        LV_COLOR_FORMAT_A8, 0);
+            assert(bitmap && lv_font_get_glyph_bitmap(&glyph, bitmap));
+            bool drawn = false;
+            for (uint32_t byte = 0; byte < bitmap->data_size; ++byte)
+                if (((const uint8_t *)bitmap->data)[byte]) { drawn = true; break; }
+            assert(drawn);
+            lv_font_glyph_release_draw_data(&glyph);
+            lv_draw_buf_destroy(bitmap);
+        }
     }
     assert(lv_font_get_glyph_dsc(&katmed_font_30, &glyph, '-', 0));
     assert(lv_font_get_glyph_dsc(&katmed_font_30, &glyph, '/', 0));

@@ -22,6 +22,8 @@ CJK_URL = ('https://raw.githubusercontent.com/notofonts/noto-cjk/Sans2.004/'
            'Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf')
 CJK_SHA256 = '2c76254f6fc379fddfce0a7e84fb5385bb135d3e399294f6eeb6680d0365b74b'
 ARABIC = Path('/usr/share/fonts/google-noto-vf/NotoSansArabic[wght].ttf')
+LATIN_CYRILLIC = Path('/usr/share/fonts/google-noto/NotoSans-Regular.ttf')
+LATIN_CYRILLIC_SHA256 = '478c558ea716033cd60c03438f628dfa75694dcf6b5f6d505a2f05fd2b4f3823'
 
 
 def converter_path():
@@ -49,11 +51,18 @@ def render(size):
             strings.extend(document['display'])
         else:
             strings.extend(document['display'].values())
-    font = TTFont(CJK)  # SC includes the Japanese and Cyrillic code points in this catalog.
-    cmap = font.getBestCmap()
-    chars = ''.join(sorted({c for text in strings for c in text
-                            if ord(c) > 127 and not 0x0600 <= ord(c) <= 0x06ff
-                            and ord(c) in cmap}))
+    if (not LATIN_CYRILLIC.exists() or
+            hashlib.sha256(LATIN_CYRILLIC.read_bytes()).hexdigest() != LATIN_CYRILLIC_SHA256):
+        raise RuntimeError('unexpected Noto Sans Latin/Cyrillic font version')
+    cmap = TTFont(CJK).getBestCmap()
+    latin_cyrillic_cmap = TTFont(LATIN_CYRILLIC).getBestCmap()
+    non_arabic = {c for text in strings for c in text
+                  if ord(c) > 127 and not 0x0600 <= ord(c) <= 0x06ff}
+    chars = ''.join(sorted(c for c in non_arabic if ord(c) in cmap))
+    latin_cyrillic = ''.join(sorted(c for c in non_arabic if ord(c) not in cmap
+                                    and ord(c) in latin_cyrillic_cmap))
+    if len(chars) + len(latin_cyrillic) != len(non_arabic):
+        raise RuntimeError('display catalog contains glyphs missing from the pinned fonts')
     arabic_base = {c for text in strings for c in text if 0x0600 <= ord(c) <= 0x06ff}
     arabic_forms = {chr(point) for point in list(range(0xfb50, 0xfe00)) + list(range(0xfe70, 0xff00))
                     if (normalized := unicodedata.normalize('NFKC', chr(point))) != chr(point)
@@ -65,7 +74,8 @@ def render(size):
             'node', str(converter_path()), '--size', str(size), '--bpp', '2',
             '--format', 'lvgl', '--no-compress', '--no-kerning', '--font', str(CJK),
             '--symbols', chars, '--font', str(ARABIC),
-            '--symbols', arabic_chars,
+            '--symbols', arabic_chars, '--font', str(LATIN_CYRILLIC),
+            '--symbols', latin_cyrillic,
             '--lv-font-name', f'katmed_font_i18n_{size}', '-o', '/dev/stdout',
         ], check=False, capture_output=True)
     if result.returncode:

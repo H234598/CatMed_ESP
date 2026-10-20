@@ -40,7 +40,7 @@ def main():
                 assert value[:1].isspace() == key[:1].isspace(), (code, section, key, 'leading space')
                 assert value[-1:].isspace() == key[-1:].isspace(), (code, section, key, 'trailing space')
                 assert PRINTF.findall(value) == PRINTF.findall(key), (code, section, key, 'printf')
-                assert set(WEB_FORMAT.findall(value)) == set(WEB_FORMAT.findall(key)), (code, section, key, 'web format')
+                assert sorted(WEB_FORMAT.findall(value)) == sorted(WEB_FORMAT.findall(key)), (code, section, key, 'web format')
     print('verified locales', len(ORDER) - len(missing), 'missing', ','.join(missing) or 'none')
     if missing and not args.available:
         raise SystemExit(1)

@@ -115,6 +115,10 @@ def run(info):
     assert json_body(expect(200, request(info, "/api/language", "PUT",
                                       {"language": "ar"}, cookie, csrf)))["language"] == "ar"
     assert json_body(expect(200, request(info, "/api/language")))["language"] == "ar"
+    for code in ("en", "de", "fr", "nl", "uk", "ar", "zh-Hans", "es", "ja", "bar", "eo", "tlh-Latn"):
+        assert json_body(expect(200, request(info, "/api/language", "PUT",
+                                          {"language": code}, cookie, csrf)))["language"] == code
+        assert json_body(expect(200, request(info, "/api/language")))["language"] == code
     device_info = json_body(expect(200, request(info, "/api/info", cookie=cookie)))
     assert device_info["device_name"] == device_info["hostname"] == "KatmedESP-002"
     assert device_info["name_state"] == "assigned"
