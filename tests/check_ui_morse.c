@@ -1,6 +1,7 @@
 #define main original_ui_surface_main
 #include "check_ui_surface.c"
 #undef main
+#include "katmed_morse.h"
 
 static unsigned flush_calls;
 
@@ -38,6 +39,30 @@ static void render_current(AppState *state, LocalSettings *local,
     clock->monotonic_ms = when_ms;
     ui_render(state, local, ui_current_view(), clock);
     draw();
+}
+
+static uint64_t morse_first_transition(uint64_t start_ms)
+{
+    KatmedMorse expected;
+    katmed_morse_start(&expected, start_ms);
+    assert(expected.active && expected.white && expected.due_ms > start_ms);
+    return expected.due_ms;
+}
+
+static uint64_t morse_pause_bounds(uint64_t start_ms, uint64_t *pause_end)
+{
+    KatmedMorse expected;
+    katmed_morse_start(&expected, start_ms);
+    size_t steps = 0;
+    while (expected.active && expected.phase != 2u) {
+        assert(++steps <= strlen(katmed_morse_message()) * 16u + 16u);
+        assert(expected.due_ms > start_ms);
+        start_ms = expected.due_ms;
+        (void)katmed_morse_update(&expected, start_ms);
+    }
+    assert(expected.active && expected.phase == 2u && !expected.white);
+    *pause_end = expected.due_ms;
+    return start_ms;
 }
 
 static void confirm_alarm(AppState *state, LocalSettings *local,
@@ -122,13 +147,14 @@ int main(void)
     unsigned stable_flushes = flush_calls;
     render_at(&state, &local, &clock, &host, 1100, 0xffff);
     assert(flush_calls == stable_flushes);
-    render_at(&state, &local, &clock, &host, 1179, 0xffff);
-    render_at(&state, &local, &clock, &host, 1180, 0x0000);
-    render_at(&state, &local, &clock, &host, 1360, 0xffff);
+    const uint64_t first_end = morse_first_transition(1000);
+    render_at(&state, &local, &clock, &host, first_end - 1u, 0xffff);
+    render_at(&state, &local, &clock, &host, first_end, 0x0000);
     state.alarm_active = true;
     state.round.origin = (EventId){.device = 1, .epoch = 1, .sequence = 1};
     state.round.ordinal = 1;
-    render_current(&state, &local, &clock, 1400);
+    const uint64_t first_alarm_at = first_end + 220u;
+    render_current(&state, &local, &clock, first_alarm_at);
     assert(ui_current_view() == ALARM);
     lv_obj_t *alarm_text = find_label(lv_screen_active(),
                                       "Please customize me! This is Alarm!");
@@ -144,15 +170,13 @@ int main(void)
     confirm_alarm(&state, &local, &clock, &host, 5100);
     assert(host.submit_calls == 2 && host.store_calls == 2);
     assert(ui_current_view() == MORSE);
-    render_at(&state, &local, &clock, &host, 5299, 0xffff);
-    render_at(&state, &local, &clock, &host, 5300, 0x0000);
     /* With no active alarm, ordinary Morse cancellation has no ACK side effect. */
     assert(!state.alarm_active);
-    ui_touch_sample(true, 110, 110, true, 5310);
+    ui_touch_sample(true, 110, 110, true, 5170);
     assert(ui_current_view() == MORSE);
-    ui_touch_sample(false, 0, 0, true, 5370);
+    ui_touch_sample(false, 0, 0, true, 5230);
     assert(ui_current_view() == BACKGROUND);
-    render_current(&state, &local, &clock, 5380);
+    render_current(&state, &local, &clock, 5240);
     assert(host.submit_calls == 2 && host.store_calls == 2);
 
     state.alarm_active = false;
@@ -160,32 +184,38 @@ int main(void)
     swipe(150, 60, 1700);
     ui_render(&state, &local, ui_current_view(), &clock);
     assert(ui_current_view() == SETTINGS);
-    clock.monotonic_ms = 2000;
+    const uint64_t cycle_start = 2000;
+    uint64_t pause_end;
+    const uint64_t pause_start = morse_pause_bounds(cycle_start, &pause_end);
+    clock.monotonic_ms = cycle_start;
     ui_render(&state, &local, ui_current_view(), &clock);
     press_morse(lv_screen_active(), 2120, true, 2200);
-    ui_touch_sample(true, 100, 100, true, 2000); /* Queued start contact. */
-    ui_touch_sample(false, 0, 0, true, 2000);
+    ui_touch_sample(true, 100, 100, true, cycle_start); /* Queued start contact. */
+    ui_touch_sample(false, 0, 0, true, cycle_start);
     assert(ui_current_view() == MORSE);
-    render_at(&state, &local, &clock, &host, UINT64_C(1448299), 0xffff);
-    render_at(&state, &local, &clock, &host, UINT64_C(1448300), 0x0000);
+    render_at(&state, &local, &clock, &host, pause_start - 1u, 0xffff);
+    render_at(&state, &local, &clock, &host, pause_start, 0x0000);
     /* The alarm pauses the long black pause and resumes its remaining time. */
+    const uint64_t alarm_at = pause_start + 1000u;
+    clock.monotonic_ms = alarm_at;
     state.alarm_active = true;
     state.round.ordinal = 2;
-    render_current(&state, &local, &clock, UINT64_C(1470000));
+    render_current(&state, &local, &clock, alarm_at);
     assert(ui_current_view() == ALARM);
-    render_current(&state, &local, &clock, UINT64_C(1471000));
+    render_current(&state, &local, &clock, alarm_at + 1000u);
     assert(ui_current_view() == ALARM);
     assert(host.submit_calls == 2 && host.store_calls == 2);
-    confirm_alarm(&state, &local, &clock, &host, UINT64_C(1471000));
+    confirm_alarm(&state, &local, &clock, &host, alarm_at + 1000u);
     assert(host.submit_calls == 3 && host.store_calls == 3);
     assert(ui_current_view() == MORSE);
-    render_at(&state, &local, &clock, &host, UINT64_C(1494359), 0x0000);
-    render_at(&state, &local, &clock, &host, UINT64_C(1494360), 0xffff);
-    ui_touch_sample(true, 110, 110, true, UINT64_C(1494370));
+    const uint64_t resumed_pause_end = pause_end + 1060u;
+    render_at(&state, &local, &clock, &host, resumed_pause_end - 1u, 0x0000);
+    render_at(&state, &local, &clock, &host, resumed_pause_end, 0xffff);
+    ui_touch_sample(true, 110, 110, true, resumed_pause_end + 10u);
     assert(ui_current_view() == MORSE);
-    ui_touch_sample(false, 0, 0, true, UINT64_C(1494430));
+    ui_touch_sample(false, 0, 0, true, resumed_pause_end + 70u);
     assert(ui_current_view() == BACKGROUND);
-    render_current(&state, &local, &clock, UINT64_C(1494440));
+    render_current(&state, &local, &clock, resumed_pause_end + 80u);
     assert(host.submit_calls == 3 && host.store_calls == 3);
     lv_indev_delete(indev);
     lv_display_delete(display);

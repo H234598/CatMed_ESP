@@ -255,7 +255,10 @@ static void click_label(lv_obj_t *screen, const char *text)
         lv_obj_send_event(lv_obj_get_parent(caption), LV_EVENT_CLICKED, NULL);
         return;
     }
-    assert(click_matrix_button(screen, text) && "button not found");
+    const bool clicked = click_matrix_button(screen, text);
+    if (!clicked)
+        fprintf(stderr, "button not found: %s\n", text);
+    assert(clicked && "button not found");
 }
 
 static unsigned count_objects(lv_obj_t *object)
@@ -281,8 +284,12 @@ static void cycle_views(lv_obj_t *screen)
 {
     click_label(screen, "Uhrdesign");
     click_label(screen, "Abbrechen");
+    click_label(screen, "Advanced");
     click_label(screen, "Medikamente: Stunden");
     click_label(screen, "Abbrechen");
+    static uint64_t nav_time = UINT64_C(30000000);
+    nav_time += 1000;
+    swipe(35, 185, nav_time);
     click_label(screen, "Status");
     click_label(screen, "Zurück");
 }
@@ -880,6 +887,7 @@ int main(int argc, char **argv)
     clock.quality = CLOCK_SYNCHRONIZED;
     clock.utc_ms = 1774744200000LL; /* 2026-03-29 01:30 CET. */
     ui_render(&state, &local, SETTINGS, &clock);
+    click_label(screen, "Advanced");
     click_label(screen, "Nächste Fälligkeit HH:MM");
     report_memory("time-keypad");
     click_label(screen, "0");
@@ -946,6 +954,7 @@ int main(int argc, char **argv)
     click_label(screen, "Abbrechen");
 
     lv_mem_monitor_t before_cycles, after_cycles;
+    swipe(35, 185, 2500);
     cycle_views(screen);
     lv_mem_monitor(&before_cycles);
     for (int i = 0; i < 50; ++i) cycle_views(screen);
@@ -984,6 +993,7 @@ int main(int argc, char **argv)
     assert(find_label(screen, "Einstellungen"));
     const char *hour_values[] = {"1.5", "1,5", "0", "999999999999999999999999",
                                  "1..2"};
+    click_label(screen, "Advanced");
     for (unsigned i = 0; i < 5; ++i) {
         int before = host.submit_calls;
         click_label(screen, "Bilder: Stunden");
@@ -999,6 +1009,7 @@ int main(int argc, char **argv)
             click_label(screen, "Abbrechen");
         }
     }
+    swipe(35, 185, 31000);
     lv_obj_t *angle_matrix = find_matrix_with_first_button(screen, "0°");
     lv_obj_t *rotation_matrix = find_matrix_with_first_button(screen, "Aus");
     assert(angle_matrix && rotation_matrix);

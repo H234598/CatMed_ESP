@@ -36,6 +36,7 @@ int main(void)
 
     ui_render(&state, &local, SETTINGS, &clock);
     lv_obj_t *screen = lv_screen_active();
+    click_label(screen, "Advanced");
     click_label(screen, "Medikamente: Stunden");
     enter_keys(screen, "2");
     click_label(screen, "Speichern");

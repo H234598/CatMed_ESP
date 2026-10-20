@@ -120,6 +120,7 @@ int main(int argc, char **argv)
     UiServices services = {.context=&runtime, .submit=submit_ui};
     ui_set_services(&services);
     render();
+    click("Advanced");
     const AppState before_medication_open = runtime.state;
     const unsigned medication_open_writes = writes;
     const unsigned medication_open_submits = fake_shared_calls;

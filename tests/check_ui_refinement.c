@@ -112,6 +112,7 @@ int UI_REFINEMENT_ENTRYPOINT(int argc,char **argv)
         assert(after.free_size>=before.free_size);
     }
     if (!strcmp(argv[1],"save")) {
+        click_label(screen,"Advanced");
         click_label(screen,"Nächste Fälligkeit HH:MM");
         enter_keys(screen,"1111");click_label(screen,"Speichern");
         assert(refinement_state()->deadline.effective_utc.valid);
@@ -141,6 +142,7 @@ int UI_REFINEMENT_ENTRYPOINT(int argc,char **argv)
         row=find_label_prefix(screen,"Nächster Alarm:");assert(strstr(lv_label_get_text(row),"12:22"));
     }
     if (!strcmp(argv[1],"nav")) {
+        click_label(screen,"Advanced");
         lv_obj_t *menu=lv_obj_get_parent(find_label(screen,"Einstellungen"));
         lv_obj_update_layout(menu);lv_obj_scroll_to_y(menu,140,LV_ANIM_OFF);
         const int saved=lv_obj_get_scroll_y(menu);
@@ -156,6 +158,7 @@ int UI_REFINEMENT_ENTRYPOINT(int argc,char **argv)
         assert(!find_label(menu,"Status")&&!find_label(menu,"Zurück"));
         const char *details[]={"Medikamente: Stunden","Nächste Fälligkeit HH:MM","Uhrdesign"};
         for(unsigned i=0;i<3;++i) {
+            if(i<2) click_label(screen,"Advanced");
             click_label(screen,details[i]);right_swipe();
             menu=lv_obj_get_parent(find_label(screen,"Einstellungen"));assert(menu);
             assert(lv_obj_get_scroll_y(menu)==saved&&refinement_writes()==writes);
