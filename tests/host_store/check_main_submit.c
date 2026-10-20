@@ -281,11 +281,59 @@ int main(void)
                                   earlier,CLOCK_SYNCHRONIZED));
     ClockSample restore_now=clock_sample(runtime.boot_domain);
     assert(apply_time_sample(&runtime,&restore_now));
+    /* Feed two authenticated Boot snapshots through the same Core/Store
+     * entry used by the Mesh adapter, one on each side of local dismissal. */
+    AppState peer_boot={0};
+    ClockSample peer_captured={1000,99,restore_now.utc_ms-1000,true,CLOCK_SYNCHRONIZED};
+    assert(app_init(&peer_boot,&runtime.state.settings,&peer_captured,
+                    (EventId){99,5,1},75,runtime.state.catalog_id)==APP_OK);
+    StateSnapshot peer_snapshot={0};
+    assert(app_make_snapshot(&peer_boot,&peer_captured,&peer_snapshot)==APP_OK);
+    AppEvent peer_event={0};
+    peer_event.kind=EVENT_ADOPT_SNAPSHOT;
+    peer_event.id=(EventId){99,5,2};
+    peer_event.sender=99;
+    peer_event.round=runtime.state.round;
+    peer_event.parent_revision=runtime.state.revision;
+    peer_event.occurred_at=restore_now;
+    peer_event.coordinator_accepted=true;
+    peer_event.value.snapshot=&peer_snapshot;
+    const StoreRecord before_peer_boot=runtime.store.record;
+    const unsigned before_peer_writes=writes;
+    const unsigned before_peer_notifications=fake_mesh_notifications;
+    AppEffects peer_effects={0};
+    AppResult peer_core=APP_INVALID;
+    assert(store_apply_event(&runtime.store,&runtime.state,&peer_event,&restore_now,
+                             false,&peer_effects,&peer_core)==STORE_OK && peer_core==APP_OK);
+    assert(runtime.state.alarm_active && runtime.state.start_reason==START_BOOT &&
+           !runtime.state.has_last_confirmation &&
+           memcmp(&runtime.store.record,&before_peer_boot,sizeof(before_peer_boot))==0 &&
+           writes==before_peer_writes &&
+           fake_mesh_notifications==before_peer_notifications);
     restore_manual_if_ready(&runtime,&restore_now);
     assert(runtime.state.alarm_active && runtime.store.record.manual_intent.pending);
     fake_microseconds+=1000000;
     assert(submit_ui(&runtime,&dismiss)==UI_SUBMIT_DISMISSED);
     restore_now=clock_sample(runtime.boot_domain);
+    peer_captured.monotonic_ms+=1000;
+    peer_captured.utc_ms+=1000;
+    assert(app_make_snapshot(&peer_boot,&peer_captured,&peer_snapshot)==APP_OK);
+    peer_event.id.sequence=3;
+    peer_event.round=runtime.state.round;
+    peer_event.parent_revision=runtime.state.revision;
+    peer_event.occurred_at=restore_now;
+    assert(store_apply_event(&runtime.store,&runtime.state,&peer_event,&restore_now,
+                             false,&peer_effects,&peer_core)==STORE_OK && peer_core==APP_OK);
+    assert(!runtime.state.alarm_active && runtime.state.start_reason==START_BOOT &&
+           !runtime.state.has_last_confirmation &&
+           !peer_effects.alarm_started && !peer_effects.persistence_required &&
+           !peer_effects.broadcast_required &&
+           memcmp(&runtime.store.record,&before_peer_boot,sizeof(before_peer_boot))==0 &&
+           writes==before_peer_writes &&
+           fake_mesh_notifications==before_peer_notifications);
+    assert(submit_ui(&runtime,&confirm)==UI_SUBMIT_STALE &&
+           writes==before_peer_writes &&
+           runtime.store.record.manual_intent.pending);
     restore_manual_if_ready(&runtime,&restore_now);
     assert(runtime.state.start_reason==START_MANUAL &&
            runtime.state.deadline.regular_utc.ms==preview.regular_utc.ms &&

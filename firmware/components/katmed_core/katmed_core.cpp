@@ -423,9 +423,10 @@ AppResult adopt(AppState &local, const StateSnapshot &snap, const ClockSample &n
     /* Independent cold starts have different Boot rounds. After an
      * authenticated coordinator snapshot, a fresh Boot alarm may join that
      * same alarm without manufacturing a confirmation or a new deadline. */
-    const bool boot_convergence = local.start_reason == START_BOOT &&
+    const bool local_boot_notice = local.start_reason == START_BOOT &&
         remote.start_reason == START_BOOT && !local.has_last_confirmation &&
-        !remote.has_last_confirmation &&
+        !remote.has_last_confirmation;
+    const bool boot_convergence = local_boot_notice &&
         !id_equal(local.round.origin,remote.round.origin);
     if (remote.revision.number < local.revision.number) return APP_STALE;
     if (remote.revision.number == local.revision.number &&
@@ -472,9 +473,10 @@ AppResult adopt(AppState &local, const StateSnapshot &snap, const ClockSample &n
     AppResult r = elapsed(snap.captured_at, now, age);
     if (r != APP_OK) return r;
     AppState next = remote;
-    /* The boot notice is local presentation. Group convergence preserves
-     * whether this device has already closed its own notice. */
-    if (boot_convergence) next.alarm_active = local.alarm_active;
+    /* The boot notice is local presentation, including after this device
+     * has adopted the coordinator's round. Later snapshots of that same
+     * round cannot reopen or close the local notice. */
+    if (local_boot_notice) next.alarm_active = local.alarm_active;
     if (remote.start_reason == START_BOOT) {
         /* Boot has no medicine deadline. Rebasing its zero remaining time to
          * the receiver's current monotonic value would forge one. */
