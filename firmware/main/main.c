@@ -170,7 +170,13 @@ static bool boot_reset_prepared(void *context)
 
 static bool boot_cancel_preparation(void *context)
 {
-    return reset_cancel_locked(context);
+    Runtime *rt=context;
+    if (!reset_cancel_locked(rt)) return false;
+    /* If GPIO9 goes Low again after the durable cancellation, BOOT will not
+     * restart. Close the now-stale instruction tile on the normal UI path. */
+    rt->reset_web_close_generation=rt->reset_generation;
+    rt->reset_web_close=true;
+    return true;
 }
 
 static uint64_t boot_now_ms(void *context)

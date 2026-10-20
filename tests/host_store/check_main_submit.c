@@ -599,6 +599,19 @@ int main(void)
     reset_web_offer_complete(&runtime,rejected_epoch,false); /* stale result */
     assert(web_reset_status(&runtime)==KATMED_WEB_RESET_PREPARING);
     assert(web_reset_cancel(&runtime)==KATMED_WEB_RESET_CANCELLED);
+    /* BOOT may cancel the durable preparation and then observe IO9 Low.
+     * Its abandoned restart must still retire the stale display tile. */
+    runtime.reset_web_close=false;
+    assert(katmed_runtime_reset_arm(&runtime,false) && reset_marker);
+    const unsigned boot_writes=writes, boot_notifications=fake_mesh_notifications;
+    assert(boot_cancel_preparation(&runtime) && !reset_marker);
+    assert(runtime.reset_web_close &&
+           reset_close_matches_locked(&runtime,runtime.reset_web_close_generation));
+    assert(writes==boot_writes && fake_mesh_notifications==boot_notifications);
+    const uint64_t boot_close=runtime.reset_web_close_generation;
+    assert(katmed_runtime_reset_arm(&runtime,false) && reset_marker);
+    assert(!reset_close_matches_locked(&runtime,boot_close));
+    assert(katmed_runtime_reset_cancel(&runtime) && !reset_marker);
     puts("main solo-root settings: image persistence, next-time history, follower/unstarted and commit failure OK");
     puts("physical reset runtime: offer, cancel, one-boot marker, warning, fresh one-use confirmation OK");
     puts("main submit/reboot regression passed");
