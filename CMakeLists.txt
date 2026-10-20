@@ -11,6 +11,15 @@ target_link_libraries(check_core PRIVATE katmed_core)
 target_compile_options(check_core PRIVATE -Wall -Wextra -Wpedantic -Werror)
 add_test(NAME core_contract COMMAND check_core)
 
+add_executable(check_reset_workflow
+    tests/check_reset_workflow.c
+    firmware/components/katmed_reset/katmed_reset_journal.c)
+target_include_directories(check_reset_workflow PRIVATE
+    firmware/boards
+    firmware/components/katmed_reset/include)
+target_compile_options(check_reset_workflow PRIVATE -Wall -Wextra -Wpedantic -Werror)
+add_test(NAME reset_workflow_contract COMMAND check_reset_workflow)
+
 # Exercise the same bounded reader and LVGL/TJpgD adapter used by both firmware
 # targets against the checked-in image packs. The generated index is target-local.
 set(KATMED_IMAGE_COMPONENT "${CMAKE_CURRENT_SOURCE_DIR}/firmware/components/katmed_images")

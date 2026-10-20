@@ -34,6 +34,11 @@ typedef struct {
 bool katmed_reset_begin(KatmedResetJournalBackend backend);
 bool katmed_reset_resume(KatmedResetJournalBackend backend, bool *pending);
 
+/* A consumed preparation can expose a warning after a hardware/power reset.
+ * It never starts the destructive journal. */
+bool katmed_reset_warning_after_boot(bool preparation_consumed,
+                                     bool reset_reason_may_be_physical);
+
 typedef struct {
     char token[33];
     uint64_t expires_ms;

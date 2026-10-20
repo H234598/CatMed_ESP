@@ -20,10 +20,13 @@ add_executable(check_ui_surface
     "${UI}/navigation.c" "${UI}/clock_view.c" "${UI}/ui.c" "${UI}/morse.c"
     "${UI}/katmed_font_10.c" "${UI}/katmed_font_12.c"
     "${UI}/katmed_font_14.c" "${UI}/katmed_font_26.c"
+    "${ROOT}/firmware/components/katmed_reset/katmed_reset_journal.c"
     "${ROOT}/firmware/components/katmed_core/katmed_core.cpp")
 target_include_directories(check_ui_surface PRIVATE
+    "${ROOT}/firmware/boards"
     "${UI}/include"
     "${ROOT}/firmware/components/katmed_core/include"
+    "${ROOT}/firmware/components/katmed_reset/include"
     "${ROOT}/firmware/components/katmed_images/include")
 target_compile_definitions(check_ui_surface PRIVATE LV_LVGL_H_INCLUDE_SIMPLE)
 target_compile_options(check_ui_surface PRIVATE -Wall -Wextra -Werror)
@@ -61,9 +64,12 @@ add_executable(check_ui_interaction
     "${UI}/navigation.c" "${UI}/clock_view.c" "${UI}/ui.c" "${UI}/morse.c"
     "${UI}/katmed_font_10.c" "${UI}/katmed_font_12.c"
     "${UI}/katmed_font_14.c" "${UI}/katmed_font_26.c"
+    "${ROOT}/firmware/components/katmed_reset/katmed_reset_journal.c"
     "${ROOT}/firmware/components/katmed_core/katmed_core.cpp")
 target_include_directories(check_ui_interaction PRIVATE "${UI}/include"
+    "${ROOT}/firmware/boards"
     "${ROOT}/firmware/components/katmed_core/include"
+    "${ROOT}/firmware/components/katmed_reset/include"
     "${ROOT}/firmware/components/katmed_images/include")
 target_compile_definitions(check_ui_interaction PRIVATE LV_LVGL_H_INCLUDE_SIMPLE)
 target_compile_options(check_ui_interaction PRIVATE -Wall -Wextra -Werror)

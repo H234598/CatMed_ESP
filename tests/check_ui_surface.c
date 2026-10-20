@@ -2,6 +2,8 @@
 #include "clock_view.h"
 #include "katmed_images.h"
 #include "katmed_core.h"
+#include "katmed_reset_journal.h"
+#include "c3_pins.h"
 #include "lvgl.h"
 
 #include <assert.h>
@@ -11,6 +13,17 @@
 #include <stdlib.h>
 #include <string.h>
 
+_Static_assert(KATMED_C3_LCD_WIDTH == 240 && KATMED_C3_LCD_HEIGHT == 240,
+               "C3 display profile must match the GUITION panel");
+_Static_assert(KATMED_C3_LCD_SCK == 6 && KATMED_C3_LCD_MOSI == 7 &&
+               KATMED_C3_LCD_DC == 2 && KATMED_C3_LCD_CS == 10 &&
+               KATMED_C3_LCD_BACKLIGHT == 3,
+               "C3 LCD pins must match the GUITION evidence");
+_Static_assert(KATMED_C3_TOUCH_SDA == 4 && KATMED_C3_TOUCH_SCL == 5 &&
+               KATMED_C3_TOUCH_RESET == 1 && KATMED_C3_TOUCH_INTERRUPT == 0 &&
+               KATMED_C3_TOUCH_I2C_ADDRESS_7BIT == 0x15,
+               "C3 touch pins must match the GUITION evidence");
+
 typedef struct {
     int width, height;
     uint16_t *frame;
@@ -19,6 +32,10 @@ typedef struct {
     UiRequest last_request;
     UiNetworkStatus network;
     bool reset_prepared, reset_warning;
+    bool reset_marker;
+    KatmedResetConfirmation reset_confirmation;
+    uint64_t reset_now_ms;
+    uint8_t reset_random_sequence;
     unsigned reset_arms, reset_cancels, reset_confirms;
 } Host;
 
@@ -28,6 +45,7 @@ static bool reset_arm(void *context, bool from_web)
     (void)from_web;
     if (host->reset_prepared || host->reset_warning) return false;
     host->reset_prepared = true;
+    host->reset_marker = true; /* Durable one-boot marker in this test model. */
     ++host->reset_arms;
     return true;
 }
@@ -36,24 +54,42 @@ static bool reset_cancel(void *context)
 {
     Host *host = context;
     host->reset_prepared = host->reset_warning = false;
+    host->reset_marker = false;
+    memset(&host->reset_confirmation, 0, sizeof(host->reset_confirmation));
     ++host->reset_cancels;
     return true;
+}
+
+static bool reset_random_bytes(void *context, uint8_t *out, size_t length)
+{
+    Host *host = context;
+    for (size_t i = 0; i < length; ++i) out[i] = ++host->reset_random_sequence;
+    return true;
+}
+
+static void reset_simulate_hardware_boot(Host *host, bool reset_reason_may_be_physical)
+{
+    const bool preparation_consumed = host->reset_marker;
+    host->reset_marker = false;
+    host->reset_prepared = false;
+    memset(&host->reset_confirmation, 0, sizeof(host->reset_confirmation));
+    host->reset_warning = katmed_reset_warning_after_boot(
+        preparation_consumed, reset_reason_may_be_physical);
 }
 
 static bool reset_prepare_warning(void *context, char *out, size_t capacity, size_t *length)
 {
     Host *host = context;
-    if (!host->reset_warning || capacity < 33) return false;
-    memcpy(out, "0123456789abcdef0123456789abcdef", 33);
-    *length = 32;
-    return true;
+    return host->reset_warning && katmed_reset_confirmation_prepare(
+        &host->reset_confirmation, reset_random_bytes, host, host->reset_now_ms,
+        90000u, out, capacity, length);
 }
 
 static int reset_confirm(void *context, const char *token, size_t length)
 {
     Host *host = context;
-    if (!host->reset_warning || length != 32 ||
-        memcmp(token, "0123456789abcdef0123456789abcdef", 32)) return 1;
+    if (!host->reset_warning || !katmed_reset_confirmation_consume(
+            &host->reset_confirmation, token, length, host->reset_now_ms)) return 1;
     host->reset_warning = false;
     ++host->reset_confirms;
     return 0;
@@ -347,7 +383,7 @@ int main(int argc, char **argv)
 {
     assert(argc == 6);
     Host host = {.width = atoi(argv[1]), .height = atoi(argv[2]),
-                 .result = UI_SUBMIT_COMMITTED};
+                 .result = UI_SUBMIT_COMMITTED, .reset_now_ms = 1000};
     int orientation_index = atoi(argv[3]);
     const char *dir = argv[4];
     const char *prefix = argv[5];
@@ -1215,7 +1251,7 @@ int main(int argc, char **argv)
     lv_obj_t *cancel_button = lv_obj_get_parent(find_label(screen, "Abbrechen"));
     lv_obj_send_event(cancel_button, LV_EVENT_PRESSED, NULL);
     lv_obj_send_event(cancel_button, LV_EVENT_CLICKED, NULL);
-    assert(host.reset_cancels == 1 && !host.reset_prepared);
+    assert(host.reset_cancels == 1 && !host.reset_prepared && !host.reset_marker);
 
     state.alarm_active = true;
     ui_render(&state, &local, SETTINGS, &clock);
@@ -1223,10 +1259,10 @@ int main(int argc, char **argv)
     state.alarm_active = false;
     ui_render(&state, &local, SETTINGS, &clock);
     assert(ui_reset_offer_from_web());
-    assert(host.reset_arms == 2 && host.reset_confirms == 0);
-    ui_reset_close_remote(); /* Simulated hardware reboot destroys the old tile. */
-    host.reset_prepared = false;
-    host.reset_warning = true; /* One-boot NVS marker was consumed. */
+    assert(host.reset_arms == 2 && host.reset_confirms == 0 && host.reset_marker);
+    ui_reset_close_remote(); /* EN/REST reboot destroys the old tile. */
+    reset_simulate_hardware_boot(&host, true);
+    assert(host.reset_warning && !host.reset_marker);
     ui_reset_show_warning();
     lv_obj_t *yes = lv_obj_get_parent(find_label(screen, "Ja, zurücksetzen"));
     lv_obj_t *no = lv_obj_get_parent(find_label(screen, "Nein"));
@@ -1235,19 +1271,36 @@ int main(int argc, char **argv)
     assert(lv_obj_has_state(no, LV_STATE_FOCUSED));
     lv_obj_send_event(yes, LV_EVENT_CLICKED, NULL);
     assert(host.reset_confirms == 0); /* No touch-through into Ja. */
+    char cancelled_token[33];
+    memcpy(cancelled_token, host.reset_confirmation.token, sizeof(cancelled_token));
     lv_obj_send_event(no, LV_EVENT_PRESSED, NULL);
     lv_obj_send_event(no, LV_EVENT_CLICKED, NULL);
-    assert(host.reset_confirms == 0 && !host.reset_warning);
+    assert(host.reset_confirms == 0 && !host.reset_warning &&
+           !host.reset_confirmation.valid);
+    assert(reset_confirm(&host, cancelled_token, 32) == 1);
 
     assert(ui_reset_offer_from_web());
     ui_reset_close_remote();
-    host.reset_prepared = false;
-    host.reset_warning = true;
+    reset_simulate_hardware_boot(&host, false); /* Unknown reset cause: no prompt. */
+    assert(!host.reset_warning && !host.reset_marker);
+    reset_simulate_hardware_boot(&host, true); /* A discarded marker cannot return. */
+    assert(!host.reset_warning);
     ui_reset_show_warning();
+    assert(!find_label(screen, "Ja, zurücksetzen"));
+
+    assert(ui_reset_offer_from_web());
+    ui_reset_close_remote();
+    reset_simulate_hardware_boot(&host, true); /* Includes power restoration. */
+    assert(host.reset_warning && !host.reset_marker);
+    ui_reset_show_warning();
+    char accepted_token[33];
+    memcpy(accepted_token, host.reset_confirmation.token, sizeof(accepted_token));
     yes = lv_obj_get_parent(find_label(screen, "Ja, zurücksetzen"));
     lv_obj_send_event(yes, LV_EVENT_PRESSED, NULL);
     lv_obj_send_event(yes, LV_EVENT_CLICKED, NULL);
-    assert(host.reset_confirms == 1);
+    assert(host.reset_confirms == 1 && !host.reset_warning &&
+           !host.reset_confirmation.valid);
+    assert(reset_confirm(&host, accepted_token, 32) == 1);
 
     /* A boot alarm may be active when the one-boot warning appears. Its
      * gesture path stays blocked, while the warning's Nein remains usable. */
@@ -1255,7 +1308,8 @@ int main(int argc, char **argv)
     state.start_reason = START_BOOT;
     clock.monotonic_ms += 1000;
     ui_render(&state, &local, ui_current_view(), &clock);
-    host.reset_warning = true;
+    host.reset_marker = true;
+    reset_simulate_hardware_boot(&host, true);
     ui_reset_show_warning();
     assert(ui_lvgl_touch_allowed(true, host.width / 2, host.height / 2,
                                  true, clock.monotonic_ms));

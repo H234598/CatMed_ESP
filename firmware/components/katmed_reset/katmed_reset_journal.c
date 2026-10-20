@@ -6,6 +6,12 @@ static bool valid_backend(KatmedResetJournalBackend b)
     return b.load && b.save && b.run_stage;
 }
 
+bool katmed_reset_warning_after_boot(bool preparation_consumed,
+                                     bool reset_reason_may_be_physical)
+{
+    return preparation_consumed && reset_reason_may_be_physical;
+}
+
 bool katmed_reset_begin(KatmedResetJournalBackend backend)
 {
     if (!valid_backend(backend)) return false;

@@ -102,23 +102,12 @@ static bool reset_reason_allows_warning(esp_reset_reason_t reason)
     return reason==ESP_RST_EXT || reason==ESP_RST_POWERON;
 }
 
-static bool physical_reset_board_supported(void)
-{
-#if defined(ESP_PLATFORM) && !defined(CONFIG_IDF_TARGET_ESP32C6)
-    /* The C3 PCB revision and its RESET wiring have not been proven. */
-    return false;
-#else
-    return true;
-#endif
-}
-
 static bool katmed_runtime_reset_arm(void *context,bool from_web)
 {
     Runtime *rt=context;
     if (!rt || !reset_mutex || xSemaphoreTake(reset_mutex,pdMS_TO_TICKS(1000))!=pdTRUE)
         return false;
-    const bool ok=physical_reset_board_supported() &&
-        !rt->reset_active && !rt->reset_requested &&
+    const bool ok=!rt->reset_active && !rt->reset_requested &&
         !rt->reset_warning_ready && !rt->reset_prepared &&
         (from_web ? rt->reset_web_offer : !rt->reset_web_offer) &&
         katmed_reset_idf_prepare();
@@ -1572,8 +1561,8 @@ void app_main(void)
      * restoration cannot be distinguished reliably here; it can only show
      * the warning and never starts the destructive journal. */
     const esp_reset_reason_t reset_reason=esp_reset_reason();
-    if (!reset_reason_allows_warning(reset_reason))
-        runtime.reset_warning_ready=false;
+    runtime.reset_warning_ready=katmed_reset_warning_after_boot(
+        runtime.reset_warning_ready,reset_reason_allows_warning(reset_reason));
 
     if (!boot_identity(&runtime.boot)) {
         ESP_LOGE(tag, "read-only device identity unavailable");

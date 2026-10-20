@@ -12,3 +12,10 @@ gcc -std=c11 -Wall -Wextra -Werror \
   "$repo_dir/firmware/components/katmed_reset/katmed_reset_journal.c" \
   -o "$tmp_dir/check"
 "$tmp_dir/check"
+gcc -std=c11 -Wall -Wextra -Wpedantic -Werror \
+  -I"$repo_dir/firmware/boards" \
+  -I"$repo_dir/firmware/components/katmed_reset/include" \
+  "$repo_dir/tests/check_reset_workflow.c" \
+  "$repo_dir/firmware/components/katmed_reset/katmed_reset_journal.c" \
+  -o "$tmp_dir/check_reset_workflow"
+"$tmp_dir/check_reset_workflow"
