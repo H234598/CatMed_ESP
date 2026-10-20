@@ -1,7 +1,7 @@
 idf_build_get_property(KATMED_FULL_STACK KATMED_FULL_STACK)
 idf_build_get_property(KATMED_WITH_CORE KATMED_WITH_CORE)
 set(req esp_timer esp_hw_support freertos)
-set(sources main.c runtime_metrics.c)
+set(sources main.c runtime_metrics.c boot_restart.c)
 if(KATMED_FULL_STACK)
     list(APPEND req mesh_lite lvgl esp_lvgl_port esp_lcd_gc9a01
         katmed_images board katmed_ui)

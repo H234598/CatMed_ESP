@@ -27,6 +27,15 @@ target_include_directories(check_boot_button PRIVATE firmware/components/board/i
 target_compile_options(check_boot_button PRIVATE -Wall -Wextra -Wpedantic -Werror)
 add_test(NAME boot_button_contract COMMAND check_boot_button)
 
+add_executable(check_boot_restart_runtime
+    tests/check_boot_restart_runtime.c
+    firmware/main/boot_restart.c
+    firmware/components/board/board_boot_gate.c)
+target_include_directories(check_boot_restart_runtime PRIVATE
+    firmware/main firmware/components/board/include)
+target_compile_options(check_boot_restart_runtime PRIVATE -Wall -Wextra -Wpedantic -Werror)
+add_test(NAME boot_restart_runtime_contract COMMAND check_boot_restart_runtime)
+
 # Exercise the same bounded reader and LVGL/TJpgD adapter used by both firmware
 # targets against the checked-in image packs. The generated index is target-local.
 set(KATMED_IMAGE_COMPONENT "${CMAKE_CURRENT_SOURCE_DIR}/firmware/components/katmed_images")

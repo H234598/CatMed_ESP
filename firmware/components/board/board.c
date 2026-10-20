@@ -118,6 +118,11 @@ bool board_boot_button_released(uint64_t monotonic_ms)
                                 monotonic_ms);
 }
 
+bool board_boot_button_high(void)
+{
+    return boot_input_ready && gpio_get_level(BOOT_GPIO) == 1;
+}
+
 static void touch_sampler(void *argument)
 {
     (void)argument;

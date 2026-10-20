@@ -37,6 +37,8 @@ bool board_touch_sampler_take(BoardTouch *touch, BoardResult *result);
  * press/release yields one restart request; a held key never requests one. */
 BoardResult board_boot_button_init(void);
 bool board_boot_button_released(uint64_t monotonic_ms);
+/* Raw strap read for the final, nonblocking restart guard. */
+bool board_boot_button_high(void);
 
 #ifdef __cplusplus
 }

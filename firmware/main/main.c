@@ -5,6 +5,7 @@
 #include "esp_log.h"
 #include "esp_system.h"
 #include "runtime_metrics.h"
+#include "boot_restart.h"
 
 #if KATMED_FULL_STACK && KATMED_WITH_CORE
 #include "esp_app_desc.h"
@@ -135,6 +136,52 @@ static bool reset_cancel_locked(Runtime *rt)
         memset(&rt->reset_confirmation,0,sizeof(rt->reset_confirmation));
     }
     return ok;
+}
+
+static bool boot_pin_high(void *context)
+{
+    (void)context;
+    return board_boot_button_high();
+}
+
+static bool boot_try_reset_lock(void *context)
+{
+    (void)context;
+    return xSemaphoreTake(reset_mutex,0)==pdTRUE;
+}
+
+static void boot_unlock_reset(void *context)
+{
+    (void)context;
+    xSemaphoreGive(reset_mutex);
+}
+
+static bool boot_reset_busy(void *context)
+{
+    const Runtime *rt=context;
+    return rt->reset_active || rt->reset_requested;
+}
+
+static bool boot_reset_prepared(void *context)
+{
+    return ((const Runtime *)context)->reset_prepared;
+}
+
+static bool boot_cancel_preparation(void *context)
+{
+    return reset_cancel_locked(context);
+}
+
+static uint64_t boot_now_ms(void *context)
+{
+    (void)context;
+    return monotonic_ms();
+}
+
+static void boot_restart_now(void *context)
+{
+    (void)context;
+    esp_restart();
 }
 
 static bool katmed_runtime_reset_cancel(void *context)
@@ -1727,28 +1774,27 @@ void app_main(void)
 
     uint64_t last_render_ms = now.monotonic_ms;
     KatmedRuntimeMetricsGate metrics_gate = {0};
-    bool boot_restart_pending = false;
+    BootRestartState boot_restart = {0};
+    const BootRestartOps boot_ops = {
+        .pin_high = boot_pin_high,
+        .try_reset_lock = boot_try_reset_lock,
+        .unlock_reset = boot_unlock_reset,
+        .reset_busy = boot_reset_busy,
+        .reset_prepared = boot_reset_prepared,
+        .cancel_preparation = boot_cancel_preparation,
+        .now_ms = boot_now_ms,
+        .restart = boot_restart_now,
+    };
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(25));
         if (reset_runtime_step(&runtime,monotonic_ms())) {
             vTaskDelay(pdMS_TO_TICKS(100));
             continue;
         }
-        if (board_boot_button_released(monotonic_ms()))
-            boot_restart_pending = true;
-        if (boot_restart_pending &&
-            xSemaphoreTake(reset_mutex,pdMS_TO_TICKS(100))==pdTRUE) {
-            boot_restart_pending = false;
-            if (!runtime.reset_active && !runtime.reset_requested) {
-                /* BOOT is separate from the physical EN/RESET confirmation.
-                 * A pending preparation must not survive this software boot. */
-                if (runtime.reset_prepared && !reset_cancel_locked(&runtime))
-                    ESP_LOGW(tag,"BOOT restart could not clear reset preparation");
-                ESP_LOGI(tag,"BOOT released; restarting application");
-                esp_restart();
-            }
-            xSemaphoreGive(reset_mutex);
-        }
+        const BootRestartResult boot_result = boot_restart_step(&boot_restart,
+            &boot_ops, &runtime, board_boot_button_released(monotonic_ms()));
+        if (boot_result == BOOT_RESTART_CANCEL_FAILED)
+            ESP_LOGE(tag,"BOOT restart refused: reset preparation remains active");
         reboot_if_due(&runtime, monotonic_ms());
         now = clock_sample(runtime.boot_domain);
         if (runtime.mesh_started && !runtime.reboot_required)
