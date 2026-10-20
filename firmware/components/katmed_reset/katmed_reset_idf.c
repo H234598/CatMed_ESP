@@ -1,5 +1,6 @@
 #include "katmed_reset_idf.h"
 #include "katmed_reset_acme_files.h"
+#include "katmed_nvs_init.h"
 
 #include "esp_err.h"
 #include "katmed_image_store.h"
@@ -8,8 +9,7 @@
 
 static bool nvs_ready(void)
 {
-    esp_err_t result=nvs_flash_init();
-    return result==ESP_OK || result==ESP_ERR_INVALID_STATE;
+    return katmed_nvs_init()==ESP_OK;
 }
 
 bool katmed_reset_idf_prepare(void)

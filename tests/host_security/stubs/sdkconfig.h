@@ -1,0 +1,1 @@
+#define CONFIG_NVS_ENCRYPTION 1

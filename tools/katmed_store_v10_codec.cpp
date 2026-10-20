@@ -31,13 +31,15 @@ int main() {
     std::cin.read(reinterpret_cast<char *>(bytes.data()), bytes.size());
     const size_t n=static_cast<size_t>(std::cin.gcount());
     if (n<12 || n> KATMED_STORE_BLOB_MAX ||
-        (bytes[4]!=5 && bytes[4]!=7 && bytes[4]!=10) || bytes[5]!=0 ||
+        (bytes[4]!=5 && bytes[4]!=7 && bytes[4]!=9 &&
+         bytes[4]!=10 && bytes[4]!=11) || bytes[5]!=0 ||
         std::cin.bad()) return 1;
     StoreRecord record{};
     if (decode_record(bytes.data(),n,&record)!=STORE_OK) return 1;
-    std::printf("{\"schema\":10,\"mesh_name_count\":%u,\"mesh_name_next_index\":%u,\"record_device\":%" PRIu64
+    std::printf("{\"schema\":%u,\"language\":%u,\"mesh_name_count\":%u,\"mesh_name_next_index\":%u,\"record_device\":%" PRIu64
                 ",\"boot_epoch\":%" PRIu64 ",\"next_sequence\":%" PRIu64
                 ",\"configured\":%s,\"has_history\":%s,\"group_divergent\":%s",
+                static_cast<unsigned>(bytes[4]), static_cast<unsigned>(record.language),
                 static_cast<unsigned>(record.mesh_name_count),
                 static_cast<unsigned>(record.mesh_name_next_index),
                 record.device,record.epoch,record.next_sequence,

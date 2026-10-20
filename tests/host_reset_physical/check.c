@@ -13,7 +13,7 @@ static bool fail_commit;
 static unsigned image_clears, acme_clears, namespace_clears;
 static bool fail_acme;
 
-esp_err_t nvs_flash_init(void) { return ESP_OK; }
+esp_err_t katmed_nvs_init(void) { return ESP_OK; }
 esp_err_t nvs_open(const char *name, int mode, nvs_handle_t *out)
 {
     (void)mode;

@@ -6,6 +6,7 @@
 std::vector<unsigned char> blob;int stat_error=0,set_error=0,commit_error=0;
 unsigned commits=0,stats=0,sets=0;bool opened=false;
 extern "C" esp_err_t nvs_flash_init(){return ESP_OK;}
+extern "C" esp_err_t katmed_nvs_init(void){return ESP_OK;}
 extern "C" esp_err_t nvs_open(const char *s,int mode,nvs_handle_t *h){assert(!std::strcmp(s,"katmed")&&mode==NVS_READWRITE);*h=1;opened=true;return ESP_OK;}
 extern "C" void nvs_close(nvs_handle_t h){assert(h==1);opened=false;}
 extern "C" esp_err_t nvs_get_blob(nvs_handle_t h,const char *key,void *out,size_t *n){

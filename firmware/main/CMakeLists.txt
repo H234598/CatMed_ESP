@@ -13,10 +13,10 @@ if(KATMED_WITH_CORE)
     list(APPEND req katmed_core)
 endif()
 if(KATMED_FULL_STACK AND KATMED_WITH_CORE)
-    list(APPEND req katmed_store katmed_mesh katmed_time katmed_config_bridge katmed_web katmed_acme katmed_reset esp_app_format)
+    list(APPEND req katmed_store katmed_mesh katmed_import katmed_time katmed_config_bridge katmed_web katmed_acme katmed_reset esp_app_format)
     list(APPEND sources usb_console.c runtime_metrics_idf.c)
 endif()
-idf_component_register(SRCS ${sources} INCLUDE_DIRS "." "${CMAKE_BINARY_DIR}/generated" REQUIRES ${req})
+idf_component_register(SRCS ${sources} INCLUDE_DIRS "." "${CMAKE_BINARY_DIR}/generated" REQUIRES ${req} katmed_security)
 target_compile_definitions(${COMPONENT_LIB} PRIVATE
     KATMED_FULL_STACK=$<BOOL:${KATMED_FULL_STACK}>
     KATMED_WITH_CORE=$<BOOL:${KATMED_WITH_CORE}>)

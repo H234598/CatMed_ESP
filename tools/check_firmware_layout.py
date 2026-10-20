@@ -11,7 +11,7 @@ import struct
 from pathlib import Path
 
 
-def check_layout(repo: Path, board: str, build: Path) -> dict:
+def check_layout(repo: Path, board: str, build: Path, security_profile: bool = False) -> dict:
     # Existing target-local sdkconfig files survive a defaults change. Verify
     # both the input and the generated header consumed by the compiler.
     config = (build / "sdkconfig").read_text()
@@ -29,13 +29,36 @@ def check_layout(repo: Path, board: str, build: Path) -> dict:
         raise ValueError("Target sdkconfig lacks the primary USB Serial/JTAG input console")
     if "#define CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG 1" not in header.splitlines():
         raise ValueError("Compiled firmware lacks the primary USB Serial/JTAG input console")
+    required = (
+        "CONFIG_SECURE_FLASH_ENC_ENABLED=y",
+        "CONFIG_SECURE_FLASH_ENCRYPTION_KEY_SOURCE_EFUSES=y",
+        "CONFIG_SECURE_FLASH_ENCRYPTION_MODE_RELEASE=y",
+        "CONFIG_SECURE_ENABLE_SECURE_ROM_DL_MODE=y",
+        "CONFIG_SOC_FLASH_ENCRYPTION_XTS_AES_128=y",
+        "CONFIG_NVS_ENCRYPTION=y",
+        "CONFIG_NVS_SEC_KEY_PROTECT_USING_FLASH_ENC=y",
+    )
+    if security_profile:
+        if "CONFIG_PARTITION_TABLE_OFFSET=0x10000" not in config.splitlines():
+            raise ValueError("Security profile partition table must start at 0x10000")
+        for setting in required:
+            if setting not in config.splitlines():
+                raise ValueError(f"Security profile missing resolved setting: {setting}")
+        if "CONFIG_SECURE_BOOT=y" in config.splitlines():
+            raise ValueError("Secure Boot must remain separately controlled")
+    elif "CONFIG_SECURE_FLASH_ENC_ENABLED=y" in config.splitlines():
+        raise ValueError("Neutral build unexpectedly enables flash encryption")
     flash_bytes = {"c3": 0x400000, "c6": 0x800000}[board]
     rows = []
-    with (repo / "firmware" / "boards" / f"{board}.partitions.csv").open() as src:
+    partition_file = f"{board}.security.partitions.csv" if security_profile else f"{board}.partitions.csv"
+    if f'CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="boards/{partition_file}"' not in config.splitlines():
+        raise ValueError("Resolved partition filename differs from requested profile")
+    with (repo / "firmware" / "boards" / partition_file).open() as src:
         for row in csv.reader(line for line in src if line.strip() and not line.startswith("#")):
             name, kind, subtype, offset, size, flags = (part.strip() for part in row)
             rows.append((name, int(offset, 0), int(size, 0), kind, subtype, flags))
-    previous_end = 0x9000  # 0x8000 partition table occupies one 4 KiB sector.
+    table_offset = 0x10000 if security_profile else 0x8000
+    previous_end = table_offset + 0x1000
     partitions = {}
     for name, offset, size, kind, subtype, flags in sorted(rows, key=lambda r: r[1]):
         if size <= 0 or offset < previous_end or offset + size > flash_bytes:
@@ -61,13 +84,29 @@ def check_layout(repo: Path, board: str, build: Path) -> dict:
         actual[name] = (offset, size, kind, subtype, flags)
     expected_binary = {}
     for name, (offset, size, kind, subtype, flags) in partitions.items():
-        subtype_id = {"nvs": 2, "phy": 1, "factory": 0, "littlefs": 0x83}.get(subtype)
+        subtype_id = {"nvs": 2, "nvs_keys": 4, "phy": 1, "factory": 0, "littlefs": 0x83}.get(subtype)
         if subtype_id is None:
             subtype_id = int(subtype, 0)
+        flag_bits = {"": 0, "encrypted": 1, "readonly": 2, "encrypted:readonly": 3}
         expected_binary[name] = (offset, size, {"app": 0, "data": 1}[kind], subtype_id,
-                                 2 if flags == "readonly" else 0)
+                                 flag_bits[flags])
     if actual != expected_binary:
         raise ValueError("Built partition table does not match board CSV")
+    if security_profile:
+        critical = {
+            "nvs": (0x11000, 0x6000, "data", "nvs", ""),
+            "nvs_keys": (0x18000, 0x1000, "data", "nvs_keys", "encrypted"),
+            "nvs_guard": (0x19000, 0x1000, "data", "0x40", ""),
+            "user_images": (0x280000, 0x40000, "data", "littlefs", "encrypted"),
+        }
+        for name, expected in critical.items():
+            if partitions.get(name) != expected:
+                raise ValueError(f"Security partition {name} differs from runtime contract")
+    elif "nvs_keys" in partitions:
+        raise ValueError("Neutral profile unexpectedly includes NVS keys")
+    bootloader_bytes = (build / "bootloader" / "bootloader.bin").stat().st_size
+    if bootloader_bytes > table_offset:
+        raise ValueError("Bootloader overlaps partition table")
     app = build / "katmed_foundation.bin"
     app_bytes = app.stat().st_size
     app_budget = partitions["factory"][1]
@@ -85,7 +124,9 @@ def check_layout(repo: Path, board: str, build: Path) -> dict:
         raise ValueError("Image pack differs from verified manifest")
     if len(data) > image_partition[1] or expected["budget"] != image_partition[1]:
         raise ValueError("Image pack and partition budgets disagree")
-    return {"board": board, "app_bytes": app_bytes, "app_budget": app_budget,
+    return {"board": board, "security_profile": security_profile,
+            "bootloader_bytes": bootloader_bytes,
+            "app_bytes": app_bytes, "app_budget": app_budget,
             "app_free": app_budget - app_bytes, "image_bytes": len(data),
             "image_budget": image_partition[1], "image_free": image_partition[1] - len(data),
             "runtime_heap": "not_measured"}
@@ -95,10 +136,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("board", choices=("c3", "c6"))
     parser.add_argument("--build-dir", type=Path)
+    parser.add_argument("--security-profile", action="store_true")
     args = parser.parse_args()
     repo = Path(__file__).resolve().parents[1]
     build = args.build_dir or repo / "firmware" / f"build-{args.board}"
-    print(json.dumps(check_layout(repo, args.board, build), indent=2))
+    print(json.dumps(check_layout(repo, args.board, build, args.security_profile), indent=2))
 
 
 if __name__ == "__main__":

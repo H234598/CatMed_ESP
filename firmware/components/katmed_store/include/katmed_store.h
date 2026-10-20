@@ -201,6 +201,11 @@ typedef struct {
 StoreResult store_open(Store *store, StoreBackend backend, uint64_t device,
                        const uint8_t catalog_id[KATMED_CATALOG_BYTES],
                        uint32_t image_count, StoreRecovery *recovery);
+/* Firmware import accepts only the exact canonical v11 encoding. The host
+ * bridge semantically migrates older Store records before staging a capsule. */
+bool store_import_blob_valid(const uint8_t *bytes, size_t length);
+bool store_import_blob_group(const uint8_t *bytes, size_t length,
+                             uint8_t group[16]);
 StoreResult store_get_recovery(const Store *store, StoreRecovery *recovery);
 StoreResult store_next_event_id(Store *store, EventId *id);
 /* Atomically burns a contiguous ID range before use. Unused IDs are skipped

@@ -2,6 +2,7 @@
 
 #include <cstdio>
 #include <cstring>
+#include <new>
 #include <inttypes.h>
 
 #ifdef ESP_PLATFORM
@@ -664,6 +665,33 @@ StoreResult make_reply(char *out, size_t capacity, const char *text) {
 } // namespace
 
 extern "C" {
+
+/* The external host bridge migrates older records to this canonical v11
+ * encoding. A raw v10 capsule is deliberately not accepted by firmware. */
+bool store_import_blob_group(const uint8_t *bytes, size_t length,
+                             uint8_t group[16]) {
+    if (!bytes || length < 20 || length > KATMED_STORE_BLOB_MAX ||
+        bytes[4] != 11 || bytes[5] != 0) return false;
+    StoreRecord *record = new (std::nothrow) StoreRecord{};
+    uint8_t *canonical = new (std::nothrow) uint8_t[KATMED_STORE_BLOB_MAX];
+    if (!record || !canonical) {
+        delete record; delete[] canonical; return false;
+    }
+    size_t canonical_length = 0;
+    const bool ok = decode_record(bytes, length, record) == STORE_OK &&
+        encode_record(*record, canonical, &canonical_length) == STORE_OK &&
+        canonical_length == length &&
+        std::memcmp(bytes, canonical, length) == 0;
+    if (ok && group) std::memcpy(group, record->provision.group, 16);
+    std::memset(record, 0, sizeof(*record));
+    std::memset(canonical, 0, KATMED_STORE_BLOB_MAX);
+    delete record; delete[] canonical;
+    return ok;
+}
+
+bool store_import_blob_valid(const uint8_t *bytes, size_t length) {
+    return store_import_blob_group(bytes, length, nullptr);
+}
 
 bool store_diagnostics(const Store *store, StoreDiagnostics *out) {
     if (!store || !out || !store->open) return false;

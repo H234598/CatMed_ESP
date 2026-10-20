@@ -33,4 +33,4 @@ idf_component_register(
     INCLUDE_DIRS "include"
     PRIV_INCLUDE_DIRS "."
     REQUIRES katmed_core lvgl esp_partition
-    PRIV_REQUIRES mbedtls esp_timer joltwallet__littlefs)
+    PRIV_REQUIRES mbedtls esp_timer joltwallet__littlefs katmed_security)

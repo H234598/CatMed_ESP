@@ -29,6 +29,8 @@
 #include "katmed_dhcp_diag.h"
 #include "katmed_store.h"
 #include "katmed_store_idf.h"
+#include "katmed_nvs_init.h"
+#include "katmed_import.h"
 #include "katmed_i18n.h"
 #include "katmed_reset_idf.h"
 #include "katmed_acme.h"
@@ -1622,6 +1624,18 @@ void app_main(void)
 {
 #if KATMED_FULL_STACK && KATMED_WITH_CORE
     static const char *tag = "katmed";
+#if CONFIG_NVS_ENCRYPTION
+    /* Hold normal startup until encrypted NVS and any import journal are
+     * verified. The IDF replay adapter reads the local Factory-MAC itself. */
+    if (katmed_nvs_init() != ESP_OK) {
+        ESP_LOGE(tag, "encrypted NVS unavailable; startup held for recovery");
+        return;
+    }
+    if (!katmed_import_resume_idf()) {
+        ESP_LOGE(tag, "migration journal unavailable; startup held for recovery");
+        return;
+    }
+#endif
     ESP_LOGI(tag, "Board/UI runtime with durable store and bounded group services");
     ESP_LOGI(tag, "free heap at entry: %" PRIu32, esp_get_free_heap_size());
 

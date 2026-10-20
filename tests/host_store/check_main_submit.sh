@@ -27,6 +27,8 @@ flags=(-std=c11 -Wall -Wextra -Werror -Wno-error=cpp -Wno-unused-variable -ffunc
     "-I${repo_root}/firmware/components/katmed_config_bridge/include"
     "-I${repo_root}/firmware/components/katmed_reset/include"
     "-I${repo_root}/firmware/components/katmed_acme/include"
+    "-I${repo_root}/firmware/components/katmed_security/include"
+    "-I${repo_root}/firmware/components/katmed_import/include"
     "-I${repo_root}/firmware/components/katmed_web/include"
     "-I${repo_root}/firmware/components/katmed_images/include"
     "-I${repo_root}/firmware/components/katmed_store/include"

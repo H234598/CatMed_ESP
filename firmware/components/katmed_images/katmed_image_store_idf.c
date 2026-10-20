@@ -1,6 +1,7 @@
 #include "katmed_image_store.h"
 #include "katmed_images_internal.h"
 #include "katmed_image_store_cleanup.h"
+#include "katmed_security_layout.h"
 
 #include "esp_err.h"
 #include "esp_littlefs.h"
@@ -18,7 +19,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-#define STORE_PARTITION "user_images"
+#define STORE_PARTITION KATMED_USER_IMAGE_PARTITION_LABEL
 #define STORE_MOUNT_POINT "/katmed"
 #define STORE_DIRECTORY STORE_MOUNT_POINT "/user-images"
 #define STORE_MAX_UPLOADS 2u

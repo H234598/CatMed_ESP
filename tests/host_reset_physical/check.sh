@@ -7,6 +7,7 @@ gcc -std=c11 -Wall -Wextra -Werror \
   -I"$repo_dir/tests/host_reset_physical/stubs" \
   -I"$repo_dir/tests/host_web_upload_wifi/stubs" \
   -I"$repo_dir/firmware/components/katmed_reset/include" \
+  -I"$repo_dir/firmware/components/katmed_security/include" \
   "$repo_dir/tests/host_reset_physical/check.c" \
   "$repo_dir/firmware/components/katmed_reset/katmed_reset_idf.c" \
   "$repo_dir/firmware/components/katmed_reset/katmed_reset_journal.c" \

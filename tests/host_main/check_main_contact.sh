@@ -33,6 +33,8 @@ flags=(-std=c11 -Wall -Wextra -Werror -Wno-unused-variable
     "-I${repo_dir}/firmware/main"
     "-I${repo_dir}/firmware/components/katmed_reset/include"
     "-I${repo_dir}/firmware/components/katmed_acme/include"
+    "-I${repo_dir}/firmware/components/katmed_security/include"
+    "-I${repo_dir}/firmware/components/katmed_import/include"
     "-I${repo_dir}/firmware/managed_components/lvgl__lvgl")
 cc "${flags[@]}" -c "${repo_dir}/firmware/components/katmed_ui/ui.c" -o "${out_dir}/ui.o"
 cc "${flags[@]}" -c "${repo_dir}/tests/host_main/main_contact_regression.c" \

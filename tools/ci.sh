@@ -49,14 +49,18 @@ elif [[ "$mode" == host ]]; then
     build-ci-ui/check_ui_surface 172 320 0 build-ci-ui/surface c6
     build-ci-ui/check_ui_surface 320 172 1 build-ci-ui/surface c6-landscape
     # Existing narrow main-contact check expects bootstrap tools at this path.
-    export KATMED_TOOLS_DIR="$repo/build-ci-tools"
-    mkdir -p "$KATMED_TOOLS_DIR/bootstrap/bin"
-    ln -sf "$(command -v cmake)" "$KATMED_TOOLS_DIR/bootstrap/bin/cmake"
-    ln -sf "$(command -v ninja)" "$KATMED_TOOLS_DIR/bootstrap/bin/ninja"
-    bash tests/host_main/check_main_contact.sh
+    host_bootstrap="$repo/build-ci-tools"
+    mkdir -p "$host_bootstrap/bootstrap/bin"
+    ln -sf "$(command -v cmake)" "$host_bootstrap/bootstrap/bin/cmake"
+    ln -sf "$(command -v ninja)" "$host_bootstrap/bootstrap/bin/ninja"
+    KATMED_TOOLS_DIR="$host_bootstrap" bash tests/host_main/check_main_contact.sh
     bash tests/host_mesh/check_interaction.sh
     bash tests/host_mesh/check_admission.sh
     bash tests/host_store/check_store.sh
+    bash tests/host_security/check.sh
+    python3 tests/host_source_export/check.py
+    python3 tests/host_security_migration/check.py
+    python3 tests/host_security_import/check.py
     bash tests/host_config_bridge/check_bridge.sh
     bash tests/host_web_auth/check_web_auth.sh
     node tests/host_web_ui/check_async_buttons.js

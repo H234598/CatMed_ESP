@@ -2,6 +2,7 @@
 
 #include <string.h>
 #include "nvs_flash.h"
+#include "katmed_nvs_init.h"
 
 static StoreResult idf_read(void *context, uint8_t *buffer, size_t *length)
 {
@@ -35,7 +36,7 @@ StoreResult store_idf_open_backend(StoreIdfNvs *nvs, StoreBackend *backend)
 {
     if (!nvs || !backend) return STORE_INVALID;
     memset(nvs, 0, sizeof(*nvs));
-    esp_err_t err = nvs_flash_init();
+    esp_err_t err = katmed_nvs_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES) return STORE_FULL;
     if (err == ESP_ERR_NVS_NEW_VERSION_FOUND) return STORE_UNSUPPORTED;
     if (err != ESP_OK) return STORE_IO;
