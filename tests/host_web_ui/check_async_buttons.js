@@ -31,7 +31,8 @@ const history = { pushState(state) { this.state = state; }, replaceState(state) 
 const location = { hostname: "device.local", protocol: "http:", hash: "", pathname: "/", search: "" };
 const script = fs.readFileSync(path.join(__dirname,
   "../../firmware/components/katmed_web/ui/app.js"), "utf8");
-vm.runInNewContext(script.replace("const state = {", "const state = window.__testState = {"), {
+vm.runInNewContext(script.replace("const state = {", "const state = window.__testState = {")
+  .replace("function cancelResetOnLeave() {", "window.__testShow = show; function cancelResetOnLeave() {"), {
   document, window, history, location,
   setTimeout: (callback, delay) => { callback.delay = delay; timers.push(callback); },
   fetch: async (url, options) => {
@@ -192,6 +193,45 @@ async function submit(id) {
     cancelBefore + 2);
   assert.equal(calls.filter((call) => call.url === "/api/factory-reset/status").length,
     statusBefore);
+
+  // A session loss can clear bootstrap while Prepare is still in flight.
+  window.__testState.bootstrap = {csrf_token: "synthetic-csrf"};
+  let releaseViewPrepare;
+  const viewHold = new Promise((resolve) => { releaseViewPrepare = resolve; });
+  replies.push({status: 202, body: {display: "preparing"}, hold: viewHold},
+    {status: 409, body: {error: "reset_not_prepared"}},
+    {status: 200, body: {display: "idle"}});
+  const viewCancelBefore = calls.filter((call) => call.url === "/api/factory-reset/cancel").length;
+  const viewStatusBefore = calls.filter((call) => call.url === "/api/factory-reset/status").length;
+  const pendingViewPrepare = invoke("factory-reset-start");
+  window.__testState.bootstrap = null;
+  window.__testShow("login-view");
+  assert.equal(element("login-view").hidden, false);
+  assert.equal(calls.at(-1).url, "/api/factory-reset/cancel");
+  assert.equal(calls.at(-1).options.headers["X-Katmed-CSRF"], "synthetic-csrf");
+  releaseViewPrepare();
+  await pendingViewPrepare;
+  assert.equal(element("factory-reset-dialog").open, false);
+  assert.equal(calls.filter((call) => call.url === "/api/factory-reset/cancel").length,
+    viewCancelBefore + 2);
+  assert.equal(calls.filter((call) => call.url === "/api/factory-reset/status").length,
+    viewStatusBefore);
+
+  // A restored document with an open dialog must refresh its invalidated poll.
+  window.__testState.bootstrap = {csrf_token: "synthetic-csrf"};
+  element("factory-reset-dialog").showModal();
+  replies.push({status: 200, body: {display: "press_reset"}});
+  await invoke("factory-reset-status");
+  assert.match(element("reset-status").textContent, /RESET-Taste/);
+  replies.push({status: 200, body: {display: "idle"}},
+    {status: 200, body: {display: "idle"}});
+  windowEvents.pagehide();
+  await windowEvents.pageshow();
+  assert.match(element("reset-status").textContent, /Keine aktive Resetvorbereitung/);
+  const afterRestore = calls.length;
+  await timers.shift()();
+  assert.equal(calls.length, afterRestore);
+  element("factory-reset-dialog").close();
   assert.equal(calls.some((call) => call.url === "/api/factory-reset/confirm"), false);
   assert.equal(replies.length, 0);
   console.log("async buttons, Advanced scroll restore and physical reset web flow: OK");

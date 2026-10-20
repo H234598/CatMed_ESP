@@ -14,7 +14,7 @@
   };
   let advancedTouchStart = null;
   let resetPoll = 0;
-  let resetPending = false, resetLeaving = false;
+  let resetPending = false, resetLeaving = false, resetCsrf = null;
 
   function notice(message, error = false) {
     const node = $("notice");
@@ -24,19 +24,22 @@
   }
 
   function show(view) {
-    if (view !== "private-view" && $("factory-reset-dialog")?.open) {
+    const dialog = $("factory-reset-dialog");
+    if (view !== "private-view" && (resetPending || dialog.open)) {
+      if (resetPending) resetLeaving = true;
       ++resetPoll;
-      api("/api/factory-reset/cancel", "POST", {}).catch(() => {});
-      $("factory-reset-dialog").close();
+      cancelResetOnLeave();
+      if (dialog.open) dialog.close();
     }
     for (const id of views) $(id).hidden = id !== view;
   }
 
   function cancelResetOnLeave() {
-    if (!state.bootstrap?.csrf_token) return;
+    const csrf = resetCsrf || state.bootstrap?.csrf_token;
+    if (!csrf) return;
     fetch("/api/factory-reset/cancel", {
       method: "POST", credentials: "same-origin", keepalive: true,
-      headers: {"X-Katmed-CSRF": state.bootstrap.csrf_token}
+      headers: {"X-Katmed-CSRF": csrf}
     }).catch(() => {});
   }
 
@@ -46,7 +49,11 @@
     ++resetPoll;
     cancelResetOnLeave();
   });
-  window.addEventListener("pageshow", () => { if (!resetPending) resetLeaving = false; });
+  window.addEventListener("pageshow", () => {
+    if (resetPending) return;
+    resetLeaving = false;
+    if ($("factory-reset-dialog").open) return refreshResetStatus(++resetPoll);
+  });
 
   function renderDeviceName(name) {
     if (typeof name !== "string" || !name || !$("device-info")) return;
@@ -661,6 +668,7 @@
     const poll = ++resetPoll;
     status.textContent = "Displaykachel öffnet.";
     resetPending = true;
+    resetCsrf = state.bootstrap?.csrf_token;
     try {
       await api("/api/factory-reset/prepare", "POST", {});
     } catch (error) {
