@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Apply the reviewed atomic-write bridge to official acmeclient 1.1.1.
+"""Apply the bounded atomic-write bridge and numeric probe hooks to ACME 1.1.1.
 
 The component manager owns the extracted source. This bounded, idempotent
 step runs in the private build tree after resolution and refuses any source
@@ -21,6 +21,7 @@ EXPECTED = {
     "Crypto.cpp": "a5e479237b4a5b1560068b7f85aa568b3aaafb3c4b0aa84c39630f5d3351b9f3",
 }
 MARKER = "KATMED_ACME_ATOMIC_PATCH_1"
+PROBE_MARKER = "KATMED_ACME_RESOURCE_HOOK_1"
 DECLARATION = """
 #include <stdio.h>
 extern \"C\" FILE *katmed_acme_atomic_open(const char *target);
@@ -80,6 +81,28 @@ def _patch_source(path: Path, writes: tuple[str, ...], closes: tuple[str, ...],
     path.write_text(changed, encoding="utf-8")
 
 
+def _patch_probe(path: Path, sites: tuple[tuple[str, str], ...]) -> None:
+    """Add numeric observation hooks to the resolved copy, never the archive."""
+    source = path.read_text(encoding="utf-8")
+    if PROBE_MARKER in source:
+        return
+    declaration = (
+        f'/* {PROBE_MARKER} */\n'
+        'extern "C" void katmed_acme_probe_mark(unsigned phase) __attribute__((weak));\n'
+        '#define KATMED_ACME_PROBE(p) do { if (katmed_acme_probe_mark) '
+        'katmed_acme_probe_mark(p); } while (0)\n'
+    )
+    anchor = f'/* {MARKER} */\n'
+    if source.count(anchor) != 1:
+        raise PatchError(f"atomic patch anchor missing in {path.name}")
+    source = source.replace(anchor, declaration + anchor, 1)
+    for before, after in sites:
+        if source.count(before) != 1:
+            raise PatchError(f"ACME probe site changed in {path.name}")
+        source = source.replace(before, after, 1)
+    path.write_text(source, encoding="utf-8")
+
+
 def apply(component: Path) -> bool:
     component = component.resolve()
     manifest = component / "idf_component.yml"
@@ -107,6 +130,26 @@ def apply(component: Path) -> bool:
         _patch_source(paths["Acme.cpp"],
                       ('FILE *f = fopen(fn, "w");', 'FILE *tf = fopen(localfn, "w");'),
                       ("fclose(f);", "fclose(tf);"), {})
+        _patch_probe(paths["Crypto.cpp"], (
+            ('void Acme::GenerateAccountKey() {',
+             'void Acme::GenerateAccountKey() {\n  KATMED_ACME_PROBE(1);'),
+            ('void Acme::GenerateCertificateKey() {',
+             'void Acme::GenerateCertificateKey() {\n  KATMED_ACME_PROBE(1);'),
+        ))
+        _patch_probe(paths["Acme.cpp"], (
+            ('bool Acme::RequestNewNonce() {',
+             'bool Acme::RequestNewNonce() {\n  KATMED_ACME_PROBE(2);'),
+            ('char *Acme::PerformWebQuery(const char *query, const char *topost, const char *apptype, const char *accept_message) {',
+             'char *Acme::PerformWebQuery(const char *query, const char *topost, const char *apptype, const char *accept_message) {\n  KATMED_ACME_PROBE(2);'),
+            ('Acme::return_status Acme::ValidateOrder() {',
+             'Acme::return_status Acme::ValidateOrder() {\n  KATMED_ACME_PROBE(3);'),
+            ('void Acme::FinalizeOrder() {',
+             'void Acme::FinalizeOrder() {\n  KATMED_ACME_PROBE(4);'),
+            ('void Acme::RenewCertificate() {',
+             'void Acme::RenewCertificate() {\n  KATMED_ACME_PROBE(5);'),
+            ('    if (ok)\n      return true;\n  }\n\n  if (strcmp(order->status, acme_status_invalid)',
+             '    if (ok) {\n      KATMED_ACME_PROBE(6);\n      return true;\n    }\n  }\n\n  if (strcmp(order->status, acme_status_invalid)'),
+        ))
         changed = any(path.read_bytes() != before[name] for name, path in paths.items())
     except Exception:
         for name, path in paths.items():

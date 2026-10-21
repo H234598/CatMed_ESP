@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import json
 import pathlib
+import re
 import subprocess
 import sys
 import tempfile
@@ -80,6 +81,105 @@ class AcmeRamBenchCheck(unittest.TestCase):
             )
             self.assertNotEqual(0, result.returncode)
             self.assertFalse(output.exists())
+
+
+def resource_record(cycle: int, seq: int, name: str, *, variant: str = "client",
+                    status: str = "running", free: int = 64000) -> str:
+    return (
+        f"I (1) katmed_acme_resource: schema=2 variant={variant} cycle={cycle} "
+        f"seq={seq} phase={name} status={status} uptime_ms={cycle * 10000 + seq} "
+        f"internal_free={free} internal_min={free - 1000} "
+        f"internal_largest={free - 2000} dma_free={free - 10000} "
+        f"dma_min={free - 11000} dma_largest={free - 12000} monitor_valid=1\n"
+    )
+
+
+def resource_capture(variant: str = "client") -> bytes:
+    lines = []
+    for cycle in range(1, 4):
+        names = (["idle", "key", "connection", "challenge", "issuance",
+                  "certificate_switch", "cleanup"] if cycle == 1 else
+                 ["idle", "renewal", "connection", "challenge", "issuance",
+                  "certificate_switch", "cleanup"])
+        if variant == "baseline":
+            names = ["idle", "cleanup"]
+        for seq, name in enumerate(names, 1):
+            lines.append(resource_record(
+                cycle, seq, name, variant=variant,
+                status="ok" if name == "cleanup" else "running",
+                free=64000 if name in ("idle", "cleanup") else 60000,
+            ))
+    return "".join(lines).encode("ascii")
+
+
+class AcmeResourceCaptureCheck(unittest.TestCase):
+    def test_compiled_producer_field_order_matches_file_consumer(self):
+        source = (ROOT / "firmware/components/katmed_acme/katmed_acme.cpp").read_text()
+        start = source.index('"schema=2 variant=%s')
+        end = source.index('monitor_valid=%u"', start) + len('monitor_valid=%u"')
+        record_format = "".join(re.findall(r'"([^"]*)"', source[start:end]))
+        self.assertEqual(
+            ["schema", "variant", "cycle", "seq", "phase", "status", "uptime_ms",
+             "internal_free", "internal_min", "internal_largest", "dma_free",
+             "dma_min", "dma_largest", "monitor_valid"],
+            re.findall(r"([a-z_]+)=", record_format),
+        )
+
+    def test_three_synthetic_cycles_are_only_source_qualified(self):
+        summary = katmed_acme_ram.evaluate_resource(resource_capture(), "client")
+        self.assertEqual("source_capture_valid", summary["qualification"])
+        self.assertFalse(summary["hardware_pass"])
+        self.assertEqual(3, summary["cycles"])
+        self.assertEqual([], summary["missing_phases"])
+        baseline = katmed_acme_ram.evaluate_resource(resource_capture("baseline"), "baseline")
+        self.assertEqual("source_capture_valid", baseline["qualification"])
+
+    def test_missing_phase_is_reported_and_cli_cannot_pass(self):
+        raw = resource_capture().replace(
+            resource_record(2, 4, "challenge", free=60000).encode("ascii"), b""
+        )
+        # A capture with a missing numeric sequence is rejected before qualification.
+        with self.assertRaises(katmed_acme_ram.RamBenchError):
+            katmed_acme_ram.evaluate_resource(raw, "client")
+        text = resource_capture().decode("ascii")
+        text = text.replace("phase=challenge", "phase=connection", 1)
+        summary = katmed_acme_ram.evaluate_resource(text.encode("ascii"), "client")
+        self.assertEqual("incomplete", summary["qualification"])
+        self.assertIn("challenge", summary["missing_by_cycle"]["1"])
+        with tempfile.TemporaryDirectory() as temporary:
+            source = pathlib.Path(temporary) / "capture.log"
+            output = pathlib.Path(temporary) / "summary.json"
+            source.write_text(text)
+            result = subprocess.run(
+                [sys.executable, str(ROOT / "tools/katmed_acme_ram.py"),
+                 "--mode", "resource", "--variant", "client", "--input", str(source),
+                 "--output", str(output)], capture_output=True, text=True, check=False,
+            )
+            self.assertNotEqual(0, result.returncode)
+            self.assertEqual("incomplete", json.loads(output.read_text())["qualification"])
+
+    def test_error_abort_cleanup_loss_and_missing_cycle_fail_closed(self):
+        raw = resource_capture()
+        for damaged in (
+            raw.replace(b"phase=cleanup status=ok", b"phase=cleanup status=error", 1),
+            raw.replace(resource_record(1, 7, "cleanup", status="ok", free=64000).encode("ascii"),
+                        resource_record(1, 7, "cleanup", status="ok", free=59000).encode("ascii"), 1),
+            raw.split(b"cycle=3")[0],
+        ):
+            with self.assertRaises(katmed_acme_ram.RamBenchError):
+                katmed_acme_ram.evaluate_resource(damaged, "client")
+
+    def test_malformed_incomplete_and_wrong_variant_never_qualify(self):
+        raw = resource_capture()
+        for damaged in (
+            raw.replace(b"monitor_valid=1", b"monitor_valid=0", 1),
+            raw.replace(b"internal_free=64000", b"internal_free=x", 1),
+            raw.replace(b"variant=client", b"variant=baseline", 1),
+            raw.replace(b"seq=2", b"seq=4", 1),
+            b"",
+        ):
+            with self.assertRaises(katmed_acme_ram.RamBenchError):
+                katmed_acme_ram.evaluate_resource(damaged, "client")
 
 
 if __name__ == "__main__":

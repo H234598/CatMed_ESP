@@ -1,5 +1,7 @@
 idf_build_get_property(KATMED_FULL_STACK KATMED_FULL_STACK)
 idf_build_get_property(KATMED_WITH_CORE KATMED_WITH_CORE)
+idf_build_get_property(KATMED_ACME_RESOURCE_PROBE KATMED_ACME_RESOURCE_PROBE)
+idf_build_get_property(KATMED_ACME_RESOURCE_CLIENT KATMED_ACME_RESOURCE_CLIENT)
 set(req esp_timer esp_hw_support freertos)
 set(sources main.c runtime_metrics.c boot_restart.c)
 if(KATMED_FULL_STACK)
@@ -20,3 +22,6 @@ idf_component_register(SRCS ${sources} INCLUDE_DIRS "." "${CMAKE_BINARY_DIR}/gen
 target_compile_definitions(${COMPONENT_LIB} PRIVATE
     KATMED_FULL_STACK=$<BOOL:${KATMED_FULL_STACK}>
     KATMED_WITH_CORE=$<BOOL:${KATMED_WITH_CORE}>)
+target_compile_definitions(${COMPONENT_LIB} PRIVATE
+    KATMED_ACME_RESOURCE_PROBE=$<BOOL:${KATMED_ACME_RESOURCE_PROBE}>
+    KATMED_ACME_RESOURCE_CLIENT=$<BOOL:${KATMED_ACME_RESOURCE_CLIENT}>)

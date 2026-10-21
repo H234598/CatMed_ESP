@@ -1854,6 +1854,9 @@ void app_main(void)
     }
 
     uint64_t last_render_ms = now.monotonic_ms;
+#if KATMED_ACME_RESOURCE_PROBE
+    bool acme_probe_launched = false;
+#endif
     KatmedRuntimeMetricsGate metrics_gate = {0};
     BootRestartState boot_restart = {0};
     const BootRestartOps boot_ops = {
@@ -1881,6 +1884,10 @@ void app_main(void)
         if (runtime.mesh_started && !runtime.reboot_required)
             katmed_mesh_poll(&now);
         const bool root_ip = runtime.mesh_started && katmed_mesh_root_has_ip();
+#if KATMED_ACME_RESOURCE_PROBE
+        if (root_ip && !acme_probe_launched)
+            acme_probe_launched = katmed_acme_resource_probe_launch();
+#endif
         katmed_time_set_link(&runtime.time, root_ip ||
                              (runtime.mesh_started && katmed_mesh_connected() &&
                               !katmed_mesh_is_coordinator()));

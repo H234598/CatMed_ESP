@@ -6,6 +6,10 @@
 #include <time.h>
 
 #include "esp_log.h"
+#include "esp_heap_caps.h"
+#include "esp_timer.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "katmed_web.h"
 #include "katmed_source_export.h"
 
@@ -84,3 +88,128 @@ bool katmed_acme_certificate_changed(void)
     certificate_changed = false;
     return changed;
 }
+
+#if KATMED_ACME_RESOURCE_PROBE
+/* The two builds share this observer and all normal services. Only the client
+ * variant enters the official 1.1.1 API. Numeric hooks in the resolved copy
+ * mark real upstream call boundaries; no phase is synthesized on failure. */
+static unsigned probe_cycle;
+static unsigned probe_sequence;
+static unsigned probe_phase;
+static bool probe_running;
+static bool probe_monitor_valid;
+static bool probe_launched;
+
+static const char *probe_phase_name(unsigned phase)
+{
+    static const char *const names[] = {
+        "idle", "key", "connection", "challenge", "issuance",
+        "renewal", "certificate_switch", "cleanup"
+    };
+    return phase < sizeof(names) / sizeof(names[0]) ? names[phase] : "invalid";
+}
+
+static void probe_sample(const char *status)
+{
+    const uint32_t internal = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
+    const uint32_t dma = MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL;
+    ESP_LOGI("katmed_acme_resource",
+        "schema=2 variant=%s cycle=%u seq=%u phase=%s status=%s uptime_ms=%llu "
+        "internal_free=%u internal_min=%u internal_largest=%u "
+        "dma_free=%u dma_min=%u dma_largest=%u monitor_valid=%u",
+#if KATMED_ACME_RESOURCE_CLIENT
+        "client",
+#else
+        "baseline",
+#endif
+        probe_cycle, ++probe_sequence, probe_phase_name(probe_phase), status,
+        (unsigned long long)(esp_timer_get_time() / 1000),
+        (unsigned)heap_caps_get_free_size(internal),
+        (unsigned)heap_caps_get_minimum_free_size(internal),
+        (unsigned)heap_caps_get_largest_free_block(internal),
+        (unsigned)heap_caps_get_free_size(dma),
+        (unsigned)heap_caps_get_minimum_free_size(dma),
+        (unsigned)heap_caps_get_largest_free_block(dma),
+        probe_monitor_valid ? 1u : 0u);
+}
+
+static void probe_next(unsigned phase)
+{
+    if (!probe_running || phase > 7) return;
+    probe_sample("running");
+    if (probe_monitor_valid && heap_caps_monitor_local_minimum_free_size_stop() != ESP_OK)
+        probe_monitor_valid = false;
+    probe_phase = phase;
+    probe_monitor_valid = heap_caps_monitor_local_minimum_free_size_start() == ESP_OK;
+}
+
+extern "C" void katmed_acme_probe_mark(unsigned phase)
+{
+    probe_next(phase);
+}
+
+static void probe_task(void *)
+{
+#if KATMED_ACME_RESOURCE_CLIENT
+    /* A deliberately local, non-credential endpoint. A later authorized
+     * fixture may serve it; without one, the real client aborts visibly. */
+    static const KatmedAcmeConfig config = {
+        "katmed-probe.invalid", "probe@invalid", KATMED_ACME_RESOURCE_SERVER,
+        "/katmed/acme"
+    };
+#endif
+    for (unsigned cycle = 1; cycle <= 3; ++cycle) {
+        probe_cycle = cycle;
+        probe_sequence = 0;
+        probe_phase = 0;
+        probe_running = true;
+        probe_monitor_valid = heap_caps_monitor_local_minimum_free_size_start() == ESP_OK;
+        bool success = false;
+#if KATMED_ACME_RESOURCE_CLIENT
+        if (time(NULL) >= 1700000000 && katmed_acme_start(&config)) {
+            if (client->getAccountKey() == 0) client->GenerateAccountKey();
+            if (client->getCertificateKey() == 0) client->GenerateCertificateKey();
+            if (client->getAccountKey() != 0 && client->getCertificateKey() != 0 &&
+                client->CreateNewAccount()) {
+                if (cycle == 1) client->CreateNewOrder();
+                else if (client->HaveValidCertificate(time(NULL))) client->RenewCertificate();
+                if (cycle == 1 || client->HaveValidCertificate(time(NULL))) {
+                    const int64_t deadline = esp_timer_get_time() + 120000000LL;
+                    while (esp_timer_get_time() < deadline) {
+                        katmed_acme_poll((uint64_t)(esp_timer_get_time() / 1000));
+                        if (katmed_acme_certificate_changed()) {
+                            success = client->HaveValidCertificate(time(NULL));
+                            break;
+                        }
+                        vTaskDelay(pdMS_TO_TICKS(1000));
+                    }
+                }
+            }
+        }
+#else
+        vTaskDelay(pdMS_TO_TICKS(12000));
+        success = true;
+#endif
+        probe_next(7);
+        katmed_acme_stop();
+        probe_sample(success ? "ok" : "error");
+        if (probe_monitor_valid) heap_caps_monitor_local_minimum_free_size_stop();
+        probe_running = false;
+        if (cycle < 3) vTaskDelay(pdMS_TO_TICKS(12000));
+    }
+    vTaskDelete(NULL);
+}
+
+bool katmed_acme_resource_probe_launch(void)
+{
+    if (probe_launched) return true;
+    if (katmed_web_acme_http_server() == NULL) return false;
+    BaseType_t result = xTaskCreate(probe_task, "acme_resource", 12288, NULL,
+                                    tskIDLE_PRIORITY + 1, NULL);
+    if (result != pdPASS) return false;
+    probe_launched = true;
+    return true;
+}
+#else
+bool katmed_acme_resource_probe_launch(void) { return false; }
+#endif
