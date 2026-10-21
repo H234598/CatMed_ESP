@@ -49,7 +49,8 @@ typedef struct {
     bool (*erase)(void *, const char *ns, const char *key);
     /* Enumerate the entire target NVS, including unknown SDK/application keys. */
     bool (*target_empty)(void *);
-    bool (*free_entries)(void *, size_t *);
+    /* IDF nvs_stats_t.available_entries excludes its reserved GC page. */
+    bool (*available_entries)(void *, size_t *);
     /* IDF implementation uses the product Web X.509/key-pair validator. */
     bool (*validate_web)(void *, const uint8_t *auth, size_t auth_len,
                          const uint8_t *identity, size_t identity_len);

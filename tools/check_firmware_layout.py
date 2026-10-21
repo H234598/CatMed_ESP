@@ -94,14 +94,24 @@ def check_layout(repo: Path, board: str, build: Path, security_profile: bool = F
         raise ValueError("Built partition table does not match board CSV")
     if security_profile:
         critical = {
-            "nvs": (0x11000, 0x6000, "data", "nvs", ""),
+            "nvs": (0x11000, 0x7000, "data", "nvs", ""),
             "nvs_keys": (0x18000, 0x1000, "data", "nvs_keys", "encrypted"),
             "nvs_guard": (0x19000, 0x1000, "data", "0x40", ""),
+            "phy_init": (0x1a000, 0x1000, "data", "phy", ""),
             "user_images": (0x230000, 0x90000, "data", "littlefs", "encrypted"),
         }
         for name, expected in critical.items():
             if partitions.get(name) != expected:
                 raise ValueError(f"Security partition {name} differs from runtime contract")
+        # Match the KMS3 worst case: 123 images plus all five NVS values. IDF
+        # reserves one 126-entry page before reporting available_entries.
+        nvs_lengths = (4065, 2152, 1112, 1288, 2)
+        stage_length = 16 + sum(nvs_lengths) + 123 * 13
+        required_entries = ((stage_length + 31) // 32 + 4 +
+                            sum((length + 31) // 32 + 4 for length in nvs_lengths) + 24)
+        available_entries = (partitions["nvs"][1] // 0x1000 - 1) * 126
+        if available_entries < required_entries:
+            raise ValueError("Security NVS lacks usable entries for KMS3 maximum")
     elif "nvs_keys" in partitions:
         raise ValueError("Neutral profile unexpectedly includes NVS keys")
     bootloader_bytes = (build / "bootloader" / "bootloader.bin").stat().st_size
@@ -129,6 +139,7 @@ def check_layout(repo: Path, board: str, build: Path, security_profile: bool = F
             "app_bytes": app_bytes, "app_budget": app_budget,
             "app_free": app_budget - app_bytes, "image_bytes": len(data),
             "image_budget": image_partition[1], "image_free": image_partition[1] - len(data),
+            "nvs_available_entries": available_entries if security_profile else None,
             "runtime_heap": "not_measured"}
 
 

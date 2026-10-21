@@ -146,7 +146,7 @@ void wipe(void *p, size_t n) {
 }
 bool callbacks(const KatmedImportBackend *b) {
     return b && b->read && b->write && b->erase &&
-        b->target_empty && b->free_entries;
+        b->target_empty && b->available_entries;
 }
 bool input_read(const KatmedImportInput *in, size_t at, uint8_t *p, size_t n) {
     return in && in->read && at <= in->length && n <= in->length - at &&
@@ -590,7 +590,7 @@ extern "C" bool katmed_import_apply(const KatmedImportInput *in,
         ok = b->target_empty(b->context) &&
             absent(b, kImportNs, kStage) &&
             absent(b, kImportNs, kJournal) &&
-            b->free_entries(b->context, &free) &&
+            b->available_entries(b->context, &free) &&
             free >= entries + 24 &&
             (!file_count || b->files_empty(b->context, file_bytes, file_count));
     }

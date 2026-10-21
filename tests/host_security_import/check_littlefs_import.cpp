@@ -242,7 +242,7 @@ void populate_source_images(const std::vector<uint8_t> &capsule) {
 }
 
 int main(int argc, char **argv) {
-    if (argc != 4) return 2;
+    if (argc != 5) return 2;
     std::ifstream stream(argv[1], std::ios::binary);
     if (!stream) return 2;
     std::vector<uint8_t> capsule((std::istreambuf_iterator<char>(stream)),
@@ -255,6 +255,11 @@ int main(int argc, char **argv) {
     if (!old_stream) return 2;
     std::vector<uint8_t> old_capsule((std::istreambuf_iterator<char>(old_stream)),
                                      std::istreambuf_iterator<char>());
+    std::ifstream combined_stream(argv[4], std::ios::binary);
+    if (!combined_stream) return 2;
+    std::vector<uint8_t> combined_capsule(
+        (std::istreambuf_iterator<char>(combined_stream)),
+        std::istreambuf_iterator<char>());
     fresh_fs();
     Memory m;
     m.capsule = capsule;
@@ -488,6 +493,28 @@ int main(int argc, char **argv) {
     assert(near_replay.values.count("katmed/state") == 1 &&
            near_replay.values.count("katmed_imp/journal") == 0 &&
            capsule_images_match(near_capsule, 127));
+    assert(lfs_unmount(&fs) == 0);
+
+    fresh_fs();
+    Memory combined;
+    combined.capsule = combined_capsule;
+    combined.available_entries = 630; /* Six pages: 756 free, 126 reserved. */
+    auto combined_backend = real_backend(combined);
+    auto combined_input = input(combined);
+    const unsigned initial_flash_mutations = flash_mutations;
+    assert(!katmed_import_apply(&combined_input, &combined_backend));
+    assert(combined.writes == 0 && combined.erases == 0 &&
+           combined.values.empty() && flash_mutations == initial_flash_mutations);
+    combined.available_entries = 756; /* Seven pages, same reserved page. */
+    assert(katmed_import_apply(&combined_input, &combined_backend));
+    remount();
+    assert(capsule_images_match(combined_capsule, 123) &&
+           combined.values.count("katmed/state") == 1 &&
+           combined.values.count("katmed/mesh_history") == 1 &&
+           combined.values.count("katmed_web/auth") == 1 &&
+           combined.values.count("katmed_web/identity") == 1 &&
+           combined.values.count("katmed_reset/journal") == 1 &&
+           combined.values.count("katmed_imp/journal") == 0);
     assert(lfs_unmount(&fs) == 0);
     puts("actual LittleFS KMI1 import/remount/replay: PASS");
 }

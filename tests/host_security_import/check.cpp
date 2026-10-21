@@ -93,7 +93,7 @@ static bool erase_blob(void *context, const char *ns, const char *key) {
 static bool target_empty(void *context) {
     return static_cast<Memory *>(context)->values.empty();
 }
-static bool free_entries(void *context, size_t *out) {
+static bool available_entries(void *context, size_t *out) {
     *out = static_cast<Memory *>(context)->available_entries;
     return true;
 }
@@ -164,7 +164,7 @@ static bool file_abort(void *context, unsigned, const KatmedImportFile *f) {
     return true;
 }
 static KatmedImportBackend backend(Memory &m) {
-    return {&m, read_blob, write_blob, erase_blob, target_empty, free_entries,
+    return {&m, read_blob, write_blob, erase_blob, target_empty, available_entries,
             validate_web, files_empty, file_stage, file_publish, file_final,
             file_abort};
 }
@@ -350,6 +350,23 @@ int main(int argc, char **argv) {
         ok = katmed_import_apply(&in, &b) &&
             m.final_files.size() == 127 && m.staged_files.empty() &&
             m.values.count("katmed/state") == 1 &&
+            m.values.count("katmed_imp/journal") == 0 &&
+            katmed_import_resume(&b, 1);
+    } else if (mode == "capacity_97" || mode == "capacity_123") {
+        const size_t images = mode == "capacity_97" ? 97 : 123;
+        const size_t required = mode == "capacity_97" ? 631 : 641;
+        m.available_entries = required - 1;
+        ok = !katmed_import_apply(&in, &b) &&
+            m.writes == 0 && m.erases == 0 && m.values.empty() &&
+            m.staged_files.empty() && m.final_files.empty();
+        m.available_entries = 756; /* Seven IDF pages minus its reserved page. */
+        ok = ok && katmed_import_apply(&in, &b) &&
+            m.final_files.size() == images && m.staged_files.empty() &&
+            m.values.count("katmed/state") == 1 &&
+            m.values.count("katmed/mesh_history") == 1 &&
+            m.values.count("katmed_web/auth") == 1 &&
+            m.values.count("katmed_web/identity") == 1 &&
+            m.values.count("katmed_reset/journal") == 1 &&
             m.values.count("katmed_imp/journal") == 0 &&
             katmed_import_resume(&b, 1);
     } else if (mode == "legacy_cleanup") {

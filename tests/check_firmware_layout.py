@@ -90,6 +90,7 @@ class FirmwareLayoutTests(unittest.TestCase):
         result = layout.check_layout(self.root, "c3", self.build, True)
         self.assertTrue(result["security_profile"])
         self.assertEqual(result["app_budget"], 0x210000)
+        self.assertEqual(result["nvs_available_entries"], 756)
         self.assertGreater(result["app_free"], 0)
 
     def test_security_profile_rejects_old_image_boundary(self):
@@ -114,9 +115,20 @@ class FirmwareLayoutTests(unittest.TestCase):
         self.security_fixture()
         partition = self.root / "firmware/boards/c3.security.partitions.csv"
         partition.write_text(partition.read_text().replace(
-            "nvs, data, nvs, 0x11000, 0x6000,",
-            "nvs, data, nvs, 0x11000, 0x5000,"))
+            "nvs, data, nvs, 0x11000, 0x7000,",
+            "nvs, data, nvs, 0x11000, 0x6000,"))
         with self.assertRaisesRegex(ValueError, "does not match"):
+            layout.check_layout(self.root, "c3", self.build, True)
+
+    def test_security_profile_rejects_old_phy_position(self):
+        self.security_fixture()
+        partition = self.root / "firmware/boards/c3.security.partitions.csv"
+        partition.write_text(partition.read_text().replace(
+            "phy_init, data, phy, 0x1A000, 0x1000,",
+            "phy_init, data, phy, 0x1B000, 0x1000,"))
+        self.write_partition_fixture(partition,
+                                     self.build / "partition_table/partition-table.bin")
+        with self.assertRaisesRegex(ValueError, "Security partition phy_init differs"):
             layout.check_layout(self.root, "c3", self.build, True)
 
     def test_modified_pack_rejected(self):

@@ -73,12 +73,12 @@ static bool target_empty(void *context)
     return empty;
 }
 
-static bool free_entries(void *context, size_t *out)
+static bool available_entries(void *context, size_t *out)
 {
     (void)context;
     nvs_stats_t stats;
     if (!out || nvs_get_stats("nvs", &stats) != ESP_OK) return false;
-    *out = stats.free_entries;
+    *out = stats.available_entries;
     return true;
 }
 
@@ -94,7 +94,7 @@ static KatmedImportBackend backend(void)
     KatmedImportBackend b = {
         .context = NULL, .read = read_blob, .write = write_blob,
         .erase = erase_blob, .target_empty = target_empty,
-        .free_entries = free_entries, .validate_web = validate_web,
+        .available_entries = available_entries, .validate_web = validate_web,
         .files_empty = katmed_import_files_empty,
         .file_stage = katmed_import_file_stage,
         .file_publish = katmed_import_file_publish,

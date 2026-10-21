@@ -63,6 +63,18 @@ with tempfile.TemporaryDirectory(prefix="katmed-import-test-") as temporary:
         str(ROOT / "firmware/components/katmed_core/katmed_core.cpp"),
         "-lz", "-o", str(binary),
     ], check=True)
+    idf_stats = root / "idf-nvs-stats-check"
+    subprocess.run([
+        "cc", "-std=c11", "-Wall", "-Wextra", "-Werror", "-O1",
+        "-ffunction-sections", "-fdata-sections", "-Wl,--gc-sections",
+        "-I", str(ROOT / "tests/host_security_import/stubs"),
+        "-I", str(ROOT / "tests/host_security/stubs"),
+        "-I", str(ROOT / "firmware/components/katmed_import/include"),
+        "-I", str(ROOT / "firmware/components/katmed_web/include"),
+        str(ROOT / "tests/host_security_import/check_idf_nvs_stats.c"),
+        "-o", str(idf_stats),
+    ], check=True)
+    subprocess.run([str(idf_stats)], check=True)
     partial = staged_capsule(root, "partial", {"nvs/katmed/state": state}, codec)
     with_history = staged_capsule(root, "history", {
         "nvs/katmed/state": state,
@@ -120,10 +132,10 @@ with tempfile.TemporaryDirectory(prefix="katmed-import-test-") as temporary:
         return result
     near_files = {"nvs/katmed/state": state}
     for number in range(127):
-        length = migration.MAX_CONTENT // 127 + (number < migration.MAX_CONTENT % 127)
+        image_length = migration.MAX_CONTENT // 127 + (number < migration.MAX_CONTENT % 127)
         name = ("littlefs/user-images/cat-00-0.jpg" if number == 0 else
                 f"littlefs/user-images/img-{number:08x}.jpg")
-        near_files[name] = padded_jpeg(cached if number == 0 else uploaded, length)
+        near_files[name] = padded_jpeg(cached if number == 0 else uploaded, image_length)
     near_full = staged_capsule(root, "near-full", near_files, codec)
     assert sum(len(value) for name, value in near_files.items()
                if name.startswith("littlefs/")) == migration.MAX_CONTENT
@@ -135,6 +147,33 @@ with tempfile.TemporaryDirectory(prefix="katmed-import-test-") as temporary:
         for number in range(1, 4)
     })
     old_near = staged_capsule(root, "old-near-full", old_near_files, codec)
+    def combined_capsule(count):
+        files = {
+            "nvs/katmed/state": state,
+            "nvs/katmed/mesh_history": fixture[8 + length:],
+            "nvs/katmed_web/auth": auth,
+            "nvs/katmed_web/identity": identity,
+            "nvs/katmed_reset/journal": b"\0\0",
+        }
+        for number in range(count):
+            image_length = migration.MAX_CONTENT // count + (number < migration.MAX_CONTENT % count)
+            name = ("littlefs/user-images/cat-00-0.jpg" if number == 0 else
+                    f"littlefs/user-images/img-{number:08x}.jpg")
+            files[name] = padded_jpeg(cached if number == 0 else uploaded, image_length)
+        image_bytes = sum(len(value) for name, value in files.items()
+                          if name.startswith("littlefs/"))
+        assert image_bytes == migration.MAX_CONTENT
+        nvs_lengths = [len(value) for name, value in files.items()
+                       if name.startswith("nvs/")]
+        stage_length = 16 + sum(nvs_lengths) + 13 * count
+        required = (stage_length + 31) // 32 + 4 + sum(
+            (n + 31) // 32 + 4 for n in nvs_lengths) + 24
+        assert required == {97: 631, 123: 641}[count]
+        capsule = staged_capsule(root, f"combined-{count}", files, codec)
+        assert struct.unpack_from("<H", capsule.read_bytes(), 8)[0] == count + 5
+        return capsule
+    combined_97 = combined_capsule(97)
+    combined_123 = combined_capsule(123)
     image = root / "image.bin"
     image.write_bytes(migration.firmware_capsule({
         "nvs/katmed/state": state,
@@ -250,8 +289,10 @@ with tempfile.TemporaryDirectory(prefix="katmed-import-test-") as temporary:
         *lfs_objects, "-lz", "-o", str(lfs_binary),
     ], check=True)
     subprocess.run([str(binary), str(near_full), "files_many"], check=True)
+    subprocess.run([str(binary), str(combined_97), "capacity_97"], check=True)
+    subprocess.run([str(binary), str(combined_123), "capacity_123"], check=True)
     subprocess.run([str(lfs_binary), str(full_files), str(near_full),
-                    str(old_near)], check=True)
+                    str(old_near), str(combined_123)], check=True)
     subprocess.run([str(binary), str(partial), "legacy_cleanup"], check=True)
     subprocess.run([str(binary), str(full), "full_space"], check=True)
     subprocess.run([str(binary), str(full), "reject_web"], check=True)
@@ -269,4 +310,4 @@ with tempfile.TemporaryDirectory(prefix="katmed-import-test-") as temporary:
     subprocess.run([str(binary), str(raw_v10), "reject"], check=True)
     for path in invalid_history:
         subprocess.run([str(binary), str(path), "reject"], check=True)
-print("synthetic product import: 63 cases plus real LittleFS remount passed")
+print("synthetic product import: 65 cases plus real LittleFS remount passed")

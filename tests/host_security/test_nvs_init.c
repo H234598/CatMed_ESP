@@ -20,7 +20,8 @@ uint32_t esp_rom_crc32_le(uint32_t crc, const uint8_t *data, uint32_t length)
 /* After the bootloader encrypts an empty key sector, raw flash is ciphertext
  * while esp_partition_read decrypts it back to erased (0xff) bytes. */
 static uint8_t key_bytes[0x1000], key_raw_bytes[0x1000];
-static uint8_t nvs_bytes[0x6000], image_bytes[0x90000], guard_bytes[0x1000];
+static uint8_t nvs_bytes[0x7000], image_bytes[0x90000], guard_bytes[0x1000];
+static uint8_t phy_bytes[0x1000];
 static esp_partition_t keys = {ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_NVS_KEYS,
     0x18000, sizeof(key_bytes), "nvs_keys", true, false, key_bytes};
 static esp_partition_t data = {ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_NVS,
@@ -29,6 +30,8 @@ static esp_partition_t images = {ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_
     0x230000, sizeof(image_bytes), "user_images", true, false, image_bytes};
 static esp_partition_t guard = {ESP_PARTITION_TYPE_DATA, 0x40,
     0x19000, sizeof(guard_bytes), "nvs_guard", false, false, guard_bytes};
+static esp_partition_t phy = {ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_PHY,
+    0x1a000, sizeof(phy_bytes), "phy_init", false, false, phy_bytes};
 static bool enabled = true;
 static bool missing_keys;
 static esp_err_t read_result = ESP_ERR_NVS_KEYS_NOT_INITIALIZED;
@@ -47,6 +50,7 @@ const esp_partition_t *esp_partition_find_first(int type, int subtype, const cha
     if (strcmp(label, "nvs") == 0) return &data;
     if (strcmp(label, "user_images") == 0) return &images;
     if (strcmp(label, "nvs_guard") == 0) return &guard;
+    if (strcmp(label, "phy_init") == 0) return &phy;
     assert(0);
     return NULL;
 }
@@ -137,7 +141,7 @@ int main(int argc, char **argv)
     assert(katmed_nvs_init() == ESP_ERR_INVALID_STATE);
     images.encrypted = true;
     /* Every critical field is checked before key generation or NVS mount. */
-    esp_partition_t *parts[] = {&data, &keys, &images, &guard};
+    esp_partition_t *parts[] = {&data, &keys, &images, &guard, &phy};
     for (size_t i = 0; i < sizeof(parts) / sizeof(parts[0]); ++i) {
         esp_partition_t *p = parts[i];
         uint32_t address = p->address;
@@ -171,9 +175,9 @@ int main(int argc, char **argv)
     guard_bytes[0] = 0;
     assert(katmed_nvs_init() == ESP_ERR_INVALID_STATE && initialized == 0);
     guard_bytes[0] = 0xff;
-    nvs_bytes[0x5fff] = 0;
+    nvs_bytes[sizeof(nvs_bytes) - 1] = 0;
     assert(katmed_nvs_init() == ESP_ERR_INVALID_STATE && generated == 0);
-    nvs_bytes[0x5fff] = 0xff;
+    nvs_bytes[sizeof(nvs_bytes) - 1] = 0xff;
     key_bytes[0xfff] = 0;
     assert(katmed_nvs_init() == ESP_ERR_INVALID_STATE && generated == 0);
     key_bytes[0xfff] = 0xff;

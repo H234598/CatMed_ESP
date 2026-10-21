@@ -114,14 +114,18 @@ esp_err_t katmed_nvs_init(void)
     const esp_partition_t *user_images = esp_partition_find_first(
         ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_ANY,
         KATMED_USER_IMAGE_PARTITION_LABEL);
+    const esp_partition_t *phy = esp_partition_find_first(
+        ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_ANY, "phy_init");
     const esp_partition_t *guard = esp_partition_find_first(
         ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_ANY, "nvs_guard");
     if (!layout_matches(data, "nvs", ESP_PARTITION_SUBTYPE_DATA_NVS,
-                        0x11000, 0x6000, false) ||
+                        0x11000, 0x7000, false) ||
         !layout_matches(keys, "nvs_keys", ESP_PARTITION_SUBTYPE_DATA_NVS_KEYS,
                         0x18000, 0x1000, true) ||
         !layout_matches(guard, "nvs_guard", 0x40,
                         0x19000, 0x1000, false) ||
+        !layout_matches(phy, "phy_init", ESP_PARTITION_SUBTYPE_DATA_PHY,
+                        0x1a000, 0x1000, false) ||
         !layout_matches(user_images, KATMED_USER_IMAGE_PARTITION_LABEL,
                         ESP_PARTITION_SUBTYPE_DATA_LITTLEFS,
                         0x230000, 0x90000, true))
