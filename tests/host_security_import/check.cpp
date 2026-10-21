@@ -5,12 +5,14 @@
 #include <fstream>
 #include <iterator>
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 #include <zlib.h>
 
 struct Memory {
     std::map<std::string, std::vector<uint8_t>> values;
+    std::set<std::string> u8_keys;
     std::vector<uint8_t> capsule;
     bool fail_live_once = false;
     bool fail_history_once = false;
@@ -55,6 +57,7 @@ static KatmedImportRead read_blob(void *context, const char *ns, const char *key
     }
     auto it = m.values.find(id(ns, key));
     if (it == m.values.end()) return KATMED_IMPORT_READ_ABSENT;
+    if (m.u8_keys.count(id(ns, key))) return KATMED_IMPORT_READ_ERROR;
     if (out && *n < it->second.size()) return KATMED_IMPORT_READ_ERROR;
     if (out) std::memcpy(out, it->second.data(), it->second.size());
     *n = it->second.size();
@@ -78,6 +81,28 @@ static bool write_blob(void *context, const char *ns, const char *key,
     }
     ++m.writes;
     m.values[id(ns, key)] = std::vector<uint8_t>(data, data + n);
+    return true;
+}
+static KatmedImportRead read_u8(void *context, const char *ns, const char *key,
+                                uint8_t *out) {
+    auto &m = *static_cast<Memory *>(context);
+    auto it = m.values.find(id(ns, key));
+    if (it == m.values.end()) return KATMED_IMPORT_READ_ABSENT;
+    if (!m.u8_keys.count(id(ns, key)) || it->second.size() != 1)
+        return KATMED_IMPORT_READ_ERROR;
+    *out = it->second[0];
+    return KATMED_IMPORT_READ_OK;
+}
+static bool write_u8(void *context, const char *ns, const char *key,
+                     uint8_t value) {
+    auto &m = *static_cast<Memory *>(context);
+    if (m.fail_write_key_once == id(ns, key)) {
+        m.fail_write_key_once.clear();
+        return false;
+    }
+    ++m.writes;
+    m.u8_keys.insert(id(ns, key));
+    m.values[id(ns, key)] = {value};
     return true;
 }
 static bool erase_blob(void *context, const char *ns, const char *key) {
@@ -164,7 +189,8 @@ static bool file_abort(void *context, unsigned, const KatmedImportFile *f) {
     return true;
 }
 static KatmedImportBackend backend(Memory &m) {
-    return {&m, read_blob, write_blob, erase_blob, target_empty, available_entries,
+    return {&m, read_blob, write_blob, read_u8, write_u8,
+            erase_blob, target_empty, available_entries,
             validate_web, files_empty, file_stage, file_publish, file_final,
             file_abort};
 }
@@ -238,6 +264,62 @@ int main(int argc, char **argv) {
             m.values.count("katmed_web/auth") == 0 &&
             m.values.count("katmed_reset/journal") == 0 &&
             m.values.count("katmed_imp/journal") == 0;
+    } else if (mode == "bridge") {
+        ok = katmed_import_apply(&in, &b) &&
+            m.values.at("netif_ip_info/WIFI_AP_DEF").size() == 12 &&
+            m.values.at("netif_ip_info/WIFI_STA_DEF").size() == 12 &&
+            m.u8_keys.count("netif_ip_info/WIFI_AP__check") == 1 &&
+            m.u8_keys.count("netif_ip_info/WIFI_STA_check") == 1 &&
+            m.values.at("netif_ip_info/WIFI_AP__check")[0] == 1 &&
+            m.values.at("netif_ip_info/WIFI_STA_check")[0] == 0 &&
+            katmed_import_resume(&b, 1);
+    } else if (mode == "bridge_replay") {
+        m.fail_write_key_once = "netif_ip_info/WIFI_AP__check";
+        ok = !katmed_import_apply(&in, &b) &&
+            m.values.count("katmed_imp/journal") == 1 &&
+            m.values.count("netif_ip_info/WIFI_AP_DEF") == 1 &&
+            m.values.count("netif_ip_info/WIFI_AP__check") == 0;
+        const unsigned writes = m.writes, erases = m.erases;
+        ok = ok && !katmed_import_resume(&b, 2) &&
+            m.writes == writes && m.erases == erases;
+        m.values["netif_ip_info/WIFI_AP__check"] = {1}; // Wrong NVS type: blob.
+        ok = ok && !katmed_import_resume(&b, 1) &&
+            m.writes == writes && m.erases == erases &&
+            m.values.count("katmed_imp/journal") == 1;
+        m.values.erase("netif_ip_info/WIFI_AP__check");
+        ok = ok &&
+            katmed_import_resume(&b, 1) &&
+            m.u8_keys.count("netif_ip_info/WIFI_AP__check") == 1 &&
+            m.values.count("katmed_imp/journal") == 0;
+    } else if (mode == "bridge_orphan") {
+        ok = katmed_import_apply(&in, &b) &&
+            m.values.count("netif_ip_info/WIFI_AP_DEF") == 0 &&
+            m.u8_keys.count("netif_ip_info/WIFI_AP__check") == 1;
+    } else if (mode == "bridge_abort") {
+        m.fail_journal_once = true;
+        m.fail_erase_once = true;
+        ok = !katmed_import_apply(&in, &b) &&
+            m.values.count("katmed_imp/stage") == 1 &&
+            m.values.count("katmed_imp/journal") == 0 &&
+            m.u8_keys.empty();
+        const unsigned writes = m.writes, erases = m.erases;
+        ok = ok && !katmed_import_abort(&b, 2) &&
+            m.writes == writes && m.erases == erases &&
+            m.values.count("katmed_imp/stage") == 1 &&
+            katmed_import_abort(&b, 1) &&
+            m.values.count("katmed_imp/stage") == 0 &&
+            katmed_import_resume(&b, 1);
+    } else if (mode == "bridge_capacity") {
+        // Full v11 State, Mesh history and four typed Bridge entries.
+        m.available_entries = 439;
+        ok = !katmed_import_apply(&in, &b) &&
+            m.writes == 0 && m.erases == 0 && m.values.empty();
+        m.available_entries = 440;
+        ok = ok && katmed_import_apply(&in, &b) &&
+            m.values.count("netif_ip_info/WIFI_AP_DEF") == 1 &&
+            m.values.count("netif_ip_info/WIFI_STA_DEF") == 1 &&
+            m.u8_keys.count("netif_ip_info/WIFI_AP__check") == 1 &&
+            m.u8_keys.count("netif_ip_info/WIFI_STA_check") == 1;
     } else if (mode == "mixed_success") {
         ok = katmed_import_apply(&in, &b) &&
             m.final_files.size() == 2 &&

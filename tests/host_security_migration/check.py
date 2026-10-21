@@ -134,6 +134,42 @@ class MigrationContract(unittest.TestCase):
         self.assertEqual(json.loads((self.package / "manifest.json").read_text())["format"],
                          "katmed-semantic-v1")
 
+    def test_bridge_ip_and_u8_roundtrip_with_maximal_store(self):
+        values = {
+            "WIFI_AP_DEF": bytes(range(12)), "WIFI_AP__check": b"\x01",
+            "WIFI_STA_DEF": bytes(range(12, 24)), "WIFI_STA_check": b"\x00",
+        }
+        inventory = json.loads((self.source / "source-inventory.json").read_text())
+        for key, value in values.items():
+            path = f"nvs/netif_ip_info/{key}"
+            put(self.source / path, value)
+            inventory["nvs"].append(path)
+        inventory["nvs"].sort()
+        put(self.source / "source-inventory.json", json.dumps(inventory).encode())
+        self.assertEqual(self.run_tool("export", self.source, self.package).returncode, 0)
+        self.assertEqual(self.run_tool("import-stage", self.package, self.staged).returncode, 0)
+        for key, value in values.items():
+            self.assertEqual((self.staged / f"nvs/netif_ip_info/{key}").read_bytes(), value)
+        self.assertEqual(len(self.state), 4065)
+        self.assertEqual(len(self.history), 2152)
+        self.assertEqual(struct.unpack_from("<H", (self.staged / "firmware-import-v1.bin").read_bytes(), 8)[0], 11)
+
+    def test_bridge_orphan_check_and_invalid_records(self):
+        path = "nvs/netif_ip_info/WIFI_AP__check"
+        inventory = json.loads((self.source / "source-inventory.json").read_text())
+        inventory["nvs"].append(path)
+        inventory["nvs"].sort()
+        put(self.source / "source-inventory.json", json.dumps(inventory).encode())
+        put(self.source / path, b"\x00")
+        self.assertEqual(self.run_tool("export", self.source, self.package).returncode, 0)
+        self.assertEqual(self.run_tool("import-stage", self.package, self.staged).returncode, 0)
+        for value in (b"", b"\x02", b"\x00\x00"):
+            with self.subTest(value=value):
+                put(self.source / path, value)
+                candidate = self.root / f"bad-bridge-{len(value)}-{value.hex()}"
+                self.assertNotEqual(self.run_tool("export", self.source, candidate).returncode, 0)
+                self.assertFalse(candidate.exists())
+
     def test_legacy_v10_migrates_to_v11_english_without_losing_state(self):
         length = struct.unpack_from("<I", self.v10_fixture)[0]
         old_state = self.v10_fixture[4:4 + length]

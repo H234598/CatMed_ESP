@@ -56,8 +56,8 @@ typedef struct {
 } FileIdentity;
 static FileIdentity file_ids[MAX_FILES];
 static size_t file_id_count;
-static uint8_t nvs_digests[5][32];
-static size_t nvs_lengths[5];
+static uint8_t nvs_digests[9][32];
+static size_t nvs_lengths[9];
 #ifdef KATMED_SOURCE_EXPORT_HOST_TEST
 void (*katmed_source_test_before_admission)(void);
 #endif
@@ -162,11 +162,17 @@ bool katmed_source_snapshot_boot(const KatmedSourceExportSink *sink,
     return ok;
 }
 
-typedef struct { const char *name; const char *key; } Key;
+typedef struct { const char *name; const char *key; nvs_type_t type; } Key;
 static const Key keys[] = {
-    {"katmed", "state"}, {"katmed", "mesh_history"},
-    {"katmed_web", "auth"}, {"katmed_web", "identity"},
-    {"katmed_reset", "journal"}
+    {"katmed", "state", NVS_TYPE_BLOB},
+    {"katmed", "mesh_history", NVS_TYPE_BLOB},
+    {"katmed_web", "auth", NVS_TYPE_BLOB},
+    {"katmed_web", "identity", NVS_TYPE_BLOB},
+    {"katmed_reset", "journal", NVS_TYPE_BLOB},
+    {"netif_ip_info", "WIFI_AP_DEF", NVS_TYPE_BLOB},
+    {"netif_ip_info", "WIFI_AP__check", NVS_TYPE_U8},
+    {"netif_ip_info", "WIFI_STA_DEF", NVS_TYPE_BLOB},
+    {"netif_ip_info", "WIFI_STA_check", NVS_TYPE_U8}
 };
 static const char *const acme_names[] = {
     "account.json", "directory.json", "account.pem", "order.json",
@@ -271,16 +277,16 @@ static bool acme_name(const char *s)
 
 static int key_index(const nvs_entry_info_t *info)
 {
-    if (info->type != NVS_TYPE_BLOB) return -1;
     for (unsigned i = 0; i < sizeof(keys) / sizeof(keys[0]); ++i)
         if (strcmp(info->namespace_name, keys[i].name) == 0 &&
-            strcmp(info->key, keys[i].key) == 0) return (int)i;
+            strcmp(info->key, keys[i].key) == 0 &&
+            info->type == keys[i].type) return (int)i;
     return -1;
 }
 
 /* Enumerate the whole default partition, including SDK and historical keys.
  * Unknown entries are a hard error: no implicit semantic omission. */
-static bool scan_nvs(const KatmedSourceExportSink *sink, uint8_t *mask)
+static bool scan_nvs(const KatmedSourceExportSink *sink, uint16_t *mask)
 {
     nvs_iterator_t it = NULL;
     esp_err_t err = nvs_entry_find("nvs", NULL, NVS_TYPE_ANY, &it);
@@ -297,7 +303,7 @@ static bool scan_nvs(const KatmedSourceExportSink *sink, uint8_t *mask)
             nvs_release_iterator(it);
             return false;
         }
-        *mask |= (uint8_t)(1u << index);
+        *mask |= (uint16_t)(1u << index);
         err = nvs_entry_next(&it);
     }
     nvs_release_iterator(it);
@@ -410,22 +416,30 @@ static bool read_nvs(const KatmedSourceExportSink *sink, const Key *key,
     nvs_handle_t handle;
     esp_err_t err = nvs_open(key->name, NVS_READONLY, &handle);
     if (err != ESP_OK) return false;
-    *length = 0;
-    err = nvs_get_blob(handle, key->key, NULL, length);
-    if (err != ESP_OK || *length == 0 || *length > MAX_NVS_BLOB) {
-        nvs_close(handle);
-        return false;
+    if (key->type == NVS_TYPE_U8) {
+        *length = 1;
+        err = nvs_get_u8(handle, key->key, buffer);
+    } else {
+        *length = 0;
+        err = nvs_get_blob(handle, key->key, NULL, length);
+        if (err != ESP_OK || *length == 0 || *length > MAX_NVS_BLOB) {
+            nvs_close(handle);
+            return false;
+        }
+        size_t actual = *length;
+        err = nvs_get_blob(handle, key->key, buffer, &actual);
+        if (actual != *length) err = ESP_FAIL;
     }
-    size_t actual = *length;
-    err = nvs_get_blob(handle, key->key, buffer, &actual);
     nvs_close(handle);
-    if (err != ESP_OK || actual != *length) return false;
+    if (err != ESP_OK) return false;
+    if (strcmp(key->name, "netif_ip_info") == 0)
+        return key->type == NVS_TYPE_U8 ? buffer[0] <= 1 : *length == 12;
     if (strcmp(key->name, "katmed_reset") == 0 &&
         (*length != 2 || buffer[0] != 0 || buffer[1] > 5)) return false;
     return true;
 }
 
-static bool bind_nvs(const KatmedSourceExportSink *sink, uint8_t mask,
+static bool bind_nvs(const KatmedSourceExportSink *sink, uint16_t mask,
                      uint8_t buffer[MAX_NVS_BLOB], bool verify)
 {
     for (unsigned i = 0; i < sizeof(keys) / sizeof(keys[0]); ++i) {
@@ -566,7 +580,7 @@ bool katmed_source_export(const KatmedSourceExportSink *sink)
         return false;
     }
     size_t content = 0;
-    uint8_t mask = 0;
+    uint16_t mask = 0;
     bool acme_present = false;
     file_id_count = 0;
     bool ok = checkpoint(sink) && scan_nvs(sink, &mask);
@@ -578,7 +592,7 @@ bool katmed_source_export(const KatmedSourceExportSink *sink)
     if (ok) {
         uint8_t buffer[MAX_NVS_BLOB];
         ok = bind_nvs(sink, mask, buffer, false);
-        uint8_t checked_mask = 0;
+        uint16_t checked_mask = 0;
         size_t checked_count = nvs_count, checked_content = 0;
         bool checked_acme = false;
         if (ok) ok = scan_nvs(sink, &checked_mask) && checked_mask == mask &&

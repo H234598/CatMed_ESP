@@ -33,6 +33,7 @@ with tempfile.TemporaryDirectory(prefix="katmed-export-") as base:
         subprocess.run([str(codec), "synthetic-fixture"], check=True, stdout=stream)
     logical = Path(base) / "logical"
     for name in ("nvs/katmed", "nvs/katmed_web", "nvs/katmed_reset",
+                 "nvs/netif_ip_info",
                  "littlefs/user-images", "littlefs/acme"):
         (logical / name).mkdir(parents=True, exist_ok=True, mode=0o700)
     subprocess.run([
@@ -49,6 +50,14 @@ with tempfile.TemporaryDirectory(prefix="katmed-export-") as base:
     assert before == after
     for path, data in before.items():
         assert (logical / "littlefs" / path).read_bytes() == data
+    bridge = {
+        "WIFI_AP_DEF": bytes((192, 168, 4, 1, 255, 255, 255, 0, 192, 168, 4, 1)),
+        "WIFI_AP__check": b"\x01",
+        "WIFI_STA_DEF": bytes((192, 168, 4, 1, 255, 255, 255, 0, 192, 168, 4, 1)),
+        "WIFI_STA_check": b"\x01",
+    }
+    for key, value in bridge.items():
+        assert (logical / "nvs/netif_ip_info" / key).read_bytes() == value
     paths = sorted(p.relative_to(logical).as_posix() for p in logical.rglob("*") if p.is_file())
     (logical / "source-inventory.json").write_text(json.dumps({
         "nvs": [p for p in paths if p.startswith("nvs/")],
@@ -59,4 +68,6 @@ with tempfile.TemporaryDirectory(prefix="katmed-export-") as base:
                     "--source", str(logical), "--output", str(package)], check=True,
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     assert (package / "manifest.json").is_file()
+    for key, value in bridge.items():
+        assert (package / "nvs/netif_ip_info" / key).read_bytes() == value
 print("source adapter to host package: read-only contract passed")

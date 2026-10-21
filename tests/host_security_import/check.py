@@ -99,6 +99,18 @@ with tempfile.TemporaryDirectory(prefix="katmed-import-test-") as temporary:
         "nvs/katmed/state": state,
         "nvs/katmed_web/identity": identity,
     }, codec)
+    bridge = staged_capsule(root, "bridge", {
+        "nvs/katmed/state": state,
+        "nvs/katmed/mesh_history": fixture[8 + length:],
+        "nvs/netif_ip_info/WIFI_AP_DEF": bytes(range(12)),
+        "nvs/netif_ip_info/WIFI_AP__check": b"\x01",
+        "nvs/netif_ip_info/WIFI_STA_DEF": bytes(range(12, 24)),
+        "nvs/netif_ip_info/WIFI_STA_check": b"\x00",
+    }, codec)
+    bridge_orphan = staged_capsule(root, "bridge-orphan", {
+        "nvs/katmed/state": state,
+        "nvs/netif_ip_info/WIFI_AP__check": b"\x00",
+    }, codec)
     def synthetic_jpeg(color):
         stream = BytesIO()
         Image.new("RGB", (8, 8), color).save(stream, format="JPEG", progressive=False)
@@ -190,6 +202,12 @@ with tempfile.TemporaryDirectory(prefix="katmed-import-test-") as temporary:
                         "nvs/katmed_web/identity": identity}),
         ("pending-reset", {"nvs/katmed/state": state,
                             "nvs/katmed_reset/journal": b"\1\1"}),
+        ("bad-bridge-size", {"nvs/katmed/state": state,
+                             "nvs/netif_ip_info/WIFI_AP_DEF": b"short"}),
+        ("bad-bridge-u8", {"nvs/katmed/state": state,
+                           "nvs/netif_ip_info/WIFI_AP__check": b"\2"}),
+        ("bad-bridge-name", {"nvs/katmed/state": state,
+                             "nvs/netif_ip_info/WIFI_AP_OLD": bytes(range(12))}),
     ):
         path = root / f"invalid-{label}.bin"
         path.write_bytes(migration.firmware_capsule(replacement))
@@ -252,6 +270,10 @@ with tempfile.TemporaryDirectory(prefix="katmed-import-test-") as temporary:
         subprocess.run([str(binary), str(with_history), mode], check=True)
     subprocess.run([str(binary), str(full), "full_nvs"], check=True)
     subprocess.run([str(binary), str(identity_only), "identity_only"], check=True)
+    for mode in ("bridge", "bridge_replay", "bridge_capacity"):
+        subprocess.run([str(binary), str(bridge), mode], check=True)
+    subprocess.run([str(binary), str(bridge_orphan), "bridge_orphan"], check=True)
+    subprocess.run([str(binary), str(bridge), "bridge_abort"], check=True)
     for mode in ("files_success", "files_replay", "files_missing",
                  "files_stage_error", "files_no_space", "files_zero_space",
                  "files_occupied", "files_orphan_guard",

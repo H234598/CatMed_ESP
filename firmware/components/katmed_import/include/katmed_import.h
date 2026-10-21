@@ -47,6 +47,10 @@ typedef struct {
                              uint8_t *, size_t *);
     bool (*write)(void *, const char *ns, const char *key,
                   const uint8_t *, size_t);
+    /* Bridge conflict flags are NVS U8 entries, never one-byte blobs. */
+    KatmedImportRead (*read_u8)(void *, const char *ns, const char *key,
+                                uint8_t *out);
+    bool (*write_u8)(void *, const char *ns, const char *key, uint8_t value);
     bool (*erase)(void *, const char *ns, const char *key);
     /* Enumerate the entire target NVS, including unknown SDK/application keys. */
     bool (*target_empty)(void *);

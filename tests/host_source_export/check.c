@@ -18,12 +18,19 @@ static const unsigned char auth[] = { 'K', 'W', 'A', '1' };
 static const unsigned char identity[] = { 'K', 'W', 'I', '1' };
 static const unsigned char journal[] = { 0, 0 };
 static const unsigned char bad_journal[] = { 1, 2 };
+static const unsigned char bridge_ip[12] = { 192, 168, 4, 1, 255, 255, 255, 0, 192, 168, 4, 1 };
+static const unsigned char bridge_check[] = { 1 };
+static const unsigned char bad_bridge_check[] = { 2 };
 static Entry entries[] = {
     { "katmed", "state", state, sizeof(state), NVS_TYPE_BLOB },
     { "katmed", "mesh_history", history, sizeof(history), NVS_TYPE_BLOB },
     { "katmed_web", "auth", auth, sizeof(auth), NVS_TYPE_BLOB },
     { "katmed_web", "identity", identity, sizeof(identity), NVS_TYPE_BLOB },
-    { "katmed_reset", "journal", journal, sizeof(journal), NVS_TYPE_BLOB }
+    { "katmed_reset", "journal", journal, sizeof(journal), NVS_TYPE_BLOB },
+    { "netif_ip_info", "WIFI_AP_DEF", bridge_ip, sizeof(bridge_ip), NVS_TYPE_BLOB },
+    { "netif_ip_info", "WIFI_AP__check", bridge_check, 1, NVS_TYPE_U8 },
+    { "netif_ip_info", "WIFI_STA_DEF", bridge_ip, sizeof(bridge_ip), NVS_TYPE_BLOB },
+    { "netif_ip_info", "WIFI_STA_check", bridge_check, 1, NVS_TYPE_U8 }
 };
 static unsigned entry_count = 5;
 struct MockIterator { unsigned index; };
@@ -64,8 +71,21 @@ esp_err_t nvs_get_blob(nvs_handle_t handle, const char *key, void *dst, size_t *
     const char *ns = entries[handle - 1].ns;
     for (unsigned i = 0; i < entry_count; ++i)
         if (strcmp(ns, entries[i].ns) == 0 && strcmp(key, entries[i].key) == 0) {
+            if (entries[i].type != NVS_TYPE_BLOB) return ESP_ERR_INVALID_ARG;
             if (dst) { assert(*length >= entries[i].size); memcpy(dst, entries[i].data, entries[i].size); }
             *length = entries[i].size;
+            return ESP_OK;
+        }
+    return ESP_ERR_NVS_NOT_FOUND;
+}
+esp_err_t nvs_get_u8(nvs_handle_t handle, const char *key, uint8_t *out)
+{
+    const char *ns = entries[handle - 1].ns;
+    for (unsigned i = 0; i < entry_count; ++i)
+        if (strcmp(ns, entries[i].ns) == 0 && strcmp(key, entries[i].key) == 0) {
+            if (entries[i].type != NVS_TYPE_U8 || entries[i].size != 1)
+                return ESP_ERR_INVALID_ARG;
+            *out = entries[i].data[0];
             return ESP_OK;
         }
     return ESP_ERR_NVS_NOT_FOUND;
@@ -279,6 +299,26 @@ int main(int argc, char **argv)
     assert(r.files == 0);
     entries[4].ns = "katmed_reset";
     entries[4].key = "journal";
+    entry_count = 9;
+    r = run(true);
+    assert(r.files == 11 && strcmp(r.paths[5], "nvs/netif_ip_info/WIFI_AP_DEF") == 0 &&
+           strcmp(r.paths[8], "nvs/netif_ip_info/WIFI_STA_check") == 0);
+    entry_count = 6; /* A check may outlive the erased IP blob. */
+    entries[5] = entries[6];
+    r = run(true);
+    assert(r.files == 8);
+    entries[5] = (Entry){"netif_ip_info", "WIFI_AP_DEF", bridge_ip, 12, NVS_TYPE_BLOB};
+    entry_count = 9;
+    entries[6].data = bad_bridge_check;
+    run(false);
+    entries[6].data = bridge_check;
+    entries[5].size = 11;
+    run(false);
+    entries[5].size = 12;
+    entries[8].type = NVS_TYPE_BLOB;
+    run(false);
+    entries[8].type = NVS_TYPE_U8;
+    entry_count = 5;
     entries[0].key = "missing";
     r = run(false);
     assert(r.files == 0);
@@ -429,10 +469,11 @@ int main(int argc, char **argv)
     identity_valid[0] = '1'; identity_valid[1] = 'I'; identity_valid[2] = 'W'; identity_valid[3] = 'K';
     identity_valid[4] = 32; identity_valid[6] = 4;
     entries[3].data = identity_valid; entries[3].size = sizeof(identity_valid);
+    entry_count = 9;
     Result emitted = { .output = argv[2] };
     sink.context = &emitted;
     assert(katmed_source_export(&sink));
-    assert(emitted.finished && emitted.success && emitted.files == 7);
+    assert(emitted.finished && emitted.success && emitted.files == 11);
 
     /* Full read-only source inventory: 127 files and exactly 248 KiB of
      * synthetic content remain intact; one more path fails before emission. */

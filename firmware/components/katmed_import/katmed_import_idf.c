@@ -49,6 +49,33 @@ static bool write_blob(void *context, const char *ns, const char *key,
     return err == ESP_OK;
 }
 
+static KatmedImportRead read_u8(void *context, const char *ns, const char *key,
+                                 uint8_t *out)
+{
+    (void)context;
+    if (!ns || !key || !out) return KATMED_IMPORT_READ_ERROR;
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(ns, NVS_READONLY, &handle);
+    if (err == ESP_ERR_NVS_NOT_FOUND) return KATMED_IMPORT_READ_ABSENT;
+    if (err != ESP_OK) return KATMED_IMPORT_READ_ERROR;
+    err = nvs_get_u8(handle, key, out);
+    nvs_close(handle);
+    if (err == ESP_ERR_NVS_NOT_FOUND) return KATMED_IMPORT_READ_ABSENT;
+    return err == ESP_OK ? KATMED_IMPORT_READ_OK : KATMED_IMPORT_READ_ERROR;
+}
+
+static bool write_u8(void *context, const char *ns, const char *key,
+                     uint8_t value)
+{
+    (void)context;
+    nvs_handle_t handle;
+    if (nvs_open(ns, NVS_READWRITE, &handle) != ESP_OK) return false;
+    esp_err_t err = nvs_set_u8(handle, key, value);
+    if (err == ESP_OK) err = nvs_commit(handle);
+    nvs_close(handle);
+    return err == ESP_OK;
+}
+
 static bool erase_blob(void *context, const char *ns, const char *key)
 {
     (void)context;
@@ -93,6 +120,7 @@ static KatmedImportBackend backend(void)
 {
     KatmedImportBackend b = {
         .context = NULL, .read = read_blob, .write = write_blob,
+        .read_u8 = read_u8, .write_u8 = write_u8,
         .erase = erase_blob, .target_empty = target_empty,
         .available_entries = available_entries, .validate_web = validate_web,
         .files_empty = katmed_import_files_empty,

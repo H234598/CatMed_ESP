@@ -19,7 +19,11 @@ STATIC = {
     "nvs/katmed/state", "nvs/katmed/mesh_history",
     "nvs/katmed_web/auth", "nvs/katmed_web/identity",
     "nvs/katmed_reset/journal",
+    "nvs/netif_ip_info/WIFI_AP_DEF", "nvs/netif_ip_info/WIFI_AP__check",
+    "nvs/netif_ip_info/WIFI_STA_DEF", "nvs/netif_ip_info/WIFI_STA_check",
 }
+BRIDGE_IP = ("WIFI_AP_DEF", "WIFI_STA_DEF")
+BRIDGE_CHECK = ("WIFI_AP__check", "WIFI_STA_check")
 # The pinned ACME client can persist ARI state in renewal.json. Unknown and
 # interrupted atomic temporary paths fail inventory() rather than disappearing.
 ACME = {"account.json", "directory.json", "account.pem", "order.json",
@@ -32,6 +36,7 @@ MAX_STAGE_BYTES = MAX_CONTENT + 16384  # bounded NVS inventory alongside all ima
 MAX_CAPSULE_BYTES = 0x50000
 MESH_HISTORY_SIZES = (2080, 2152)  # MESH_HISTORY_LEGACY_BLOB, MESH_HISTORY_BLOB
 DIRECTORIES = {"nvs", "nvs/katmed", "nvs/katmed_web", "nvs/katmed_reset",
+               "nvs/netif_ip_info",
                "littlefs", "littlefs/user-images", "littlefs/acme"}
 
 
@@ -149,6 +154,17 @@ def validated_state(files, bridge):
 
 
 def validate_other(files):
+    # The pinned bridge stores esp_netif_ip_info_t as three IPv4 uint32_t
+    # fields and conflict_check with nvs_set_u8. An orphan check byte is
+    # possible because the bridge erases only the IP blob.
+    for key in BRIDGE_IP:
+        value = files.get(f"nvs/netif_ip_info/{key}")
+        if value is not None and len(value) != 12:
+            raise Invalid()
+    for key in BRIDGE_CHECK:
+        value = files.get(f"nvs/netif_ip_info/{key}")
+        if value is not None and value not in (b"\x00", b"\x01"):
+            raise Invalid()
     if any(len(value) == 0 for name, value in files.items()
            if name.startswith("littlefs/acme/")):
         raise Invalid()
