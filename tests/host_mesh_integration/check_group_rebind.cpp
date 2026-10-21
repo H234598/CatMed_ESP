@@ -54,6 +54,11 @@ static ClockSample sample(uint64_t domain,uint64_t ms) {
     return ClockSample{ms,domain,0,false,CLOCK_UNAVAILABLE};
 }
 static void downgrade_to_v5(Backend &backend, unsigned wifi_profile_count) {
+    /* v11 appends the local language. Remove it before the unchanged
+     * historical v10 -> v5 fixture construction. */
+    assert(backend.bytes[4]==11 && backend.length>12);
+    --backend.length;
+    backend.bytes[4]=10;
     constexpr size_t v7_manual_suffix=77;
     constexpr size_t v9_mesh_name_suffix=1+17+2+1+KATMED_MESH_NAME_MAX_ENTRIES*10+4;
     assert(backend.length>99 && backend.bytes[4]==10);
@@ -113,6 +118,45 @@ static bool same_clock(ClockSample a,ClockSample b) {
     return a.monotonic_ms==b.monotonic_ms && a.domain==b.domain &&
            a.utc_ms==b.utc_ms && a.utc_valid==b.utc_valid && a.quality==b.quality;
 }
+/* Reach a medication alarm through the same Core/Store events as the app.
+ * A boot notice must never create medication history or an offline confirm. */
+static void prepare_due_alarm(Store &store, AppState &active, ClockSample &now) {
+    assert(active.alarm_active && active.start_reason==START_BOOT);
+    AppEvent boot_confirm{};
+    boot_confirm.kind=EVENT_CONFIRM;
+    assert(store_next_event_id(&store,&boot_confirm.id)==STORE_OK);
+    boot_confirm.sender=store.record.device;
+    boot_confirm.round=active.round;
+    boot_confirm.parent_revision=active.revision;
+    boot_confirm.occurred_at=now;
+    const StoreRecord record_before=store.record;
+    const AppState state_before=active;
+    const unsigned writes_before=static_cast<Backend *>(store.backend.context)->commits;
+    AppEffects effects{}; AppResult core=APP_INVALID;
+    assert(store_apply_event(&store,&active,&boot_confirm,&now,true,&effects,&core)==STORE_STALE);
+    assert(core==APP_STALE && !store.uncertain &&
+           std::memcmp(&record_before,&store.record,sizeof(record_before))==0 &&
+           std::memcmp(&state_before,&active,sizeof(state_before))==0 &&
+           static_cast<Backend *>(store.backend.context)->commits==writes_before);
+    assert(app_dismiss_boot_alarm(&active,&now,&effects)==APP_OK);
+    assert(!effects.persistence_required && !effects.broadcast_required &&
+           !active.has_last_confirmation && !active.alarm_active);
+    AppEvent interval{};
+    interval.kind=EVENT_SET_MEDICATION_INTERVAL;
+    assert(store_next_event_id(&store,&interval.id)==STORE_OK);
+    interval.sender=interval.id.device;
+    interval.round=active.round; interval.parent_revision=active.revision;
+    interval.occurred_at=now; interval.coordinator_accepted=true;
+    interval.value.interval_seconds=1;
+    assert(store_apply_event(&store,&active,&interval,&now,false,&effects,&core)==STORE_OK);
+    assert(core==APP_OK && effects.persistence_required &&
+           active.start_reason==START_SETTINGS && !active.alarm_active &&
+           !store.record.last_confirmation.valid && store.record.pending_count==0);
+    now.monotonic_ms+=1000;
+    assert(app_tick(&active,&now,&effects)==APP_OK);
+    assert(active.alarm_active && active.start_reason==START_SETTINGS &&
+           !active.has_last_confirmation);
+}
 static void check_fresh_current_offline_first_provision() {
     constexpr uint64_t device=UINT64_C(0xABCDEF123456);
     Backend backend{};
@@ -120,7 +164,7 @@ static void check_fresh_current_offline_first_provision() {
     uint8_t catalog[KATMED_CATALOG_BYTES]={1,2,3};
     const StoreBackend io{&backend,read_record,write_record};
     assert(store_open(&store,io,device,catalog,75,&recovery)==STORE_OK);
-    assert(backend.bytes[4]==10 && backend.commits==1 && !recovery.configured &&
+    assert(backend.bytes[4]==11 && backend.commits==1 && !recovery.configured &&
            recovery.pending_count==0 && bound_to(store,0) &&
            store.record.group_origin==STORE_GROUP_ORIGIN_FRESH_UNBOUND);
 
@@ -128,6 +172,7 @@ static void check_fresh_current_offline_first_provision() {
     AppState active{};
     assert(app_init(&active,&recovery.shared,&now,recovery.boot_identity,75,catalog)==APP_OK);
     assert(active.alarm_active && active.start_reason==START_BOOT);
+    prepare_due_alarm(store,active,now);
     EventId original{};
     assert(store_next_event_id(&store,&original)==STORE_OK);
     now.monotonic_ms=2000;
@@ -142,7 +187,7 @@ static void check_fresh_current_offline_first_provision() {
 
     Store durable{}; StoreRecovery durable_recovery{};
     assert(store_open(&durable,io,device,catalog,75,&durable_recovery)==STORE_OK);
-    assert(backend.bytes[4]==10 && durable_recovery.pending_count==1 &&
+    assert(backend.bytes[4]==11 && durable_recovery.pending_count==1 &&
            durable_recovery.has_last_confirmation && bound_to(durable,0) &&
            durable.record.group_origin==STORE_GROUP_ORIGIN_FRESH_UNBOUND);
     const StorePendingConfirm pending=durable.record.pending[0];
@@ -213,7 +258,7 @@ static void check_fresh_current_offline_first_provision() {
            after_attempt.record.pending[0].id.epoch==original.epoch &&
            after_attempt.record.pending[0].id.sequence==original.sequence);
     std::fprintf(stderr,
-                 "fresh v10 offline first PROVISION: result=%d reply=%s"
+                 "fresh v11 offline first PROVISION: result=%d reply=%s"
                  "commits_before=%u commits_after=%u commits_after_reopen=%u "
                  "commits_during_provision=%u pending=%u id=%llx/%llu/%llu "
                  "bound_before=zero bound_after_zero=%d bound_after_requested=%d "
@@ -286,9 +331,10 @@ int main() {
     ClockSample now=sample(recovery.boot_identity.epoch,1000);
     AppState active{};
     assert(app_init(&active,&recovery.shared,&now,recovery.boot_identity,75,catalog)==APP_OK);
+    prepare_due_alarm(store,active,now);
     EventId id{};
     assert(store_next_event_id(&store,&id)==STORE_OK);
-    assert(id.sequence==1026);
+    assert(id.sequence==1028);
     now.monotonic_ms=2000;
     AppEvent confirm{};
     confirm.kind=EVENT_CONFIRM; confirm.id=id; confirm.sender=id.device;
@@ -367,7 +413,7 @@ int main() {
     assert(app_init(&active,&fresh.shared,&now,fresh.boot_identity,75,catalog)==APP_OK);
     assert(active.alarm_active && active.start_reason==START_BOOT);
 
-    /* All fixed-size fields are present here; the v10 mesh registry plus
+    /* All fixed-size fields are present here; the v11 mesh registry plus
      * bounded Wi-Fi profile header are included in the storage regression. */
     Backend maximal=backend;
     Store max_store{};StoreRecovery max_recovery{};
@@ -380,7 +426,7 @@ int main() {
     max_store.record.pending_count=KATMED_STORE_PENDING_MAX;
     EventId max_id{};
     assert(store_next_event_id(&max_store,&max_id)==STORE_OK);
-    assert(maximal.length<=KATMED_STORE_BLOB_MAX && maximal.length==2907);
+    assert(maximal.length<=KATMED_STORE_BLOB_MAX && maximal.length==2908);
     max_store.record.history.divergent=true;
     max_store.record.group_divergent=true;
     for(unsigned i=0;i<KATMED_STORE_CONFLICT_MAX;++i) {
@@ -390,12 +436,37 @@ int main() {
     }
     max_store.record.conflict_count=KATMED_STORE_CONFLICT_MAX;
     assert(store_next_event_id(&max_store,&max_id)==STORE_OK);
-    assert(maximal.length==3755 && maximal.length<KATMED_STORE_BLOB_MAX);
+    assert(maximal.length==3756 && maximal.length<KATMED_STORE_BLOB_MAX);
+    /* Fill the name registry and all four Wi-Fi rows through production
+     * APIs as well. Fixed-width registry slots were encoded even when empty. */
+    assert(store_mesh_name_assign(&max_store,device,1)==STORE_OK);
+    for(uint16_t index=2;index<=KATMED_MESH_NAME_MAX_ENTRIES;++index)
+        assert(store_mesh_name_assign(&max_store,device+index,index)==STORE_OK);
+    StoreWifiProfileUpdate profiles[KATMED_STORE_WIFI_PROFILE_MAX]{};
+    for(unsigned i=0;i<KATMED_STORE_WIFI_PROFILE_MAX;++i) {
+        profiles[i].priority=i+1;
+        profiles[i].ssid[0]='A'+i;profiles[i].ssid_length=1;
+        profiles[i].credential_action=STORE_WIFI_CREDENTIAL_OPEN;
+    }
+    assert(store_wifi_profiles_save_atomic(&max_store,profiles,
+                                          KATMED_STORE_WIFI_PROFILE_MAX)==STORE_OK);
+    assert(store_set_language(&max_store,KATMED_LANGUAGE_COUNT-1)==STORE_OK);
+    assert(maximal.length==4065 && maximal.length<KATMED_STORE_BLOB_MAX);
     Store full_restart{};StoreRecovery full_recovery{};
     assert(store_open(&full_restart,{&maximal,read_record,write_record},device,
                       catalog,75,&full_recovery)==STORE_OK);
     assert(full_restart.record.pending_count==8 && full_restart.record.conflict_count==8 &&
-           full_restart.record.history.divergent && full_restart.record.group_divergent);
+           full_restart.record.history.divergent && full_restart.record.group_divergent &&
+           full_restart.record.mesh_name_count==KATMED_MESH_NAME_MAX_ENTRIES &&
+           store_mesh_name_index(&full_restart)==1 &&
+           store_mesh_name_next_index(&full_restart)==65 &&
+           full_restart.record.wifi_profile_count==KATMED_STORE_WIFI_PROFILE_MAX &&
+           full_restart.record.language==KATMED_LANGUAGE_COUNT-1);
+    for(uint16_t index=1;index<=KATMED_MESH_NAME_MAX_ENTRIES;++index) {
+        assert(full_restart.record.mesh_names[index-1].index==index);
+        assert(full_restart.record.mesh_names[index-1].device==
+               (index==1?device:device+index));
+    }
     AppState full_active{};
     ClockSample full_now=sample(full_recovery.boot_identity.epoch,3000);
     assert(app_init(&full_active,&full_recovery.shared,&full_now,
@@ -415,6 +486,7 @@ int main() {
     AppState root{};
     assert(app_init(&root,&conflict_recovery.shared,&conflict_now,
                     conflict_recovery.boot_identity,75,catalog)==APP_OK);
+    prepare_due_alarm(conflict_store,root,conflict_now);
     const AlarmRoundId original_round=root.round;
     const StateRevision original_revision=root.revision;
     AppEvent winner{};
@@ -428,7 +500,7 @@ int main() {
     const AlarmRoundId next_round=root.round;
     const uint64_t deadline=root.deadline.effective_monotonic_ms;
     StorePendingConfirm loser{{100,5,2},100,original_round,original_revision,
-                              sample(conflict_now.domain,1500)};
+                              sample(conflict_now.domain,2200)};
     const unsigned before_conflict=conflict_backend.commits;
     assert(store_record_conflict(&conflict_store,&root,&loser,&conflict_now)==STORE_OK);
     assert(conflict_backend.commits==before_conflict+1 && root.divergent &&
@@ -438,12 +510,12 @@ int main() {
     uint8_t conflict_count=0;StorePendingConfirm read_conflict{};
     assert(store_conflict_count(&conflict_store,&conflict_count)==STORE_OK && conflict_count==1);
     assert(store_conflict_at(&conflict_store,0,&read_conflict)==STORE_OK &&
-           read_conflict.id.device==100 && read_conflict.occurred_at.monotonic_ms==1500);
+           read_conflict.id.device==100 && read_conflict.occurred_at.monotonic_ms==2200);
     assert(store_record_conflict(&conflict_store,&root,&loser,&conflict_now)==STORE_DUPLICATE &&
            conflict_backend.commits==before_conflict+1);
-    loser.occurred_at.monotonic_ms=1600;
+    loser.occurred_at.monotonic_ms=2300;
     assert(store_record_conflict(&conflict_store,&root,&loser,&conflict_now)==STORE_STALE);
-    loser.occurred_at.monotonic_ms=1500;
+    loser.occurred_at.monotonic_ms=2200;
     assert(store_mark_divergent(&conflict_store,&root)==STORE_DUPLICATE);
     conflict_backend.fail=true;
     loser.id.sequence=3;
@@ -542,7 +614,7 @@ int main() {
            empty_reply=="KM1 ERR CONFIG\n" && empty.commits==empty_writes);
     assert(provision(empty_reopened,0x33,0x77,"Same",&empty_reply)==STORE_OK);
     check_fresh_current_offline_first_provision();
-    std::printf("v10 pending-and-conflict-max encoded blob: %zu / %u bytes\n",
+    std::printf("v11 pending/conflict/name/Wi-Fi-max encoded blob: %zu / %u bytes\n",
                 maximal.length,KATMED_STORE_BLOB_MAX);
     std::puts("group rebind durability matrix passed");
 }
