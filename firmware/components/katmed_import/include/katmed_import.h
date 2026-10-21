@@ -72,8 +72,10 @@ bool katmed_import_apply(const KatmedImportInput *input,
  * ID before any live write or stage/journal erase. Mismatch holds startup. */
 bool katmed_import_resume(const KatmedImportBackend *backend,
                           uint64_t local_device);
-/* Only an uncommitted orphan stage may be explicitly aborted. */
-bool katmed_import_abort(const KatmedImportBackend *backend);
+/* Only a canonical uncommitted orphan bound to the locally read device ID
+ * may be aborted. A foreign or damaged stage remains for explicit recovery. */
+bool katmed_import_abort(const KatmedImportBackend *backend,
+                         uint64_t local_device);
 
 #ifdef ESP_PLATFORM
 bool katmed_import_apply_idf(const KatmedImportInput *input);

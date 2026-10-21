@@ -407,8 +407,10 @@ extern "C" bool katmed_import_resume(const KatmedImportBackend *b,
     return ok;
 }
 
-extern "C" bool katmed_import_abort(const KatmedImportBackend *b) {
-    if (!callbacks(b) || !absent(b, kImportNs, kJournal)) return false;
+extern "C" bool katmed_import_abort(const KatmedImportBackend *b,
+                                      uint64_t local_device) {
+    if (!callbacks(b) || !local_device ||
+        !absent(b, kImportNs, kJournal)) return false;
     for (const LiveKey &key : kLiveKeys)
         if (!absent(b, key.ns, key.key)) return false;
     uint8_t *stage = static_cast<uint8_t *>(std::malloc(kStageMax));
@@ -416,6 +418,7 @@ extern "C" bool katmed_import_abort(const KatmedImportBackend *b) {
     size_t n = 0;
     bool ok = read_blob(b, kImportNs, kStage, stage, kStageMax, &n);
     StageView view{};
+    if (ok) ok = valid_stage(stage, n, local_device, b);
     if (ok) ok = stage_view(stage, n, &view);
     if (ok && view.file_count) {
         if (!b->file_abort) ok = false;
@@ -607,10 +610,11 @@ extern "C" bool katmed_import_apply(const KatmedImportInput *in,
                               journal, sizeof(journal)) &&
                      katmed_import_resume(b, in->expected_device);
         if (check) { wipe(check, kStageMax); std::free(check); }
-        /* Before the journal is committed an orphan may be removed. Once the
-         * journal exists only replay may touch the live key. */
+        /* The IDF entry bound expected_device to the Factory MAC before
+         * apply. An uncommitted orphan may be removed only if its stage
+         * validates against that same ID. A journal requires replay. */
         if (!ok && absent(b, kImportNs, kJournal))
-            (void)katmed_import_abort(b);
+            (void)katmed_import_abort(b, in->expected_device);
     }
     wipe(state, KATMED_STORE_BLOB_MAX);
     wipe(history, MESH_HISTORY_BLOB);

@@ -138,8 +138,10 @@ bool katmed_import_resume_idf(void)
 bool katmed_import_abort_idf(void)
 {
 #if CONFIG_NVS_ENCRYPTION
+    uint64_t device = 0;
+    if (!local_device_id(&device)) return false;
     KatmedImportBackend b = backend();
-    bool ok = katmed_import_abort(&b);
+    bool ok = katmed_import_abort(&b, device);
     bool closed = katmed_import_files_unmount();
     return ok && closed;
 #else

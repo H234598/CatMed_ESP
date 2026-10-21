@@ -29,6 +29,9 @@ struct Memory {
     size_t fs_free = 256 * 1024;
     int fail_publish_at = -1;
     int fail_stage_at = -1;
+    bool fail_file_abort_once = false;
+    bool corrupt_stage_on_file_error = false;
+    unsigned file_aborts = 0;
 };
 static std::string id(const char *ns, const char *key) {
     return std::string(ns) + "/" + key;
@@ -118,7 +121,12 @@ static bool files_empty(void *context, size_t bytes, size_t count) {
 static bool file_stage(void *context, unsigned ordinal, const KatmedImportFile *f,
                        const KatmedImportInput *in) {
     auto &m = *static_cast<Memory *>(context);
-    if (int(ordinal) == m.fail_stage_at) { m.fail_stage_at = -1; return false; }
+    if (int(ordinal) == m.fail_stage_at) {
+        m.fail_stage_at = -1;
+        if (m.corrupt_stage_on_file_error)
+            m.values.at("katmed_imp/stage")[16] ^= 1;
+        return false;
+    }
     if (m.staged_files.count(file_id(f)) || m.final_files.count(file_id(f))) return false;
     std::vector<uint8_t> bytes(f->length);
     if (!in->read(in->context, f->input_offset, bytes.data(), bytes.size()) ||
@@ -149,7 +157,9 @@ static bool file_publish(void *context, unsigned ordinal, const KatmedImportFile
 }
 static bool file_abort(void *context, unsigned, const KatmedImportFile *f) {
     auto &m = *static_cast<Memory *>(context);
+    if (m.fail_file_abort_once) { m.fail_file_abort_once = false; return false; }
     if (m.final_files.count(file_id(f))) return false;
+    ++m.file_aborts;
     m.staged_files.erase(file_id(f));
     return true;
 }
@@ -270,6 +280,62 @@ int main(int argc, char **argv) {
             m.values.count("katmed_imp/journal") == 0 &&
             m.values.count("katmed_imp/stage") == 0 &&
             m.values.count("katmed/state") == 0;
+    } else if (mode == "files_orphan_guard") {
+        m.fail_stage_at = 1;
+        m.fail_file_abort_once = true;
+        ok = !katmed_import_apply(&in, &b) &&
+            m.values.count("katmed_imp/stage") == 1 &&
+            m.values.count("katmed_imp/journal") == 0 &&
+            m.staged_files.size() == 1 && m.final_files.empty();
+        const auto stage = m.values.at("katmed_imp/stage");
+        const auto files = m.staged_files;
+        const unsigned writes = m.writes, erases = m.erases,
+                       file_aborts = m.file_aborts;
+        ok = ok && !katmed_import_resume(&b, 2) &&
+            !katmed_import_abort(&b, 2) &&
+            m.writes == writes && m.erases == erases &&
+            m.file_aborts == file_aborts &&
+            m.values.at("katmed_imp/stage") == stage &&
+            m.staged_files == files;
+        const size_t state_len = size_t(stage[4]) | size_t(stage[5]) << 8;
+        const size_t history_len = size_t(stage[6]) | size_t(stage[7]) << 8;
+        const size_t auth_len = size_t(stage[8]) | size_t(stage[9]) << 8;
+        const size_t identity_len = size_t(stage[10]) | size_t(stage[11]) << 8;
+        const size_t auth_at = 16 + state_len + history_len;
+        const size_t reset_at = auth_at + auth_len + identity_len;
+        for (size_t off : {size_t(16), auth_at, reset_at}) {
+            m.values.at("katmed_imp/stage") = stage;
+            m.values.at("katmed_imp/stage")[off] ^= 1;
+            const auto damaged = m.values.at("katmed_imp/stage");
+            ok = ok && !katmed_import_abort(&b, 1) &&
+                m.writes == writes && m.erases == erases &&
+                m.file_aborts == file_aborts &&
+                m.values.at("katmed_imp/stage") == damaged &&
+                m.staged_files == files;
+        }
+        m.values.at("katmed_imp/stage") = stage;
+        m.reject_web_once = true;
+        ok = ok && !katmed_import_abort(&b, 1) &&
+            m.writes == writes && m.erases == erases &&
+            m.file_aborts == file_aborts && m.staged_files == files;
+        ok = ok && katmed_import_abort(&b, 1) &&
+            m.values.count("katmed_imp/stage") == 0 &&
+            m.staged_files.empty() && m.final_files.empty() &&
+            m.values.count("katmed/state") == 0 &&
+            katmed_import_resume(&b, 1);
+    } else if (mode == "files_auto_abort_damaged") {
+        m.fail_stage_at = 1;
+        m.corrupt_stage_on_file_error = true;
+        ok = !katmed_import_apply(&in, &b) &&
+            m.values.count("katmed_imp/stage") == 1 &&
+            m.values.count("katmed_imp/journal") == 0 &&
+            m.staged_files.size() == 1 && m.final_files.empty() &&
+            m.file_aborts == 0 && m.erases == 0;
+        const unsigned writes = m.writes, erases = m.erases;
+        ok = ok && !katmed_import_abort(&b, 1) &&
+            m.writes == writes && m.erases == erases &&
+            m.file_aborts == 0 && m.staged_files.size() == 1 &&
+            m.values.count("katmed_imp/stage") == 1;
     } else if (mode == "files_no_space" || mode == "files_zero_space") {
         m.fs_free = mode == "files_zero_space" ? 0 : 8 * 1024;
         ok = !katmed_import_apply(&in, &b) &&
@@ -301,7 +367,11 @@ int main(int argc, char **argv) {
         stage.insert(stage.end(), state.begin(), state.end());
         m.values["katmed/state"] = state;
         m.values["katmed_imp/stage"] = stage;
-        ok = katmed_import_resume(&b, 1) &&
+        const unsigned writes = m.writes, erases = m.erases;
+        ok = !katmed_import_resume(&b, 2) &&
+            m.writes == writes && m.erases == erases &&
+            m.values.at("katmed_imp/stage") == stage &&
+            katmed_import_resume(&b, 1) &&
             m.values.count("katmed/state") == 1 &&
             m.values.count("katmed_imp/stage") == 0;
     } else if (mode == "full_space") {
@@ -378,8 +448,12 @@ int main(int argc, char **argv) {
         m.fail_erase_once = true;
         ok = !katmed_import_apply(&in, &b) &&
             m.values.count("katmed_imp/stage") == 1 &&
-            !katmed_import_resume(&b, 1) &&
-            katmed_import_abort(&b) &&
+            !katmed_import_resume(&b, 1);
+        const unsigned writes = m.writes, erases = m.erases;
+        ok = ok && !katmed_import_abort(&b, 2) &&
+            m.writes == writes && m.erases == erases &&
+            m.values.count("katmed_imp/stage") == 1 &&
+            katmed_import_abort(&b, 1) &&
             katmed_import_resume(&b, 1);
     } else if (mode == "cleanup") {
         m.fail_stage_erase_once = true;

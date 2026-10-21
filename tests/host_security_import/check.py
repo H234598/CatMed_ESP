@@ -171,7 +171,8 @@ with tempfile.TemporaryDirectory(prefix="katmed-import-test-") as temporary:
     subprocess.run([str(binary), str(identity_only), "identity_only"], check=True)
     for mode in ("files_success", "files_replay", "files_missing",
                  "files_stage_error", "files_no_space", "files_zero_space",
-                 "files_occupied"):
+                 "files_occupied", "files_orphan_guard",
+                 "files_auto_abort_damaged"):
         subprocess.run([str(binary), str(full_files), mode], check=True)
     subprocess.run([str(binary), str(many_files), "files_many"], check=True)
     for label, files in (
@@ -238,4 +239,4 @@ with tempfile.TemporaryDirectory(prefix="katmed-import-test-") as temporary:
     subprocess.run([str(binary), str(raw_v10), "reject"], check=True)
     for path in invalid_history:
         subprocess.run([str(binary), str(path), "reject"], check=True)
-print("synthetic product import: 60 cases plus real LittleFS remount passed")
+print("synthetic product import: 62 cases plus real LittleFS remount passed")

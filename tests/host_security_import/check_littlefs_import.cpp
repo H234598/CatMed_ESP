@@ -15,6 +15,8 @@ uint8_t flash[block_size * block_count];
 uint8_t read_cache[cache_size], prog_cache[cache_size], lookahead[cache_size];
 lfs_t fs;
 int fail_publish_at = -1, fail_stage_at = -1;
+bool fail_abort_once = false;
+unsigned flash_mutations = 0;
 
 int read_block(const lfs_config *, lfs_block_t block, lfs_off_t off,
                void *out, lfs_size_t n) {
@@ -31,11 +33,13 @@ int prog_block(const lfs_config *, lfs_block_t block, lfs_off_t off,
         if ((dst[i] & src[i]) != src[i]) return LFS_ERR_IO;
         dst[i] &= src[i];
     }
+    ++flash_mutations;
     return 0;
 }
 int erase_block(const lfs_config *, lfs_block_t block) {
     if (block >= block_count) return LFS_ERR_IO;
     std::memset(flash + block * block_size, 0xff, block_size);
+    ++flash_mutations;
     return 0;
 }
 int sync_block(const lfs_config *) { return 0; }
@@ -56,6 +60,7 @@ void fresh_fs() {
     assert(lfs_format(&fs, &config) == 0);
     assert(lfs_mount(&fs, &config) == 0);
     fail_publish_at = fail_stage_at = -1;
+    fail_abort_once = false;
 }
 void remount() {
     assert(lfs_unmount(&fs) == 0);
@@ -156,6 +161,7 @@ bool lfs_publish(void *ctx, unsigned ordinal, const KatmedImportFile *f) {
     return lfs_final(ctx, ordinal, f);
 }
 bool lfs_abort(void *, unsigned ordinal, const KatmedImportFile *f) {
+    if (fail_abort_once) { fail_abort_once = false; return false; }
     if (presence(name_for(f, ordinal, false)) != 0) return false;
     auto temp = name_for(f, ordinal, true);
     int present = presence(temp);
@@ -202,6 +208,44 @@ int main(int argc, char **argv) {
     assert(presence("/user-images/.migration-000.tmp") == 0);
     remount();
     assert(katmed_import_resume(&partial_backend, 1));
+    assert(lfs_unmount(&fs) == 0);
+
+    fresh_fs();
+    Memory orphan;
+    orphan.capsule = capsule;
+    auto orphan_backend = real_backend(orphan);
+    auto orphan_input = input(orphan);
+    fail_stage_at = 1;
+    fail_abort_once = true;
+    assert(!katmed_import_apply(&orphan_input, &orphan_backend));
+    assert(orphan.values.count("katmed_imp/stage") == 1);
+    assert(orphan.values.count("katmed_imp/journal") == 0);
+    remount();
+    assert(presence("/user-images/.migration-000.tmp") == 1);
+    assert(presence("/user-images/.migration-001.tmp") == 1);
+    const auto good_stage = orphan.values.at("katmed_imp/stage");
+    const unsigned writes = orphan.writes, erases = orphan.erases,
+                   flash_before = flash_mutations;
+    assert(!katmed_import_resume(&orphan_backend, 2));
+    assert(!katmed_import_abort(&orphan_backend, 2));
+    assert(orphan.writes == writes && orphan.erases == erases &&
+           flash_mutations == flash_before &&
+           orphan.values.at("katmed_imp/stage") == good_stage &&
+           presence("/user-images/.migration-000.tmp") == 1);
+    orphan.values.at("katmed_imp/stage")[16] ^= 1;
+    const auto bad_stage = orphan.values.at("katmed_imp/stage");
+    assert(!katmed_import_abort(&orphan_backend, 1));
+    assert(orphan.writes == writes && orphan.erases == erases &&
+           flash_mutations == flash_before &&
+           orphan.values.at("katmed_imp/stage") == bad_stage &&
+           presence("/user-images/.migration-000.tmp") == 1);
+    orphan.values.at("katmed_imp/stage") = good_stage;
+    assert(katmed_import_abort(&orphan_backend, 1));
+    assert(orphan.values.count("katmed_imp/stage") == 0);
+    assert(presence("/user-images/.migration-000.tmp") == 0);
+    assert(presence("/user-images/.migration-001.tmp") == 0);
+    remount();
+    assert(katmed_import_resume(&orphan_backend, 1));
     assert(lfs_unmount(&fs) == 0);
 
     fresh_fs();
