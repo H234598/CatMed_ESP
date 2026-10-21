@@ -21,6 +21,12 @@ typedef Address esp_ip4_addr_t;
 typedef struct {struct {int type; union {Address ip4;} u_addr;} ip;} esp_netif_dns_info_t;
 #define ESP_NETIF_DNS_MAIN 0
 #define ESP_IPADDR_TYPE_V4 0
+static const char *confirmed_name="KatmedESP-002";
+static bool name_uncertain;
+static unsigned name_reads;
+static void katmed_mesh_device_name(char *out,size_t cap,bool *assigned,bool *uncertain){
+    ++name_reads;snprintf(out,cap,"%s",confirmed_name);*assigned=strcmp(confirmed_name,"KatmedESP")!=0;*uncertain=name_uncertain;
+}
 static bool fail_dns, unknown_dns, ipv6_dns, disconnect_dns;
 static unsigned sync_server=0x017100CB;
 static bool mesh_active=true;
@@ -75,6 +81,12 @@ int main(void) {
     KatmedWebDeviceInfo info;
     assert(web_device_info(&rt,&info) && !strcmp(info.device_name,"KatmedESP-002") &&
            info.assigned && !info.uncertain);
+    assert(name_reads==2);
+    // Legacy bytes deliberately disagree: both real callbacks read the shared source.
+    strcpy(rt.store.record.mesh_name,"KatmedESP-099");
+    name_uncertain=true;network_status(&rt,&out);assert(web_device_info(&rt,&info));
+    assert(!strcmp(out.device_name,info.device_name)&&!strcmp(info.device_name,"KatmedESP-002")&&out.device_name_uncertain&&info.uncertain);
+    name_uncertain=false;
     assert(!strcmp(out.station_ip,"192.0.2.10") && !strcmp(out.gateway,"192.0.2.1"));
     assert(!strcmp(out.ap_ip,"192.0.2.129"));
     assert(!strcmp(out.dns_ip,"192.0.2.53") && !strcmp(out.sync_server_ip,"203.0.113.1"));

@@ -10,7 +10,7 @@ static bool prepared, staged_prepared;
 static bool journal_exists, staged_journal_exists;
 static uint8_t journal[2], staged_journal[2];
 static bool fail_commit;
-static unsigned image_clears, acme_clears, namespace_clears;
+static unsigned image_clears, acme_clears, names_clears, namespace_clears;
 static bool fail_acme;
 
 esp_err_t katmed_nvs_init(void) { return ESP_OK; }
@@ -87,11 +87,13 @@ bool katmed_reset_acme_files(void)
     return !fail_acme;
 }
 
+bool names_idf_clear_files(void){++names_clears;return true;}
+
 int main(void)
 {
     bool warning = true;
     assert(katmed_reset_idf_take_preparation(&warning) && !warning);
-    assert(image_clears == 0 && namespace_clears == 0);
+    assert(image_clears == 0 && names_clears == 0 && namespace_clears == 0);
 
     assert(katmed_reset_idf_prepare());
     assert(prepared && image_clears == 0 && !journal_exists);
@@ -121,5 +123,6 @@ int main(void)
     fail_acme = false;
     assert(katmed_reset_resume(backend, &pending) && !pending);
     assert(image_clears == 2 && acme_clears == 2 && namespace_clears == 3);
+    assert(names_clears>0);
     return 0;
 }

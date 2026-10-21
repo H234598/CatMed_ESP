@@ -1,4 +1,7 @@
 #include "katmed_mesh.h"
+#include "katmed_mesh_names.h"
+#include "katmed_names_wire.h"
+#include "../host_names/memory_backend.hpp"
 #include "katmed_mesh_payload.h"
 #include "katmed_mesh_status.h"
 #include "katmed_mesh_interaction.hpp"
@@ -198,6 +201,9 @@ int main(int argc,char **argv){
     }
     KatmedMeshServices services{&store,&state,nullptr,shared_result,utc_received};
     assert(katmed_mesh_start(&provision,&services)==MESH_ACCEPTED);
+    #include "check_names_barrier.inc"
+    #include "check_names_leaf.inc"
+    #include "check_names_engine.inc"
     if(argc==2&&std::strcmp(argv[1],"name_assignment")==0){
         host_station_present=true;
         level=ROOT;katmed_mesh_poll(&now);

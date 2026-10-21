@@ -26,9 +26,11 @@
 #include "katmed_images.h"
 #include "katmed_image_store.h"
 #include "katmed_mesh.h"
+#include "katmed_mesh_names.h"
 #include "katmed_dhcp_diag.h"
 #include "katmed_store.h"
 #include "katmed_store_idf.h"
+#include "katmed_names_idf.h"
 #include "katmed_nvs_init.h"
 #include "katmed_source_export.h"
 #include "katmed_import.h"
@@ -59,6 +61,7 @@ static uint64_t monotonic_ms(void);
 typedef struct {
     Store store;
     StoreIdfNvs nvs;
+    NamesIdf names_nvs;
     AppState state;
     LocalSettings local;
     EventId boot;
@@ -279,6 +282,7 @@ static bool reset_runtime_step(Runtime *rt,uint64_t now_ms)
         if (!web_prepare_listener_stop(rt)) return true;
         katmed_web_stop();
         katmed_mesh_stop();
+        names_idf_close(&rt->names_nvs);
         store_idf_close_backend(&rt->nvs);
         rt->store_ready=false;
         rt->reset_retry_due_ms=0;
@@ -1025,12 +1029,8 @@ static void network_status(void *context, UiNetworkStatus *out)
     if (!out) return;
     *out = (UiNetworkStatus){0};
     snprintf(out->device_name, sizeof(out->device_name), "KatmedESP");
-    if (rt && rt->store_ready && rt->store.record.mesh_name[0]) {
-        snprintf(out->device_name, sizeof(out->device_name), "%s",
-                 rt->store.record.mesh_name);
-        out->device_name_assigned = rt->store.record.mesh_name_index != 0;
-        out->device_name_uncertain = rt->store.uncertain;
-    }
+    katmed_mesh_device_name(out->device_name,sizeof(out->device_name),&out->device_name_assigned,
+                            &out->device_name_uncertain);
     out->configured = rt && rt->store_ready &&
                       rt->store.record.provision.configured;
     if (!out->configured || !rt->mesh_started) return;
@@ -1281,11 +1281,8 @@ static bool web_device_info(void *context, KatmedWebDeviceInfo *out)
     if (!out) return false;
     memset(out, 0, sizeof(*out));
     snprintf(out->device_name, sizeof(out->device_name), "KatmedESP");
-    if (!rt || !rt->store_ready || !rt->store.record.mesh_name[0]) return true;
-    snprintf(out->device_name, sizeof(out->device_name), "%s",
-             rt->store.record.mesh_name);
-    out->assigned = rt->store.record.mesh_name_index != 0;
-    out->uncertain = rt->store.uncertain;
+    (void)rt;
+    katmed_mesh_device_name(out->device_name,sizeof(out->device_name),&out->assigned,&out->uncertain);
     return true;
 }
 
@@ -1753,12 +1750,18 @@ void app_main(void)
     if (!runtime.store_ready) {
         ESP_LOGE(tag, "durable store unavailable: %d; boot alarm remains active", open_result);
     }
+    const NamesResult names_result=katmed_mesh_names_backend(
+        names_idf_backend(&runtime.names_nvs,&runtime.nvs),runtime.boot.device,
+        runtime.store.record.provision.configured?runtime.store.record.provision.group:
+                                                  runtime.store.record.bound_group);
+    if(names_result!=NAMES_OK)ESP_LOGE(tag,"durable Mesh names unavailable: %d",names_result);
     runtime.boot_domain = new_boot_domain(runtime.boot);
     katmed_time_init(&runtime.time, runtime.boot_domain);
     ClockSample now = clock_sample(runtime.boot_domain);
     if (app_init(&runtime.state, &settings, &now, runtime.boot, image_count,
                  katmed_images_catalog_sha256()) != APP_OK) {
         ESP_LOGE(tag, "initial state unavailable");
+        names_idf_close(&runtime.names_nvs);
         store_idf_close_backend(&runtime.nvs);
         katmed_images_unmount();
         board_deinit();
@@ -1767,6 +1770,7 @@ void app_main(void)
     runtime.state.divergent = store_durable_divergent(&runtime.store);
     if (board_set_orientation(runtime.local.orientation) != BOARD_OK) {
         ESP_LOGE(tag, "initial orientation failed");
+        names_idf_close(&runtime.names_nvs);
         store_idf_close_backend(&runtime.nvs);
         katmed_images_unmount();
         board_deinit();
@@ -1774,6 +1778,7 @@ void app_main(void)
     }
     if (!lvgl_port_lock(1000)) {
         ESP_LOGE(tag, "LVGL lock unavailable for UI creation");
+        names_idf_close(&runtime.names_nvs);
         store_idf_close_backend(&runtime.nvs);
         katmed_images_unmount();
         board_deinit();
@@ -1807,6 +1812,7 @@ void app_main(void)
 
     if (board_touch_sampler_start() != BOARD_OK) {
         ESP_LOGE(tag, "touch sampler unavailable");
+        names_idf_close(&runtime.names_nvs);
         store_idf_close_backend(&runtime.nvs);
         katmed_images_unmount();
         board_deinit();

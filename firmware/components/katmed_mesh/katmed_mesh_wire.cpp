@@ -35,7 +35,7 @@ bool nonzero_id(EventId id) {
     return id.device!=0 && id.epoch!=0 && id.sequence!=0;
 }
 bool valid_kind(uint8_t kind) {
-    return kind>=MESH_HELLO && kind<=MESH_NAME_MAP;
+    return kind>=MESH_HELLO && kind<=MESH_NAME_SYNC;
 }
 bool nonzero_bytes(const uint8_t *p,size_t n){unsigned v=0;for(size_t i=0;i<n;++i)v|=p[i];return v!=0;}
 bool tag(const uint8_t key[32], const uint8_t *message, size_t n,

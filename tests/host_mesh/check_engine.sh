@@ -4,19 +4,29 @@ repo=$(cd "$(dirname "$0")/../.." && pwd)
 out=$(mktemp)
 fixture=$(mktemp)
 trap 'rm -f "$out" "$fixture"' EXIT
-g++ -std=c++17 -Wall -Wextra -Werror -DKATMED_MESH_HOST \
+adapter="$repo/firmware/components/katmed_mesh/katmed_mesh_idf.cpp"
+sanitizers=()
+if [[ "${KATMED_HOST_SANITIZE:-0}" == 1 ]]; then sanitizers=(-fsanitize=address,undefined -fno-omit-frame-pointer); fi
+g++ "${sanitizers[@]}" -std=c++17 -Wall -Wextra -Werror -DKATMED_MESH_HOST \
   -I"$repo/tests/host_mesh/stubs" \
+  -I"$repo/firmware/components/katmed_names/include" \
   -I"$repo/firmware/components/katmed_mesh/include" \
   -I"$repo/firmware/components/katmed_store/include" \
   -I"$repo/firmware/components/katmed_core/include" \
+  "$repo/firmware/components/katmed_names/katmed_names.cpp" \
+  "$repo/firmware/components/katmed_names/katmed_names_wire.cpp" \
   "$repo/firmware/components/katmed_mesh/katmed_mesh_wire.cpp" \
   "$repo/firmware/components/katmed_mesh/katmed_mesh_payload.cpp" \
   "$repo/firmware/components/katmed_mesh/katmed_mesh_status.cpp" \
   "$repo/firmware/components/katmed_mesh/katmed_mesh_session.cpp" \
-  "$repo/firmware/components/katmed_mesh/katmed_mesh_idf.cpp" \
+  "$adapter" \
   "$repo/firmware/components/katmed_store/katmed_store.cpp" \
   "$repo/firmware/components/katmed_core/katmed_core.cpp" \
   "$repo/tests/host_mesh/check_engine.cpp" -l:libcrypto.so.3 -lz -o "$out"
+if [[ $# -gt 0 ]]; then
+    for scenario in "$@"; do "$out" "$scenario"; done
+    exit 0
+fi
 "$out"
 "$out" solo_settings
 "$out" fanout
@@ -55,3 +65,20 @@ g++ -std=c++17 -Wall -Wextra -Werror -DKATMED_MESH_HOST \
 "$out" interaction_previous
 
 "$out" name_assignment
+
+"$out" names_lifetime
+
+"$out" names_leaf
+
+"$out" names_barrier
+
+"$out" names_lease_old
+"$out" names_lease_new
+
+"$out" names_successor
+
+"$out" names_mixed
+"$out" names_mixed_fresh
+
+"$out" names_prepare_old
+"$out" names_prepare_new

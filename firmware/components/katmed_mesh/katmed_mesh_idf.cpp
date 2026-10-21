@@ -1,4 +1,5 @@
 #include "katmed_mesh.h"
+#include "katmed_names_wire.h"
 #include "katmed_dhcp_diag.h"
 #include "katmed_mesh_payload.h"
 #include "katmed_mesh_session.h"
@@ -8,6 +9,8 @@
 
 #include <atomic>
 #include <cstring>
+#include <cstdio>
+#include <new>
 #include "esp_app_desc.h"
 #include "esp_bridge.h"
 #include "esp_event.h"
@@ -35,7 +38,12 @@ constexpr unsigned kRxQueue=3;
 constexpr unsigned kPendingBurst=3;
 constexpr uint64_t kIdBlock=256;
 constexpr unsigned kMaxCandidates=KATMED_MESH_PEERS*KATMED_STORE_PENDING_MAX;
-struct Packet { uint16_t length; uint8_t bytes[KATMED_MESH_WIRE_MAX]; };
+struct Packet {uint16_t length;uint8_t bytes[KATMED_MESH_WIRE_MAX];};
+union ReceiveScratch {
+    Packet raw;
+    KatmedMeshFrame name_frame;
+    uint64_t name_page[89];
+};
 struct Candidate { StorePendingConfirm pending; uint64_t age_ms_at_send; };
 struct DiagnosticCounters {
     std::atomic<uint32_t> sdk_send_failures{0}, rx_queue_drops{0},
@@ -75,7 +83,7 @@ struct Context {
     uint64_t candidate_started=0;
     bool recovery_candidates=false;
     char ap_ssid[33]{}, ap_password[64]{};
-    Packet receive{};
+    ReceiveScratch receive{};
     uint8_t tx[KATMED_MESH_WIRE_MAX]{};
 };
 static_assert(sizeof(Candidate)*kMaxCandidates<=8192,
@@ -97,6 +105,16 @@ bool linked();
 void apply_hostname();
 bool send_name_map(uint64_t destination);
 void ensure_root_name();
+bool names_enabled();
+void names_legacy_map(uint64_t);
+void names_reset_rights();
+void names_activity(uint64_t,uint64_t);
+void names_hello(uint64_t,uint64_t);
+void names_frame(const KatmedMeshFrame &,uint64_t);
+void names_tick(uint64_t);
+bool names_expire(uint64_t);
+void names_current(char [32],bool *,bool *);
+void names_publish_status();
 const StoreWifiProfile *wifi_profile_by_priority(uint32_t priority) {
     if (!ctx.services.store) return nullptr;
     const StoreRecord &record=ctx.services.store->record;
@@ -172,6 +190,7 @@ void note_session_transition(){
 bool rekey(){
     uint8_t nonce[16];esp_fill_random(nonce,sizeof(nonce));
     if(!katmed_mesh_sessions_init(&ctx.sessions,nonce))return false;
+    names_reset_rights();
     ctx.coordinator_device=0;ctx.tx_counter=0;ctx.dirty=true;interaction_id=EventId{};
     interaction.bind(ctx.services.store?ctx.services.store->record.device:0,0,0,false,false,ctx.status.now_ms);std::memset(pending_admission,0,sizeof(pending_admission));std::memset(admission_verified,0,sizeof(admission_verified));
     const uint64_t observed=ctx.status.now_ms;
@@ -388,6 +407,7 @@ void send_hello(uint64_t recipient=0,const uint8_t *echo=nullptr){
         (void)send(f);
 }
 bool send_name_map(uint64_t destination){
+    if(names_enabled())return false;
     if(!linked()||!destination||ctx.services.store->record.mesh_name_count==0)return false;
     EventId id{};if(!next_event_id(id))return false;
     auto f=frame_for(MESH_NAME_MAP,id,destination);
@@ -639,6 +659,7 @@ void receive(const KatmedMeshFrame &f,const ClockSample *now){
             send_hello();
             return;
         }
+        if(names_expire(now->monotonic_ms)){send_hello(f.sender,f.session_nonce);return;}
         bool already=false;
         for(const auto &peer:ctx.sessions.peers)
             if(peer.live&&peer.device==f.sender&&
@@ -679,7 +700,9 @@ void receive(const KatmedMeshFrame &f,const ClockSample *now){
          * the root can authenticate this leaf before sending STATE. */
         if(!already)send_hello(f.sender,f.session_nonce);
         if(root())ctx.dirty=true;
-        if(root()){
+        if(names_enabled()){
+            names_hello(f.sender,now->monotonic_ms);
+        }else if(root()){
             if(!store_mesh_name_has_device(ctx.services.store,f.sender) &&
                !store_durable_divergent(ctx.services.store)){
                 const uint32_t next=store_mesh_name_next_index(ctx.services.store);
@@ -705,6 +728,8 @@ void receive(const KatmedMeshFrame &f,const ClockSample *now){
     if(!katmed_mesh_sessions_check(&ctx.sessions,f.sender,f.session_nonce,
                                    f.session_counter,true))return;
     if(!root()&&f.sender!=ctx.coordinator_device)return;
+    names_activity(f.sender,now->monotonic_ms);
+    if(f.kind==MESH_NAME_SYNC){names_frame(f,now->monotonic_ms);return;}
     if(f.kind==MESH_INTERACTION){
         bind_interaction(now->monotonic_ms);
         katmed::InteractionMessage message;
@@ -719,6 +744,7 @@ void receive(const KatmedMeshFrame &f,const ClockSample *now){
     }
     if(f.kind==MESH_STATUS){receive_status(f);return;}
     if(f.kind==MESH_NAME_MAP){
+        if(names_enabled()){names_legacy_map(f.sender);return;}
         StoreMeshNameEntry entries[KATMED_MESH_NAME_MAX_ENTRIES]{};
         uint8_t count=0;
         if(!katmed_mesh_decode_name_map(f.payload,f.payload_length,entries,&count))return;
@@ -840,15 +866,39 @@ void hex(char *out,const uint8_t *bytes,size_t n){
     for(size_t i=0;i<n;++i){out[2*i]=alphabet[bytes[i]>>4];out[2*i+1]=alphabet[bytes[i]&15];}
     out[2*n]=0;
 }
+#include "katmed_mesh_names.inc"
+bool names_enabled(){
+#ifdef ESP_PLATFORM
+    return true; // Production has exactly one naming source, even on open failure.
+#else
+    return names_bound; // Retain historical codec/adapter fixtures on the host.
+#endif
+}
+void names_current(char out[32],bool *assigned,bool *uncertain){
+    if(names_enabled()){
+        const uint32_t projection=names_publication.load(std::memory_order_acquire);
+        const unsigned index=projection&65535u;
+        std::snprintf(out,32,index?"KatmedESP-%03u":"KatmedESP",index);
+        if(assigned)*assigned=index!=0;
+        if(uncertain)*uncertain=!(projection&(1u<<17))||(projection&(1u<<16));
+        return;
+    }
+    const char *name=ctx.services.store?store_mesh_name(ctx.services.store):"KatmedESP";
+    std::snprintf(out,32,"%s",name);
+    if(assigned)*assigned=ctx.services.store&&ctx.services.store->record.mesh_name_index!=0;
+    if(uncertain)*uncertain=!ctx.services.store||ctx.services.store->uncertain;
+}
 void apply_hostname(){
     if(!ctx.services.store)return;
-    const char *name=store_mesh_name(ctx.services.store);
+    if(names_enabled())names_publish_status();
+    char name[32];names_current(name,nullptr,nullptr);
     for(const char *key:{"WIFI_STA_DEF","WIFI_AP_DEF"}){
         esp_netif_t *netif=esp_netif_get_handle_from_ifkey(key);
         if(netif)(void)esp_netif_set_hostname(netif,name);
     }
 }
 void ensure_root_name(){
+    if(names_enabled()){names_tick(ctx.status.now_ms);return;}
     if(!root()||store_durable_divergent(ctx.services.store) ||
        store_mesh_name_has_device(ctx.services.store,ctx.services.store->record.device))return;
     const uint32_t next=store_mesh_name_next_index(ctx.services.store);
@@ -946,6 +996,11 @@ extern "C" bool katmed_mesh_radio_channel(uint8_t *channel){
     return true;
 }
 extern "C" void katmed_mesh_history_backend(StoreBackend backend){history.backend=backend;}
+extern "C" NamesResult katmed_mesh_names_backend(NamesBackend backend,uint64_t device,const uint8_t group[16]){
+    names_bound=true;names_reset_rights();
+    NamesResult result=names_open(&names,backend,device,group);names_publish_status();return result;
+}
+extern "C" void katmed_mesh_device_name(char *out,size_t capacity,bool *assigned,bool *uncertain){char value[32];names_current(value,assigned,uncertain);if(out&&capacity)std::snprintf(out,capacity,"%s",value);}
 extern "C" void katmed_mesh_counts(KatmedMeshCounts *out){
     if(!out)return;
     *out=KatmedMeshCounts{};
@@ -1023,6 +1078,7 @@ extern "C" KatmedMeshResult katmed_mesh_submit_shared(const AppEvent *event,
     return MESH_PENDING;
 }
 extern "C" void katmed_mesh_poll(const ClockSample *now){
+    NamesStatusPublication publish_name_status;
     if(!now||!current_group())return;
     const uint8_t profile_count=ctx.services.store->record.wifi_profile_count;
     const bool explicit_reconnect=
@@ -1050,9 +1106,9 @@ extern "C" void katmed_mesh_poll(const ClockSample *now){
     }
     ensure_root_name();
     for(unsigned i=0;i<kRxQueue;++i){
-        if(xQueueReceive(ctx.queue,&ctx.receive,0)!=pdTRUE)break;
+        if(xQueueReceive(ctx.queue,&ctx.receive.raw,0)!=pdTRUE)break;
         KatmedMeshFrame frame{};
-        if(katmed_mesh_wire_decode(ctx.receive.bytes,ctx.receive.length,
+        if(katmed_mesh_wire_decode(ctx.receive.raw.bytes,ctx.receive.raw.length,
                                    ctx.provision.group,ctx.provision.secret,&frame))
             receive(frame,now);
     }
