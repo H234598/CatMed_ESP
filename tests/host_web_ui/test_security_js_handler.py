@@ -175,12 +175,20 @@ int main(void) {
         {"*;q=0,identity;q=1",1}, {"identity;q=0,gzip;q=1",2},
         {"gzip;q=0,identity;q=0",406}, {"*;q=0",406},
         {"identity;q=0,br",406}, {"gzip;q=broken",400}, {"gzip;q=2",400},
-        {"gzip, gzip;q=0",1}, {"gzip,",400}, {"gzip;q=0.000",1},
+        {"gzip, gzip;q=0",1}, {"gzip,",2}, {"gzip;q=0.000",1},
+        {"identity,",1}, {",identity",1}, {"gzip;q=0, ,identity",1},
+        {"gzip;q=0,",1}, {"identity, ",1}, {"gzip, ,identity;q=0",2},
+        {" , \t, ",1}, {" \t ",1}, {",,gzip,,",2},
+        {",gzip;q=0,*;q=1,",1}, {",*;q=0,identity;q=1,",1},
+        {",gzip;q=0,identity;q=0,",406}, {",gzip,gzip;q=0,",1},
+        {",gzip;q=broken,",400}, {",;q=1,",400},
         {"gzip;q=1.0000",400}, {"gzip;q=1.001",400},
         {" identity ; q=0.5 , gzip ; q=0.8 ",2}, {"gzip;q=0.",1}
     };
     char oversized[258]; memset(oversized, 'g', 257); oversized[257] = 0;
+    char empty_list[257]; memset(empty_list, ',', 256); empty_list[256] = 0;
     for (int language = 0; language < 2; language++) {
+        CHECK(check(language,empty_list,"192.0.2.10",false,0,1)==0);
         for (size_t i=0; i<sizeof(cases)/sizeof(*cases); i++) {
             fprintf(stderr,"case language=%d accept=%s\n", language, cases[i].value ? cases[i].value : "absent");
             CHECK(check(language,cases[i].value,"192.0.2.10",false,0,cases[i].coding)==0);

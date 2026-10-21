@@ -500,6 +500,13 @@ static int script_coding(httpd_req_t *req)
         while (part < token_end && (*part == ' ' || *part == '\t')) ++part;
         while (token_end > part && (token_end[-1] == ' ' || token_end[-1] == '\t'))
             --token_end;
+        /* Empty HTTP list elements are ignored. The 256-byte field limit
+         * bounds even an all-empty list to at most 257 elements. A parameter
+         * without a coding token is still malformed. */
+        if (part == token_end && !semi) {
+            part = *end ? end + 1 : end;
+            continue;
+        }
         if (part == token_end) return -1;
         int quality = 1000;
         if (semi) {
@@ -518,7 +525,6 @@ static int script_coding(httpd_req_t *req)
         /* Duplicate entries conservatively retain the lowest quality. */
         if (selected && (*selected < 0 || quality < *selected)) *selected = quality;
         if (*end == '\0') break;
-        if (end[1] == '\0') return -1;
         part = end + 1;
     }
     if (gzip < 0) gzip = wildcard < 0 ? 0 : wildcard;
