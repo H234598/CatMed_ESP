@@ -91,7 +91,8 @@ def resource_record(cycle: int, seq: int, name: str, *, variant: str = "client",
         f"seq={seq} phase={name} status={status} uptime_ms={cycle * 100000 + seq} "
         f"internal_free={free} internal_min={free - 1000} "
         f"internal_largest={free - 2000} dma_free={free - 10000} "
-        f"dma_min={free - 11000} dma_largest={free - 12000} monitor_valid=1\n"
+        f"dma_min={free - 11000} dma_largest={free - 12000} monitor_valid=1 sample_us={(cycle * 100000 + seq)*1000} "
+        f"worker_start_us={(cycle * 100000 + 1)*1000-1} worker_end_us={(cycle * 100000 + seq)*1000-2 if name=='released' else 0}\n"
     )
 
 
@@ -106,12 +107,14 @@ def with_measurements(raw: bytes) -> bytes:
         if not samples: continue
         variant=samples[0][3]
         first,last=samples[0][2],samples[-1][2]
-        cpu_times=[('before',first-12000002,first-2),('active',first-1,last+1),('after',last+2,last+12000002)]
+        cpu_times=[('before',first-12000002,first-2),('active',first-1,last-2),('after',last-1,last+12000002)]
         for name,start,end in cpu_times:
             extra.append(f'I (1) katmed_acme_cpu: schema=1 variant={variant} cycle={cycle} core=0 cores=1 window={name} start_us={start} end_us={end} idle_start={start//2} idle_end={end//2} idle_delta={end//2-start//2} elapsed_us={end-start} counter_bits=64 timer_hz=1000000 tickless=0 idle_priority_shared=1 valid=1')
         if variant=='baseline': continue
-        active={};attempts={}
+        active={};attempts={}; marker_offsets={}
         def emit(op,event,seq,stamp,status):
+            marker_offsets[seq]=marker_offsets.get(seq,0)+10
+            stamp=samples[seq-1][2]+marker_offsets[seq]
             if event=='begin':
                 attempts[op]=attempts.get(op,0)+1
                 active[op]=(seq,stamp)
@@ -122,7 +125,7 @@ def with_measurements(raw: bytes) -> bytes:
         for seq,phase,stamp,_ in samples:
             for interval in ('key','connection'):
                 if interval in active and phase != interval:emit(interval,'end',seq,stamp+500,'observed')
-            if phase in ('key','connection') and phase not in active:emit(phase,'begin',seq,stamp,'running')
+            if phase in ('key','connection') and phase not in active:emit(phase,'begin',seq,stamp+501,'running')
             if phase=='renewal' and 'renewal' not in active and 'renewal' not in attempts:emit('renewal','begin',seq,stamp,'running')
             if phase=='challenge' and 'challenge' not in active:
                 if 'issuance' in active and previous:
@@ -130,14 +133,26 @@ def with_measurements(raw: bytes) -> bytes:
                 emit('challenge','begin',seq,stamp,'running')
             if phase=='issuance':
                 if 'challenge' in active:emit('challenge','end',seq,stamp+500,'ok')
-                if 'issuance' not in active:emit('issuance','begin',seq,stamp,'running')
+                if 'issuance' not in active:emit('issuance','begin',seq,stamp+501,'running')
             if phase=='certificate_download' and 'download' not in active and 'download' not in attempts:emit('download','begin',seq,stamp,'running')
             if phase=='certificate_switch':
                 if 'download' in active and previous:emit('download','end',previous[0],previous[2]+500,'ok')
                 for op in ('issuance','renewal'):
                     if op in active:emit(op,'end',seq,stamp+500,'ok')
             previous=(seq,phase,stamp)
-    return ('\n'.join(lines+extra)+'\n').encode()
+    # Preserve producer order, including end marks after their final sample.
+    def order(line):
+        kv=dict(token.split('=') for token in line.split(': ')[1].split())
+        cycle=int(kv['cycle'])
+        if 'katmed_acme_resource:' in line:
+            return cycle, int(kv['seq'])*10, 0
+        if 'katmed_acme_cpu:' in line:
+            n={'before':-1,'active':99998,'after':100000}[kv['window']]
+            if kv['window']=='active':
+                n=max(int(dict(x.split('=') for x in l.split(': ')[1].split())['seq'])*10 for l in lines if f'cycle={cycle} ' in l)-1
+            return cycle,n,0
+        return cycle,int(kv['end_seq'])*10+1, int(kv['end_us'])
+    return ('\n'.join(sorted(lines+extra,key=order))+'\n').encode()
 
 
 def resource_capture(variant: str = "client") -> bytes:
@@ -162,12 +177,12 @@ class AcmeResourceCaptureCheck(unittest.TestCase):
     def test_compiled_producer_field_order_matches_file_consumer(self):
         source = (ROOT / "firmware/components/katmed_acme/katmed_acme.cpp").read_text()
         start = source.index('"schema=2 variant=%s')
-        end = source.index('monitor_valid=%u"', start) + len('monitor_valid=%u"')
+        end = source.index('worker_end_us=%llu"', start) + len('worker_end_us=%llu"')
         record_format = "".join(re.findall(r'"([^"]*)"', source[start:end]))
         self.assertEqual(
             ["schema", "variant", "cycle", "seq", "phase", "status", "uptime_ms",
              "internal_free", "internal_min", "internal_largest", "dma_free",
-             "dma_min", "dma_largest", "monitor_valid"],
+             "dma_min", "dma_largest", "monitor_valid", "sample_us", "worker_start_us", "worker_end_us"],
             re.findall(r"([a-z_]+)=", record_format),
         )
 
@@ -232,8 +247,7 @@ class AcmeResourceCaptureCheck(unittest.TestCase):
 
     def test_peer_phase_order_and_cross_cycle_loss_fail_closed(self):
         lines = resource_capture().decode("ascii").splitlines(keepends=True)
-        lines[4] = lines[4].replace("phase=issuance", "phase=certificate_switch")
-        lines[5] = lines[5].replace("phase=certificate_switch", "phase=issuance")
+        lines = [line.replace("phase=issuance", "phase=certificate_switch", 1) if "cycle=1 seq=5 " in line else line for line in lines]
         with self.assertRaises(katmed_acme_ram.RamBenchError):
             katmed_acme_ram.evaluate_resource("".join(lines).encode("ascii"), "client")
 

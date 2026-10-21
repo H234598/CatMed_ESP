@@ -276,6 +276,7 @@ assert(deleted==1 && !probe_worker && acme_abort.load() && probe_cycle==1);}
         pre=r'''
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #define configNUMBER_OF_CORES 2
 static bool tickless=false;
 #define CONFIG_FREERTOS_USE_TICKLESS_IDLE tickless

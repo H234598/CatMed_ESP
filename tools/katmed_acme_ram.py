@@ -40,7 +40,7 @@ _RESOURCE_RE = re.compile(
     rb"status=(running|ok|error) uptime_ms=([0-9]{1,20}) "
     rb"internal_free=([0-9]{1,10}) internal_min=([0-9]{1,10}) "
     rb"internal_largest=([0-9]{1,10}) dma_free=([0-9]{1,10}) "
-    rb"dma_min=([0-9]{1,10}) dma_largest=([0-9]{1,10}) monitor_valid=([01])"
+    rb"dma_min=([0-9]{1,10}) dma_largest=([0-9]{1,10}) monitor_valid=([01]) sample_us=([0-9]{1,20}) worker_start_us=([0-9]{1,20}) worker_end_us=([0-9]{1,20})"
 )
 
 _PHASE_RE = re.compile(
@@ -163,7 +163,7 @@ def _auxiliary_records(raw: bytes) -> tuple[list[dict], list[dict]]:
         'cpu': ('schema variant cycle core cores window start_us end_us idle_start idle_end idle_delta elapsed_us counter_bits timer_hz tickless idle_priority_shared valid').split(),
     }
     string_keys = {'variant', 'op', 'event', 'status', 'window'}
-    for line in raw.splitlines():
+    for position, line in enumerate(raw.splitlines()):
         for kind, dest in (('window', windows), ('cpu', cpu)):
             if ('katmed_acme_' + kind + ':').encode() not in line:
                 continue
@@ -183,6 +183,7 @@ def _auxiliary_records(raw: bytes) -> tuple[list[dict], list[dict]]:
                     item[key] = int(value)
             if item['schema'] != 1 or item['cycle'] not in (1, 2, 3):
                 raise RamBenchError('Ungültiges Operations-/CPU-Schema oder Zyklus')
+            item["position"] = position
             dest.append(item)
     return windows, cpu
 
@@ -194,11 +195,16 @@ def _evaluate_windows_cpu(raw: bytes, cycles: dict, variant: str) -> dict:
     attempts = {}
     complete = {}
     previous_end = {}
+    last_window_time = -1
+    last_window_cycle = 1
     for w in windows:
         cycle, op = w['cycle'], w['op']
         if w['variant'] != variant or variant != 'client' or op not in ('challenge','issuance','renewal','download','key','connection'):
             raise RamBenchError('Operationsfenster passt nicht zur Variante')
         key = cycle, op
+        if cycle < last_window_cycle or w['end_us'] < last_window_time:
+            raise RamBenchError('Rückläufige gemeinsame Operationsfolge')
+        last_window_cycle, last_window_time = cycle, w['end_us']
         samples = cycles[cycle]
         if (w['valid'] != 1 or w['period_us'] != 100000 or
                 not 1 <= w['start_seq'] <= w['end_seq'] <= len(samples) or
@@ -209,6 +215,14 @@ def _evaluate_windows_cpu(raw: bytes, cycles: dict, variant: str) -> dict:
                 (w['internal_min'] > 0 and w['internal_block_observed'] == 0) or
                 (w['dma_min'] > 0 and w['dma_block_observed'] == 0)):
             raise RamBenchError('Ungültige Operationsbeobachtung')
+        # Keep the actual shared log position: an end cannot be rebound to an
+        # earlier resource record, even when every mark rounds to the same ms.
+        adjacent = [s for s in samples if s['position'] < w['position']]
+        following = next((s for s in samples if s['position'] > w['position']), None)
+        if (not adjacent or adjacent[-1]['seq'] != w['end_seq'] or
+                w['end_us'] < adjacent[-1]['sample_us'] or
+                following is None or w['end_us'] > following['sample_us']):
+            raise RamBenchError('Operationsmarke liegt außerhalb ihrer Ressourcen-Nachbarn')
         if w['event'] == 'begin':
             if (key in pending or w['attempt'] != attempts.get(key, 0) + 1 or
                     w['status'] != 'running' or w['start_seq'] != w['end_seq'] or
@@ -218,9 +232,22 @@ def _evaluate_windows_cpu(raw: bytes, cycles: dict, variant: str) -> dict:
             # Start at the first matching entry since the previous attempt.
             first = next((s['seq'] for i,s in enumerate(samples)
                           if i >= previous_end.get(key,0) and s['phase'] == phase and
-                          (i == 0 or samples[i-1]['phase'] != phase)), None)
+                          (i == previous_end.get(key,0) or samples[i-1]['phase'] != phase)), None)
+            # A failed attempt can be followed by another entry in the same
+            # phase. Its emitted begin position is the boundary, not a phase
+            # name change (probe_next emits both old and new entry snapshots).
+            if (previous_end.get(key,0) and not complete.get(key,False) and
+                    w['start_seq'] > previous_end[key] and
+                    samples[w['start_seq']-1]['phase'] == phase):
+                first = w['start_seq']
             if first != w['start_seq']:
                 raise RamBenchError('Verkürzter oder falsch zugeordneter Operationsbeginn')
+            if complete.get(key, False) and op not in ('key','connection'):
+                raise RamBenchError('Operation nach bestätigtem Erfolg erneut geöffnet')
+            if op == 'download' and (cycle,'issuance') not in pending:
+                raise RamBenchError('Download ohne laufende Ausstellung')
+            if op in ('challenge','issuance') and cycle > 1 and (cycle,'renewal') not in pending:
+                raise RamBenchError('Operation außerhalb der Erneuerung')
             pending[key] = w
             attempts[key] = w['attempt']
         elif w['event'] == 'end':
@@ -233,6 +260,14 @@ def _evaluate_windows_cpu(raw: bytes, cycles: dict, variant: str) -> dict:
             for metric in ('internal_min','dma_min','internal_block_observed','dma_block_observed'):
                 if w[metric] > begin[metric]:
                     raise RamBenchError('Aggregiertes Minimum ist rückläufig')
+            # These resource values are the very observations incorporated by
+            # the producer. Entry precedes activation and is deliberately excluded.
+            covered = samples[w['start_seq']:w['end_seq']]
+            for aggregate, resource in (('internal_min','internal_min'), ('dma_min','dma_min'),
+                                        ('internal_block_observed','internal_largest'),
+                                        ('dma_block_observed','dma_largest')):
+                if covered and w[aggregate] > min(s[resource] for s in covered):
+                    raise RamBenchError('Aggregat unterschlägt eine zugeordnete Beobachtung')
             endphase = samples[w['end_seq']-1]['phase']
             expected = {'challenge':'issuance','issuance':'certificate_switch','renewal':'certificate_switch','download':'certificate_download','key':'key','connection':'connection'}[op]
             if op in ('key','connection'):
@@ -247,6 +282,10 @@ def _evaluate_windows_cpu(raw: bytes, cycles: dict, variant: str) -> dict:
             if w['status'] == 'observed': raise RamBenchError('Operation ohne bestätigtes Ende')
 
             if w['status'] == 'ok':
+                children = {'issuance':('challenge','download'),
+                            'renewal':('challenge','issuance','download')}.get(op,())
+                if any((cycle,child) in pending for child in children):
+                    raise RamBenchError('Erfolgreiches Elternende bei offener Kindoperation')
                 if endphase != expected:
                     raise RamBenchError('Vorzeitiges erfolgreiches Operationsende')
                 boundary = next((s['seq'] for s in samples[w['start_seq']:] if s['phase'] == expected), None)
@@ -259,6 +298,8 @@ def _evaluate_windows_cpu(raw: bytes, cycles: dict, variant: str) -> dict:
                 complete[key] = True
             else:
                 complete[key] = False
+                if op == 'issuance':
+                    complete[(cycle,'challenge')] = False
             previous_end[key] = w['end_seq']
             summaries.append(w)
         else:
@@ -296,11 +337,19 @@ def _evaluate_windows_cpu(raw: bytes, cycles: dict, variant: str) -> dict:
                     before['idle_end'] > active['idle_start'] or active['idle_end'] > after['idle_start']):
                 raise RamBenchError('Überlappende oder rückläufige CPU-Zeitfenster')
             samples = cycles[cycle]
-            cleanup = next((s for s in reversed(samples) if s['phase']=='cleanup'), samples[-1])
-            if (active['start_us'] > samples[0]['uptime_ms']*1000+1000 or
-                    active['end_us']+1000 < cleanup['uptime_ms']*1000 or
-                    after['end_us'] < samples[-1]['uptime_ms']*1000):
+            released = samples[-1]
+            if (active['start_us'] != samples[0]['worker_start_us'] or
+                    active['end_us'] != released['worker_end_us'] or
+                    active['end_us'] > released['sample_us'] or
+                    after['start_us'] < active['end_us'] or
+                    after['start_us'] > released['sample_us'] or
+                    after['end_us'] < released['sample_us'] or
+                    not before['position'] < samples[0]['position'] < active['position'] < released['position'] < after['position']):
                 raise RamBenchError('CPU-Fenster deckt den tatsächlichen Workerzyklus nicht ab')
+            if any(w['cycle'] == cycle and not
+                   active['start_us'] <= w['start_us'] <= w['end_us'] <= active['end_us']
+                   for w in windows):
+                raise RamBenchError('Operation außerhalb des CPU-/Workerfensters')
     for core in range(next(iter(cores),1)):
         for cycle in (1,2):
             after=by_cpu.get((cycle,core,'after'));before=by_cpu.get((cycle+1,core,'before'))
@@ -320,7 +369,7 @@ def evaluate_resource(raw: bytes, variant: str, cleanup_tolerance: int = 0) -> d
     cycles: dict[int, list[dict]] = {1: [], 2: [], 3: []}
     previous_uptime = -1
     previous_cycle = 1
-    for line in raw.splitlines():
+    for position, line in enumerate(raw.splitlines()):
         if b"\r" in line:
             raise RamBenchError("Ungültiges Zeilenende")
         if b"katmed_acme_resource:" not in line:
@@ -338,8 +387,13 @@ def evaluate_resource(raw: bytes, variant: str, cleanup_tolerance: int = 0) -> d
             "internal_free": int(fields[6]), "internal_min": int(fields[7]),
             "internal_largest": int(fields[8]), "dma_free": int(fields[9]),
             "dma_min": int(fields[10]), "dma_largest": int(fields[11]),
-            "monitor_valid": int(fields[12]),
+            "monitor_valid": int(fields[12]), "sample_us": int(fields[13]),
+            "position": position, "worker_start_us": int(fields[14]), "worker_end_us": int(fields[15]),
         }
+        if (item["sample_us"] > 0xffffffffffffffff or
+                item["sample_us"] // 1000 != item["uptime_ms"] or
+                (cycles[item["cycle"]] and item["sample_us"] < cycles[item["cycle"]][-1]["sample_us"])):
+            raise RamBenchError("Mikrosekundenmarke passt nicht zum Ressourcenbeleg")
         if item["variant"] != variant:
             raise RamBenchError("Variantenbeleg passt nicht zum gewählten Vertrag")
         if item["uptime_ms"] > 0xFFFFFFFFFFFFFFFF or item["uptime_ms"] < previous_uptime:
@@ -415,6 +469,12 @@ def evaluate_resource(raw: bytes, variant: str, cleanup_tolerance: int = 0) -> d
                     raise RamBenchError(f"Spätere widersprüchliche Phase in Zyklus {cycle}")
                 stage = next_stage
                 retry_connection = False
+        if (any(s['worker_start_us'] != samples[0]['worker_start_us'] or
+                    not 0 < s['worker_start_us'] <= s['sample_us'] or
+                    s['worker_end_us'] != 0 for s in samples[:-1]) or
+                samples[-1]['worker_start_us'] != samples[0]['worker_start_us'] or
+                not samples[0]['worker_start_us'] < samples[-1]['worker_end_us'] <= samples[-1]['sample_us']):
+            raise RamBenchError('Workeraufbau und bestätigte Freigabe sind nicht eindeutig gebunden')
         idle, cleanup = samples[0], samples[-1]
         for key in ("internal_free", "internal_largest", "dma_free", "dma_largest"):
             if (cleanup[key] + cleanup_tolerance < idle[key] or

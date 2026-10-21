@@ -185,14 +185,22 @@ static const char *probe_variant()
 {
     return KATMED_ACME_RESOURCE_CLIENT ? "client" : "baseline";
 }
-static void probe_windows_sample(bool local)
+/* One observation supplies both the resource record and active aggregates.
+ * Heap minima and largest-block observations remain separate quantities. */
+struct ProbeObservation {
+    uint64_t time;
+    size_t internal_free, dma_free, internal_min, dma_min, internal_block, dma_block;
+};
+static ProbeObservation probe_windows_sample(bool local)
 {
     portENTER_CRITICAL(&probe_window_mux);
     const uint64_t now = (uint64_t)esp_timer_get_time();
     const uint32_t in = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
     const uint32_t dma = MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL;
-    const size_t im = local && probe_monitor_valid ? heap_caps_get_minimum_free_size(in) : heap_caps_get_free_size(in);
-    const size_t dm = local && probe_monitor_valid ? heap_caps_get_minimum_free_size(dma) : heap_caps_get_free_size(dma);
+    const size_t inf = heap_caps_get_free_size(in);
+    const size_t df = heap_caps_get_free_size(dma);
+    const size_t im = local && probe_monitor_valid ? heap_caps_get_minimum_free_size(in) : inf;
+    const size_t dm = local && probe_monitor_valid ? heap_caps_get_minimum_free_size(dma) : df;
     const size_t ib = heap_caps_get_largest_free_block(in);
     const size_t db = heap_caps_get_largest_free_block(dma);
     for (ProbeWindow &w : probe_windows) {
@@ -208,6 +216,7 @@ static void probe_windows_sample(bool local)
         if (db < w.dma_block) w.dma_block = db;
     }
     portEXIT_CRITICAL(&probe_window_mux);
+    return {now, inf, df, im, dm, ib, db};
 }
 static void probe_window_log(unsigned op, const char *event, const char *status, const ProbeWindow &w)
 {
@@ -262,17 +271,23 @@ struct ProbeCpuWindow {
     unsigned cycle;
 };
 static ProbeCpuWindow probe_cpu;
+static uint64_t probe_worker_start_us, probe_worker_end_us;
 static void probe_cpu_begin(const char *name, unsigned cycle)
 {
     probe_cpu.name = name;
     probe_cpu.cycle = cycle;
     probe_cpu.start = (uint64_t)esp_timer_get_time();
+    if (strcmp(name, "active") == 0) {
+        probe_worker_start_us = probe_cpu.start;
+        probe_worker_end_us = 0;
+    }
     for (BaseType_t core = 0; core < configNUMBER_OF_CORES; ++core)
         probe_cpu.idle[core] = ulTaskGetIdleRunTimeCounterForCore(core);
 }
 static void probe_cpu_end()
 {
     const uint64_t end = (uint64_t)esp_timer_get_time();
+    if (strcmp(probe_cpu.name, "active") == 0) probe_worker_end_us = end;
     for (BaseType_t core = 0; core < configNUMBER_OF_CORES; ++core) {
         const uint64_t idle = ulTaskGetIdleRunTimeCounterForCore(core);
         const uint64_t elapsed = end >= probe_cpu.start ? end - probe_cpu.start : 0;
@@ -304,27 +319,24 @@ static const char *probe_phase_name(unsigned phase)
 
 static void probe_sample(const char *status)
 {
-    if (probe_running) probe_windows_sample(true);
-    const uint32_t internal = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
-    const uint32_t dma = MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL;
+    const ProbeObservation observation = probe_windows_sample(probe_running);
     ESP_LOGI("katmed_acme_resource",
         "schema=2 variant=%s cycle=%u seq=%u phase=%s status=%s uptime_ms=%llu "
         "internal_free=%u internal_min=%u internal_largest=%u "
-        "dma_free=%u dma_min=%u dma_largest=%u monitor_valid=%u",
+        "dma_free=%u dma_min=%u dma_largest=%u monitor_valid=%u sample_us=%llu worker_start_us=%llu worker_end_us=%llu",
 #if KATMED_ACME_RESOURCE_CLIENT
         "client",
 #else
         "baseline",
 #endif
         probe_cycle, ++probe_sequence, probe_phase_name(probe_phase), status,
-        (unsigned long long)(esp_timer_get_time() / 1000),
-        (unsigned)heap_caps_get_free_size(internal),
-        (unsigned)(probe_running ? heap_caps_get_minimum_free_size(internal) : heap_caps_get_free_size(internal)),
-        (unsigned)heap_caps_get_largest_free_block(internal),
-        (unsigned)heap_caps_get_free_size(dma),
-        (unsigned)(probe_running ? heap_caps_get_minimum_free_size(dma) : heap_caps_get_free_size(dma)),
-        (unsigned)heap_caps_get_largest_free_block(dma),
-        probe_monitor_valid && probe_measurement_valid ? 1u : 0u);
+        (unsigned long long)(observation.time / 1000),
+        (unsigned)observation.internal_free, (unsigned)observation.internal_min,
+        (unsigned)observation.internal_block, (unsigned)observation.dma_free,
+        (unsigned)observation.dma_min, (unsigned)observation.dma_block,
+        probe_monitor_valid && probe_measurement_valid ? 1u : 0u,
+        (unsigned long long)observation.time, (unsigned long long)probe_worker_start_us,
+        (unsigned long long)probe_worker_end_us);
 }
 
 static void probe_next(unsigned phase)
