@@ -88,6 +88,10 @@ void katmed_acme_poll(uint64_t now_ms)
 void katmed_acme_stop(void)
 {
     bool was_active = client != NULL;
+    if (client != NULL && !client->Cleanup()) {
+        ESP_LOGE(TAG, "ACME cleanup failed; writer lease retained");
+        return;
+    }
     delete client;
     client = NULL;
     certificate_changed = false;
@@ -97,9 +101,9 @@ void katmed_acme_stop(void)
 
 bool katmed_acme_quiescent(void)
 {
-    /* The client holds a writer lease for its entire lifetime. Inspect only
-     * atomic slots here, whose lock also catches an orphaned file handle. */
-    return katmed_acme_atomic_idle();
+    /* A failed HTTP teardown retains the client and its writer lease. Atomic
+     * slots additionally catch an orphaned file handle. */
+    return client == NULL && katmed_acme_atomic_idle();
 }
 
 bool katmed_acme_certificate_changed(void)
@@ -119,12 +123,17 @@ static unsigned probe_phase;
 static bool probe_running;
 static bool probe_monitor_valid;
 static bool probe_launched;
+static TaskHandle_t probe_worker;
+static bool probe_success;
+static bool probe_window;
+static int64_t probe_due;
+static BaseType_t probe_core;
 
 static const char *probe_phase_name(unsigned phase)
 {
     static const char *const names[] = {
         "idle", "key", "connection", "challenge", "issuance",
-        "renewal", "certificate_switch", "cleanup"
+        "renewal", "certificate_switch", "cleanup", "certificate_download", "released"
     };
     return phase < sizeof(names) / sizeof(names[0]) ? names[phase] : "invalid";
 }
@@ -145,17 +154,17 @@ static void probe_sample(const char *status)
         probe_cycle, ++probe_sequence, probe_phase_name(probe_phase), status,
         (unsigned long long)(esp_timer_get_time() / 1000),
         (unsigned)heap_caps_get_free_size(internal),
-        (unsigned)heap_caps_get_minimum_free_size(internal),
+        (unsigned)(probe_running ? heap_caps_get_minimum_free_size(internal) : heap_caps_get_free_size(internal)),
         (unsigned)heap_caps_get_largest_free_block(internal),
         (unsigned)heap_caps_get_free_size(dma),
-        (unsigned)heap_caps_get_minimum_free_size(dma),
+        (unsigned)(probe_running ? heap_caps_get_minimum_free_size(dma) : heap_caps_get_free_size(dma)),
         (unsigned)heap_caps_get_largest_free_block(dma),
         probe_monitor_valid ? 1u : 0u);
 }
 
 static void probe_next(unsigned phase)
 {
-    if (!probe_running || phase > 7) return;
+    if (!probe_running || phase > 8) return;
     probe_sample("running");
     if (probe_monitor_valid && heap_caps_monitor_local_minimum_free_size_stop() != ESP_OK)
         probe_monitor_valid = false;
@@ -165,7 +174,17 @@ static void probe_next(unsigned phase)
 
 extern "C" void katmed_acme_probe_mark(unsigned phase)
 {
-    probe_next(phase);
+    if (!probe_running) return;
+    if (phase == 8) {
+        probe_next(8);
+        probe_window = true;
+        probe_sample("running");
+    } else if (phase == 9 || phase == 10) {
+        if (probe_window) probe_sample("running");
+        if (phase == 10) probe_window = false;
+    } else if (!probe_window) {
+        probe_next(phase);
+    }
 }
 
 static void probe_task(void *)
@@ -178,10 +197,10 @@ static void probe_task(void *)
         "/katmed/acme"
     };
 #endif
-    for (unsigned cycle = 1; cycle <= 3; ++cycle) {
-        probe_cycle = cycle;
-        probe_sequence = 0;
-        probe_phase = 0;
+#if KATMED_ACME_RESOURCE_CLIENT
+    const unsigned cycle = probe_cycle;
+#endif
+    {
         probe_running = true;
         probe_monitor_valid = heap_caps_monitor_local_minimum_free_size_start() == ESP_OK;
         bool success = false;
@@ -212,24 +231,55 @@ static void probe_task(void *)
 #endif
         probe_next(7);
         katmed_acme_stop();
-        probe_sample(success ? "ok" : "error");
-        if (probe_monitor_valid) heap_caps_monitor_local_minimum_free_size_stop();
+        probe_sample("running");
+        if (probe_monitor_valid && heap_caps_monitor_local_minimum_free_size_stop() != ESP_OK)
+            probe_monitor_valid = false;
         probe_running = false;
-        if (cycle < 3) vTaskDelay(pdMS_TO_TICKS(12000));
+        probe_success = success && katmed_acme_quiescent() && probe_monitor_valid;
     }
-    vTaskDelete(NULL);
+    /* Main observes the suspended state on this same pinned core, then deletes
+     * the non-running task. IDF 6.1 vTaskDelete frees its TCB/stack synchronously
+     * in this case, unlike self-deletion through the idle termination list. */
+    vTaskSuspend(NULL);
 }
 
 bool katmed_acme_resource_probe_launch(void)
 {
     if (probe_launched) return true;
     if (katmed_web_acme_http_server() == NULL) return false;
-    BaseType_t result = xTaskCreate(probe_task, "acme_resource", 12288, NULL,
-                                    tskIDLE_PRIORITY + 1, NULL);
-    if (result != pdPASS) return false;
     probe_launched = true;
+    probe_core = xPortGetCoreID();
+    probe_due = esp_timer_get_time() + 12000000LL;
     return true;
 }
+void katmed_acme_resource_probe_observe(void)
+{
+    if (!probe_launched || xPortGetCoreID() != probe_core) return;
+    if (probe_worker != NULL) {
+        if (eTaskGetState(probe_worker) != eSuspended) return;
+        vTaskDelete(probe_worker);
+        probe_worker = NULL;
+        probe_phase = 9;
+        probe_sample(probe_success ? "ok" : "error");
+        probe_due = esp_timer_get_time() + 12000000LL;
+        return;
+    }
+    if (probe_cycle == 3 || esp_timer_get_time() < probe_due) return;
+    ++probe_cycle;
+    probe_sequence = 0;
+    probe_phase = 0;
+    probe_monitor_valid = true; /* direct snapshot, no local monitor allocated */
+    probe_sample("running");
+    BaseType_t result = xTaskCreatePinnedToCore(probe_task, "acme_resource", 12288,
+        NULL, tskIDLE_PRIORITY + 1, &probe_worker, probe_core);
+    if (result != pdPASS) {
+        probe_phase = 9;
+        probe_sample("error");
+        probe_cycle = 3;
+    }
+}
+
 #else
 bool katmed_acme_resource_probe_launch(void) { return false; }
+void katmed_acme_resource_probe_observe(void) {}
 #endif

@@ -28,6 +28,7 @@ bool katmed_acme_quiescent(void);
 /* Built only into the paired source experiment. Normal firmware never calls
  * this entry point and never starts an ACME exchange during boot. */
 bool katmed_acme_resource_probe_launch(void);
+void katmed_acme_resource_probe_observe(void);
 
 #ifdef __cplusplus
 }

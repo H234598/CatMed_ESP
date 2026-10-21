@@ -30,12 +30,12 @@ MAX_SUMMARY_BYTES = 4096
 UINT32_MAX = 0xFFFFFFFF
 RESOURCE_PHASES = (
     "idle", "key", "connection", "challenge", "issuance", "renewal",
-    "certificate_switch", "cleanup",
+    "certificate_switch", "cleanup", "certificate_download", "released",
 )
 _RESOURCE_RE = re.compile(
     rb"I \([0-9]{1,10}\) katmed_acme_resource: schema=2 "
     rb"variant=(baseline|client) cycle=([1-3]) seq=([1-9][0-9]{0,3}) "
-    rb"phase=(idle|key|connection|challenge|issuance|renewal|certificate_switch|cleanup) "
+    rb"phase=(idle|key|connection|challenge|issuance|renewal|certificate_switch|cleanup|certificate_download|released) "
     rb"status=(running|ok|error) uptime_ms=([0-9]{1,20}) "
     rb"internal_free=([0-9]{1,10}) internal_min=([0-9]{1,10}) "
     rb"internal_largest=([0-9]{1,10}) dma_free=([0-9]{1,10}) "
@@ -217,31 +217,48 @@ def evaluate_resource(raw: bytes, variant: str, cleanup_tolerance: int = 0) -> d
         "dma_free", "dma_min", "dma_largest")}
     first_idle = cycles[1][0]
     for cycle, samples in cycles.items():
-        if samples[0]["phase"] != "idle" or samples[-1]["phase"] != "cleanup":
-            raise RamBenchError(f"Zyklus {cycle} ohne Idle oder Cleanup")
+        if samples[0]["phase"] != "idle" or samples[-1]["phase"] != "released":
+            raise RamBenchError(f"Zyklus {cycle} ohne Idle oder bestätigte Workerfreigabe")
         if any(s["status"] != "running" for s in samples[:-1]):
             raise RamBenchError(f"Zyklus {cycle} enthält Fehler oder vorzeitiges Ende")
         if samples[-1]["status"] != "ok":
             raise RamBenchError(f"Zyklus {cycle} wurde abgebrochen")
         phases = {s["phase"] for s in samples}
-        if variant == "baseline" and [s["phase"] for s in samples] != ["idle", "cleanup"]:
+        if variant == "baseline" and [s["phase"] for s in samples] != ["idle", "idle", "cleanup", "released"]:
             raise RamBenchError("Baseline enthält unerwartete Clientphasen")
         if variant == "client":
             required_cycle = {"idle", "connection", "challenge", "issuance",
-                              "certificate_switch", "cleanup"}
+                              "certificate_switch", "certificate_download", "cleanup", "released"}
             required_cycle.add("key" if cycle == 1 else "renewal")
             missing_by_cycle[str(cycle)] = sorted(required_cycle - phases)
-            first = {name: next((i for i, s in enumerate(samples) if s["phase"] == name), None)
-                     for name in required_cycle}
-            milestones = ("idle", "key" if cycle == 1 else "renewal",
-                          "challenge", "issuance", "certificate_switch", "cleanup")
-            for earlier, later in zip(milestones, milestones[1:]):
-                if (first[earlier] is not None and first[later] is not None and
-                    first[earlier] >= first[later]):
-                    raise RamBenchError(f"Phasenfolge in Zyklus {cycle} ist widersprüchlich")
-            if (first["connection"] is not None and first["challenge"] is not None and
-                first["connection"] >= first["challenge"]):
-                raise RamBenchError(f"Verbindung folgt der Challenge in Zyklus {cycle}")
+            # Connection hooks may nest in challenge/issuance, and pending
+            # challenge or issuance may retry. They cannot reopen a completed
+            # download/switch/cleanup. Check every observation, not just firsts.
+            rank = {"idle": 0, "key": 1, "renewal": 1, "challenge": 2,
+                    "issuance": 3, "certificate_download": 4,
+                    "certificate_switch": 5, "cleanup": 6, "released": 7}
+            stage = 0
+            connected = False
+            retry_connection = False
+            for sample in samples:
+                phase = sample["phase"]
+                if phase == "connection":
+                    if stage >= 4:
+                        raise RamBenchError("Verbindung nach Downloadfenster")
+                    connected = True
+                    retry_connection = True
+                    continue
+                if phase == "challenge" and not connected:
+                    raise RamBenchError("Challenge ohne vorherige Verbindung")
+                next_stage = rank[phase]
+                # An invalid order can create a new order via a connection,
+                # then retry its challenge/finalization before any download.
+                if stage == 3 and next_stage == 2 and retry_connection:
+                    stage = 2
+                if next_stage < stage:
+                    raise RamBenchError(f"Spätere widersprüchliche Phase in Zyklus {cycle}")
+                stage = next_stage
+                retry_connection = False
         idle, cleanup = samples[0], samples[-1]
         for key in ("internal_free", "internal_largest", "dma_free", "dma_largest"):
             if (cleanup[key] + cleanup_tolerance < idle[key] or
@@ -252,7 +269,7 @@ def evaluate_resource(raw: bytes, variant: str, cleanup_tolerance: int = 0) -> d
         for sample in samples:
             for key in minima:
                 minima[key] = min(minima[key], sample[key])
-    expected = set(RESOURCE_PHASES if variant == "client" else ("idle", "cleanup"))
+    expected = set(RESOURCE_PHASES if variant == "client" else ("idle", "cleanup", "released"))
     missing = sorted(expected - observed)
     complete = not missing and not any(missing_by_cycle.values())
     return {
@@ -262,9 +279,9 @@ def evaluate_resource(raw: bytes, variant: str, cleanup_tolerance: int = 0) -> d
         "missing_by_cycle": missing_by_cycle,
         "cleanup_tolerance_bytes": cleanup_tolerance,
         "minima_bytes": minima, "hardware_pass": False,
-        "certificate_file_boundary": "DownloadCertificate ends before certificate_switch hook; file peak belongs to preceding phase",
-        "cleanup_boundary": "cleanup snapshot precedes probe task deletion; worker stack release is unmeasured",
-        "largest_block_boundary": "hook snapshot, not an interval minimum",
+        "certificate_file_boundary": "DownloadCertificate entry through return; certificate_switch remains separate successful commit hook",
+        "cleanup_boundary": "released snapshot after monitor stop and synchronous deletion of suspended worker",
+        "largest_block_boundary": "discrete snapshots including download entry, network return, write, commit and parse; not a continuous block minimum",
     }
 
 

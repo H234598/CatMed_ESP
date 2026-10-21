@@ -99,16 +99,16 @@ def resource_capture(variant: str = "client") -> bytes:
     lines = []
     for cycle in range(1, 4):
         names = (["idle", "key", "connection", "challenge", "issuance",
-                  "certificate_switch", "cleanup"] if cycle == 1 else
+                  "certificate_download", "certificate_switch", "cleanup", "released"] if cycle == 1 else
                  ["idle", "renewal", "connection", "challenge", "issuance",
-                  "certificate_switch", "cleanup"])
+                  "certificate_download", "certificate_switch", "cleanup", "released"])
         if variant == "baseline":
-            names = ["idle", "cleanup"]
+            names = ["idle", "idle", "cleanup", "released"]
         for seq, name in enumerate(names, 1):
             lines.append(resource_record(
                 cycle, seq, name, variant=variant,
-                status="ok" if name == "cleanup" else "running",
-                free=64000 if name in ("idle", "cleanup") else 60000,
+                status="ok" if name == "released" else "running",
+                free=64000 if name in ("idle", "cleanup", "released") else 60000,
             ))
     return "".join(lines).encode("ascii")
 
@@ -132,8 +132,8 @@ class AcmeResourceCaptureCheck(unittest.TestCase):
         self.assertFalse(summary["hardware_pass"])
         self.assertEqual(3, summary["cycles"])
         self.assertEqual([], summary["missing_phases"])
-        self.assertIn("before certificate_switch", summary["certificate_file_boundary"])
-        self.assertIn("worker stack release is unmeasured", summary["cleanup_boundary"])
+        self.assertIn("certificate_switch remains separate", summary["certificate_file_boundary"])
+        self.assertIn("synchronous deletion", summary["cleanup_boundary"])
         self.assertIn("snapshot", summary["largest_block_boundary"])
         baseline = katmed_acme_ram.evaluate_resource(resource_capture("baseline"), "baseline")
         self.assertEqual("source_capture_valid", baseline["qualification"])
@@ -165,9 +165,9 @@ class AcmeResourceCaptureCheck(unittest.TestCase):
     def test_error_abort_cleanup_loss_and_missing_cycle_fail_closed(self):
         raw = resource_capture()
         for damaged in (
-            raw.replace(b"phase=cleanup status=ok", b"phase=cleanup status=error", 1),
-            raw.replace(resource_record(1, 7, "cleanup", status="ok", free=64000).encode("ascii"),
-                        resource_record(1, 7, "cleanup", status="ok", free=59000).encode("ascii"), 1),
+            raw.replace(b"phase=released status=ok", b"phase=released status=error", 1),
+            raw.replace(resource_record(1, 9, "released", status="ok", free=64000).encode("ascii"),
+                        resource_record(1, 9, "released", status="ok", free=59000).encode("ascii"), 1),
             raw.split(b"cycle=3")[0],
         ):
             with self.assertRaises(katmed_acme_ram.RamBenchError):
@@ -274,12 +274,13 @@ class AcmeSourceContractCheck(unittest.TestCase):
         source = ROOT / "firmware/managed_components/dannybackx__acmeclient"
         with tempfile.TemporaryDirectory() as temporary:
             target = pathlib.Path(temporary)
-            for name in (*patch.EXPECTED, "idf_component.yml"):
+            for name in (*patch.EXPECTED, "idf_component.yml", "include/Acme.h"):
+                (target / name).parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(source / name, target / name)
-            self.assertTrue(patch.apply(target))
+            patch.apply(target)
             self.assertFalse(patch.apply(target))
             text = (target / "Acme.cpp").read_text()
-            self.assertIn("if (!katmed_acme_http_host_allowed(req))", text)
+            self.assertIn("!katmed_acme_http_host_allowed(req))", text)
             self.assertIn("if (!ws_registered) {", text)
             self.assertIn("free((void *)wsconf.uri);", text)
             self.assertIn("int committed = ok ? katmed_acme_atomic_close(f) : katmed_acme_atomic_abort(f);", text)

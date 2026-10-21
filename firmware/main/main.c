@@ -1887,6 +1887,7 @@ void app_main(void)
 #if KATMED_ACME_RESOURCE_PROBE
         if (root_ip && !acme_probe_launched)
             acme_probe_launched = katmed_acme_resource_probe_launch();
+        katmed_acme_resource_probe_observe();
 #endif
         katmed_time_set_link(&runtime.time, root_ip ||
                              (runtime.mesh_started && katmed_mesh_connected() &&

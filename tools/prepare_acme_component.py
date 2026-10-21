@@ -195,6 +195,102 @@ def _patch_resource_fixes(path: Path) -> None:
     path.write_text(source, encoding="utf-8")
 
 
+EXPECTED_HEADER = '5fe34f81a3a7f03270b0b30ae5b2bba6293c2d0610a7ecdd5e6928930091e1ff'
+LIFECYCLE_MARKER = "KATMED_ACME_LIFECYCLE_4"
+
+def _patch_lifecycle(component: Path) -> None:
+    path = component / "Acme.cpp"
+    source = path.read_text()
+    header = component / "include/Acme.h"
+    h = header.read_text()
+    original_header = h.replace("  public:\n    bool Cleanup();", "  public:", 1)
+    if hashlib.sha256(original_header.encode()).hexdigest() != EXPECTED_HEADER:
+        raise PatchError("official ACME header checksum mismatch")
+    if LIFECYCLE_MARKER in source:
+        if "bool Cleanup();" not in h:
+            raise PatchError("ACME Cleanup declaration missing")
+        return
+    def replace(before, after):
+        nonlocal source
+        if source.count(before) != 1:
+            raise PatchError("ACME lifecycle anchor changed")
+        source = source.replace(before, after, 1)
+    replace('Acme::~Acme() {', 'Acme::~Acme() {\n  Cleanup();\n  if (_acme == this) _acme = NULL;')
+    replace('  if (!katmed_acme_http_host_allowed(req)) {',
+            '  if (_acme == NULL || _acme->ValidationFile == NULL ||\n      _acme->ValidationString == NULL || !katmed_acme_http_host_allowed(req)) {')
+    replace('  httpd_unregister_uri_handler(webserver, ovf, HTTP_GET);\n  free(ovf);',
+            '  if (httpd_unregister_uri_handler(webserver, ovf, HTTP_GET) != ESP_OK) return;\n  free(ovf);')
+    # Reuse Disable rather than losing the old registration on failure.
+    start = source.index('  if (ws_registered && (ovf != NULL)) {')
+    end = source.index('\n\n  memset((void *)&wsconf', start)
+    source = source[:start] + '  if (ws_registered) {\n    DisableLocalWebServer();\n    if (ws_registered) return;\n  }' + source[end:]
+    replace('    ValidationString = CreateValidationString(token);',
+            '    if (!Cleanup()) return status_fail;\n    ValidationString = CreateValidationString(token);')
+    replace("""    if (r != status_pending) {
+      if (ValidationString) {
+        free(ValidationString);
+        ValidationString = 0;
+      }
+      if (ValidationFile) {
+        free(ValidationFile);
+        ValidationFile = 0;
+      }
+
+      if (ws_registered)
+        DisableLocalWebServer();
+    }""", '    if (r != status_pending && !Cleanup()) return status_fail;')
+    replace('bool Acme::DownloadCertificate() {',
+            'bool Acme::DownloadCertificate() {\n  KATMED_ACME_PROBE(8);\n'
+            '  struct Window { ~Window() { KATMED_ACME_PROBE(10); } } window;')
+    replace('  free(msg);\n  if (reply) {\n    ESP_LOGD(tag, "%s -> %s", __FUNCTION__, reply);',
+            '  free(msg);\n  KATMED_ACME_PROBE(9);\n  if (reply) {\n    ESP_LOGD(tag, "%s -> %s", __FUNCTION__, reply);')
+    replace('    int committed = ok ?', '    KATMED_ACME_PROBE(9);\n    int committed = ok ?')
+    replace('  if (ok) ReadCertificate();', '  KATMED_ACME_PROBE(9);\n  if (ok) ReadCertificate();')
+    # Serialize every deregistration, including normal validation completion,
+    # with HTTP request execution. Never free URI/data while send uses them.
+    start = source.index('void Acme::DisableLocalWebServer() {')
+    end = source.index('\n}\n', start) + 3
+    source = source[:start] + r'''
+void Acme::DisableLocalWebServer() {
+  if (!ws_registered) return;
+  if (!webserver || !ovf) return;
+  struct Work { Acme *self; SemaphoreHandle_t done; };
+  StaticSemaphore_t storage;
+  Work work = {this, xSemaphoreCreateBinaryStatic(&storage)};
+  auto disable = [](void *arg) {
+    Work *w = static_cast<Work *>(arg);
+    Acme *a = w->self;
+    if (httpd_unregister_uri_handler(a->webserver, a->ovf, HTTP_GET) == ESP_OK) {
+      free(a->ovf); a->ovf = NULL;
+      a->ws_registered = false;
+    }
+    xSemaphoreGive(w->done);
+  };
+  if (httpd_queue_work(webserver, disable, &work) != ESP_OK) return;
+  xSemaphoreTake(work.done, portMAX_DELAY);
+}
+''' + source[end:]
+    source += r'''
+/* KATMED_ACME_LIFECYCLE_4
+ * Disable waits for the server's serialized work queue, after active requests.
+ * Callers retain the object and writer lease when deregistration fails.
+ */
+bool Acme::Cleanup() {
+  DisableLocalWebServer();
+  if (ws_registered) return false;
+  free(ovf); ovf = NULL;
+  free(ValidationFile); ValidationFile = NULL;
+  free(ValidationString); ValidationString = NULL;
+  return true;
+}
+'''
+    source = '#include "freertos/FreeRTOS.h"\n#include "freertos/semphr.h"\n' + source
+    if h.count('  public:') != 1:
+        raise PatchError("ACME public anchor changed")
+    header.write_text(h.replace('  public:', '  public:\n    bool Cleanup();', 1))
+    path.write_text(source)
+
+
 def apply(component: Path) -> bool:
     component = component.resolve()
     manifest = component / "idf_component.yml"
@@ -210,6 +306,7 @@ def apply(component: Path) -> bool:
         if MARKER not in path.read_text(encoding="utf-8") and _sha256(path) != EXPECTED[name]:
             raise PatchError(f"official ACME source checksum mismatch: {name}")
     changed = False
+    paths["include/Acme.h"] = component / "include/Acme.h"
     before = {name: path.read_bytes() for name, path in paths.items()}
     try:
         _patch_source(paths["Cache.cpp"],
@@ -243,6 +340,7 @@ def apply(component: Path) -> bool:
              '    if (ok) {\n      KATMED_ACME_PROBE(6);\n      return true;\n    }\n  }\n\n  if (strcmp(order->status, acme_status_invalid)'),
         ))
         _patch_resource_fixes(paths["Acme.cpp"])
+        _patch_lifecycle(component)
         changed = any(path.read_bytes() != before[name] for name, path in paths.items())
     except Exception:
         for name, path in paths.items():
