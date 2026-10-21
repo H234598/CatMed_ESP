@@ -11,6 +11,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "katmed_web.h"
+#include "katmed_web_acme_route.h"
 #include "katmed_source_export.h"
 
 extern "C" bool katmed_acme_atomic_idle(void);
@@ -18,11 +19,24 @@ extern "C" bool katmed_acme_atomic_idle(void);
 static const char *TAG = "katmed_acme";
 static Acme *client;
 static bool certificate_changed;
+static char challenge_host[254];
+
+extern "C" bool katmed_acme_http_host_allowed(httpd_req_t *req)
+{
+    if (req == NULL || client == NULL ||
+        req->handle != katmed_web_acme_http_server()) return false;
+    size_t length = httpd_req_get_hdr_value_len(req, "Host");
+    if (length == 0 || length > 256) return false;
+    char supplied[257];
+    if (httpd_req_get_hdr_value_str(req, "Host", supplied,
+                                    sizeof(supplied)) != ESP_OK) return false;
+    return katmed_web_acme_host_matches(challenge_host, supplied);
+}
 
 bool katmed_acme_start(const KatmedAcmeConfig *config)
 {
-    certificate_changed = false;
     if (client != NULL) return true;
+    certificate_changed = false;
     if (config == NULL || config->identifier == NULL || config->email == NULL ||
         config->server == NULL || config->state_prefix == NULL ||
         config->identifier[0] == '\0' || config->email[0] == '\0' ||
@@ -36,6 +50,10 @@ bool katmed_acme_start(const KatmedAcmeConfig *config)
         ESP_LOGE(TAG, "ACME refused: state directory is outside reset contract");
         return false;
     }
+    if (!katmed_web_acme_host_matches(config->identifier, config->identifier)) {
+        ESP_LOGE(TAG, "ACME refused: invalid challenge identifier");
+        return false;
+    }
     if (!katmed_source_writer_enter()) return false;
     httpd_handle_t server = katmed_web_acme_http_server();
     if (server == NULL) {
@@ -45,6 +63,7 @@ bool katmed_acme_start(const KatmedAcmeConfig *config)
     }
     client = new Acme();
     if (client == NULL) { katmed_source_writer_leave(); return false; }
+    strlcpy(challenge_host, config->identifier, sizeof(challenge_host));
     client->setUrl(config->identifier);
     client->setEmail(config->email);
     client->setAcmeServer(config->server);
@@ -72,6 +91,7 @@ void katmed_acme_stop(void)
     delete client;
     client = NULL;
     certificate_changed = false;
+    memset(challenge_host, 0, sizeof(challenge_host));
     if (was_active) katmed_source_writer_leave();
 }
 

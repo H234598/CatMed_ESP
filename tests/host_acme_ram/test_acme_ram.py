@@ -2,6 +2,7 @@
 import json
 import pathlib
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -131,6 +132,9 @@ class AcmeResourceCaptureCheck(unittest.TestCase):
         self.assertFalse(summary["hardware_pass"])
         self.assertEqual(3, summary["cycles"])
         self.assertEqual([], summary["missing_phases"])
+        self.assertIn("before certificate_switch", summary["certificate_file_boundary"])
+        self.assertIn("worker stack release is unmeasured", summary["cleanup_boundary"])
+        self.assertIn("snapshot", summary["largest_block_boundary"])
         baseline = katmed_acme_ram.evaluate_resource(resource_capture("baseline"), "baseline")
         self.assertEqual("source_capture_valid", baseline["qualification"])
 
@@ -180,6 +184,107 @@ class AcmeResourceCaptureCheck(unittest.TestCase):
         ):
             with self.assertRaises(katmed_acme_ram.RamBenchError):
                 katmed_acme_ram.evaluate_resource(damaged, "client")
+
+    def test_peer_phase_order_and_cross_cycle_loss_fail_closed(self):
+        lines = resource_capture().decode("ascii").splitlines(keepends=True)
+        lines[4] = lines[4].replace("phase=issuance", "phase=certificate_switch")
+        lines[5] = lines[5].replace("phase=certificate_switch", "phase=issuance")
+        with self.assertRaises(katmed_acme_ram.RamBenchError):
+            katmed_acme_ram.evaluate_resource("".join(lines).encode("ascii"), "client")
+
+        raw = resource_capture()
+        for cycle in (2, 3):
+            for seq, name in ((1, "idle"), (7, "cleanup")):
+                old = resource_record(cycle, seq, name, status="ok" if seq == 7 else "running")
+                new = resource_record(cycle, seq, name,
+                                      status="ok" if seq == 7 else "running",
+                                      free=64000 - (cycle - 1) * 1000)
+                raw = raw.replace(old.encode("ascii"), new.encode("ascii"), 1)
+        with self.assertRaises(katmed_acme_ram.RamBenchError):
+            katmed_acme_ram.evaluate_resource(raw, "client")
+
+    def test_positive_heap_cannot_have_zero_largest_block(self):
+        raw = resource_capture()
+        for damaged in (
+            raw.replace(b"internal_largest=62000", b"internal_largest=0", 1),
+            raw.replace(b"dma_largest=52000", b"dma_largest=0", 1),
+        ):
+            with self.assertRaises(katmed_acme_ram.RamBenchError):
+                katmed_acme_ram.evaluate_resource(damaged, "client")
+
+
+class AcmeSourceContractCheck(unittest.TestCase):
+    def test_http01_route_registration_delivery_failure_and_cleanup(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            binary = pathlib.Path(temporary) / "route_test"
+            subprocess.run([
+                "cc", "-std=c11", "-Wall", "-Wextra", "-Werror", "-O2",
+                "-I", str(ROOT / "firmware/components/katmed_web/include"),
+                str(ROOT / "firmware/components/katmed_web/katmed_web_acme_route.c"),
+                str(ROOT / "tests/host_acme_ram/test_acme_route.c"),
+                "-o", str(binary),
+            ], check=True, capture_output=True, text=True)
+            subprocess.run([str(binary)], check=True, capture_output=True, text=True)
+        web = (ROOT / "firmware/components/katmed_web/katmed_web.c").read_text()
+        self.assertIn("plain.max_uri_handlers = 2;", web)
+        self.assertIn("plain.uri_match_fn = katmed_web_plain_uri_match;", web)
+        self.assertIn('if (!web.https || !request_host(req, host))', web)
+
+    def test_atomic_close_failures_preserve_old_certificate(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            for name, content in {
+                "esp_log.h": "#define ESP_LOGE(tag, ...) ((void)(tag))\n",
+                "freertos/FreeRTOS.h": "",
+                "freertos/portmacro.h": (
+                    "typedef int portMUX_TYPE;\n"
+                    "#define portMUX_INITIALIZER_UNLOCKED 0\n"
+                    "#define portENTER_CRITICAL(x) ((void)(x))\n"
+                    "#define portEXIT_CRITICAL(x) ((void)(x))\n"
+                ),
+                "katmed_source_export.h": (
+                    "#include <stdbool.h>\n"
+                    "bool katmed_source_writer_enter(void);\n"
+                    "void katmed_source_writer_leave(void);\n"
+                ),
+            }.items():
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(content)
+            obj = root / "atomic.o"
+            binary = root / "atomic_test"
+            result = subprocess.run([
+                "cc", "-D_GNU_SOURCE", "-std=c11", "-Wall", "-Wextra", "-Werror",
+                "-I", str(root), "-Dfsync=fixture_fsync", "-Drename=fixture_rename",
+                "-c", str(ROOT / "firmware/components/katmed_acme/katmed_acme_atomic.c"),
+                "-o", str(obj),
+            ], capture_output=True, text=True)
+            self.assertEqual(0, result.returncode, result.stderr)
+            subprocess.run([
+                "cc", "-D_GNU_SOURCE", "-std=c11", "-Wall", "-Wextra", "-Werror",
+                str(obj), str(ROOT / "tests/host_acme_ram/test_acme_atomic.c"),
+                "-o", str(binary),
+            ], check=True, capture_output=True, text=True)
+            subprocess.run([str(binary), str(root / "certificate.pem")],
+                           check=True, capture_output=True, text=True)
+
+    def test_resolved_client_patch_is_idempotent_and_propagates_failure(self):
+        sys.path.insert(0, str(ROOT / "tools"))
+        import prepare_acme_component as patch
+        source = ROOT / "firmware/managed_components/dannybackx__acmeclient"
+        with tempfile.TemporaryDirectory() as temporary:
+            target = pathlib.Path(temporary)
+            for name in (*patch.EXPECTED, "idf_component.yml"):
+                shutil.copy2(source / name, target / name)
+            self.assertTrue(patch.apply(target))
+            self.assertFalse(patch.apply(target))
+            text = (target / "Acme.cpp").read_text()
+            self.assertIn("if (!katmed_acme_http_host_allowed(req))", text)
+            self.assertIn("if (!ws_registered) {", text)
+            self.assertIn("free((void *)wsconf.uri);", text)
+            self.assertIn("int committed = ok ? katmed_acme_atomic_close(f) : katmed_acme_atomic_abort(f);", text)
+            self.assertIn("if (committed != 0)", text)
+            self.assertIn("if (ok) ReadCertificate();", text)
 
 
 if __name__ == "__main__":

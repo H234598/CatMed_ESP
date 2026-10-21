@@ -1,5 +1,5 @@
 idf_component_register(
-    SRCS "katmed_web.c" "katmed_web_auth.c" "katmed_web_identity.c"
+    SRCS "katmed_web.c" "katmed_web_acme_route.c" "katmed_web_auth.c" "katmed_web_identity.c"
          "katmed_web_policy.c" "katmed_web_wifi.c" "katmed_web_reset.c"
          "katmed_web_media.c"
     INCLUDE_DIRS "include"

@@ -22,6 +22,7 @@ EXPECTED = {
 }
 MARKER = "KATMED_ACME_ATOMIC_PATCH_1"
 PROBE_MARKER = "KATMED_ACME_RESOURCE_HOOK_1"
+RESOURCE_FIX_MARKER = "KATMED_ACME_HTTP01_FILE_FIX_1"
 DECLARATION = """
 #include <stdio.h>
 extern \"C\" FILE *katmed_acme_atomic_open(const char *target);
@@ -103,6 +104,97 @@ def _patch_probe(path: Path, sites: tuple[tuple[str, str], ...]) -> None:
     path.write_text(source, encoding="utf-8")
 
 
+def _patch_resource_fixes(path: Path) -> None:
+    """Keep the resolved client's HTTP-01 and certificate success paths fail-closed."""
+    source = path.read_text(encoding="utf-8")
+    if RESOURCE_FIX_MARKER in source:
+        anchor = f"/* {RESOURCE_FIX_MARKER} */\n"
+        includes = "#include <stdio.h>\n#include <esp_http_server.h>\n"
+        if includes + anchor not in source:
+            if source.count(anchor) != 1:
+                raise PatchError("ACME resource fix marker changed")
+            path.write_text(source.replace(anchor, includes + anchor, 1), encoding="utf-8")
+        return
+
+    def replace_once(before: str, after: str) -> None:
+        nonlocal source
+        if source.count(before) != 1:
+            raise PatchError("ACME resource fix anchor changed")
+        source = source.replace(before, after, 1)
+
+    replace_once(
+        f"/* {MARKER} */\n",
+        '#include <stdio.h>\n#include <esp_http_server.h>\n'
+        f'/* {RESOURCE_FIX_MARKER} */\n'
+        'extern "C" bool katmed_acme_http_host_allowed(httpd_req_t *req);\n'
+        'extern "C" int katmed_acme_atomic_abort(FILE *stream);\n'
+        f"/* {MARKER} */\n",
+    )
+    replace_once(
+        '  if (strcmp(req->uri, _acme->ValidationFile) == 0) {',
+        '  if (!katmed_acme_http_host_allowed(req)) {\n'
+        '    httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, "host");\n'
+        '    return ESP_OK;\n'
+        '  }\n'
+        '  if (strcmp(req->uri, _acme->ValidationFile) == 0) {',
+    )
+    replace_once(
+        '    free(ovf);\n    ovf = NULL;\n  }\n\n  memset((void *)&wsconf, 0, sizeof(wsconf));',
+        '    free(ovf);\n    ovf = NULL;\n    ws_registered = false;\n'
+        '  }\n\n  memset((void *)&wsconf, 0, sizeof(wsconf));',
+    )
+    replace_once(
+        '  wsconf.uri = strdup(ValidationFile);\n  wsconf.method = HTTP_GET;',
+        '  wsconf.uri = strdup(ValidationFile);\n'
+        '  if (wsconf.uri == NULL) {\n'
+        '    ESP_LOGE(tag, "%s: challenge URI allocation failed", __FUNCTION__);\n'
+        '    return;\n'
+        '  }\n'
+        '  wsconf.method = HTTP_GET;',
+    )
+    replace_once(
+        '      __FUNCTION__, wsconf.uri, err, esp_err_to_name(err));\n  } else {',
+        '      __FUNCTION__, wsconf.uri, err, esp_err_to_name(err));\n'
+        '    free((void *)wsconf.uri);\n'
+        '  } else {',
+    )
+    replace_once(
+        '    EnableLocalWebServer();\n  } else {',
+        '    EnableLocalWebServer();\n'
+        '    if (!ws_registered) {\n'
+        '      free(ValidationString);\n      free(ValidationFile);\n'
+        '      ValidationString = ValidationFile = NULL;\n'
+        '      return status_fail;\n'
+        '    }\n'
+        '  } else {',
+    )
+    replace_once(
+        '    ValidationFile = (char *)malloc(strlen(well_known) + strlen(token) + 2);\n'
+        '    sprintf(ValidationFile, "%s%s", well_known, token);',
+        '    ValidationFile = (char *)malloc(strlen(well_known) + strlen(token) + 2);\n'
+        '    if (ValidationString == NULL || ValidationFile == NULL) {\n'
+        '      free(ValidationString);\n      free(ValidationFile);\n'
+        '      ValidationString = ValidationFile = NULL;\n'
+        '      return status_fail;\n'
+        '    }\n'
+        '    sprintf(ValidationFile, "%s%s", well_known, token);',
+    )
+    replace_once(
+        '    katmed_acme_atomic_close(f);\n  } else {',
+        '    int committed = ok ? katmed_acme_atomic_close(f) : katmed_acme_atomic_abort(f);\n'
+        '    if (committed != 0) {\n'
+        '      ESP_LOGE(tag, "Certificate file commit failed");\n'
+        '      ok = false;\n'
+        '    }\n'
+        '  } else {',
+    )
+    replace_once(
+        '  free(reply);\n\n  if (ok) ReadCertificate();',
+        '  free(fn);\n  free(reply);\n\n  if (ok) ReadCertificate();',
+    )
+    path.write_text(source, encoding="utf-8")
+
+
 def apply(component: Path) -> bool:
     component = component.resolve()
     manifest = component / "idf_component.yml"
@@ -150,6 +242,7 @@ def apply(component: Path) -> bool:
             ('    if (ok)\n      return true;\n  }\n\n  if (strcmp(order->status, acme_status_invalid)',
              '    if (ok) {\n      KATMED_ACME_PROBE(6);\n      return true;\n    }\n  }\n\n  if (strcmp(order->status, acme_status_invalid)'),
         ))
+        _patch_resource_fixes(paths["Acme.cpp"])
         changed = any(path.read_bytes() != before[name] for name, path in paths.items())
     except Exception:
         for name, path in paths.items():

@@ -75,7 +75,7 @@ FILE *katmed_acme_atomic_open(const char *target)
     return stream;
 }
 
-int katmed_acme_atomic_close(FILE *stream)
+static int atomic_finish(FILE *stream, bool commit)
 {
     if (stream == NULL) return EOF;
     AtomicSlot slot = {0};
@@ -90,16 +90,19 @@ int katmed_acme_atomic_close(FILE *stream)
         }
     }
     portEXIT_CRITICAL(&slots_lock);
-    if (!found) return fclose(stream);
-    int result = fflush(stream);
-    if (result == 0) result = fsync(fileno(stream));
+    if (!found) return EOF;
+    int result = 0;
+    if (commit) {
+        result = fflush(stream);
+        if (result == 0) result = fsync(fileno(stream));
+    }
     if (fclose(stream) != 0) result = EOF;
-    if (result == 0 && rename(slot.temporary, slot.target) != 0) result = -1;
-    if (result != 0) {
+    if (commit && result == 0 && rename(slot.temporary, slot.target) != 0) result = -1;
+    if (!commit || result != 0) {
         unlink(slot.temporary);
-        ESP_LOGE(TAG, "atomic ACME state commit failed: %s", strerror(errno));
+        if (commit) ESP_LOGE(TAG, "atomic ACME state commit failed: %s", strerror(errno));
         katmed_source_writer_leave();
-        return EOF;
+        return commit ? EOF : 0;
     }
     char parent[ATOMIC_PATH_MAX];
     strlcpy(parent, slot.target, sizeof(parent));
@@ -114,6 +117,16 @@ int katmed_acme_atomic_close(FILE *stream)
     }
     katmed_source_writer_leave();
     return 0;
+}
+
+int katmed_acme_atomic_close(FILE *stream)
+{
+    return atomic_finish(stream, true);
+}
+
+int katmed_acme_atomic_abort(FILE *stream)
+{
+    return atomic_finish(stream, false);
 }
 
 bool katmed_acme_atomic_idle(void)

@@ -17,6 +17,7 @@
 #include "esp_timer.h"
 #include "katmed_config_bridge.h"
 #include "katmed_web_auth.h"
+#include "katmed_web_acme_route.h"
 #include "katmed_web_identity.h"
 #include "katmed_web_media.h"
 #include "katmed_web_policy.h"
@@ -1094,12 +1095,12 @@ static bool start_listeners(void)
     plain.server_port = 80;
     plain.ctrl_port = tls.httpd.ctrl_port + 1;
     plain.max_open_sockets = 1;
-    plain.max_uri_handlers = 1;
+    plain.max_uri_handlers = 2;
     plain.stack_size = 3072;
     plain.backlog_conn = 1;
     plain.recv_wait_timeout = 2;
     plain.send_wait_timeout = 2;
-    plain.uri_match_fn = httpd_uri_match_wildcard;
+    plain.uri_match_fn = katmed_web_plain_uri_match;
     if (httpd_start(&web.redirect, &plain) != ESP_OK || !web.redirect) {
         ESP_LOGW(WEB_TAG, "HTTP redirect start failed");
         stop_listeners();

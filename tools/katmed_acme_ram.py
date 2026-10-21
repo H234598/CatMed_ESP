@@ -200,6 +200,8 @@ def evaluate_resource(raw: bytes, variant: str, cleanup_tolerance: int = 0) -> d
             item["dma_min"] > item["dma_free"] or
             item["internal_largest"] > item["internal_free"] or
             item["dma_largest"] > item["dma_free"] or
+            (item["internal_free"] > 0 and item["internal_largest"] == 0) or
+            (item["dma_free"] > 0 and item["dma_largest"] == 0) or
             item["monitor_valid"] != 1):
             raise RamBenchError("Heap-Messung ist unvollständig oder widersprüchlich")
         samples = cycles[item["cycle"]]
@@ -213,6 +215,7 @@ def evaluate_resource(raw: bytes, variant: str, cleanup_tolerance: int = 0) -> d
     minima = {key: UINT32_MAX for key in (
         "internal_free", "internal_min", "internal_largest",
         "dma_free", "dma_min", "dma_largest")}
+    first_idle = cycles[1][0]
     for cycle, samples in cycles.items():
         if samples[0]["phase"] != "idle" or samples[-1]["phase"] != "cleanup":
             raise RamBenchError(f"Zyklus {cycle} ohne Idle oder Cleanup")
@@ -221,16 +224,29 @@ def evaluate_resource(raw: bytes, variant: str, cleanup_tolerance: int = 0) -> d
         if samples[-1]["status"] != "ok":
             raise RamBenchError(f"Zyklus {cycle} wurde abgebrochen")
         phases = {s["phase"] for s in samples}
-        if variant == "baseline" and phases != {"idle", "cleanup"}:
+        if variant == "baseline" and [s["phase"] for s in samples] != ["idle", "cleanup"]:
             raise RamBenchError("Baseline enthält unerwartete Clientphasen")
         if variant == "client":
             required_cycle = {"idle", "connection", "challenge", "issuance",
                               "certificate_switch", "cleanup"}
             required_cycle.add("key" if cycle == 1 else "renewal")
             missing_by_cycle[str(cycle)] = sorted(required_cycle - phases)
+            first = {name: next((i for i, s in enumerate(samples) if s["phase"] == name), None)
+                     for name in required_cycle}
+            milestones = ("idle", "key" if cycle == 1 else "renewal",
+                          "challenge", "issuance", "certificate_switch", "cleanup")
+            for earlier, later in zip(milestones, milestones[1:]):
+                if (first[earlier] is not None and first[later] is not None and
+                    first[earlier] >= first[later]):
+                    raise RamBenchError(f"Phasenfolge in Zyklus {cycle} ist widersprüchlich")
+            if (first["connection"] is not None and first["challenge"] is not None and
+                first["connection"] >= first["challenge"]):
+                raise RamBenchError(f"Verbindung folgt der Challenge in Zyklus {cycle}")
         idle, cleanup = samples[0], samples[-1]
         for key in ("internal_free", "internal_largest", "dma_free", "dma_largest"):
-            if cleanup[key] + cleanup_tolerance < idle[key]:
+            if (cleanup[key] + cleanup_tolerance < idle[key] or
+                idle[key] + cleanup_tolerance < first_idle[key] or
+                cleanup[key] + cleanup_tolerance < first_idle[key]):
                 raise RamBenchError(f"Cleanup-Verlust in Zyklus {cycle}: {key}")
         observed.update(s["phase"] for s in samples)
         for sample in samples:
@@ -246,6 +262,9 @@ def evaluate_resource(raw: bytes, variant: str, cleanup_tolerance: int = 0) -> d
         "missing_by_cycle": missing_by_cycle,
         "cleanup_tolerance_bytes": cleanup_tolerance,
         "minima_bytes": minima, "hardware_pass": False,
+        "certificate_file_boundary": "DownloadCertificate ends before certificate_switch hook; file peak belongs to preceding phase",
+        "cleanup_boundary": "cleanup snapshot precedes probe task deletion; worker stack release is unmeasured",
+        "largest_block_boundary": "hook snapshot, not an interval minimum",
     }
 
 
