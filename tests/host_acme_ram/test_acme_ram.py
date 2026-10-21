@@ -88,11 +88,56 @@ def resource_record(cycle: int, seq: int, name: str, *, variant: str = "client",
                     status: str = "running", free: int = 64000) -> str:
     return (
         f"I (1) katmed_acme_resource: schema=2 variant={variant} cycle={cycle} "
-        f"seq={seq} phase={name} status={status} uptime_ms={cycle * 10000 + seq} "
+        f"seq={seq} phase={name} status={status} uptime_ms={cycle * 100000 + seq} "
         f"internal_free={free} internal_min={free - 1000} "
         f"internal_largest={free - 2000} dma_free={free - 10000} "
         f"dma_min={free - 11000} dma_largest={free - 12000} monitor_valid=1\n"
     )
+
+
+def with_measurements(raw: bytes) -> bytes:
+    lines=[line for line in raw.decode().splitlines() if 'katmed_acme_resource:' in line]
+    extra=[]
+    for cycle in (1,2,3):
+        samples=[]
+        for line in lines:
+            m=katmed_acme_ram._RESOURCE_RE.fullmatch(line.encode())
+            if m and int(m[2])==cycle: samples.append((int(m[3]),m[4].decode(),int(m[6])*1000,m[1].decode()))
+        if not samples: continue
+        variant=samples[0][3]
+        first,last=samples[0][2],samples[-1][2]
+        cpu_times=[('before',first-12000002,first-2),('active',first-1,last+1),('after',last+2,last+12000002)]
+        for name,start,end in cpu_times:
+            extra.append(f'I (1) katmed_acme_cpu: schema=1 variant={variant} cycle={cycle} core=0 cores=1 window={name} start_us={start} end_us={end} idle_start={start//2} idle_end={end//2} idle_delta={end//2-start//2} elapsed_us={end-start} counter_bits=64 timer_hz=1000000 tickless=0 idle_priority_shared=1 valid=1')
+        if variant=='baseline': continue
+        active={};attempts={}
+        def emit(op,event,seq,stamp,status):
+            if event=='begin':
+                attempts[op]=attempts.get(op,0)+1
+                active[op]=(seq,stamp)
+            startseq,start=active[op]
+            extra.append(f'I (1) katmed_acme_window: schema=1 variant={variant} cycle={cycle} op={op} attempt={attempts[op]} event={event} status={status} start_seq={startseq} end_seq={seq} start_us={start} end_us={stamp} observations={1 if event=="begin" else 5} max_gap_us={0 if event=="begin" else stamp-start} period_us=100000 internal_min=50000 dma_min=40000 internal_block_observed=30000 dma_block_observed=20000 valid=1')
+            if event=='end':del active[op]
+        previous=None
+        for seq,phase,stamp,_ in samples:
+            for interval in ('key','connection'):
+                if interval in active and phase != interval:emit(interval,'end',seq,stamp+500,'observed')
+            if phase in ('key','connection') and phase not in active:emit(phase,'begin',seq,stamp,'running')
+            if phase=='renewal' and 'renewal' not in active and 'renewal' not in attempts:emit('renewal','begin',seq,stamp,'running')
+            if phase=='challenge' and 'challenge' not in active:
+                if 'issuance' in active and previous:
+                    emit('issuance','end',previous[0],previous[2]+500,'error')
+                emit('challenge','begin',seq,stamp,'running')
+            if phase=='issuance':
+                if 'challenge' in active:emit('challenge','end',seq,stamp+500,'ok')
+                if 'issuance' not in active:emit('issuance','begin',seq,stamp,'running')
+            if phase=='certificate_download' and 'download' not in active and 'download' not in attempts:emit('download','begin',seq,stamp,'running')
+            if phase=='certificate_switch':
+                if 'download' in active and previous:emit('download','end',previous[0],previous[2]+500,'ok')
+                for op in ('issuance','renewal'):
+                    if op in active:emit(op,'end',seq,stamp+500,'ok')
+            previous=(seq,phase,stamp)
+    return ('\n'.join(lines+extra)+'\n').encode()
 
 
 def resource_capture(variant: str = "client") -> bytes:
@@ -110,7 +155,7 @@ def resource_capture(variant: str = "client") -> bytes:
                 status="ok" if name == "released" else "running",
                 free=64000 if name in ("idle", "cleanup", "released") else 60000,
             ))
-    return "".join(lines).encode("ascii")
+    return with_measurements("".join(lines).encode("ascii"))
 
 
 class AcmeResourceCaptureCheck(unittest.TestCase):
@@ -146,7 +191,7 @@ class AcmeResourceCaptureCheck(unittest.TestCase):
         with self.assertRaises(katmed_acme_ram.RamBenchError):
             katmed_acme_ram.evaluate_resource(raw, "client")
         text = resource_capture().decode("ascii")
-        text = text.replace("phase=challenge", "phase=connection", 1)
+        text = with_measurements(text.replace("phase=challenge", "phase=connection", 1).encode()).decode()
         summary = katmed_acme_ram.evaluate_resource(text.encode("ascii"), "client")
         self.assertEqual("incomplete", summary["qualification"])
         self.assertIn("challenge", summary["missing_by_cycle"]["1"])

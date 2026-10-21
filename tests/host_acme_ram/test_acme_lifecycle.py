@@ -18,24 +18,8 @@ def method(text, signature):
         pos += 1
     return text[start:pos]
 
-class Lifecycle(unittest.TestCase):
-    def compile_run(self, source, args=()):
-        with tempfile.TemporaryDirectory() as tmp:
-            f = Path(tmp) / 'test.cpp'
-            f.write_text(source)
-            result = subprocess.run(['c++', '-std=c++17', '-Wall', '-Wextra',
-                                     str(f), '-o', str(Path(tmp)/'test')], capture_output=True)
-            self.assertEqual(0, result.returncode, result.stderr.decode())
-            return subprocess.check_output([str(Path(tmp)/'test'), *args])
-
-    def test_actual_pending_cleanup_destructor_failure_and_reregistration(self):
-        import shutil
-        with tempfile.TemporaryDirectory() as tmp:
-            component = Path(tmp)/'client'
-            shutil.copytree(ROOT/'firmware/managed_components/dannybackx__acmeclient', component)
-            patch.apply(component)
-            text = (component/'Acme.cpp').read_text()
-        pre = r'''
+def pending_client_fixture():
+    return r'''
 #include <cassert>
 #include <cstring>
 #include <cstdlib>
@@ -100,6 +84,72 @@ void ClearAccount(){}void ClearOrder(){}void ClearChallenge(){}void ClearDirecto
 };
 Acme *Acme::_acme=nullptr;
 '''
+
+def observer_fixture():
+    return r'''
+#include <cstdio>
+#include <cstdint>
+#include <cassert>
+#include <atomic>
+#include <cstring>
+#define KATMED_ACME_RESOURCE_CLIENT 0
+#define ESP_LOGI(tag,fmt,...) std::printf("I (1) " tag ": " fmt "\n",__VA_ARGS__)
+#define ESP_OK 0
+#define MALLOC_CAP_INTERNAL 1
+#define MALLOC_CAP_8BIT 2
+#define MALLOC_CAP_DMA 4
+#define pdMS_TO_TICKS(x) (x)
+#define tskIDLE_PRIORITY 0
+#define pdPASS 1
+using BaseType_t=int;using TaskHandle_t=void*;
+static int free_bytes=64000,deleted=0;static bool monitor=false,suspended=false;
+static long tick=0;
+static std::atomic<TaskHandle_t> client_owner;
+static std::atomic<bool> acme_abort;
+static std::atomic<TaskHandle_t> probe_worker;
+#define configNUMBER_OF_CORES 1
+#define CONFIG_FREERTOS_USE_TICKLESS_IDLE 0
+using portMUX_TYPE=int;
+#define portMUX_INITIALIZER_UNLOCKED 0
+#define portENTER_CRITICAL(x) ((void)(x))
+#define portEXIT_CRITICAL(x) ((void)(x))
+uint64_t ulTaskGetIdleRunTimeCounterForCore(int){return tick/2;}
+bool katmed_acme_atomic_idle(){return true;}
+long esp_timer_get_time(){return ++tick;}
+int heap_caps_monitor_local_minimum_free_size_start(){assert(!monitor);monitor=true;return 0;}
+int heap_caps_monitor_local_minimum_free_size_stop(){assert(monitor);monitor=false;return 0;}
+int heap_caps_get_free_size(int){return free_bytes;}
+int heap_caps_get_minimum_free_size(int){return free_bytes-1000;}
+int heap_caps_get_largest_free_block(int){return free_bytes-2000;}
+void katmed_acme_stop(){}bool katmed_acme_quiescent(){return true;}
+void vTaskDelay(int ms){tick+=ms*1000;}
+void vTaskSuspend(void*){throw 1;}
+enum {eRunning,eSuspended};
+int eTaskGetState(void*){return suspended?eSuspended:eRunning;}
+int xPortGetCoreID(){return 0;}
+void vTaskDelete(void*p){assert(p && suspended && !monitor);free_bytes+=12288;++deleted;}
+int xTaskCreatePinnedToCore(void(*)(void*),const char*,int,void*,int,void**h,int){*h=(void*)1;free_bytes-=12288;suspended=false;return pdPASS;}
+void*katmed_web_acme_http_server(){return (void*)1;}
+'''
+
+class Lifecycle(unittest.TestCase):
+    def compile_run(self, source, args=()):
+        with tempfile.TemporaryDirectory() as tmp:
+            f = Path(tmp) / 'test.cpp'
+            f.write_text(source)
+            result = subprocess.run(['c++', '-std=c++17', '-Wall', '-Wextra',
+                                     str(f), '-o', str(Path(tmp)/'test')], capture_output=True)
+            self.assertEqual(0, result.returncode, result.stderr.decode())
+            return subprocess.check_output([str(Path(tmp)/'test'), *args])
+
+    def test_actual_pending_cleanup_destructor_failure_and_reregistration(self):
+        import shutil
+        with tempfile.TemporaryDirectory() as tmp:
+            component = Path(tmp)/'client'
+            shutil.copytree(ROOT/'firmware/managed_components/dannybackx__acmeclient', component)
+            patch.apply(component)
+            text = (component/'Acme.cpp').read_text()
+        pre = pending_client_fixture()
         bodies = '\n'.join(method(text, sig) for sig in (
             'Acme::~Acme()', 'bool Acme::Cleanup()', 'esp_err_t Acme::acme_http_get_handler(',
             'void Acme::EnableLocalWebServer()', 'void Acme::DisableLocalWebServer()', 'Acme::return_status Acme::ValidateOrder()'))
@@ -126,42 +176,12 @@ puts("pending_cleanup_destructor_failure_retry_and_slot_reuse=passed");}
     def test_actual_worker_release_observer_and_multicycle_loss(self):
         text = (ROOT/'firmware/components/katmed_acme/katmed_acme.cpp').read_text()
         text = text[text.index('static unsigned probe_cycle;'):text.index('\n#else\nbool katmed_acme_resource_probe_launch')]
-        pre = r'''
-#include <cstdio>
-#include <cstdint>
-#include <cassert>
-#define KATMED_ACME_RESOURCE_CLIENT 0
-#define ESP_LOGI(tag,fmt,...) std::printf("I (1) " tag ": " fmt "\n",__VA_ARGS__)
-#define ESP_OK 0
-#define MALLOC_CAP_INTERNAL 1
-#define MALLOC_CAP_8BIT 2
-#define MALLOC_CAP_DMA 4
-#define pdMS_TO_TICKS(x) (x)
-#define tskIDLE_PRIORITY 0
-#define pdPASS 1
-using BaseType_t=int;using TaskHandle_t=void*;
-static int free_bytes=64000,deleted=0;static bool monitor=false,suspended=false;
-static long tick=0;
-long esp_timer_get_time(){return tick;}
-int heap_caps_monitor_local_minimum_free_size_start(){assert(!monitor);monitor=true;return 0;}
-int heap_caps_monitor_local_minimum_free_size_stop(){assert(monitor);monitor=false;return 0;}
-int heap_caps_get_free_size(int){return free_bytes;}
-int heap_caps_get_minimum_free_size(int){return free_bytes-1000;}
-int heap_caps_get_largest_free_block(int){return free_bytes-2000;}
-void katmed_acme_stop(){}bool katmed_acme_quiescent(){return true;}
-void vTaskDelay(int){}
-void vTaskSuspend(void*){throw 1;}
-enum {eRunning,eSuspended};
-int eTaskGetState(void*){return suspended?eSuspended:eRunning;}
-int xPortGetCoreID(){return 0;}
-void vTaskDelete(void*p){assert(p && suspended && !monitor);free_bytes+=12288;++deleted;}
-int xTaskCreatePinnedToCore(void(*)(void*),const char*,int,void*,int,void**h,int){*h=(void*)1;free_bytes-=12288;suspended=false;return pdPASS;}
-void*katmed_web_acme_http_server(){return (void*)1;}
-'''
+        pre = observer_fixture()
         main = r'''
 int main(int argc,char**){
 assert(katmed_acme_resource_probe_launch());
 for(int c=1;c<=3;++c){
+if(c>1){tick+=13000000;katmed_acme_resource_probe_observe();}
 tick+=13000000;katmed_acme_resource_probe_observe();assert(probe_worker);
 try{probe_task(nullptr);}catch(int){}
 assert(!monitor);katmed_acme_resource_probe_observe();assert(deleted==c-1);
@@ -169,6 +189,7 @@ suspended=true;
 if(argc>1)free_bytes-=100;
 katmed_acme_resource_probe_observe();assert(deleted==c && !probe_worker);
 }
+tick+=13000000;katmed_acme_resource_probe_observe();
 }
 '''
         capture = self.compile_run(pre+text+main)
@@ -218,7 +239,7 @@ katmed_acme_probe_mark(9);katmed_acme_probe_mark(10);assert(!probe_window);}
 #define ESP_LOGD(...) ((void)0)
 #define ESP_LOGE(...) ((void)0)
 static bool window=false;static int mode=0,reads=0;static std::vector<unsigned> points;
-void mark(unsigned p){points.push_back(p);if(p==8){assert(!window);window=true;}else if(p==10){assert(window);window=false;}else assert(window);}
+void mark(unsigned p){points.push_back(p);if(p==8){assert(!window);window=true;}else if(p==10 || p==13){assert(window);window=false;}else assert(window);}
 #define KATMED_ACME_PROBE(p) mark(p)
 FILE*katmed_acme_atomic_open(const char*){assert(window);return tmpfile();}
 int katmed_acme_atomic_close(FILE*f){fclose(f);return mode==2?-1:0;}
@@ -236,7 +257,7 @@ bool DownloadCertificate();
         main=r'''
 int main(){Acme a;for(mode=0;mode<3;++mode){points.clear();reads=0;
 bool ok=a.DownloadCertificate();assert(ok==(mode==0));assert(!window);
-assert(points.front()==8 && points.back()==10);assert(reads==(mode==0));
+assert(points.front()==8 && points.back()==(mode==0?13:10));assert(reads==(mode==0));
 if(mode==0)assert(points.size()>=6);}}
 '''
         self.compile_run(pre+method(text,'bool Acme::DownloadCertificate()')+main)
@@ -246,6 +267,11 @@ if(mode==0)assert(points.size()>=6);}}
         pre=r'''
 #include <cassert>
 #include <cstring>
+#include <atomic>
+using TaskHandle_t=void*;
+static std::atomic<TaskHandle_t> client_owner;
+static std::atomic<bool> acme_abort;
+TaskHandle_t xTaskGetCurrentTaskHandle(){return (void*)1;}
 #define ESP_LOGE(...) ((void)0)
 static int destroyed=0,leaves=0;
 class Acme {public: bool ok=false;bool Cleanup(){return ok;}~Acme(){++destroyed;}};
@@ -256,7 +282,7 @@ bool katmed_acme_atomic_idle(){return true;}
 void katmed_source_writer_leave(){++leaves;}
 '''
         main=r'''
-int main(){client=new Acme;katmed_acme_stop();assert(client && !destroyed && !leaves);
+int main(){client=new Acme;client_owner.store((void*)1);katmed_acme_stop();assert(client && !destroyed && !leaves);
 assert(!katmed_acme_quiescent());client->ok=true;katmed_acme_stop();
 assert(!client && destroyed==1 && leaves==1 && katmed_acme_quiescent());
 katmed_acme_stop();assert(destroyed==1 && leaves==1);}
@@ -264,7 +290,7 @@ katmed_acme_stop();assert(destroyed==1 && leaves==1);}
         self.compile_run(pre+method(text,'void katmed_acme_stop(')+method(text,'bool katmed_acme_quiescent(')+main)
 
     def test_whole_trace_rejects_late_issuance_and_accepts_nested_retries(self):
-        from test_acme_ram import resource_record
+        from test_acme_ram import resource_record, with_measurements
         def trace(late):
             lines=[]
             for cycle in range(1,4):
@@ -277,7 +303,7 @@ katmed_acme_stop();assert(destroyed==1 && leaves==1);}
                 names += ['cleanup','released']
                 for seq,name in enumerate(names,1):
                     lines.append(resource_record(cycle,seq,name,status='ok' if name=='released' else 'running'))
-            return ''.join(lines).encode()
+            return with_measurements(''.join(lines).encode())
         self.assertEqual('source_capture_valid',ram.evaluate_resource(trace(False),'client')['qualification'])
         with self.assertRaises(ram.RamBenchError): ram.evaluate_resource(trace(True),'client')
 

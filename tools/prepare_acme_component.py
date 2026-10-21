@@ -291,6 +291,28 @@ bool Acme::Cleanup() {
     path.write_text(source)
 
 
+def _patch_measurement_windows(path: Path) -> None:
+    source = path.read_text()
+    marker = "KATMED_ACME_OPERATION_WINDOWS_3"
+    if marker in source: return
+    def replace(before, after):
+        nonlocal source
+        if source.count(before) != 1: raise PatchError("operation window anchor changed")
+        source = source.replace(before, after, 1)
+    replace('struct Window { ~Window() { KATMED_ACME_PROBE(10); } } window;',
+            'struct Window { bool committed = false; ~Window() { KATMED_ACME_PROBE(committed ? 13 : 10); } } window;')
+    replace('  if (ok) ReadCertificate();\n  return ok;',
+            '  if (ok) ReadCertificate();\n  window.committed = ok;\n  return ok;')
+    replace('void Acme::RequestNewOrder(const char *url) {',
+            'void Acme::RequestNewOrder(const char *url) {\n  KATMED_ACME_PROBE(12);')
+    start=source.index('Acme::return_status Acme::ValidateOrder() {')
+    end=source.index('Acme::return_status Acme::ValidateAlertServer()', start)
+    section=source[start:end]
+    section=section.replace('return status_fail;', '{ KATMED_ACME_PROBE(11); return status_fail; }')
+    source=source[:start]+section+source[end:]
+    path.write_text('/* '+marker+' */\n'+source)
+
+
 def apply(component: Path) -> bool:
     component = component.resolve()
     manifest = component / "idf_component.yml"
@@ -341,6 +363,7 @@ def apply(component: Path) -> bool:
         ))
         _patch_resource_fixes(paths["Acme.cpp"])
         _patch_lifecycle(component)
+        _patch_measurement_windows(paths["Acme.cpp"])
         changed = any(path.read_bytes() != before[name] for name, path in paths.items())
     except Exception:
         for name, path in paths.items():

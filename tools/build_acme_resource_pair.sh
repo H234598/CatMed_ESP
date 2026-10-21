@@ -41,7 +41,7 @@ for board in c3 c6; do
         if [[ "$variant" == client ]]; then client=ON; fi
         if ! (cd "$repo_dir/firmware" && idf.py -B "$out" \
             -D "IDF_TARGET=$target" -D "SDKCONFIG=$out/sdkconfig" \
-            -D "SDKCONFIG_DEFAULTS=sdkconfig.defaults;boards/$board.defaults" \
+            -D "SDKCONFIG_DEFAULTS=sdkconfig.defaults;boards/$board.defaults;acme_resource.defaults" \
             -D KATMED_ACME_RESOURCE_PROBE=ON \
             -D "KATMED_ACME_RESOURCE_CLIENT=$client" \
             -D "KATMED_ACME_RESOURCE_SERVER=$fixture_server" build) >"$out/build.log" 2>&1; then

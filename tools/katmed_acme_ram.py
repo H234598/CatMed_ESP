@@ -27,6 +27,7 @@ PHASES = (
 MAX_INPUT_BYTES = 1024 * 1024
 MAX_INPUT_LINES = 16_384
 MAX_SUMMARY_BYTES = 4096
+MAX_RESOURCE_SUMMARY_BYTES = 32768
 UINT32_MAX = 0xFFFFFFFF
 RESOURCE_PHASES = (
     "idle", "key", "connection", "challenge", "issuance", "renewal",
@@ -155,6 +156,161 @@ def evaluate(raw: bytes) -> dict:
     return summary
 
 
+def _auxiliary_records(raw: bytes) -> tuple[list[dict], list[dict]]:
+    windows, cpu = [], []
+    keys = {
+        'window': ('schema variant cycle op attempt event status start_seq end_seq start_us end_us observations max_gap_us period_us internal_min dma_min internal_block_observed dma_block_observed valid').split(),
+        'cpu': ('schema variant cycle core cores window start_us end_us idle_start idle_end idle_delta elapsed_us counter_bits timer_hz tickless idle_priority_shared valid').split(),
+    }
+    string_keys = {'variant', 'op', 'event', 'status', 'window'}
+    for line in raw.splitlines():
+        for kind, dest in (('window', windows), ('cpu', cpu)):
+            if ('katmed_acme_' + kind + ':').encode() not in line:
+                continue
+            match = re.fullmatch(rb'I \([0-9]{1,10}\) katmed_acme_' + kind.encode() + rb': ([a-zA-Z0-9_= ]+)', line)
+            if not match:
+                raise RamBenchError('Beschädigte Operations-/CPU-Messung')
+            pairs = [token.split('=') for token in match[1].decode('ascii').split(' ')]
+            if any(len(pair) != 2 for pair in pairs) or [p[0] for p in pairs] != keys[kind]:
+                raise RamBenchError('Unvollständige Operations-/CPU-Felder')
+            item = {}
+            for key, value in pairs:
+                if key in string_keys:
+                    item[key] = value
+                else:
+                    if not re.fullmatch(r'[0-9]{1,20}', value) or int(value) > 0xffffffffffffffff:
+                        raise RamBenchError('Ungültiger Operations-/CPU-Zähler')
+                    item[key] = int(value)
+            if item['schema'] != 1 or item['cycle'] not in (1, 2, 3):
+                raise RamBenchError('Ungültiges Operations-/CPU-Schema oder Zyklus')
+            dest.append(item)
+    return windows, cpu
+
+
+def _evaluate_windows_cpu(raw: bytes, cycles: dict, variant: str) -> dict:
+    windows, cpu = _auxiliary_records(raw)
+    missing, summaries, cpu_summary = [], [], []
+    pending = {}
+    attempts = {}
+    complete = {}
+    previous_end = {}
+    for w in windows:
+        cycle, op = w['cycle'], w['op']
+        if w['variant'] != variant or variant != 'client' or op not in ('challenge','issuance','renewal','download','key','connection'):
+            raise RamBenchError('Operationsfenster passt nicht zur Variante')
+        key = cycle, op
+        samples = cycles[cycle]
+        if (w['valid'] != 1 or w['period_us'] != 100000 or
+                not 1 <= w['start_seq'] <= w['end_seq'] <= len(samples) or
+                w['start_us'] > w['end_us'] or not 1 <= w['observations'] <= UINT32_MAX or
+                any(w[k] > UINT32_MAX for k in ('internal_min','dma_min','internal_block_observed','dma_block_observed')) or
+                w['max_gap_us'] > w['end_us'] - w['start_us'] or
+                w['max_gap_us'] * w['observations'] < w['end_us'] - w['start_us'] or
+                (w['internal_min'] > 0 and w['internal_block_observed'] == 0) or
+                (w['dma_min'] > 0 and w['dma_block_observed'] == 0)):
+            raise RamBenchError('Ungültige Operationsbeobachtung')
+        if w['event'] == 'begin':
+            if (key in pending or w['attempt'] != attempts.get(key, 0) + 1 or
+                    w['status'] != 'running' or w['start_seq'] != w['end_seq'] or
+                    w['start_us'] != w['end_us']):
+                raise RamBenchError('Operationsbeginn ist widersprüchlich')
+            phase = {'challenge':'challenge','issuance':'issuance','renewal':'renewal','download':'certificate_download','key':'key','connection':'connection'}[op]
+            # Start at the first matching entry since the previous attempt.
+            first = next((s['seq'] for i,s in enumerate(samples)
+                          if i >= previous_end.get(key,0) and s['phase'] == phase and
+                          (i == 0 or samples[i-1]['phase'] != phase)), None)
+            if first != w['start_seq']:
+                raise RamBenchError('Verkürzter oder falsch zugeordneter Operationsbeginn')
+            pending[key] = w
+            attempts[key] = w['attempt']
+        elif w['event'] == 'end':
+            begin = pending.pop(key, None)
+            if (begin is None or w['status'] not in ('ok','error','observed') or
+                    any(w[k] != begin[k] for k in ('attempt','start_seq','start_us')) or
+                    w['observations'] < 2 or w['end_us'] <= w['start_us'] or
+                    w['observations'] < begin['observations']):
+                raise RamBenchError('Operationsende fehlt oder ist widersprüchlich')
+            for metric in ('internal_min','dma_min','internal_block_observed','dma_block_observed'):
+                if w[metric] > begin[metric]:
+                    raise RamBenchError('Aggregiertes Minimum ist rückläufig')
+            endphase = samples[w['end_seq']-1]['phase']
+            expected = {'challenge':'issuance','issuance':'certificate_switch','renewal':'certificate_switch','download':'certificate_download','key':'key','connection':'connection'}[op]
+            if op in ('key','connection'):
+                if w['status'] == 'ok': raise RamBenchError('Intervallgrenze ist kein Protokollerfolg')
+                if w['status'] == 'observed':
+                    boundary = next((s['seq'] for s in samples[w['start_seq']:] if s['phase'] != op), None)
+                    if boundary != w['end_seq']: raise RamBenchError('Verkürztes Schlüssel-/Verbindungsintervall')
+                    complete[key] = True
+                previous_end[key] = w['end_seq']
+                summaries.append(w)
+                continue
+            if w['status'] == 'observed': raise RamBenchError('Operation ohne bestätigtes Ende')
+
+            if w['status'] == 'ok':
+                if endphase != expected:
+                    raise RamBenchError('Vorzeitiges erfolgreiches Operationsende')
+                boundary = next((s['seq'] for s in samples[w['start_seq']:] if s['phase'] == expected), None)
+                if op == 'download':
+                    switch = next((s['seq'] for s in samples[w['end_seq']:] if s['phase'] != 'certificate_download'), None)
+                    if switch is None or samples[switch-1]['phase'] != 'certificate_switch':
+                        raise RamBenchError('Download ohne atomaren Erfolgscaller')
+                elif boundary != w['end_seq']:
+                    raise RamBenchError('Falsche Grenze des übergeordneten Operationsfensters')
+                complete[key] = True
+            else:
+                complete[key] = False
+            previous_end[key] = w['end_seq']
+            summaries.append(w)
+        else:
+            raise RamBenchError('Unbekannte Operationsmarke')
+    if pending:
+        raise RamBenchError('Offene Operationsfenster am Captureende')
+    for cycle in (1,2,3):
+        if variant == 'client':
+            for op in ('challenge','issuance','download','connection') + (('renewal',) if cycle > 1 else ('key',)):
+                if not complete.get((cycle,op),False): missing.append(f'{cycle}:{op}')
+    by_cpu = {}
+    for c in cpu:
+        if (c['variant'] != variant or c['window'] not in ('before','active','after') or
+                not 1 <= c['cores'] <= 2 or not 0 <= c['core'] < c['cores'] or
+                c['counter_bits'] != 64 or c['timer_hz'] != 1000000 or c['tickless'] != 0 or
+                c['idle_priority_shared'] != 1 or c['valid'] != 1 or
+                c['end_us'] <= c['start_us'] or c['idle_end'] < c['idle_start'] or
+                c['elapsed_us'] != c['end_us']-c['start_us'] or
+                c['idle_delta'] != c['idle_end']-c['idle_start'] or
+                c['idle_delta'] > c['elapsed_us'] or c['elapsed_us'] > 3600000000 or
+                (c['window'] != 'active' and c['elapsed_us'] < 12000000)):
+            raise RamBenchError('CPU-Zeitfenster ist ungültig oder übergelaufen')
+        key = c['cycle'], c['core'], c['window']
+        if key in by_cpu: raise RamBenchError('Doppeltes CPU-Fenster')
+        by_cpu[key] = c
+        cpu_summary.append({**c, 'idle_permille': c['idle_delta']*1000//c['elapsed_us']})
+    cores = {c['cores'] for c in cpu}
+    if len(cores)>1: raise RamBenchError('Wechselnde CPU-Kernzahl')
+    for cycle in (1,2,3):
+        for core in range(next(iter(cores),1)):
+            group = [by_cpu.get((cycle,core,n)) for n in ('before','active','after')]
+            if not all(group): missing.append(f'{cycle}:cpu:{core}'); continue
+            before, active, after = group
+            if (before['end_us'] > active['start_us'] or active['end_us'] > after['start_us'] or
+                    before['idle_end'] > active['idle_start'] or active['idle_end'] > after['idle_start']):
+                raise RamBenchError('Überlappende oder rückläufige CPU-Zeitfenster')
+            samples = cycles[cycle]
+            cleanup = next((s for s in reversed(samples) if s['phase']=='cleanup'), samples[-1])
+            if (active['start_us'] > samples[0]['uptime_ms']*1000+1000 or
+                    active['end_us']+1000 < cleanup['uptime_ms']*1000 or
+                    after['end_us'] < samples[-1]['uptime_ms']*1000):
+                raise RamBenchError('CPU-Fenster deckt den tatsächlichen Workerzyklus nicht ab')
+    for core in range(next(iter(cores),1)):
+        for cycle in (1,2):
+            after=by_cpu.get((cycle,core,'after'));before=by_cpu.get((cycle+1,core,'before'))
+            if after and before and (after['end_us'] > before['start_us'] or after['idle_end'] > before['idle_start']):
+                raise RamBenchError('Zyklusübergreifend rückläufige CPU-Fenster')
+    return {'missing_measurement_windows':missing, 'operation_windows':summaries,
+            'cpu_windows':cpu_summary, 'sampling_contract':'main block sampling target 100000 us plus operation hooks; max_gap_us reports actual gaps; no continuous block minimum',
+            'cpu_boundary':'per-core idle-task runtime deltas using 64-bit ESP timer microseconds; idle-priority peers excluded, tickless unavailable'}
+
+
 def evaluate_resource(raw: bytes, variant: str, cleanup_tolerance: int = 0) -> dict:
     """Qualify a bounded numeric source capture, never a hardware RAM pass."""
     if variant not in ("baseline", "client") or not 0 <= cleanup_tolerance <= 65536:
@@ -271,8 +427,10 @@ def evaluate_resource(raw: bytes, variant: str, cleanup_tolerance: int = 0) -> d
                 minima[key] = min(minima[key], sample[key])
     expected = set(RESOURCE_PHASES if variant == "client" else ("idle", "cleanup", "released"))
     missing = sorted(expected - observed)
-    complete = not missing and not any(missing_by_cycle.values())
+    extra = _evaluate_windows_cpu(raw, cycles, variant)
+    complete = not missing and not any(missing_by_cycle.values()) and not extra["missing_measurement_windows"]
     return {
+        **extra,
         "schema": 2, "qualification": "source_capture_valid" if complete else "incomplete",
         "variant": variant, "cycles": 3, "samples": sum(map(len, cycles.values())),
         "observed_phases": sorted(observed), "missing_phases": missing,
@@ -288,6 +446,9 @@ def evaluate_resource(raw: bytes, variant: str, cleanup_tolerance: int = 0) -> d
 def _write_summary(path: Path, summary: dict) -> None:
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     encoded = (json.dumps(summary, sort_keys=True, separators=(",", ":")) + "\n").encode("ascii")
+    limit = MAX_RESOURCE_SUMMARY_BYTES if summary.get("schema") == 2 else MAX_SUMMARY_BYTES
+    if len(encoded) > limit:
+        raise RamBenchError("Messzusammenfassung überschreitet die feste Ausgabegrenze")
     fd, temp_name = tempfile.mkstemp(prefix=".acme-ram-", dir=path.parent)
     try:
         os.fchmod(fd, 0o600)

@@ -1161,6 +1161,8 @@ void katmed_web_poll(uint64_t now_ms)
         xSemaphoreGive(web.auth_mutex);
     }
     if (!web.restart_pending || now_ms < web.restart_due_ms) return;
+    if (web.services.prepare_listener_stop &&
+        !web.services.prepare_listener_stop(web.services.context)) return;
     web.restart_pending = false;
     stop_listeners();
     if (!start_listeners()) {
@@ -1183,6 +1185,8 @@ bool katmed_web_pairing_code(char out[7])
 
 void katmed_web_stop(void)
 {
+    if (web.services.prepare_listener_stop &&
+        !web.services.prepare_listener_stop(web.services.context)) return;
     stop_listeners();
     if (web.auth_mutex) {
         vSemaphoreDelete(web.auth_mutex);

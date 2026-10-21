@@ -22,6 +22,8 @@ typedef struct {
 
 typedef struct {
     void *context;
+    /* Main-loop lifecycle barrier before destroying/replacing HTTP handles. */
+    bool (*prepare_listener_stop)(void *context);
     bool (*device_info)(void *context, KatmedWebDeviceInfo *out);
     bool (*language_get)(void *context, uint8_t *out);
     bool (*language_set)(void *context, uint8_t language);

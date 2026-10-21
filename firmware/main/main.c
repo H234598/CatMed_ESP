@@ -247,8 +247,15 @@ int katmed_runtime_reset_confirm(void *context,const char *token,size_t length)
     return valid ? 0 : 1;
 }
 
+static bool web_prepare_listener_stop(void *context)
+{
+    (void)context;
+    return katmed_acme_prepare_listener_stop();
+}
+
 static bool reset_runtime_step(Runtime *rt,uint64_t now_ms)
 {
+    static bool shutdown_pending;
     if (!rt || !reset_mutex) return false;
     if (xSemaphoreTake(reset_mutex,pdMS_TO_TICKS(100))!=pdTRUE) return rt->reset_active;
     const bool requested=rt->reset_requested;
@@ -266,12 +273,16 @@ static bool reset_runtime_step(Runtime *rt,uint64_t now_ms)
             }
             return false;
         }
+        shutdown_pending=true;
+    }
+    if (shutdown_pending) {
+        if (!web_prepare_listener_stop(rt)) return true;
         katmed_web_stop();
         katmed_mesh_stop();
-        katmed_acme_stop();
         store_idf_close_backend(&rt->nvs);
         rt->store_ready=false;
         rt->reset_retry_due_ms=0;
+        shutdown_pending=false;
     }
     if (!rt->reset_active) return false;
     if (now_ms<rt->reset_retry_due_ms) return true;
@@ -1831,6 +1842,7 @@ void app_main(void)
     else {
         const KatmedWebServices web_services = {
             .context = &runtime,
+            .prepare_listener_stop = web_prepare_listener_stop,
             .device_info = web_device_info,
             .language_get = web_language_get,
             .language_set = web_language_set,
