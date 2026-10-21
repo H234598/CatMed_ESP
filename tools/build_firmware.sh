@@ -25,23 +25,40 @@ case "$board" in
     c6) chip=esp32c6 ;;
     *) echo "Unsupported board: $board" >&2; exit 2 ;;
 esac
-if [[ "$security_profile" -eq 1 && -n "$private_profile" && "$board" != c3 ]]; then
-    echo 'Private security profile is supported only for c3.' >&2
-    exit 2
-fi
 build_root="${KATMED_BUILD_ROOT:-${repo_dir}/firmware}"
-if [[ "$security_profile" -eq 1 && -n "$private_profile" &&
-      "${build_root}" != "${repo_dir}/firmware" ]]; then
-    # A custom root inside the checkout would bypass firmware/build*/ ignore.
-    if ! python3 - "${repo_dir}" "${build_root}" <<'PY'
+if [[ "$security_profile" -eq 1 && -n "$private_profile" ]]; then
+    if [[ -z "${KATMED_BUILD_ROOT:-}" ]]; then
+        echo 'Private security build requires an explicit external KATMED_BUILD_ROOT.' >&2
+        exit 2
+    fi
+    if [[ "${build_root}" != /* ]]; then
+        echo 'Private security build root must be an absolute external path.' >&2
+        exit 2
+    fi
+    if ! python3 - "${repo_dir}" "${build_root}" "${private_profile}" <<'PY'
+import os
 import pathlib
+import subprocess
 import sys
 repo = pathlib.Path(sys.argv[1]).resolve()
+for argument in sys.argv[2:]:
+    path = pathlib.Path(argument)
+    lexical = pathlib.Path(os.path.abspath(path))
+    if lexical.is_relative_to(repo) or path.resolve().is_relative_to(repo):
+        raise SystemExit(1)
 root = pathlib.Path(sys.argv[2]).resolve()
-raise SystemExit(1 if root.is_relative_to(repo) else 0)
+ancestor = root
+while not ancestor.exists():
+    ancestor = ancestor.parent
+inside_git = subprocess.run(
+    ["git", "-C", str(ancestor), "rev-parse", "--is-inside-work-tree"],
+    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, check=False,
+)
+if inside_git.returncode == 0 and inside_git.stdout.strip() == "true":
+    raise SystemExit(2)
 PY
     then
-        echo 'Private security build root must be outside the repository.' >&2
+        echo 'Private security profile and build root must be outside the repository; build root must be outside every Git worktree.' >&2
         exit 2
     fi
 fi
@@ -67,7 +84,20 @@ if [[ "$security_profile" -eq 1 ]]; then
     fi
 fi
 build_dir="${build_root}/build-a61-${board}${profile_suffix}"
-mkdir -p -- "${build_dir}"
+if [[ "$security_profile" -eq 1 && -n "$private_profile" ]]; then
+    # mkdir without -p is the exclusive gate: a pre-existing target could be
+    # a Git worktree or contain a redirected generated/ directory.
+    if [[ -e "${build_dir}" || -L "${build_dir}" ]]; then
+        echo 'Private security target build directory already exists.' >&2
+        exit 2
+    fi
+    if ! mkdir -- "${build_dir}"; then
+        echo 'Private security target build directory could not be created exclusively.' >&2
+        exit 2
+    fi
+else
+    mkdir -p -- "${build_dir}"
+fi
 if [[ -L "${build_dir}" || ! -d "${build_dir}" || ! -O "${build_dir}" ]]; then
     echo "Target build directory must be a real directory owned by the current user" >&2
     exit 1
@@ -111,5 +141,13 @@ if ! python "${repo_dir}/tools/check_firmware_layout.py" "${board}" \
     --build-dir "${build_dir}" "${layout_args[@]}" >>"${build_log}" 2>&1; then
     echo "Firmware layout check failed; detailed output is retained in the protected build log." >&2
     exit 1
+fi
+if [[ "$security_profile" -eq 1 && -n "$private_profile" ]]; then
+    # Some IDF/CMake generators ignore umask. Keep executable tools usable for
+    # incremental builds, but remove group/other access from every output.
+    find "${build_dir}" -type d -exec chmod 700 -- {} +
+    find "${build_dir}" -type f -perm /111 -exec chmod 700 -- {} +
+    find "${build_dir}" -type f ! -perm /111 -exec chmod 600 -- {} +
+    find "${build_dir}" -type f -name '*.elf' -exec chmod 600 -- {} +
 fi
 echo "Firmware ${profile_label} build succeeded for ${board}; detailed output is retained in the protected build log."

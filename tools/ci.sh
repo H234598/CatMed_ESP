@@ -35,6 +35,7 @@ elif [[ "$mode" == host ]]; then
         exit 1
     fi
     python3 tests/check_crop_geometry.py
+    python3 tests/host_private_wifi_defaults/check.py
     cmake -S . -B build-ci-host -G Ninja \
         -DKATMED_MBEDTLS_SOURCE="${mbedtls_source}"
     cmake --build build-ci-host -j 4

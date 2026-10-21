@@ -14,6 +14,84 @@ import katmed_usb_setup
 
 
 class PrivateWifiDefaultsCheck(unittest.TestCase):
+    def test_security_private_opt_in_rejects_implicit_or_in_repo_paths(self):
+        helper = ROOT / "tools" / "build_firmware.sh"
+        with tempfile.TemporaryDirectory() as temporary:
+            outside = pathlib.Path(temporary)
+            os.chmod(outside, 0o700)
+            profile = outside / "profile.json"
+            profile.write_text("{}\n")
+            os.chmod(profile, 0o600)
+            other_repo = outside / "other_repo"
+            other_repo.mkdir()
+            subprocess.run(["git", "init", "-q", str(other_repo)], check=True)
+            cases = (
+                ({}, profile, "explicit external KATMED_BUILD_ROOT"),
+                ({"KATMED_BUILD_ROOT": "../external-build"}, profile,
+                 "absolute external path"),
+                ({"KATMED_BUILD_ROOT": str(ROOT / "firmware")}, profile,
+                 "must be outside the repository"),
+                ({"KATMED_BUILD_ROOT": str(outside)}, ROOT / "README.md",
+                 "must be outside the repository"),
+                ({"KATMED_BUILD_ROOT": str(other_repo / "build")}, profile,
+                 "outside every Git worktree"),
+            )
+            for variables, selected, message in cases:
+                for board in ("c3", "c6"):
+                    with self.subTest(board=board, message=message):
+                        environment = os.environ.copy()
+                        environment.pop("KATMED_BUILD_ROOT", None)
+                        environment.update(variables)
+                        result = subprocess.run(
+                            ["bash", str(helper), board, "--security-profile",
+                             "--private-profile", str(selected)],
+                            env=environment, text=True, capture_output=True,
+                            check=False,
+                        )
+                        self.assertEqual(result.returncode, 2)
+                        self.assertIn(message, result.stderr)
+            self.assertFalse((outside / "build-a61-c6-security-private").exists())
+
+    def test_security_private_rejects_existing_git_targets_before_headers(self):
+        helper = ROOT / "tools" / "build_firmware.sh"
+        for git_location in ("target", "generated"):
+            with self.subTest(git_location=git_location), tempfile.TemporaryDirectory() as temporary:
+                outside = pathlib.Path(temporary)
+                os.chmod(outside, 0o700)
+                profile = outside / "profile.json"
+                profile.write_text(json.dumps({
+                    "schema_version": 1,
+                    "provenance": "synthetic Git boundary regression",
+                    "wifi": {"ssid": "SyntheticNet", "password": "SyntheticPass123"},
+                    "display": {
+                        "medication_alarm_text": "Synthetic alarm",
+                        "seltsam_morse_text": "Synthetic Morse",
+                    },
+                    "legacy_personal_documentation_text": "Synthetic documentation",
+                }) + "\n")
+                os.chmod(profile, 0o600)
+                target = outside / "build-a61-c6-security-private"
+                target.mkdir(mode=0o700)
+                if git_location == "target":
+                    git_directory = target
+                else:
+                    git_directory = target / "generated"
+                    git_directory.mkdir(mode=0o700)
+                subprocess.run(["git", "init", "-q", str(git_directory)], check=True)
+
+                environment = os.environ.copy()
+                environment["KATMED_BUILD_ROOT"] = str(outside)
+                result = subprocess.run(
+                    ["bash", str(helper), "c6", "--security-profile",
+                     "--private-profile", str(profile)],
+                    env=environment, text=True, capture_output=True,
+                    check=False,
+                )
+                self.assertEqual(result.returncode, 2)
+                self.assertIn("target build directory already exists", result.stderr)
+                self.assertFalse(list(target.rglob("private_wifi_defaults.h")))
+                self.assertFalse(list(target.rglob("katmed_private_ui_profile.h")))
+
     def test_omitting_external_profile_emits_neutral_empty_defaults(self):
         with tempfile.TemporaryDirectory() as temporary:
             private = pathlib.Path(temporary)
