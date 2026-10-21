@@ -38,7 +38,9 @@ bool katmed_source_snapshot_boot(const KatmedSourceExportSink *sink,
 const KatmedSourceExportSink *katmed_source_snapshot_boot_sink(void);
 
 /* A writer holds a lease from before its first mutation until its last
- * publish/cleanup. Entry is nonblocking and is refused during export. */
+ * publish/cleanup. Entry is nonblocking and is refused during export.
+ * Leave must run once per successful enter on the same task. A foreign or
+ * extra leave cannot release another task's lease. */
 bool katmed_source_writer_enter(void);
 void katmed_source_writer_leave(void);
 

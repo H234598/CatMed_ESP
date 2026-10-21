@@ -47,6 +47,8 @@ with tempfile.TemporaryDirectory(prefix="katmed-export-") as base:
     subprocess.run([str(binary), str(fixture), str(logical)], check=True)
     after = {p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file()}
     assert before == after
+    for path, data in before.items():
+        assert (logical / "littlefs" / path).read_bytes() == data
     paths = sorted(p.relative_to(logical).as_posix() for p in logical.rglob("*") if p.is_file())
     (logical / "source-inventory.json").write_text(json.dumps({
         "nvs": [p for p in paths if p.startswith("nvs/")],

@@ -41,6 +41,13 @@ Der nicht wartende Eintritt verweigert aktive Schreiber, offene Bild-Uploads
 und aktive ACME-Dateihandles. Store und Mesh-History, Web-Auth und -Identität,
 Resetjournal und Reset-Dateistufe, Bildspeicher und der aktive ACME-Client
 halten Schreibleases; neue Mutationen werden während der Ausgabe abgewiesen.
+Writerzahl und Bootphase liegen in einem gemeinsamen atomaren Wort: Der
+Exporter wechselt nur mit exakt null Leases von `open` zu `exporting`, und
+ein konkurrierender Writer kann diese Zustandsänderung nicht übersehen.
+Gegen fremde und doppelte `leave()`-Aufrufe schützt zusätzlich eine
+aufgabeneigene Leasezahl; ein Überlauf wird vor Eintritt abgewiesen.
+Ein während des Exports angefordertes Schließen bleibt als ausstehende
+Versiegelung erhalten und wird nach der Freigabe endgültig wirksam.
 Der gepinnte ACME-Client hält seine Lease bis nach `stop()`, auch wenn seine
 internen Dateipfade nicht einzeln kontrolliert werden. NVS wird in fester
 Schlüsselreihenfolge, Bild- und ACME-Dateien werden je lexikographisch
@@ -48,8 +55,14 @@ ausgegeben. Bei Abbruch, Fehler oder erreichtem 30-Sekunden-Budget wird
 `finish(false)` gemeldet und die Sperre freigegeben. Der Sink muss alle
 Callbacks einschließlich `keep_going` prompt und begrenzt ausführen;
 ein blockierter fremder Callback lässt sich aus demselben Thread nicht sicher
-präemptieren. Nur `finish(true)` nach vollständiger Inventur und Übertragung
-ist verwendbar, und ein Empfänger muss alle Bytes eines `finish(false)`-Laufs
+präemptieren. Vor der ersten Ausgabe bindet SHA-256 alle gefundenen NVS- und
+Dateibytes. Eine zweite vollständige Leseprüfung bestätigt diesen Bestand
+vor Ausgabe. Während der Ausgabe werden NVS-Werte vor ihrem `begin` und
+Dateibytes beim Lesen gegen diese Bindung geprüft; eine abschließende
+Inventur und Leseprüfung erkennt Änderungen aus späteren Sink-Callbacks.
+Ein gleichlanger Inhaltswechsel führt zu `finish(false)`. Nur `finish(true)`
+nach vollständiger Inventur und Übertragung ist verwendbar; ein Empfänger
+muss alle Bytes eines `finish(false)`-Laufs
 verwerfen. Der Adapter initialisiert oder formatiert keine Quelle und schreibt
 keine privaten Werte in Logs. Ein externer Transport und ein Empfänger, der
 daraus geschützte Dateien sowie `source-inventory.json` erstellt, fehlen noch.

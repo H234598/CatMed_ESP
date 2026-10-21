@@ -5,6 +5,9 @@
 #include <stdio.h>
 #include <string.h>
 #include <pthread.h>
+#include <stdatomic.h>
+#include <limits.h>
+#include <sched.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -69,9 +72,28 @@ esp_err_t nvs_get_blob(nvs_handle_t handle, const char *key, void *dst, size_t *
 }
 void nvs_close(nvs_handle_t handle) { assert(handle > 0); }
 
-typedef struct { unsigned files; size_t bytes; bool finished; bool success; bool reject; unsigned reject_at; char paths[128][80]; const char *output; FILE *stream; unsigned checks, abort_after, denied_writes; bool test_writer; } Result;
+typedef struct { unsigned files, mutations; size_t bytes; bool finished; bool success; bool reject; unsigned reject_at; char paths[128][80]; const char *output; FILE *stream; unsigned checks, abort_after, denied_writes; bool test_writer, direct_acme_change, late_acme_change, late_image_change, late_nvs_change, seal_during_export; } Result;
+static const unsigned char changed_state[] = { 'X', 'M', 'S', 'T', 10, 0 };
+static atomic_bool race_wait_in_begin, race_worker_attempted;
+static pthread_barrier_t race_barrier;
+static void replace_acme(const char *contents)
+{
+    FILE *replacement = fopen(KATMED_SOURCE_EXPORT_HOST_TEST "/acme/account.json", "wb");
+    assert(replacement && fwrite(contents, 1, 2, replacement) == 2 &&
+           fclose(replacement) == 0);
+}
+static void replace_image(const char *contents)
+{
+    FILE *replacement = fopen(KATMED_SOURCE_EXPORT_HOST_TEST
+                              "/user-images/img-00000001.jpg", "wb");
+    assert(replacement && fwrite(contents, 1, 4, replacement) == 4 &&
+           fclose(replacement) == 0);
+}
 static bool begin(void *ctx, const char *path, size_t size)
 {
+    if (atomic_load_explicit(&race_wait_in_begin, memory_order_acquire))
+        while (!atomic_load_explicit(&race_worker_attempted, memory_order_acquire))
+            sched_yield();
     Result *r = ctx;
     assert(r->files < 128 && size <= 128 * 1024);
     snprintf(r->paths[r->files], sizeof(r->paths[0]), "%s", path);
@@ -87,6 +109,11 @@ static bool begin(void *ctx, const char *path, size_t size)
         }
         assert(!granted);
         ++r->denied_writes;
+    }
+    if (r->direct_acme_change &&
+        strcmp(path, "littlefs/acme/account.json") == 0) {
+        replace_acme("XY");
+        ++r->mutations;
     }
     if (r->reject || (r->reject_at && r->files >= r->reject_at)) return false;
     if (r->output) {
@@ -111,6 +138,24 @@ static bool end(void *ctx)
 {
     Result *r = ctx;
     if (r->stream) { assert(fclose(r->stream) == 0); r->stream = NULL; }
+    if (r->late_acme_change &&
+        strcmp(r->paths[r->files - 1], "littlefs/acme/renewal.json") == 0) {
+        replace_acme("XY");
+        ++r->mutations;
+    }
+    if (r->late_image_change &&
+        strcmp(r->paths[r->files - 1], "littlefs/acme/renewal.json") == 0) {
+        replace_image("late");
+        ++r->mutations;
+    }
+    if (r->late_nvs_change &&
+        strcmp(r->paths[r->files - 1], "littlefs/acme/renewal.json") == 0) {
+        entries[0].data = changed_state;
+        ++r->mutations;
+    }
+    if (r->seal_during_export &&
+        strcmp(r->paths[r->files - 1], "littlefs/acme/renewal.json") == 0)
+        katmed_source_snapshot_boot_window_close();
     return true;
 }
 static void finish(void *ctx, bool success)
@@ -127,6 +172,27 @@ static bool keep_going(void *ctx)
 }
 static bool idle(void) { return true; }
 static bool busy(void) { return false; }
+void katmed_source_test_set_state(unsigned state);
+extern void (*katmed_source_test_before_admission)(void);
+static void race_admission_barrier(void)
+{
+    int result = pthread_barrier_wait(&race_barrier);
+    assert(result == 0 || result == PTHREAD_BARRIER_SERIAL_THREAD);
+}
+typedef struct { bool granted; } RaceWriter;
+static void *race_writer(void *context)
+{
+    RaceWriter *writer = context;
+    writer->granted = katmed_source_writer_enter();
+    atomic_store_explicit(&race_worker_attempted, true, memory_order_release);
+    if (writer->granted) {
+        /* Keep the lease until the snapshot decision has returned. */
+        while (atomic_load_explicit(&race_wait_in_begin, memory_order_acquire))
+            sched_yield();
+        katmed_source_writer_leave();
+    }
+    return NULL;
+}
 
 static pthread_mutex_t writer_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t writer_cond = PTHREAD_COND_INITIALIZER;
@@ -379,6 +445,8 @@ int main(int argc, char **argv)
     assert(pthread_mutex_lock(&writer_mutex) == 0);
     while (!writer_ready) assert(pthread_cond_wait(&writer_cond, &writer_mutex) == 0);
     assert(pthread_mutex_unlock(&writer_mutex) == 0);
+    katmed_source_writer_leave(); /* Foreign leave cannot release worker's lease. */
+    katmed_source_writer_leave();
     denied = (Result){0};
     assert(!katmed_source_snapshot_boot(&bounded, idle));
     assert(denied.finished && !denied.success && denied.files == 0);
@@ -387,6 +455,30 @@ int main(int argc, char **argv)
     assert(pthread_cond_signal(&writer_cond) == 0);
     assert(pthread_mutex_unlock(&writer_mutex) == 0);
     assert(pthread_join(worker, NULL) == 0);
+
+    katmed_source_test_set_state((UINT_MAX & ~7u) | 1u);
+    assert(!katmed_source_writer_enter()); /* Count must not wrap to zero. */
+    katmed_source_test_set_state(1u);
+
+    /* Both contenders observe the open state before competing on the same
+     * packed CAS. A granted writer remains held until the decision returns. */
+    for (unsigned round = 0; round < 100; ++round) {
+        Result raced = {0};
+        bounded.context = &raced;
+        RaceWriter rival = {0};
+        atomic_store(&race_worker_attempted, false);
+        atomic_store(&race_wait_in_begin, true);
+        assert(pthread_barrier_init(&race_barrier, NULL, 2) == 0);
+        katmed_source_test_before_admission = race_admission_barrier;
+        assert(pthread_create(&worker, NULL, race_writer, &rival) == 0);
+        bool exported = katmed_source_snapshot_boot(&bounded, idle);
+        katmed_source_test_before_admission = NULL;
+        atomic_store(&race_wait_in_begin, false);
+        assert(pthread_join(worker, NULL) == 0);
+        assert(pthread_barrier_destroy(&race_barrier) == 0);
+        assert(raced.finished && raced.success == exported);
+        assert(exported != rival.granted);
+    }
 
     Result cancelled = { .abort_after = 12 };
     bounded.context = &cancelled;
@@ -400,6 +492,35 @@ int main(int argc, char **argv)
     assert(sink_failure.finished && !sink_failure.success && sink_failure.files == 4);
     assert(katmed_source_writer_enter());
     katmed_source_writer_leave();
+    katmed_source_writer_leave();
+
+    Result changed = { .direct_acme_change = true };
+    bounded.context = &changed;
+    assert(!katmed_source_snapshot_boot(&bounded, idle));
+    assert(changed.finished && !changed.success && changed.files >= 7 &&
+           changed.mutations == 1);
+    replace_acme("{}");
+
+    changed = (Result){ .late_acme_change = true };
+    bounded.context = &changed;
+    assert(!katmed_source_snapshot_boot(&bounded, idle));
+    assert(changed.finished && !changed.success && changed.files == 13 &&
+           changed.mutations == 1);
+    replace_acme("{}");
+
+    changed = (Result){ .late_image_change = true };
+    bounded.context = &changed;
+    assert(!katmed_source_snapshot_boot(&bounded, idle));
+    assert(changed.finished && !changed.success && changed.files == 13 &&
+           changed.mutations == 1);
+    replace_image("jpeg");
+
+    changed = (Result){ .late_nvs_change = true };
+    bounded.context = &changed;
+    assert(!katmed_source_snapshot_boot(&bounded, idle));
+    assert(changed.finished && !changed.success && changed.files == 13 &&
+           changed.mutations == 1);
+    entries[0].data = fixture_bytes + 4;
 
     /* The independently maximal image/NVS/ACME populations exceed the
      * shared 128-record limit; none may be silently omitted. */
@@ -421,7 +542,7 @@ int main(int argc, char **argv)
                          KATMED_SOURCE_EXPORT_HOST_TEST "/user-images/img-%08x.jpg", id);
         assert(n > 0 && (size_t)n < sizeof(path) && remove(path) == 0);
     }
-    Result complete = { .test_writer = true };
+    Result complete = { .test_writer = true, .seal_during_export = true };
     bounded.context = &complete;
     assert(katmed_source_snapshot_boot(&bounded, idle));
     assert(complete.finished && complete.success && complete.files == 13);
@@ -432,6 +553,17 @@ int main(int argc, char **argv)
     katmed_source_snapshot_boot_window_close();
     Result replay = {0};
     bounded.context = &replay;
+    assert(!katmed_source_snapshot_boot(&bounded, idle));
+    assert(replay.finished && !replay.success && replay.files == 0);
+    /* Even a window that could not open because of an early writer must
+     * become permanently sealed when boot proceeds. */
+    katmed_source_test_set_state(0u);
+    assert(katmed_source_writer_enter());
+    katmed_source_snapshot_boot_window_open();
+    katmed_source_snapshot_boot_window_close();
+    katmed_source_writer_leave();
+    katmed_source_snapshot_boot_window_open();
+    replay = (Result){0};
     assert(!katmed_source_snapshot_boot(&bounded, idle));
     assert(replay.finished && !replay.success && replay.files == 0);
     for (unsigned i = 0; i < sizeof(acme_extra) / sizeof(acme_extra[0]); ++i) {
