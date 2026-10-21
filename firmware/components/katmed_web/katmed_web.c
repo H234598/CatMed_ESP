@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <time.h>
 #include <arpa/inet.h>
 #include <sys/socket.h>
@@ -404,19 +405,89 @@ static const char *json_string(const cJSON *obj, const char *key, size_t max_len
     return item->valuestring;
 }
 
+#ifdef KATMED_WEB_SECURITY_JS_GZIP
+/* A bounded Accept-Encoding parser: an explicit gzip entry overrides '*'. */
+static bool gzip_quality(const char *begin, const char *end)
+{
+    while (begin < end && (*begin == ' ' || *begin == '\t')) ++begin;
+    while (end > begin && (end[-1] == ' ' || end[-1] == '\t')) --end;
+    if (begin == end) return false;
+    if (*begin != '0' && *begin != '1') return false;
+    bool one = *begin == '1';
+    bool positive = one;
+    ++begin;
+    if (begin == end) return positive;
+    if (*begin++ != '.' || begin == end || end - begin > 3) return false;
+    for (; begin < end; ++begin) {
+        if (*begin < '0' || *begin > '9' || (one && *begin != '0'))
+            return false;
+        if (*begin != '0') positive = true;
+    }
+    return positive;
+}
+
+static bool gzip_accepted(httpd_req_t *req)
+{
+    size_t length = httpd_req_get_hdr_value_len(req, "Accept-Encoding");
+    if (length == 0) return true; /* RFC 9110: absent field permits any coding. */
+    if (length > 256) return false;
+    char value[257];
+    if (httpd_req_get_hdr_value_str(req, "Accept-Encoding", value, sizeof(value)) != ESP_OK)
+        return false;
+    bool explicit_gzip = false, gzip_allowed = true;
+    bool wildcard = false, wildcard_allowed = true;
+    const char *part = value;
+    while (*part) {
+        const char *end = strchr(part, ',');
+        if (!end) end = part + strlen(part);
+        const char *semi = memchr(part, ';', (size_t)(end - part));
+        const char *token_end = semi ? semi : end;
+        while (part < token_end && (*part == ' ' || *part == '\t')) ++part;
+        while (token_end > part && (token_end[-1] == ' ' || token_end[-1] == '\t'))
+            --token_end;
+        if (part == token_end) return false;
+        bool allowed = true;
+        if (semi) {
+            const char *quality = semi + 1;
+            while (quality < end && (*quality == ' ' || *quality == '\t')) ++quality;
+            if (end - quality < 2 || (*quality != 'q' && *quality != 'Q') ||
+                quality[1] != '=') return false;
+            allowed = gzip_quality(quality + 2, end);
+        }
+        if (token_end - part == 4 && strncasecmp(part, "gzip", 4) == 0) {
+            explicit_gzip = true;
+            gzip_allowed = gzip_allowed && allowed;
+        } else if (token_end - part == 1 && *part == '*') {
+            wildcard = true;
+            wildcard_allowed = wildcard_allowed && allowed;
+        }
+        if (*end == '\0') break;
+        if (end[1] == '\0') return false;
+        part = end + 1;
+    }
+    return explicit_gzip ? gzip_allowed : (wildcard && wildcard_allowed);
+}
+#endif
+
 static esp_err_t asset_reply(httpd_req_t *req, const unsigned char *start,
                               const unsigned char *end, const char *type,
                               bool gzip_encoded)
 {
     char host[INET_ADDRSTRLEN];
     if (!request_host(req, host)) return error_reply(req, "403 Forbidden", "host");
+#ifdef KATMED_WEB_SECURITY_JS_GZIP
+    if (gzip_encoded) {
+        httpd_resp_set_hdr(req, "Vary", "Accept-Encoding");
+        if (!gzip_accepted(req))
+            return error_reply(req, "406 Not Acceptable", "gzip_required");
+    }
+#endif
     httpd_resp_set_type(req, type);
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
     httpd_resp_set_hdr(req, "X-Content-Type-Options", "nosniff");
     httpd_resp_set_hdr(req, "Referrer-Policy", "no-referrer");
     if (gzip_encoded) {
         httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
-        httpd_resp_set_hdr(req, "Vary", "Accept-Encoding");
     }
     httpd_resp_set_hdr(req, "Content-Security-Policy",
         "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; "
