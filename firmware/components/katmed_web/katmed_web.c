@@ -30,6 +30,10 @@
 #include "nvs.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
+#ifdef KATMED_WEB_SECURITY_JS_GZIP
+#include "miniz.h"
+#include "esp_rom_crc.h"
+#endif
 
 extern const unsigned char _binary_index_html_start[];
 extern const unsigned char _binary_index_html_end[];
@@ -406,36 +410,87 @@ static const char *json_string(const cJSON *obj, const char *key, size_t max_len
 }
 
 #ifdef KATMED_WEB_SECURITY_JS_GZIP
-/* A bounded Accept-Encoding parser: an explicit gzip entry overrides '*'. */
-static bool gzip_quality(const char *begin, const char *end)
+/* Only the two build-generated gzip members reach this path. Never allocate
+ * their full decoded size: one ROM inflater and one 32 KiB history ring suffice.
+ * The synchronous HTTPS server has one socket and runs handlers serially. */
+typedef struct {
+    tinfl_decompressor inflater;
+    unsigned char dictionary[TINFL_LZ_DICT_SIZE];
+} ScriptInflate;
+_Static_assert(sizeof(ScriptInflate) <= 44u * 1024u, "script workspace exceeds bound");
+
+static uint32_t script_le32(const unsigned char *p)
+{
+    return (uint32_t)p[0] | (uint32_t)p[1] << 8 |
+           (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24;
+}
+
+/* Validate before committing a 200 response, then replay the immutable flash
+ * member into chunks with the same workspace. A send failure returns directly
+ * to httpd, which closes the session; never append a successful terminator. */
+static esp_err_t script_inflate(ScriptInflate *work, const unsigned char *start,
+                                size_t length, httpd_req_t *req)
+{
+    if (length < 18 || start[0] != 0x1f || start[1] != 0x8b ||
+        start[2] != 8 || start[3] != 0) return ESP_FAIL;
+    size_t input = 10, output = 0, offset = 0;
+    uint32_t crc = 0;
+    uint32_t expected = script_le32(start + length - 4);
+    /* Hard limit independent of the member trailer; covers the full catalog. */
+    if (expected > 128u * 1024u) return ESP_FAIL;
+    tinfl_init(&work->inflater);
+    for (;;) {
+        size_t consumed = length - 8 - input;
+        size_t produced = TINFL_LZ_DICT_SIZE - offset;
+        tinfl_status status = tinfl_decompress(&work->inflater, start + input,
+            &consumed, work->dictionary, work->dictionary + offset, &produced, 0);
+        input += consumed;
+        if (status < TINFL_STATUS_DONE || produced > expected - output)
+            return ESP_FAIL;
+        crc = esp_rom_crc32_le(crc, work->dictionary + offset, produced);
+        output += produced;
+        if (req && produced) {
+            esp_err_t sent = httpd_resp_send_chunk(req,
+                (const char *)work->dictionary + offset, produced);
+            if (sent != ESP_OK) return sent;
+        }
+        offset = (offset + produced) % TINFL_LZ_DICT_SIZE;
+        if (status == TINFL_STATUS_DONE)
+            return input == length - 8 && output == expected &&
+                   crc == script_le32(start + length - 8) ? ESP_OK : ESP_FAIL;
+        if (status != TINFL_STATUS_HAS_MORE_OUTPUT || (!consumed && !produced))
+            return ESP_FAIL;
+    }
+}
+
+/* Return an HTTP quality in thousandths, or -1 for malformed syntax. */
+static int gzip_quality(const char *begin, const char *end)
 {
     while (begin < end && (*begin == ' ' || *begin == '\t')) ++begin;
     while (end > begin && (end[-1] == ' ' || end[-1] == '\t')) --end;
-    if (begin == end) return false;
-    if (*begin != '0' && *begin != '1') return false;
-    bool one = *begin == '1';
-    bool positive = one;
-    ++begin;
-    if (begin == end) return positive;
-    if (*begin++ != '.' || begin == end || end - begin > 3) return false;
-    for (; begin < end; ++begin) {
-        if (*begin < '0' || *begin > '9' || (one && *begin != '0'))
-            return false;
-        if (*begin != '0') positive = true;
+    if (begin == end || (*begin != '0' && *begin != '1')) return -1;
+    bool one = *begin++ == '1';
+    if (begin == end) return one ? 1000 : 0;
+    if (*begin++ != '.' || end - begin > 3) return -1;
+    int quality = 0, scale = 100;
+    for (; begin < end; ++begin, scale /= 10) {
+        if (*begin < '0' || *begin > '9' || (one && *begin != '0')) return -1;
+        quality += (*begin - '0') * scale;
     }
-    return positive;
+    return one ? 1000 : quality;
 }
 
-static bool gzip_accepted(httpd_req_t *req)
+/* 2=gzip, 1=identity, 0=no acceptable representation, -1=bad/oversize header.
+ * An absent or empty field preserves the historical raw-script contract. */
+static int script_coding(httpd_req_t *req)
 {
     size_t length = httpd_req_get_hdr_value_len(req, "Accept-Encoding");
-    if (length == 0) return true; /* RFC 9110: absent field permits any coding. */
-    if (length > 256) return false;
+    if (length == 0) return 1;
+    if (length > 256) return -1;
     char value[257];
     if (httpd_req_get_hdr_value_str(req, "Accept-Encoding", value, sizeof(value)) != ESP_OK)
-        return false;
-    bool explicit_gzip = false, gzip_allowed = true;
-    bool wildcard = false, wildcard_allowed = true;
+        return -1;
+    int gzip = -1, identity = -1, wildcard = -1;
     const char *part = value;
     while (*part) {
         const char *end = strchr(part, ',');
@@ -445,27 +500,31 @@ static bool gzip_accepted(httpd_req_t *req)
         while (part < token_end && (*part == ' ' || *part == '\t')) ++part;
         while (token_end > part && (token_end[-1] == ' ' || token_end[-1] == '\t'))
             --token_end;
-        if (part == token_end) return false;
-        bool allowed = true;
+        if (part == token_end) return -1;
+        int quality = 1000;
         if (semi) {
-            const char *quality = semi + 1;
-            while (quality < end && (*quality == ' ' || *quality == '\t')) ++quality;
-            if (end - quality < 2 || (*quality != 'q' && *quality != 'Q') ||
-                quality[1] != '=') return false;
-            allowed = gzip_quality(quality + 2, end);
+            const char *q = semi + 1;
+            while (q < end && (*q == ' ' || *q == '\t')) ++q;
+            if (end - q < 2 || (*q != 'q' && *q != 'Q') || q[1] != '=') return -1;
+            quality = gzip_quality(q + 2, end);
+            if (quality < 0) return -1;
         }
-        if (token_end - part == 4 && strncasecmp(part, "gzip", 4) == 0) {
-            explicit_gzip = true;
-            gzip_allowed = gzip_allowed && allowed;
-        } else if (token_end - part == 1 && *part == '*') {
-            wildcard = true;
-            wildcard_allowed = wildcard_allowed && allowed;
-        }
+        int *selected = NULL;
+        if (token_end - part == 4 && strncasecmp(part, "gzip", 4) == 0)
+            selected = &gzip;
+        else if (token_end - part == 8 && strncasecmp(part, "identity", 8) == 0)
+            selected = &identity;
+        else if (token_end - part == 1 && *part == '*') selected = &wildcard;
+        /* Duplicate entries conservatively retain the lowest quality. */
+        if (selected && (*selected < 0 || quality < *selected)) *selected = quality;
         if (*end == '\0') break;
-        if (end[1] == '\0') return false;
+        if (end[1] == '\0') return -1;
         part = end + 1;
     }
-    return explicit_gzip ? gzip_allowed : (wildcard && wildcard_allowed);
+    if (gzip < 0) gzip = wildcard < 0 ? 0 : wildcard;
+    if (identity < 0) identity = wildcard == 0 ? 0 : 1000;
+    if (gzip > 0 && gzip >= identity) return 2;
+    return identity > 0 ? 1 : 0;
 }
 #endif
 
@@ -478,8 +537,30 @@ static esp_err_t asset_reply(httpd_req_t *req, const unsigned char *start,
 #ifdef KATMED_WEB_SECURITY_JS_GZIP
     if (gzip_encoded) {
         httpd_resp_set_hdr(req, "Vary", "Accept-Encoding");
-        if (!gzip_accepted(req))
-            return error_reply(req, "406 Not Acceptable", "gzip_required");
+        int coding = script_coding(req);
+        if (coding < 0) return error_reply(req, "400 Bad Request", "accept_encoding");
+        if (coding == 0)
+            return error_reply(req, "406 Not Acceptable", "encoding_unavailable");
+        if (coding == 1) {
+            ScriptInflate *work = malloc(sizeof(*work));
+            if (!work) return error_reply(req, "503 Service Unavailable", "script_memory");
+            esp_err_t result = script_inflate(work, start, (size_t)(end - start), NULL);
+            if (result != ESP_OK) {
+                free(work);
+                return error_reply(req, "500 Internal Server Error", "script_data");
+            }
+            httpd_resp_set_type(req, type);
+            httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+            httpd_resp_set_hdr(req, "X-Content-Type-Options", "nosniff");
+            httpd_resp_set_hdr(req, "Referrer-Policy", "no-referrer");
+            httpd_resp_set_hdr(req, "Content-Security-Policy",
+                "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; "
+                "img-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'");
+            result = script_inflate(work, start, (size_t)(end - start), req);
+            free(work);
+            if (result != ESP_OK) return result;
+            return httpd_resp_send_chunk(req, NULL, 0);
+        }
     }
 #endif
     httpd_resp_set_type(req, type);

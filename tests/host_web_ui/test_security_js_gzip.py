@@ -15,6 +15,14 @@ MINIMUM_NEW_RESERVE = 8_192
 
 
 class SecurityScriptBudget(unittest.TestCase):
+    def test_oversized_script_rejected_at_build_time(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "source"
+            source.mkdir()
+            (source / "app.js").write_bytes(b"x" * (128 * 1024 + 1))
+            with self.assertRaisesRegex(ValueError, "bounded raw response"):
+                build(source, Path(directory) / "output")
+
     def test_complete_scripts_fit_with_reserve(self):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory)
