@@ -3,6 +3,7 @@
 #include <string.h>
 #include "nvs_flash.h"
 #include "katmed_nvs_init.h"
+#include "katmed_source_export.h"
 
 static StoreResult idf_read(void *context, uint8_t *buffer, size_t *length)
 {
@@ -24,12 +25,14 @@ static StoreResult idf_write_commit(void *context, const uint8_t *buffer, size_t
     StoreIdfNvs *nvs = (StoreIdfNvs *)context;
     if (!nvs || !nvs->opened || !buffer || length == 0 ||
         length > KATMED_STORE_BLOB_MAX) return STORE_INVALID;
+    if (!katmed_source_writer_enter()) return STORE_UNAVAILABLE;
     esp_err_t err = nvs_set_blob(nvs->handle, "state", buffer, length);
-    if (err == ESP_ERR_NVS_NOT_ENOUGH_SPACE) return STORE_FULL;
-    if (err != ESP_OK) return STORE_IO;
-    err = nvs_commit(nvs->handle);
-    if (err != ESP_OK) return STORE_COMMIT_UNKNOWN;
-    return STORE_OK;
+    StoreResult result = STORE_OK;
+    if (err == ESP_ERR_NVS_NOT_ENOUGH_SPACE) result = STORE_FULL;
+    else if (err != ESP_OK) result = STORE_IO;
+    else if (nvs_commit(nvs->handle) != ESP_OK) result = STORE_COMMIT_UNKNOWN;
+    katmed_source_writer_leave();
+    return result;
 }
 
 StoreResult store_idf_open_backend(StoreIdfNvs *nvs, StoreBackend *backend)
@@ -78,11 +81,14 @@ static StoreResult history_write(void *context, const uint8_t *buffer, size_t le
      * blob capacity. Only set/commit can decide whether replacement fits. */
     nvs_stats_t stats;
     if (nvs_get_stats(NULL, &stats) != ESP_OK) return STORE_IO;
+    if (!katmed_source_writer_enter()) return STORE_UNAVAILABLE;
     esp_err_t err = nvs_set_blob(nvs->handle, "mesh_history", buffer, length);
-    if (err == ESP_ERR_NVS_NOT_ENOUGH_SPACE) return STORE_FULL;
-    if (err != ESP_OK) return STORE_IO;
-    if (nvs_commit(nvs->handle) != ESP_OK) return STORE_COMMIT_UNKNOWN;
-    return STORE_OK;
+    StoreResult result = STORE_OK;
+    if (err == ESP_ERR_NVS_NOT_ENOUGH_SPACE) result = STORE_FULL;
+    else if (err != ESP_OK) result = STORE_IO;
+    else if (nvs_commit(nvs->handle) != ESP_OK) result = STORE_COMMIT_UNKNOWN;
+    katmed_source_writer_leave();
+    return result;
 }
 StoreBackend store_idf_history_backend(StoreIdfNvs *nvs)
 {

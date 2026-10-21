@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <pthread.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -68,13 +69,25 @@ esp_err_t nvs_get_blob(nvs_handle_t handle, const char *key, void *dst, size_t *
 }
 void nvs_close(nvs_handle_t handle) { assert(handle > 0); }
 
-typedef struct { unsigned files; size_t bytes; bool finished; bool success; bool reject; unsigned reject_at; char paths[128][80]; const char *output; FILE *stream; } Result;
+typedef struct { unsigned files; size_t bytes; bool finished; bool success; bool reject; unsigned reject_at; char paths[128][80]; const char *output; FILE *stream; unsigned checks, abort_after, denied_writes; bool test_writer; } Result;
 static bool begin(void *ctx, const char *path, size_t size)
 {
     Result *r = ctx;
     assert(r->files < 128 && size <= 128 * 1024);
     snprintf(r->paths[r->files], sizeof(r->paths[0]), "%s", path);
     ++r->files;
+    if (r->test_writer && strcmp(path, "littlefs/acme/account.json") == 0) {
+        /* A same-length ACME replacement after inventory must be refused. */
+        bool granted = katmed_source_writer_enter();
+        if (granted) {
+            FILE *replacement = fopen(KATMED_SOURCE_EXPORT_HOST_TEST "/acme/account.json", "wb");
+            assert(replacement && fwrite("XX", 1, 2, replacement) == 2 &&
+                   fclose(replacement) == 0);
+            katmed_source_writer_leave();
+        }
+        assert(!granted);
+        ++r->denied_writes;
+    }
     if (r->reject || (r->reject_at && r->files >= r->reject_at)) return false;
     if (r->output) {
         char target[256];
@@ -89,6 +102,7 @@ static bool bytes(void *ctx, const uint8_t *data, size_t length)
 {
     Result *r = ctx;
     assert(data && length);
+    if (r->test_writer) assert(!katmed_source_writer_enter());
     if (r->stream) assert(fwrite(data, 1, length, r->stream) == length);
     r->bytes += length;
     return true;
@@ -106,10 +120,33 @@ static void finish(void *ctx, bool success)
     r->finished = true;
     r->success = success;
 }
+static bool keep_going(void *ctx)
+{
+    Result *r = ctx;
+    return r->abort_after == 0 || ++r->checks < r->abort_after;
+}
+static bool idle(void) { return true; }
+static bool busy(void) { return false; }
+
+static pthread_mutex_t writer_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t writer_cond = PTHREAD_COND_INITIALIZER;
+static bool writer_ready, writer_release;
+static void *competing_writer(void *unused)
+{
+    (void)unused;
+    assert(katmed_source_writer_enter());
+    assert(pthread_mutex_lock(&writer_mutex) == 0);
+    writer_ready = true;
+    assert(pthread_cond_signal(&writer_cond) == 0);
+    while (!writer_release) assert(pthread_cond_wait(&writer_cond, &writer_mutex) == 0);
+    assert(pthread_mutex_unlock(&writer_mutex) == 0);
+    katmed_source_writer_leave();
+    return NULL;
+}
 static Result run(bool expected)
 {
     Result r = {0};
-    KatmedSourceExportSink sink = { &r, begin, bytes, end, finish };
+    KatmedSourceExportSink sink = { &r, begin, bytes, end, finish, NULL };
     assert(katmed_source_export(&sink) == expected);
     assert(r.finished && r.success == expected);
     return r;
@@ -134,6 +171,9 @@ int main(int argc, char **argv)
     entry_count = 1;
     r = run(true);
     assert(r.files == 3 && strcmp(r.paths[0], "nvs/katmed/state") == 0);
+    entry_count = 3;
+    r = run(false);
+    assert(r.files == 0); /* Auth without its server identity is incomplete. */
     entry_count = 5;
 
     entries[4].data = bad_journal;
@@ -227,7 +267,7 @@ int main(int argc, char **argv)
     r = run(true);
     assert(r.files == 7);
     Result refused = { .reject = true };
-    KatmedSourceExportSink sink = { &refused, begin, bytes, end, finish };
+    KatmedSourceExportSink sink = { &refused, begin, bytes, end, finish, NULL };
     assert(!katmed_source_export(&sink));
     assert(refused.finished && !refused.success);
     Result partial = { .reject_at = 4 };
@@ -242,7 +282,7 @@ int main(int argc, char **argv)
     assert(!katmed_source_export(&missing_finish) && !no_finish.finished);
     for (unsigned omitted = 0; omitted < 3; ++omitted) {
         Result invalid = {0};
-        KatmedSourceExportSink incomplete = { &invalid, begin, bytes, end, finish };
+        KatmedSourceExportSink incomplete = { &invalid, begin, bytes, end, finish, NULL };
         if (omitted == 0) incomplete.begin = NULL;
         if (omitted == 1) incomplete.bytes = NULL;
         if (omitted == 2) incomplete.end = NULL;
@@ -314,6 +354,92 @@ int main(int argc, char **argv)
     assert(original && fwrite("jpeg", 1, 4, original) == 4 && fclose(original) == 0);
     original = fopen(KATMED_SOURCE_EXPORT_HOST_TEST "/acme/account.json", "wb");
     assert(original && fwrite("{}", 1, 2, original) == 2 && fclose(original) == 0);
+
+    /* Full bounded boot snapshot: all five NVS classes, image and seven ACME
+     * files, with deterministic paths and a writer denied inside a callback. */
+    const char *const acme_extra[] = {"directory.json", "account.pem", "order.json",
+        "certkey.pem", "certificate.pem", "renewal.json"};
+    for (unsigned i = 0; i < sizeof(acme_extra) / sizeof(acme_extra[0]); ++i) {
+        char path[160];
+        int n = snprintf(path, sizeof(path), KATMED_SOURCE_EXPORT_HOST_TEST "/acme/%s",
+                         acme_extra[i]);
+        assert(n > 0 && (size_t)n < sizeof(path));
+        FILE *file = fopen(path, "wb");
+        assert(file && fwrite("{}", 1, 2, file) == 2 && fclose(file) == 0);
+    }
+    entry_count = 5;
+    katmed_source_snapshot_boot_window_open();
+    Result denied = {0};
+    KatmedSourceExportSink bounded = { &denied, begin, bytes, end, finish, keep_going };
+    assert(!katmed_source_snapshot_boot(&bounded, busy));
+    assert(denied.finished && !denied.success && denied.files == 0);
+
+    pthread_t worker;
+    assert(pthread_create(&worker, NULL, competing_writer, NULL) == 0);
+    assert(pthread_mutex_lock(&writer_mutex) == 0);
+    while (!writer_ready) assert(pthread_cond_wait(&writer_cond, &writer_mutex) == 0);
+    assert(pthread_mutex_unlock(&writer_mutex) == 0);
+    denied = (Result){0};
+    assert(!katmed_source_snapshot_boot(&bounded, idle));
+    assert(denied.finished && !denied.success && denied.files == 0);
+    assert(pthread_mutex_lock(&writer_mutex) == 0);
+    writer_release = true;
+    assert(pthread_cond_signal(&writer_cond) == 0);
+    assert(pthread_mutex_unlock(&writer_mutex) == 0);
+    assert(pthread_join(worker, NULL) == 0);
+
+    Result cancelled = { .abort_after = 12 };
+    bounded.context = &cancelled;
+    assert(!katmed_source_snapshot_boot(&bounded, idle));
+    assert(cancelled.finished && !cancelled.success);
+    assert(katmed_source_writer_enter());
+    katmed_source_writer_leave();
+    Result sink_failure = { .reject_at = 4 };
+    bounded.context = &sink_failure;
+    assert(!katmed_source_snapshot_boot(&bounded, idle));
+    assert(sink_failure.finished && !sink_failure.success && sink_failure.files == 4);
+    assert(katmed_source_writer_enter());
+    katmed_source_writer_leave();
+
+    /* The independently maximal image/NVS/ACME populations exceed the
+     * shared 128-record limit; none may be silently omitted. */
+    for (unsigned id = 2; id <= 123; ++id) {
+        char path[160];
+        int n = snprintf(path, sizeof(path),
+                         KATMED_SOURCE_EXPORT_HOST_TEST "/user-images/img-%08x.jpg", id);
+        assert(n > 0 && (size_t)n < sizeof(path));
+        FILE *file = fopen(path, "wb");
+        assert(file && fwrite("jpeg", 1, 4, file) == 4 && fclose(file) == 0);
+    }
+    Result overfull = {0};
+    bounded.context = &overfull;
+    assert(!katmed_source_snapshot_boot(&bounded, idle));
+    assert(overfull.finished && !overfull.success && overfull.files == 0);
+    for (unsigned id = 2; id <= 123; ++id) {
+        char path[160];
+        int n = snprintf(path, sizeof(path),
+                         KATMED_SOURCE_EXPORT_HOST_TEST "/user-images/img-%08x.jpg", id);
+        assert(n > 0 && (size_t)n < sizeof(path) && remove(path) == 0);
+    }
+    Result complete = { .test_writer = true };
+    bounded.context = &complete;
+    assert(katmed_source_snapshot_boot(&bounded, idle));
+    assert(complete.finished && complete.success && complete.files == 13);
+    assert(complete.denied_writes == 1);
+    assert(strcmp(complete.paths[5], "littlefs/user-images/img-00000001.jpg") == 0);
+    assert(strcmp(complete.paths[6], "littlefs/acme/account.json") == 0);
+    assert(strcmp(complete.paths[12], "littlefs/acme/renewal.json") == 0);
+    katmed_source_snapshot_boot_window_close();
+    Result replay = {0};
+    bounded.context = &replay;
+    assert(!katmed_source_snapshot_boot(&bounded, idle));
+    assert(replay.finished && !replay.success && replay.files == 0);
+    for (unsigned i = 0; i < sizeof(acme_extra) / sizeof(acme_extra[0]); ++i) {
+        char path[160];
+        int n = snprintf(path, sizeof(path), KATMED_SOURCE_EXPORT_HOST_TEST "/acme/%s",
+                         acme_extra[i]);
+        assert(n > 0 && (size_t)n < sizeof(path) && remove(path) == 0);
+    }
     free(fixture_bytes);
     return 0;
 }

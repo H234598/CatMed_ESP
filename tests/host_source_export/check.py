@@ -36,7 +36,7 @@ with tempfile.TemporaryDirectory(prefix="katmed-export-") as base:
                  "littlefs/user-images", "littlefs/acme"):
         (logical / name).mkdir(parents=True, exist_ok=True, mode=0o700)
     subprocess.run([
-        "cc", "-std=gnu11", "-Wall", "-Wextra", "-Werror", "-O1",
+        "cc", "-std=gnu11", "-Wall", "-Wextra", "-Werror", "-O1", "-pthread",
         f'-DKATMED_SOURCE_EXPORT_HOST_TEST="{root}"',
         "-I", str(ROOT / "tests/host_source_export/stubs"),
         "-I", str(ROOT / "firmware/components/katmed_security/include"),

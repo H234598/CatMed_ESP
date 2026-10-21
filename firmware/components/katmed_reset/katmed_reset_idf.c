@@ -1,6 +1,7 @@
 #include "katmed_reset_idf.h"
 #include "katmed_reset_acme_files.h"
 #include "katmed_nvs_init.h"
+#include "katmed_source_export.h"
 
 #include "esp_err.h"
 #include "katmed_image_store.h"
@@ -15,23 +16,31 @@ static bool nvs_ready(void)
 bool katmed_reset_idf_prepare(void)
 {
     if (!nvs_ready()) return false;
+    if (!katmed_source_writer_enter()) return false;
     nvs_handle_t handle;
-    if (nvs_open("katmed_reset", NVS_READWRITE, &handle) != ESP_OK) return false;
+    if (nvs_open("katmed_reset", NVS_READWRITE, &handle) != ESP_OK) {
+        katmed_source_writer_leave(); return false;
+    }
     esp_err_t result = nvs_set_u8(handle, "prepared", 1);
     if (result == ESP_OK) result = nvs_commit(handle);
     nvs_close(handle);
+    katmed_source_writer_leave();
     return result == ESP_OK;
 }
 
 bool katmed_reset_idf_cancel_preparation(void)
 {
     if (!nvs_ready()) return false;
+    if (!katmed_source_writer_enter()) return false;
     nvs_handle_t handle;
-    if (nvs_open("katmed_reset", NVS_READWRITE, &handle) != ESP_OK) return false;
+    if (nvs_open("katmed_reset", NVS_READWRITE, &handle) != ESP_OK) {
+        katmed_source_writer_leave(); return false;
+    }
     esp_err_t result = nvs_erase_key(handle, "prepared");
     if (result == ESP_ERR_NVS_NOT_FOUND) result = ESP_OK;
     if (result == ESP_OK) result = nvs_commit(handle);
     nvs_close(handle);
+    katmed_source_writer_leave();
     return result == ESP_OK;
 }
 
@@ -39,18 +48,23 @@ bool katmed_reset_idf_take_preparation(bool *prepared)
 {
     if (!prepared || !nvs_ready()) return false;
     *prepared = false;
+    if (!katmed_source_writer_enter()) return false;
     nvs_handle_t handle;
-    if (nvs_open("katmed_reset", NVS_READWRITE, &handle) != ESP_OK) return false;
+    if (nvs_open("katmed_reset", NVS_READWRITE, &handle) != ESP_OK) {
+        katmed_source_writer_leave(); return false;
+    }
     uint8_t value = 0;
     esp_err_t result = nvs_get_u8(handle, "prepared", &value);
     if (result == ESP_ERR_NVS_NOT_FOUND) {
         nvs_close(handle);
+        katmed_source_writer_leave();
         return true;
     }
-    if (result != ESP_OK) { nvs_close(handle); return false; }
+    if (result != ESP_OK) { nvs_close(handle); katmed_source_writer_leave(); return false; }
     result = nvs_erase_key(handle, "prepared");
     if (result == ESP_OK) result = nvs_commit(handle);
     nvs_close(handle);
+    katmed_source_writer_leave();
     if (result != ESP_OK) return false;
     *prepared = value == 1;
     return true;
@@ -75,45 +89,61 @@ static bool journal_save(void *context,const KatmedResetJournal *journal)
 {
     (void)context;
     if (!journal || !nvs_ready()) return false;
+    if (!katmed_source_writer_enter()) return false;
     nvs_handle_t handle;
-    if (nvs_open("katmed_reset",NVS_READWRITE,&handle)!=ESP_OK) return false;
+    if (nvs_open("katmed_reset",NVS_READWRITE,&handle)!=ESP_OK) {
+        katmed_source_writer_leave(); return false;
+    }
     const uint8_t bytes[2]={(uint8_t)journal->pending,journal->stage};
     esp_err_t result=nvs_set_blob(handle,"journal",bytes,sizeof(bytes));
     if (result==ESP_OK) result=nvs_commit(handle);
     nvs_close(handle);
+    katmed_source_writer_leave();
     return result==ESP_OK;
 }
 
 static bool clear_namespace(const char *name)
 {
     if (!nvs_ready()) return false;
+    if (!katmed_source_writer_enter()) return false;
     nvs_handle_t handle;
-    if (nvs_open(name,NVS_READWRITE,&handle)!=ESP_OK) return false;
+    if (nvs_open(name,NVS_READWRITE,&handle)!=ESP_OK) {
+        katmed_source_writer_leave(); return false;
+    }
     esp_err_t result=nvs_erase_all(handle);
     if (result==ESP_OK) result=nvs_commit(handle);
     nvs_close(handle);
+    katmed_source_writer_leave();
     return result==ESP_OK;
 }
 
 static bool journal_run_stage(void *context,KatmedResetStage stage)
 {
     (void)context;
+    if (!katmed_source_writer_enter()) return false;
+    bool ok = false;
     switch (stage) {
     case KATMED_RESET_FILES:
-        return katmed_image_store_clear_user_data()==KATMED_IMAGE_OK &&
-               katmed_reset_acme_files();
+        ok = katmed_image_store_clear_user_data()==KATMED_IMAGE_OK &&
+             katmed_reset_acme_files();
+        break;
     case KATMED_RESET_KATMED_NVS:
         /* Contains app state, credentials, and the separate mesh_history key. */
-        return clear_namespace("katmed");
+        ok = clear_namespace("katmed");
+        break;
     case KATMED_RESET_WEB_NVS:
         /* Clears web auth, server identity, uploaded CA and client records. */
-        return clear_namespace("katmed_web");
+        ok = clear_namespace("katmed_web");
+        break;
     case KATMED_RESET_ACME_NVS:
-        return clear_namespace("katmed_acme");
+        ok = clear_namespace("katmed_acme");
+        break;
     case KATMED_RESET_DONE:
-        return true;
+        ok = true;
+        break;
     }
-    return false;
+    katmed_source_writer_leave();
+    return ok;
 }
 
 KatmedResetJournalBackend katmed_reset_idf_backend(void)

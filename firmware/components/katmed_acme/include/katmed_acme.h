@@ -23,6 +23,7 @@ bool katmed_acme_start(const KatmedAcmeConfig *config);
 void katmed_acme_poll(uint64_t now_ms);
 void katmed_acme_stop(void);
 bool katmed_acme_certificate_changed(void);
+bool katmed_acme_quiescent(void);
 
 #ifdef __cplusplus
 }

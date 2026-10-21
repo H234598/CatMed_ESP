@@ -46,6 +46,7 @@ typedef struct {
 /* Mounts the dedicated user-image partition without formatting it. A missing,
  * corrupt, or unsupported filesystem is reported and left untouched. */
 KatmedImageStatus katmed_image_store_mount(void);
+bool katmed_image_store_quiescent(void);
 void katmed_image_store_unmount(void);
 
 /* Uploads use generated IDs, never caller-provided file paths. Begin creates

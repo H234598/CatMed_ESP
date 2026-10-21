@@ -30,6 +30,7 @@
 #include "katmed_store.h"
 #include "katmed_store_idf.h"
 #include "katmed_nvs_init.h"
+#include "katmed_source_export.h"
 #include "katmed_import.h"
 #include "katmed_i18n.h"
 #include "katmed_reset_idf.h"
@@ -39,6 +40,18 @@
 #include "katmed_time_idf.h"
 #include "katmed_ui.h"
 #include "usb_console.h"
+
+/* A transport integration can provide a bounded, private sink. A NULL sink
+ * leaves the normal boot untouched; no snapshot is ever emitted implicitly. */
+__attribute__((weak)) const KatmedSourceExportSink *katmed_source_snapshot_boot_sink(void)
+{
+    return NULL;
+}
+
+static bool source_snapshot_writers_idle(void)
+{
+    return katmed_image_store_quiescent() && katmed_acme_quiescent();
+}
 
 static ClockSample clock_sample(uint64_t domain);
 static uint64_t monotonic_ms(void);
@@ -1694,6 +1707,15 @@ void app_main(void)
         ESP_LOGE(tag,"reset journal unavailable; normal startup is held");
         return;
     }
+    /* Import replay, reset replay and mount cleanup have completed. No Store,
+     * Mesh, Web, image upload or ACME service has started. Close this one-shot
+     * window before opening the live Store backend. */
+    katmed_source_snapshot_boot_window_open();
+    const KatmedSourceExportSink *snapshot_sink = katmed_source_snapshot_boot_sink();
+    if (snapshot_sink && !katmed_source_snapshot_boot(snapshot_sink,
+                                                       source_snapshot_writers_idle))
+        ESP_LOGE(tag, "source snapshot refused or incomplete");
+    katmed_source_snapshot_boot_window_close();
     SharedSettings settings = app_default_settings();
     const uint32_t image_count = image_status == KATMED_IMAGE_OK ? katmed_images_count() : 0;
     runtime.local = (LocalSettings){

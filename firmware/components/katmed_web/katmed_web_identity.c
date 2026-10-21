@@ -1,4 +1,5 @@
 #include "katmed_web_identity.h"
+#include "katmed_source_export.h"
 #include "katmed_web_import.h"
 #include "katmed_web_auth.h"
 
@@ -205,8 +206,11 @@ bool katmed_web_identity_load_or_create(nvs_handle_t nvs, KatmedWebIdentity *out
     esp_err_t err = nvs_get_blob(nvs, "identity", out, &len);
     if (err == ESP_OK) return len == sizeof(*out) && identity_valid(out);
     if (err != ESP_ERR_NVS_NOT_FOUND || !identity_create(out)) return false;
-    if (nvs_set_blob(nvs, "identity", out, sizeof(*out)) != ESP_OK ||
-        nvs_commit(nvs) != ESP_OK) {
+    if (!katmed_source_writer_enter()) { wipe(out, sizeof(*out)); return false; }
+    bool saved = nvs_set_blob(nvs, "identity", out, sizeof(*out)) == ESP_OK &&
+                 nvs_commit(nvs) == ESP_OK;
+    katmed_source_writer_leave();
+    if (!saved) {
         wipe(out, sizeof(*out));
         return false;
     }

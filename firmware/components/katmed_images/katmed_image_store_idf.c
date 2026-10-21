@@ -2,6 +2,7 @@
 #include "katmed_images_internal.h"
 #include "katmed_image_store_cleanup.h"
 #include "katmed_security_layout.h"
+#include "katmed_source_export.h"
 
 #include "esp_err.h"
 #include "esp_littlefs.h"
@@ -52,13 +53,27 @@ static bool mounted;
 
 static bool enter_store(void)
 {
-    return mounted && store_lock != NULL &&
-           xSemaphoreTake(store_lock, portMAX_DELAY) == pdTRUE;
+    if (!mounted || store_lock == NULL || !katmed_source_writer_enter()) return false;
+    if (xSemaphoreTake(store_lock, portMAX_DELAY) == pdTRUE) return true;
+    katmed_source_writer_leave();
+    return false;
 }
 
 static void leave_store(void)
 {
     (void)xSemaphoreGive(store_lock);
+    katmed_source_writer_leave();
+}
+
+bool katmed_image_store_quiescent(void)
+{
+    if (!mounted || store_lock == NULL || xSemaphoreTake(store_lock, 0) != pdTRUE)
+        return false;
+    bool idle = true;
+    for (size_t i = 0; i < STORE_MAX_UPLOADS; ++i)
+        if (uploads[i].stream != NULL) idle = false;
+    (void)xSemaphoreGive(store_lock);
+    return idle;
 }
 
 static bool catalog_image_path(uint32_t index, uint32_t profile,
@@ -222,8 +237,9 @@ static uint32_t new_image_id_locked(void)
 KatmedImageStatus katmed_image_store_mount(void)
 {
     if (mounted) return KATMED_IMAGE_OK;
+    if (!katmed_source_writer_enter()) return KATMED_IMAGE_BUSY;
     if (store_lock == NULL) store_lock = xSemaphoreCreateMutex();
-    if (store_lock == NULL) return KATMED_IMAGE_UNAVAILABLE;
+    if (store_lock == NULL) { katmed_source_writer_leave(); return KATMED_IMAGE_UNAVAILABLE; }
 
     esp_vfs_littlefs_conf_t config = {
         .base_path = STORE_MOUNT_POINT,
@@ -237,6 +253,7 @@ KatmedImageStatus katmed_image_store_mount(void)
     if (error != ESP_OK) {
         ESP_LOGW(tag, "user image filesystem unavailable (%s); partition left unchanged",
                  esp_err_to_name(error));
+        katmed_source_writer_leave();
         return KATMED_IMAGE_UNAVAILABLE;
     }
 
@@ -244,17 +261,21 @@ KatmedImageStatus katmed_image_store_mount(void)
     if (stat(STORE_DIRECTORY, &info) != 0) {
         if (errno != ENOENT || mkdir(STORE_DIRECTORY, 0700) != 0) {
             (void)esp_vfs_littlefs_unregister(STORE_PARTITION);
+            katmed_source_writer_leave();
             return KATMED_IMAGE_IO_ERROR;
         }
     } else if (!S_ISDIR(info.st_mode)) {
         (void)esp_vfs_littlefs_unregister(STORE_PARTITION);
+        katmed_source_writer_leave();
         return KATMED_IMAGE_BAD_CATALOG;
     }
     if (!katmed_image_store_cleanup_orphan_uploads(STORE_DIRECTORY)) {
         (void)esp_vfs_littlefs_unregister(STORE_PARTITION);
+        katmed_source_writer_leave();
         return KATMED_IMAGE_IO_ERROR;
     }
     mounted = true;
+    katmed_source_writer_leave();
     return KATMED_IMAGE_OK;
 }
 

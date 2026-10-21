@@ -1,5 +1,5 @@
 idf_component_register(
     SRCS "katmed_acme.cpp" "katmed_acme_atomic.c"
     INCLUDE_DIRS "include"
-    REQUIRES acmeclient katmed_web
+    REQUIRES acmeclient katmed_web katmed_security
     PRIV_REQUIRES esp_timer freertos)

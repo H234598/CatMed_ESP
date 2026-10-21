@@ -10,6 +10,7 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/portmacro.h"
+#include "katmed_source_export.h"
 
 #define ATOMIC_SLOTS 8
 #define ATOMIC_PATH_MAX 256
@@ -34,16 +35,23 @@ static bool allowed_path(const char *path)
 FILE *katmed_acme_atomic_open(const char *target)
 {
     if (!allowed_path(target)) return NULL;
+    if (!katmed_source_writer_enter()) return NULL;
     char temporary[ATOMIC_PATH_MAX];
+    portENTER_CRITICAL(&slots_lock);
+    unsigned serial = sequence++;
+    portEXIT_CRITICAL(&slots_lock);
     int length = snprintf(temporary, sizeof(temporary), "%s.katmed-%u",
-                          target, sequence++);
-    if (length < 0 || (size_t)length >= sizeof(temporary)) return NULL;
+                          target, serial);
+    if (length < 0 || (size_t)length >= sizeof(temporary)) {
+        katmed_source_writer_leave(); return NULL;
+    }
     int fd = open(temporary, O_WRONLY | O_CREAT | O_EXCL, 0600);
-    if (fd < 0) return NULL;
+    if (fd < 0) { katmed_source_writer_leave(); return NULL; }
     FILE *stream = fdopen(fd, "w");
     if (stream == NULL) {
         close(fd);
         unlink(temporary);
+        katmed_source_writer_leave();
         return NULL;
     }
     bool registered = false;
@@ -61,6 +69,7 @@ FILE *katmed_acme_atomic_open(const char *target)
     if (!registered) {
         fclose(stream);
         unlink(temporary);
+        katmed_source_writer_leave();
         return NULL;
     }
     return stream;
@@ -89,6 +98,7 @@ int katmed_acme_atomic_close(FILE *stream)
     if (result != 0) {
         unlink(slot.temporary);
         ESP_LOGE(TAG, "atomic ACME state commit failed: %s", strerror(errno));
+        katmed_source_writer_leave();
         return EOF;
     }
     char parent[ATOMIC_PATH_MAX];
@@ -102,5 +112,16 @@ int katmed_acme_atomic_close(FILE *stream)
             close(directory);
         }
     }
+    katmed_source_writer_leave();
     return 0;
+}
+
+bool katmed_acme_atomic_idle(void)
+{
+    bool idle = true;
+    portENTER_CRITICAL(&slots_lock);
+    for (size_t i = 0; i < ATOMIC_SLOTS; ++i)
+        if (slots[i].stream != NULL) idle = false;
+    portEXIT_CRITICAL(&slots_lock);
+    return idle;
 }

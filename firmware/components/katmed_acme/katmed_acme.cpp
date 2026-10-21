@@ -7,6 +7,9 @@
 
 #include "esp_log.h"
 #include "katmed_web.h"
+#include "katmed_source_export.h"
+
+extern "C" bool katmed_acme_atomic_idle(void);
 
 static const char *TAG = "katmed_acme";
 static Acme *client;
@@ -29,13 +32,15 @@ bool katmed_acme_start(const KatmedAcmeConfig *config)
         ESP_LOGE(TAG, "ACME refused: state directory is outside reset contract");
         return false;
     }
+    if (!katmed_source_writer_enter()) return false;
     httpd_handle_t server = katmed_web_acme_http_server();
     if (server == NULL) {
         ESP_LOGE(TAG, "ACME refused: Katmed HTTP-01 server is unavailable");
+        katmed_source_writer_leave();
         return false;
     }
     client = new Acme();
-    if (client == NULL) return false;
+    if (client == NULL) { katmed_source_writer_leave(); return false; }
     client->setUrl(config->identifier);
     client->setEmail(config->email);
     client->setAcmeServer(config->server);
@@ -59,9 +64,18 @@ void katmed_acme_poll(uint64_t now_ms)
 
 void katmed_acme_stop(void)
 {
+    bool was_active = client != NULL;
     delete client;
     client = NULL;
     certificate_changed = false;
+    if (was_active) katmed_source_writer_leave();
+}
+
+bool katmed_acme_quiescent(void)
+{
+    /* The client holds a writer lease for its entire lifetime. Inspect only
+     * atomic slots here, whose lock also catches an orphaned file handle. */
+    return katmed_acme_atomic_idle();
 }
 
 bool katmed_acme_certificate_changed(void)

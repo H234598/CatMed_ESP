@@ -28,19 +28,31 @@ Weitere NVS-Namespace-Schlüssel, insbesondere mögliche alte Wi-Fi-Treiberwerte
 
 `firmware/components/katmed_security/katmed_source_export.c` implementiert
 `katmed_source_export()` gegen die **produktive** ESP-IDF-NVS-API und das bereits
-gemountete `user_images`-LittleFS. Die Funktion ist derzeit nicht an eine
-Laufzeitaktion gebunden. Sie initialisiert NVS nicht, mountet nicht, formatiert
-nicht, verändert keine Quelldatei und schreibt weder Werte noch Pfade in Logs.
-Der spätere Aufrufer muss alle Store-, Web-, Mesh-, Reset-, Bild- und ACME-Schreiber
-für die gesamte Dauer anhalten und vor dem Aufruf einen lesbaren, unverändert
-gemounteten Altzustand sicherstellen. Die heutige Firmware garantiert diese
-Quieszenz noch nicht. Ein partiell empfangener Lauf ist nur mit `finish(true)`
-verwendbar; bei `finish(false)` muss der Empfänger alle empfangenen Bytes
-verwerfen. Die Funktion übergibt logische Pfade, Längen und Bytes an vier
-Callbacks (`begin`, `bytes`, `end`, `finish`). Ein externer Transport und ein
-Empfänger, der daraus geschützte Dateien sowie die exakt sortierten Listen in
-`source-inventory.json` schreibt, fehlen noch. Das ist die bewusste
-Adaptergrenze zum vorhandenen Hostpaket, keine fertige Geräteexportfunktion.
+gemountete `user_images`-LittleFS. Der produktive Aufruf ist nun ausschließlich
+im einmaligen Bootfenster über `katmed_source_snapshot_boot()` möglich: nach
+Import-Replay, Mount samt Upload-Restbereinigung und Reset-Replay, vor Store-
+Öffnung, Mesh, Web, Uploads und ACME. Das Fenster wird vor dem normalen
+Dienststart endgültig geschlossen. Der schwache Hook
+`katmed_source_snapshot_boot_sink()` liefert standardmäßig `NULL`; erst ein
+späterer privater, begrenzter Transport-Sink kann den Snapshot tatsächlich
+anfordern. Ein Laufzeitaufruf nach Dienststart wird abgewiesen.
+
+Der nicht wartende Eintritt verweigert aktive Schreiber, offene Bild-Uploads
+und aktive ACME-Dateihandles. Store und Mesh-History, Web-Auth und -Identität,
+Resetjournal und Reset-Dateistufe, Bildspeicher und der aktive ACME-Client
+halten Schreibleases; neue Mutationen werden während der Ausgabe abgewiesen.
+Der gepinnte ACME-Client hält seine Lease bis nach `stop()`, auch wenn seine
+internen Dateipfade nicht einzeln kontrolliert werden. NVS wird in fester
+Schlüsselreihenfolge, Bild- und ACME-Dateien werden je lexikographisch
+ausgegeben. Bei Abbruch, Fehler oder erreichtem 30-Sekunden-Budget wird
+`finish(false)` gemeldet und die Sperre freigegeben. Der Sink muss alle
+Callbacks einschließlich `keep_going` prompt und begrenzt ausführen;
+ein blockierter fremder Callback lässt sich aus demselben Thread nicht sicher
+präemptieren. Nur `finish(true)` nach vollständiger Inventur und Übertragung
+ist verwendbar, und ein Empfänger muss alle Bytes eines `finish(false)`-Laufs
+verwerfen. Der Adapter initialisiert oder formatiert keine Quelle und schreibt
+keine privaten Werte in Logs. Ein externer Transport und ein Empfänger, der
+daraus geschützte Dateien sowie `source-inventory.json` erstellt, fehlen noch.
 
 Der Adapter inventarisiert **alle** sichtbaren Einträge der Standard-NVS-Partition
 mittels `nvs_entry_find("nvs", NULL, NVS_TYPE_ANY, ...)`. Er übernimmt nur die
@@ -84,11 +96,11 @@ verlangt dieselben Summen wie der Vorabscan. Das sind **Vorprüfungen**, keine G
 24-KiB-NVS-Bereich oder das 256-KiB-LittleFS samt Metadaten passt. Die
 Versions- und CRC-Prüfung des Store- und Mesh-Inhalts findet im anschließenden
 unveränderten produktiven Host-Codec statt. Bei einer während des Lesens
-ändernden Quelle ist kein konsistenter Snapshot zugesichert; deshalb ist die
-Schreibsperre des späteren Aufrufers zwingend.
+ändernden Quelle ist kein konsistenter Snapshot zugesichert; deshalb ist das
+oben beschriebene Bootfenster mit seinen Schreibleases zwingend.
 
 **Noch nicht angeschlossen beziehungsweise ausdrücklich offen:** Ein
-geräteeigener Aufruf, ein authentisierter und vertraulicher Transport, ein
+authentisierter und vertraulicher Transport zum vorhandenen Bootaufruf, ein
 empfangsseitiges atomisches Anlegen der externen logischen Dateien und
 `source-inventory.json`, Kapazitätsnachweise auf echten Partitionen sowie
 Geräte- und Recoveryfreigabe. Der begrenzte LittleFS-Importadapter ist vorhanden,
@@ -96,8 +108,9 @@ aber ohne produktiven geschützten Empfänger nicht aufrufbar.
 Ein SDK-WLAN-NVS-Eintrag oder ein `katmed_acme`-NVS-Eintrag würde derzeit
 bewusst sperren; für solche tatsächlich gefundenen Schlüssel muss vor der
 Migration eine eigene semantische Zuordnung beschlossen und implementiert
-werden. Abgebrochene `.upload-*.tmp`-Dateien sperren als nicht zuordenbarer
-Quellrest. Frei editierbare Texte außerhalb des Store-Blobs wurden in den
+werden. Der Mount bereinigt bekannte abgebrochene `.upload-*.tmp`-Dateien vor
+dem Bootfenster; ein danach verbleibender nicht zuordenbarer Quellrest sperrt
+den Export. Frei editierbare Texte außerhalb des Store-Blobs wurden in den
 aktuellen Persistenzaufrufen nicht gefunden; einkompilierte private UI-Defaults
 und flüchtige Sitzungen sind keine gespeicherten Laufzeitdaten.
 Der aktuelle ACME-Dateireset, Quelladapter, Hostpaket und Importer erfassen
@@ -108,7 +121,7 @@ ist ohne aktiven Client- und Gerätelauf weiterhin ungeprüft.
 
 Der Hostaufruf ist `python3 tools/security_migration.py export --source <geschützter-logischer-altbaum> --output <neues-externes-paket>` und danach `python3 tools/security_migration.py import-stage --source <paket> --output <neue-externe-stagingmappe>`. Die Befehle geben nur einen generischen Status aus. Sie dürfen keine echten Daten auf der Konsole oder in CI ausgeben. Ein Fehler lässt den Altbaum und ein bereits vollständiges Paket bestehen; ein neuer Zielname erscheint nur nach vollständigem Schreiben. Die Veröffentlichung nutzt unter Linux `renameat2` mit `RENAME_NOREPLACE`: Wird der Zielname nach der Vorprüfung konkurrierend belegt, schlägt die Aktion fehl und entfernt ihre temporäre Stagingmappe. Ist diese Operation nicht verfügbar, erfolgt keine Veröffentlichung. Ein begrenztes Host-Budget und die 4096-Byte-v11-Codecgrenze führen bei Platzmangel zu Abweisung statt Verkleinerung.
 
-Für einen wirklichen Cutover fehlt weiterhin der **vollständige, aufrufbare alte Firmware-Exporter**: Der vorhandene lesende Adapter muss nach einem nachgewiesen ruhenden Resetzustand und stillgesetzten Schreibern sicher an einen Transport und externen Empfänger gebunden werden. Sein Ergebnis muss vor dem Tabellenwechsel extern gesichert und unabhängig gegen diese Paketprüfung verglichen werden. Das bestehende `katmed_nvs_init()` lässt einen belegten unmarkierten NVS-Bereich bewusst nicht als Migration durch. Die im Host erzeugte Stagingmappe ist **keine** geflashte oder gelinkte Runtime-Funktion.
+Für einen wirklichen Cutover muss der jetzt aufrufbare ruhende Boot-Exporter an einen begrenzten Transport und einen geschützten, authentisierten Empfänger gebunden werden. Sein Ergebnis muss vor dem Tabellenwechsel extern gesichert und unabhängig gegen diese Paketprüfung verglichen werden. Das bestehende `katmed_nvs_init()` lässt einen belegten unmarkierten NVS-Bereich bewusst nicht als Migration durch. Die im Host erzeugte Stagingmappe ist **keine** geflashte oder gelinkte Runtime-Funktion.
 
 #### Produktiver Teilslice
 
@@ -124,7 +137,7 @@ Bei Web-Werten prüft die Firmware vor der ersten NVS-Mutation und bei jedem Rep
 
 Der Abort eines vorjournalisierten Orphans verlangt zusätzlich eine vollständige kanonische Stufenprüfung gegen die lokal gelesene Device-ID. Der IDF-Wrapper liest dafür die Factory-MAC erneut. Fremde oder beschädigte Stufen und ihre Tempdateien bleiben unverändert für eine getrennte Recoveryentscheidung; auch der automatische Abort nach einem Apply-Fehler verwendet diese Bindung.
 
-**Noch offen:** Transport und geschützter authentisierter Empfänger für das Capsule, Quieszenz der Alt- und Neuschreiber sowie ein Nachweis, dass der spätere ACME-Client die bytegleich übernommenen inneren Zustände akzeptiert. Der bestehende Factory-Reset erreicht ACME-Dateien ausschließlich über seine physische Freigabe und journalisierte Dateistufe; der Import löst keinen Reset aus. Die Bilddateien sind an Dateinamen, IDs, Längen und CRC gebunden; die im Store gespeicherte Katalogkennung beschreibt dagegen den unveränderlichen Firmwarekatalog und wird durch diesen Dateislice nicht neu gebunden. Auf einem echten Gerät fehlen eine Füllstands-/Stromausfallprobe und ein Nachweis gegen konkurrierende Schreiber. Ohne diese Anschlüsse und gerätegebundene Recoveryprobe ist der Adapter keine Migrations- oder Sicherheitsfreigabe.
+**Noch offen:** Transport und geschützter authentisierter Empfänger für das Capsule, Quieszenz für einen möglichen Export nach Dienststart und auf der späteren Zielseite sowie ein Nachweis, dass der spätere ACME-Client die bytegleich übernommenen inneren Zustände akzeptiert. Der bestehende Factory-Reset erreicht ACME-Dateien ausschließlich über seine physische Freigabe und journalisierte Dateistufe; der Import löst keinen Reset aus. Die Bilddateien sind an Dateinamen, IDs, Längen und CRC gebunden; die im Store gespeicherte Katalogkennung beschreibt dagegen den unveränderlichen Firmwarekatalog und wird durch diesen Dateislice nicht neu gebunden. Auf einem echten Gerät fehlen eine Füllstands-/Stromausfallprobe und ein Nachweis gegen konkurrierende Schreiber. Ohne diese Anschlüsse und gerätegebundene Recoveryprobe ist der Adapter keine Migrations- oder Sicherheitsfreigabe.
 
 Das neutrale Quelllayout behält `user_images` bei `0x280000` mit 256 KiB. Nur das noch unaktivierte Security-Ziellayout für C3 und C6 verschiebt den Beginn auf `0x230000` und vergrößert diese verschlüsselte Partition auf 576 KiB; die Factory-App wird dabei von `0x260000` auf `0x210000` Byte verkleinert. Der unveränderliche Stockkatalog beginnt weiterhin bei `0x2c0000`. Die Security-NVS-Partition bleibt bei `0x11000`, wächst aber von `0x6000` auf `0x7000`; `phy_init` rückt aus `0x17000` in die freie Lücke bei `0x1a000`. Schlüsselbereich und Guard bleiben bei `0x18000` und `0x19000`; der Security-Partitionstisch endet bei `0x11000`. Factory-App, LittleFS und Stockbereich behalten ihre bisherigen Grenzen dieses Teilslices. Die Sicherheitsinitialisierung und der Layoutcheck verlangen die neuen Grenzen exakt. Ein bloßer Austausch der Partitionstabelle auf einem belegten Altgerät wäre **keine Migration**: Die alte LittleFS-Metadatenwurzel liegt an einer anderen Adresse. Ohne einen zuvor extern gesicherten und geprüften vollständigen Quellbestand bleibt dieser Schritt gesperrt. Der Import formatiert niemals bei einem Mountfehler und überschreibt kein vorhandenes Zielbild. Der Security-Boot hält den normalen Start nun auch dann an, wenn das umgelegte Nutzerbild-Dateisystem nicht gemountet werden kann; der neutrale Altquellpfad bleibt unverändert.
 

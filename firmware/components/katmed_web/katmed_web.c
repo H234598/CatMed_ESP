@@ -1,4 +1,5 @@
 #include "katmed_web.h"
+#include "katmed_source_export.h"
 
 #include <inttypes.h>
 #include <stdio.h>
@@ -122,8 +123,11 @@ static int sha256_bytes(const uint8_t *input, size_t length, uint8_t output[32])
 static bool commit_auth(void *context, const KatmedWebAuthRecord *record)
 {
     WebContext *w = context;
-    return w->nvs_open && nvs_set_blob(w->nvs, "auth", record, sizeof(*record)) == ESP_OK &&
-           nvs_commit(w->nvs) == ESP_OK;
+    if (!w->nvs_open || !katmed_source_writer_enter()) return false;
+    bool ok = nvs_set_blob(w->nvs, "auth", record, sizeof(*record)) == ESP_OK &&
+              nvs_commit(w->nvs) == ESP_OK;
+    katmed_source_writer_leave();
+    return ok;
 }
 
 static bool load_auth(WebContext *w)
