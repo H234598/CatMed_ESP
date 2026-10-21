@@ -74,7 +74,9 @@ def allowed(name):
         return True
     p = Path(name)
     return (len(p.parts) == 3 and p.parts[:2] == ("littlefs", "user-images")
-            and bool(IMAGE.fullmatch(p.name))) or (len(p.parts) == 3
+            and bool(IMAGE.fullmatch(p.name))
+            and ((p.name.startswith("img-") and 0 < int(p.name[4:12], 16) < 0x80000000)
+                 or (p.name.startswith("cat-") and int(p.name[4:6], 16) < 72))) or (len(p.parts) == 3
             and p.parts[:2] == ("littlefs", "acme") and p.name in ACME)
 
 

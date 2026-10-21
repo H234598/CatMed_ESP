@@ -45,6 +45,11 @@ class MigrationContract(unittest.TestCase):
                                          stdout=subprocess.PIPE).stdout
         cls.v9_fixture = subprocess.run([str(cls.codec), "synthetic-v9-fixture"], check=True,
                                         stdout=subprocess.PIPE).stdout
+        cls.legacy_fixtures = {
+            version: subprocess.run([str(cls.codec), f"synthetic-v{version}-fixture"],
+                                    check=True, stdout=subprocess.PIPE).stdout
+            for version in (5, 7, 8)
+        }
         cls.store_codec = Path(cls.binary_dir.name) / "store-codec"
         subprocess.run(["c++", "-std=c++17", "-Wall", "-Wextra", "-Werror", "-O1",
                         "-I", str(ROOT / "firmware/components/katmed_core/include"),
@@ -182,6 +187,29 @@ class MigrationContract(unittest.TestCase):
         self.assertEqual(decoded["language"], 0)
         self.assertEqual((self.staged / "nvs/katmed/mesh_history").read_bytes(), self.history)
 
+    def test_legacy_v5_v7_v8_replay_uses_product_decoder(self):
+        for version, fixture in self.legacy_fixtures.items():
+            with self.subTest(version=version):
+                length = struct.unpack_from("<I", fixture)[0]
+                previous_state = fixture[4:4 + length]
+                put(self.source / "nvs/katmed/state", previous_state)
+                put(self.source / "nvs/katmed/mesh_history", fixture[8 + length:])
+                package = self.root / f"package-v{version}"
+                staged = self.root / f"staged-v{version}"
+                self.assertEqual(self.run_tool("export", self.source, package).returncode, 0)
+                self.assertEqual(self.run_tool("import-stage", package, staged).returncode, 0)
+                self.assertEqual((package / "nvs/katmed/state").read_bytes(), previous_state)
+                canonical = (staged / "nvs/katmed/state").read_bytes()
+                self.assertEqual(canonical[4], 11)
+                decoded = json.loads(subprocess.run([str(self.store_codec)], input=canonical,
+                                                    stdout=subprocess.PIPE, check=True).stdout)
+                self.assertEqual(decoded["language"], 0)
+                self.assertEqual(decoded["mesh_name_count"], 9 if version == 8 else 0)
+                self.assertEqual(decoded["wifi_profile_count"], 1)
+                self.assertEqual(decoded["wifi_priorities"], [1])
+                self.assertEqual((staged / "nvs/katmed/mesh_history").read_bytes(),
+                                 fixture[8 + length:])
+
     def test_corrupt_mesh_history_rejected(self):
         history = bytearray(self.history)
         history[-1] ^= 1
@@ -229,6 +257,21 @@ class MigrationContract(unittest.TestCase):
         put(self.source / "nvs/katmed/unknown", b"synthetic")
         self.assertNotEqual(self.run_tool("export", self.source, self.package).returncode, 0)
         self.assertFalse(self.package.exists())
+
+    def test_unreplayable_image_ids_rejected_without_package(self):
+        for name in ("img-00000000.jpg", "img-80000000.jpg", "cat-48-0.jpg"):
+            with self.subTest(name=name):
+                path = self.source / "littlefs/user-images" / name
+                put(path, b"\xff\xd8synthetic\xff\xd9")
+                inventory = json.loads((self.source / "source-inventory.json").read_text())
+                inventory["littlefs"].append("littlefs/user-images/" + name)
+                inventory["littlefs"].sort()
+                put(self.source / "source-inventory.json", json.dumps(inventory).encode())
+                self.assertNotEqual(self.run_tool("export", self.source, self.package).returncode, 0)
+                self.assertFalse(self.package.exists())
+                path.unlink()
+                inventory["littlefs"].remove("littlefs/user-images/" + name)
+                put(self.source / "source-inventory.json", json.dumps(inventory).encode())
 
     def test_acme_ari_renewal_roundtrip(self):
         put(self.source / "littlefs/acme/renewal.json", b"{}")

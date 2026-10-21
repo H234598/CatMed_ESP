@@ -260,6 +260,16 @@ int main(int argc, char **argv)
     entries[4].key = "unknown";
     r = run(false);
     assert(r.files == 0);
+    entries[4].key = "prepared";
+    entries[4].type = 2; /* Physical reset marker is not a replayable blob. */
+    r = run(false);
+    assert(r.files == 0);
+    entries[4].type = NVS_TYPE_BLOB;
+    entries[4].ns = "netif_ip_info";
+    entries[4].key = "synthetic-ifkey"; /* Pinned IoT Bridge can persist IP state. */
+    r = run(false);
+    assert(r.files == 0);
+    entries[4].ns = "katmed_reset";
     entries[4].key = "journal";
     entries[0].key = "missing";
     r = run(false);
@@ -333,6 +343,22 @@ int main(int argc, char **argv)
     r = run(false);
     assert(r.files == 0);
     assert(unlink(KATMED_SOURCE_EXPORT_HOST_TEST "/user-images/img-00000003.jpg") == 0);
+
+    /* These names match the old source pattern but cannot be replayed by
+     * the firmware importer. The entire export must fail before emission. */
+    const char *const invalid_images[] = {
+        "img-00000000.jpg", "img-80000000.jpg", "cat-48-0.jpg"
+    };
+    for (unsigned i = 0; i < sizeof(invalid_images) / sizeof(invalid_images[0]); ++i) {
+        char path[160];
+        int n = snprintf(path, sizeof(path), KATMED_SOURCE_EXPORT_HOST_TEST
+                         "/user-images/%s", invalid_images[i]);
+        assert(n > 0 && (size_t)n < sizeof(path));
+        extra = fopen(path, "wb");
+        assert(extra && fwrite("jpeg", 1, 4, extra) == 4 && fclose(extra) == 0);
+        r = run(false);
+        assert(r.files == 0 && remove(path) == 0);
+    }
 
     extra = fopen(KATMED_SOURCE_EXPORT_HOST_TEST "/user-images/img-00000002.jpg", "wb");
     assert(extra);

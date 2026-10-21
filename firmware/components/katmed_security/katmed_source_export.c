@@ -243,7 +243,11 @@ static bool image_name(const char *s)
     for (unsigned i = 4; i < 12; ++i)
         if (!((s[i] >= '0' && s[i] <= '9') ||
               (s[i] >= 'a' && s[i] <= 'f'))) return false;
-    return true;
+    /* The import parser accepts only IDs 1..0x7fffffff. */
+    if (s[4] > '7') return false;
+    for (unsigned i = 4; i < 12; ++i)
+        if (s[i] != '0') return true;
+    return false;
 }
 
 static bool catalog_name(const char *s)
@@ -254,7 +258,8 @@ static bool catalog_name(const char *s)
     for (unsigned i = 4; i < 6; ++i)
         if (!((s[i] >= '0' && s[i] <= '9') ||
               (s[i] >= 'a' && s[i] <= 'f'))) return false;
-    return true;
+    /* There are 72 catalog IDs, 0x00..0x47. */
+    return s[4] < '4' || (s[4] == '4' && s[5] <= '7');
 }
 
 static bool acme_name(const char *s)

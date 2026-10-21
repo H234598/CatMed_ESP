@@ -76,6 +76,22 @@ static int fixture(unsigned version)
     r.local = {ORIENTATION_0, DIGITAL_LARGE, 1};
     r.language = version == 11 ? KATMED_LANG_DE : KATMED_LANG_EN;
     r.group_origin = STORE_GROUP_ORIGIN_FRESH_UNBOUND;
+    if (version <= 8) {
+        r.group_origin = STORE_GROUP_ORIGIN_FIRST_BOUND;
+        r.provision.configured = true;
+        r.provision.group[0] = 1;
+        r.provision.secret[0] = 2;
+        r.bound_group[0] = 1;
+        constexpr char ssid[] = "synthetic-legacy";
+        constexpr char password[] = "synthetic-key";
+        constexpr char time_source[] = "time.example";
+        r.provision.ssid_length = sizeof(ssid) - 1;
+        r.provision.password_length = sizeof(password) - 1;
+        r.provision.time_source_length = sizeof(time_source) - 1;
+        std::memcpy(r.provision.ssid, ssid, sizeof(ssid) - 1);
+        std::memcpy(r.provision.password, password, sizeof(password) - 1);
+        std::memcpy(r.provision.time_source, time_source, sizeof(time_source) - 1);
+    }
     const ClockSample now{1000, 1, 0, false, CLOCK_UNAVAILABLE};
     const EventId boot_id{1, 1, 1};
     if (app_init(&r.history, &r.shared, &now, boot_id, r.image_count,
@@ -100,6 +116,10 @@ static int fixture(unsigned version)
     r.mesh_name_next_index = KATMED_MESH_NAME_MAX_ENTRIES + 1;
     for (unsigned i = 0; i < r.mesh_name_count; ++i)
         r.mesh_names[i] = {uint64_t(i + 1), uint16_t(i + 1)};
+    if (version == 8) {
+        r.mesh_name_count = 9;
+        r.mesh_name_next_index = 10;
+    }
     r.wifi_profile_count = KATMED_STORE_WIFI_PROFILE_MAX;
     r.next_wifi_profile_id = KATMED_STORE_WIFI_PROFILE_MAX + 1;
     for (unsigned i = 0; i < r.wifi_profile_count; ++i) {
@@ -118,6 +138,7 @@ static int fixture(unsigned version)
     size_t state_size = 0;
     if (encode_record(r, state.data(), &state_size, version) != STORE_OK) return 1;
     MeshHistory h{};
+    std::memcpy(h.group, r.provision.group, sizeof(h.group));
     h.count = MESH_HISTORY_MAX; h.generation = 1;
     for (unsigned i = 0; i < h.count; ++i) h.ids[i] = i + 1;
     std::array<uint8_t, MESH_HISTORY_BLOB> history{};
@@ -136,5 +157,8 @@ int main(int argc, char **argv)
     if (std::strcmp(argv[1], "synthetic-fixture") == 0) return fixture(11);
     if (std::strcmp(argv[1], "synthetic-v10-fixture") == 0) return fixture(10);
     if (std::strcmp(argv[1], "synthetic-v9-fixture") == 0) return fixture(9);
+    if (std::strcmp(argv[1], "synthetic-v8-fixture") == 0) return fixture(8);
+    if (std::strcmp(argv[1], "synthetic-v7-fixture") == 0) return fixture(7);
+    if (std::strcmp(argv[1], "synthetic-v5-fixture") == 0) return fixture(5);
     return 2;
 }
