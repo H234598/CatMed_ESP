@@ -1,7 +1,7 @@
 /*******************************************************************************
  * Size: 30 px
  * Bpp: 2
- * Opts: --font /usr/share/fonts/dejavu-sans-fonts/DejaVuSansCondensed.ttf -r 0x30-0x39,0x2e --size 30 --bpp 2 --no-compress --format lvgl --lv-font-name katmed_font_30 --output firmware/components/katmed_ui/katmed_font_30.c
+ * Opts: --font DejaVuSansCondensed.ttf -r 0x2d-0x2f,0x30-0x39 --size 30 --bpp 2 --no-compress --format lvgl --lv-font-name katmed_font_30 --lv-fallback katmed_font_14 -o /dev/stdout
  ******************************************************************************/
 
 #ifdef LV_LVGL_H_INCLUDE_SIMPLE
@@ -22,8 +22,22 @@
 
 /*Store the image of the glyphs*/
 static LV_ATTRIBUTE_LARGE_CONST const uint8_t clock_30_glyph_bitmap[] = {
+    /* The date hyphen needs four visible rows to double the old 2px glyph. */
+    /* U+002D "-" */
+    0x55, 0x54, 0xbf, 0xfd, 0xbf, 0xfd, 0xbf, 0xfd,
+
     /* U+002E "." */
     0x3e, 0x3e, 0x3e, 0x3e,
+
+    /* U+002F "/" */
+    0x0, 0x7, 0xc0, 0x0, 0xb8, 0x0, 0xf, 0x40,
+    0x0, 0xf0, 0x0, 0x1f, 0x0, 0x2, 0xe0, 0x0,
+    0x3d, 0x0, 0x3, 0xc0, 0x0, 0x7c, 0x0, 0xf,
+    0x40, 0x0, 0xf0, 0x0, 0x1f, 0x0, 0x2, 0xe0,
+    0x0, 0x3d, 0x0, 0x3, 0xc0, 0x0, 0x7c, 0x0,
+    0xb, 0x80, 0x0, 0xf4, 0x0, 0xf, 0x0, 0x1,
+    0xe0, 0x0, 0x3d, 0x0, 0x3, 0xc0, 0x0, 0x7c,
+    0x0, 0xb, 0x80, 0x0, 0xf4, 0x0, 0x0,
 
     /* U+0030 "0" */
     0x0, 0x2f, 0xe4, 0x0, 0x7, 0xff, 0xf8, 0x0,
@@ -155,34 +169,33 @@ static LV_ATTRIBUTE_LARGE_CONST const uint8_t clock_30_glyph_bitmap[] = {
 
 static const lv_font_fmt_txt_glyph_dsc_t clock_30_glyph_dsc[] = {
     {.bitmap_index = 0, .adv_w = 0, .box_w = 0, .box_h = 0, .ofs_x = 0, .ofs_y = 0} /* id = 0 reserved */,
-    {.bitmap_index = 0, .adv_w = 137, .box_w = 4, .box_h = 4, .ofs_x = 2, .ofs_y = 0},
-    {.bitmap_index = 4, .adv_w = 275, .box_w = 15, .box_h = 22, .ofs_x = 1, .ofs_y = 0},
-    {.bitmap_index = 87, .adv_w = 275, .box_w = 13, .box_h = 22, .ofs_x = 2, .ofs_y = 0},
-    {.bitmap_index = 159, .adv_w = 275, .box_w = 14, .box_h = 22, .ofs_x = 1, .ofs_y = 0},
-    {.bitmap_index = 236, .adv_w = 275, .box_w = 14, .box_h = 22, .ofs_x = 2, .ofs_y = 0},
-    {.bitmap_index = 313, .adv_w = 275, .box_w = 15, .box_h = 22, .ofs_x = 1, .ofs_y = 0},
-    {.bitmap_index = 396, .adv_w = 275, .box_w = 13, .box_h = 22, .ofs_x = 2, .ofs_y = 0},
-    {.bitmap_index = 468, .adv_w = 275, .box_w = 15, .box_h = 22, .ofs_x = 1, .ofs_y = 0},
-    {.bitmap_index = 551, .adv_w = 275, .box_w = 13, .box_h = 22, .ofs_x = 2, .ofs_y = 0},
-    {.bitmap_index = 623, .adv_w = 275, .box_w = 15, .box_h = 22, .ofs_x = 1, .ofs_y = 0},
-    {.bitmap_index = 706, .adv_w = 275, .box_w = 15, .box_h = 22, .ofs_x = 1, .ofs_y = 0}
+    {.bitmap_index = 0, .adv_w = 156, .box_w = 8, .box_h = 4, .ofs_x = 1, .ofs_y = 7},
+    {.bitmap_index = 8, .adv_w = 137, .box_w = 4, .box_h = 4, .ofs_x = 2, .ofs_y = 0},
+    {.bitmap_index = 12, .adv_w = 146, .box_w = 10, .box_h = 25, .ofs_x = 0, .ofs_y = -3},
+    {.bitmap_index = 75, .adv_w = 275, .box_w = 15, .box_h = 22, .ofs_x = 1, .ofs_y = 0},
+    {.bitmap_index = 158, .adv_w = 275, .box_w = 13, .box_h = 22, .ofs_x = 2, .ofs_y = 0},
+    {.bitmap_index = 230, .adv_w = 275, .box_w = 14, .box_h = 22, .ofs_x = 1, .ofs_y = 0},
+    {.bitmap_index = 307, .adv_w = 275, .box_w = 14, .box_h = 22, .ofs_x = 2, .ofs_y = 0},
+    {.bitmap_index = 384, .adv_w = 275, .box_w = 15, .box_h = 22, .ofs_x = 1, .ofs_y = 0},
+    {.bitmap_index = 467, .adv_w = 275, .box_w = 13, .box_h = 22, .ofs_x = 2, .ofs_y = 0},
+    {.bitmap_index = 539, .adv_w = 275, .box_w = 15, .box_h = 22, .ofs_x = 1, .ofs_y = 0},
+    {.bitmap_index = 622, .adv_w = 275, .box_w = 13, .box_h = 22, .ofs_x = 2, .ofs_y = 0},
+    {.bitmap_index = 694, .adv_w = 275, .box_w = 15, .box_h = 22, .ofs_x = 1, .ofs_y = 0},
+    {.bitmap_index = 777, .adv_w = 275, .box_w = 15, .box_h = 22, .ofs_x = 1, .ofs_y = 0}
 };
 
 /*---------------------
  *  CHARACTER MAPPING
  *--------------------*/
 
-static const uint8_t clock_30_glyph_id_ofs_list_0[] = {
-    0, 0, 1, 2, 3, 4, 5, 6,
-    7, 8, 9, 10
-};
+
 
 /*Collect the unicode lists and glyph_id offsets*/
 static const lv_font_fmt_txt_cmap_t clock_30_cmaps[] =
 {
     {
-        .range_start = 46, .range_length = 12, .glyph_id_start = 1,
-        .unicode_list = NULL, .glyph_id_ofs_list = clock_30_glyph_id_ofs_list_0, .list_length = 12, .type = LV_FONT_FMT_TXT_CMAP_FORMAT0_FULL
+        .range_start = 45, .range_length = 13, .glyph_id_start = 1,
+        .unicode_list = NULL, .glyph_id_ofs_list = NULL, .list_length = 0, .type = LV_FONT_FMT_TXT_CMAP_FORMAT0_TINY
     }
 };
 
@@ -216,6 +229,7 @@ static lv_font_fmt_txt_dsc_t clock_30_font_dsc = {
 #endif
 };
 
+extern const lv_font_t katmed_font_14;
 
 
 /*-----------------
@@ -230,8 +244,8 @@ lv_font_t katmed_font_30 = {
 #endif
     .get_glyph_dsc = lv_font_get_glyph_dsc_fmt_txt,    /*Function pointer to get glyph's data*/
     .get_glyph_bitmap = lv_font_get_bitmap_fmt_txt,    /*Function pointer to get glyph's bitmap*/
-    .line_height = 22,          /*The maximum line height required by the font*/
-    .base_line = 0,             /*Baseline measured from the bottom of the line*/
+    .line_height = 25,          /*The maximum line height required by the font*/
+    .base_line = 3,             /*Baseline measured from the bottom of the line*/
 #if !(LVGL_VERSION_MAJOR == 6 && LVGL_VERSION_MINOR == 0)
     .subpx = LV_FONT_SUBPX_NONE,
 #endif

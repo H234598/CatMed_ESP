@@ -6,6 +6,7 @@
 #include "check_ui_refinement_main.h"
 #include "katmed_images_internal.h"
 #include "katmed_font.h"
+#include "src/misc/lv_text_private.h"
 
 static uint64_t reads;
 static KatmedInteractionStatus interaction_model;
@@ -61,6 +62,32 @@ static void grid_swipe(bool vertical,bool positive)
     ui_touch_sample(true,x0,y0,true,tick+50);
     ui_touch_sample(true,x1,y1,true,tick+150);
     ui_touch_sample(false,0,0,true,tick+250);
+}
+static void clock_glyphs(lv_obj_t *label,const lv_font_t *reference,unsigned numerator,unsigned denominator)
+{
+    const lv_font_t *font=lv_obj_get_style_text_font(label,0);
+    const char *text=lv_label_get_text(label);
+    lv_font_glyph_dsc_t old_glyph,new_glyph;
+    for(const unsigned char *p=(const unsigned char *)text;*p;++p) {
+        if(*p=='\n')continue;
+        assert(*p<128);
+        assert(lv_font_get_glyph_dsc(reference,&old_glyph,*p,0));
+        assert(font->get_glyph_dsc(font,&new_glyph,*p,0));
+        assert(lv_font_get_glyph_dsc(font,&new_glyph,*p,0));
+        assert(!new_glyph.is_placeholder&&new_glyph.box_h*denominator>=old_glyph.box_h*numerator);
+    }
+}
+static void clock_visible(lv_obj_t *label,lv_obj_t *plate,int width,int height)
+{
+    lv_area_t area,plate_area;
+    lv_obj_get_coords(label,&area);lv_obj_get_coords(plate,&plate_area);
+    assert(area.x1>=0&&area.x2<width&&area.y1>=0&&area.y2<height);
+    assert(area.x1>=plate_area.x1&&area.x2<=plate_area.x2&&
+           area.y1>=plate_area.y1&&area.y2<=plate_area.y2);
+    lv_point_t extent;
+    lv_text_get_size(&extent,lv_label_get_text(label),lv_obj_get_style_text_font(label,0),
+                     0,0,10000,LV_TEXT_FLAG_NONE);
+    assert(extent.x<=lv_obj_get_width(label)&&extent.y<=lv_obj_get_height(label));
 }
 #ifndef UI_REFINEMENT_ENTRYPOINT
 #define UI_REFINEMENT_ENTRYPOINT main
@@ -251,39 +278,96 @@ int UI_REFINEMENT_ENTRYPOINT(int argc,char **argv)
     if (!strcmp(argv[1],"clock")) {
         ClockSample future=now;future.utc_ms=INT64_C(4102441140000);
         LocalSettings local=*refinement_local();
+        lv_font_glyph_dsc_t old_glyph,new_glyph;
+        assert(lv_font_get_glyph_dsc(&katmed_font_26,&old_glyph,'8',0)&&old_glyph.box_h==20);
+        assert(lv_font_get_glyph_dsc(&katmed_font_14,&old_glyph,'8',0)&&old_glyph.box_h==10);
+        const uint8_t languages[]={KATMED_LANG_DE,KATMED_LANG_EN,KATMED_LANG_FR,
+                                   KATMED_LANG_AR,KATMED_LANG_ZH_HANS,KATMED_LANG_JA};
         for(int style=DIGITAL_LARGE;style<=DIGITAL_DATE;++style) {
             local.clock_style=(ClockStyle)style;
-            ui_render(refinement_state(),&local,CLOCK,&future);draw();
-            lv_obj_t *time=find_label(screen,"23:59");
-            if(!time)time=find_label(screen,"23:\n59");
-            assert(time);
-            const lv_font_t *font=lv_obj_get_style_text_font(time,0);
-            lv_font_glyph_dsc_t old_glyph,new_glyph;
-            assert(lv_font_get_glyph_dsc(&katmed_font_26,&old_glyph,'8',0));
-            assert(lv_font_get_glyph_dsc(font,&new_glyph,'8',0));
-            printf("clock_format=%dx%d style=%d old_time_height=%u new_time_height=%u\n",host.width,host.height,style,old_glyph.box_h,new_glyph.box_h);fflush(stdout);
-            assert(new_glyph.box_h*2>=old_glyph.box_h*5);
-            lv_area_t area;lv_obj_get_coords(time,&area);
-            assert(area.x1>=0&&area.x2<host.width&&area.y1>=0&&area.y2<host.height);
-            lv_point_t extent;
-            lv_text_get_size(&extent,lv_label_get_text(time),font,0,0,10000,LV_TEXT_FLAG_NONE);
-            printf("time_extent=%dx%d label=%dx%d\n",(int)extent.x,(int)extent.y,(int)lv_obj_get_width(time),(int)lv_obj_get_height(time));fflush(stdout);
-            assert(extent.x<=lv_obj_get_width(time)&&extent.y<=lv_obj_get_height(time));
-            if(style==DIGITAL_DATE) {
-                lv_obj_t *date=find_label(screen,"31.12.2099");assert(date);
-                const lv_font_t *datefont=lv_obj_get_style_text_font(date,0);
-                assert(lv_font_get_glyph_dsc(&katmed_font_14,&old_glyph,'8',0));
-                assert(lv_font_get_glyph_dsc(datefont,&new_glyph,'8',0));
-                printf("old_date_height=%u new_date_height=%u\n",old_glyph.box_h,new_glyph.box_h);
-                /* Narrow portrait uses the compact date font to fit. */
-                assert(datefont==(host.width<200?&katmed_font_14:&katmed_font_30));
-                if(host.width>=200) assert(new_glyph.box_h>=old_glyph.box_h*2);
-                lv_obj_get_coords(date,&area);
-                assert(area.x1>=0&&area.x2<host.width&&area.y1>=0&&area.y2<host.height);
-                lv_text_get_size(&extent,lv_label_get_text(date),datefont,0,0,10000,LV_TEXT_FLAG_NONE);
-                assert(extent.x<=lv_obj_get_width(date)&&extent.y<=lv_obj_get_height(date));
+            for(unsigned i=0;i<sizeof(languages)/sizeof(languages[0]);++i) {
+                katmed_i18n_select(languages[i]);
+                ui_render(refinement_state(),&local,CLOCK,&future);draw();
+                lv_obj_t *time=find_label(screen,host.width==172?"23:\n59":"23:59");
+                assert(time);
+                lv_obj_t *plate=lv_obj_get_parent(time);
+                lv_obj_t *view=lv_obj_get_parent(plate);assert(view);
+                lv_obj_t *date=lv_obj_get_child(plate,1);
+                assert(time&&date);
+                assert(strcmp(lv_label_get_text(time),host.width==172?"23:\n59":"23:59")==0);
+                assert(lv_obj_get_style_text_font(time,0)==&katmed_font_68);
+                clock_glyphs(time,&katmed_font_26,5,2);
+                clock_visible(time,plate,host.width,host.height);
+                if(style==DIGITAL_DATE) {
+                    char expected[32];
+                    katmed_i18n_format_date(expected,sizeof(expected),2099,12,31);
+                    char actual[32];snprintf(actual,sizeof(actual),"%s",lv_label_get_text(date));
+                    char *newline=strchr(actual,'\n');
+                    if(host.width==172)assert(newline);
+                    else assert(!newline);
+                    if(newline)memmove(newline,newline+1,strlen(newline+1)+1);
+                    assert(strcmp(actual,expected)==0);
+                    assert(!lv_obj_is_hidden(date));
+                    assert(lv_obj_get_style_text_font(date,0)==&katmed_font_30);
+                    clock_glyphs(date,&katmed_font_14,2,1);
+                    clock_visible(date,plate,host.width,host.height);
+                    assert(lv_font_get_glyph_dsc(&katmed_font_30,&new_glyph,expected[4]=='-'?'-':'/',0));
+                    assert(lv_font_get_glyph_dsc(&katmed_font_68,&new_glyph,'8',0));
+                    unsigned time_height=new_glyph.box_h;
+                    assert(lv_font_get_glyph_dsc(&katmed_font_30,&new_glyph,'8',0));
+                    printf("clock=%dx%d style=%d lang=%u time=%s date=%s glyph8=%u date8=%u timebox=%dx%d datebox=%dx%d\n",
+                           host.width,host.height,style,languages[i],lv_label_get_text(time),
+                           lv_label_get_text(date),time_height,new_glyph.box_h,
+                           (int)lv_obj_get_width(time),(int)lv_obj_get_height(time),
+                           (int)lv_obj_get_width(date),(int)lv_obj_get_height(date));
+                    ClockSample holdover=future;holdover.quality=CLOCK_HOLDOVER;
+                    ui_render(refinement_state(),&local,CLOCK,&holdover);draw();
+                    lv_obj_t *quality=lv_obj_get_child(plate,2);assert(quality);
+                    const char *quality_expected=katmed_i18n_text("Zeit nicht synchronisiert");
+                    char shaped[128];
+                    if(languages[i]==KATMED_LANG_AR) {
+                        lv_text_ap_proc(quality_expected,shaped);
+                        quality_expected=shaped;
+                    }
+                    assert(strcmp(lv_label_get_text(quality),quality_expected)==0);
+                    lv_area_t quality_area,plate_area;
+                    lv_obj_get_coords(quality,&quality_area);lv_obj_get_coords(plate,&plate_area);
+                    assert(quality_area.x1>=0&&quality_area.x2<host.width&&
+                           quality_area.y1>=0&&quality_area.y2<host.height&&
+                           quality_area.x1>=plate_area.x1&&quality_area.x2<=plate_area.x2&&
+                           quality_area.y1>=plate_area.y1&&quality_area.y2<=plate_area.y2);
+                    lv_point_t quality_extent;
+                    lv_text_get_size(&quality_extent,lv_label_get_text(quality),
+                                     lv_obj_get_style_text_font(quality,0),0,0,
+                                     lv_obj_get_width(quality),LV_TEXT_FLAG_NONE);
+                    assert(quality_extent.x<=lv_obj_get_width(quality)&&
+                           quality_extent.y<=lv_obj_get_height(quality));
+                    const char *quality_text=lv_label_get_text(quality);
+                    uint32_t byte_offset=0;
+                    unsigned nonlatin=0;
+                    while(quality_text[byte_offset]) {
+                        uint32_t point=lv_text_encoded_next(quality_text,&byte_offset);
+                        if(point==' '||point=='\n')continue;
+                        assert(lv_font_get_glyph_dsc(lv_obj_get_style_text_font(quality,0),
+                                                     &new_glyph,point,0));
+                        assert(!new_glyph.is_placeholder&&new_glyph.box_h>0);
+                        if(point>127)++nonlatin;
+                    }
+                    if(languages[i]==KATMED_LANG_AR||languages[i]==KATMED_LANG_ZH_HANS||
+                       languages[i]==KATMED_LANG_JA) {
+                        assert(nonlatin>0);
+                        uint32_t codepoint=languages[i]==KATMED_LANG_AR?0xfe8d:
+                                           languages[i]==KATMED_LANG_ZH_HANS?0x65f6:0x6642;
+                        assert(!katmed_font_14.get_glyph_dsc(&katmed_font_14,&new_glyph,codepoint,0));
+                        assert(lv_font_get_glyph_dsc(&katmed_font_14,&new_glyph,codepoint,0));
+                        assert(!new_glyph.is_placeholder&&new_glyph.box_h>0);
+                        printf("fallback lang=%u U+%04x height=%u\n",languages[i],
+                               (unsigned)codepoint,new_glyph.box_h);
+                    }
+                }
             }
         }
+        katmed_i18n_select(KATMED_LANG_DE);
     }
     fclose(pack);lv_display_delete(display);lv_deinit();free(buffer);free(host.frame);
     return 0;

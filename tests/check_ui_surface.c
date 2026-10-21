@@ -631,7 +631,8 @@ int main(int argc, char **argv)
     clock.utc_ms = 1792015200000LL; /* 2026-10-15 00:00 in Berlin. */
     ui_render(&state, &local, CLOCK, &clock);
     draw();
-    lv_obj_t *date = find_label(screen, "15.10.2026");
+    const char *clock_date = host.width == 172 ? "15.10.\n2026" : "15.10.2026";
+    lv_obj_t *date = find_label(screen, clock_date);
     if (!date) {
         lv_obj_t *clock_debug = find_clock_view(screen);
         lv_obj_t *plate_debug = lv_obj_get_child(clock_debug, 0);
@@ -647,7 +648,7 @@ int main(int argc, char **argv)
     lv_obj_t *rotated_clock = find_clock_view(screen);
     assert(rotated_clock);
     assert(!lv_obj_is_hidden(rotated_clock));
-    assert(find_label(screen, "15.10.2026"));
+    assert(find_label(screen, clock_date));
     local.orientation = original_orientation;
     ui_render(&state, &local, CLOCK, &clock);
 
@@ -1517,7 +1518,13 @@ int main(int argc, char **argv)
     char localized_date[16];
     katmed_i18n_format_date(localized_date, sizeof(localized_date),
                              (unsigned)date_parts.year, date_parts.month, date_parts.day);
-    assert(find_label(screen, localized_date));
+    char visible_date[18];
+    if (host.width == 172)
+        snprintf(visible_date, sizeof(visible_date), "%.5s\n%s", localized_date,
+                 localized_date + 5);
+    else
+        snprintf(visible_date, sizeof(visible_date), "%s", localized_date);
+    assert(find_label(screen, visible_date));
     lv_refr_now(display);
     snprintf(name, sizeof(name), "%s-i18n-english-date", prefix);
     snapshot(&host, dir, name);

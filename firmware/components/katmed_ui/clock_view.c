@@ -175,9 +175,11 @@ void clock_view_update(lv_obj_t *view, ClockStyle style, const ClockSample *cloc
     if (valid) katmed_i18n_format_date(buffer, sizeof(buffer), (unsigned)local.year,
                                        local.month, local.day);
     else buffer[0] = '\0';
-    lv_obj_set_style_text_font(w->date,
-                               lv_obj_get_width(view) < 200 ? &katmed_font_14 : &katmed_font_30,
-                               0);
+    if (valid && stacked) {
+        size_t split = buffer[4] == '-' ? 5 : 6;
+        memmove(buffer + split + 1, buffer + split, strlen(buffer + split) + 1);
+        buffer[split] = '\n';
+    }
     lv_label_set_text(w->date, buffer);
     lv_label_set_text(w->quality, !valid ? katmed_i18n_text("Uhrzeit nicht verfügbar") :
                       clock->quality == CLOCK_HOLDOVER ? katmed_i18n_text("Zeit nicht synchronisiert") : "");
