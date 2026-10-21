@@ -170,14 +170,45 @@ int main(int argc, char **argv)
     assert(r.files == 0);
     assert(remove(KATMED_SOURCE_EXPORT_HOST_TEST "/acme/unknown.pem") == 0);
 
-    /* ARI can persist this seventh ACME file. Keep the conservative abort
-     * until source, host, import, and reset contracts all cover it. */
+    extra = fopen(KATMED_SOURCE_EXPORT_HOST_TEST "/acme/token", "wb");
+    assert(extra);
+    assert(fclose(extra) == 0);
+    r = run(false);
+    assert(r.files == 0);
+    assert(remove(KATMED_SOURCE_EXPORT_HOST_TEST "/acme/token") == 0);
+
+    /* ARI persists this seventh state file; it must be exported. */
+    extra = fopen(KATMED_SOURCE_EXPORT_HOST_TEST "/acme/renewal.json", "wb");
+    assert(extra);
+    assert(fwrite("{}", 1, 2, extra) == 2);
+    assert(fclose(extra) == 0);
+    r = run(true);
+    bool saw_renewal = false;
+    for (unsigned i = 0; i < r.files; ++i)
+        if (strcmp(r.paths[i], "littlefs/acme/renewal.json") == 0)
+            saw_renewal = true;
+    assert(r.files == 8 && saw_renewal);
+    assert(remove(KATMED_SOURCE_EXPORT_HOST_TEST "/acme/renewal.json") == 0);
+
     extra = fopen(KATMED_SOURCE_EXPORT_HOST_TEST "/acme/renewal.json", "wb");
     assert(extra);
     assert(fclose(extra) == 0);
     r = run(false);
     assert(r.files == 0);
     assert(remove(KATMED_SOURCE_EXPORT_HOST_TEST "/acme/renewal.json") == 0);
+
+    extra = fopen(KATMED_SOURCE_EXPORT_HOST_TEST "/acme/renewal.json.katmed-1", "wb");
+    assert(extra);
+    assert(fclose(extra) == 0);
+    r = run(false);
+    assert(r.files == 0);
+    assert(remove(KATMED_SOURCE_EXPORT_HOST_TEST "/acme/renewal.json.katmed-1") == 0);
+
+    assert(symlink(KATMED_SOURCE_EXPORT_HOST_TEST "/acme/account.json",
+                   KATMED_SOURCE_EXPORT_HOST_TEST "/acme/renewal.json") == 0);
+    r = run(false);
+    assert(r.files == 0);
+    assert(unlink(KATMED_SOURCE_EXPORT_HOST_TEST "/acme/renewal.json") == 0);
 
     assert(symlink(KATMED_SOURCE_EXPORT_HOST_TEST "/user-images/img-00000001.jpg",
                    KATMED_SOURCE_EXPORT_HOST_TEST "/user-images/img-00000003.jpg") == 0);

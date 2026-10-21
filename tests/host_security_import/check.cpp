@@ -238,6 +238,31 @@ int main(int argc, char **argv) {
             m.values.count("katmed_web/auth") == 0 &&
             m.values.count("katmed_reset/journal") == 0 &&
             m.values.count("katmed_imp/journal") == 0;
+    } else if (mode == "mixed_success") {
+        ok = katmed_import_apply(&in, &b) &&
+            m.final_files.size() == 2 &&
+            m.final_files.count("3/6") == 1 &&
+            m.final_files.count("1/1") == 1 &&
+            m.values.count("katmed/state") == 1;
+    } else if (mode == "acme_success") {
+        ok = katmed_import_apply(&in, &b) &&
+            m.final_files.size() == 7 && m.staged_files.empty() &&
+            m.final_files.count("3/6") == 1 &&
+            m.values.count("katmed/state") == 1 &&
+            m.values.count("katmed_imp/journal") == 0 &&
+            katmed_import_resume(&b, 1) && !katmed_import_apply(&in, &b);
+    } else if (mode == "acme_replay") {
+        m.fail_publish_at = 6;
+        ok = !katmed_import_apply(&in, &b) &&
+            m.values.count("katmed_imp/journal") == 1 &&
+            m.values.count("katmed/state") == 0 &&
+            m.staged_files.count("3/6") == 1;
+        const unsigned writes = m.writes, erases = m.erases;
+        ok = ok && !katmed_import_resume(&b, 2) &&
+            m.writes == writes && m.erases == erases &&
+            katmed_import_resume(&b, 1) &&
+            m.final_files.size() == 7 && m.staged_files.empty() &&
+            m.values.count("katmed/state") == 1;
     } else if (mode == "files_success") {
         ok = katmed_import_apply(&in, &b) &&
             m.final_files.size() == 2 && m.staged_files.empty() &&

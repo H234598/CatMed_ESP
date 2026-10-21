@@ -68,11 +68,21 @@ void remount() {
 }
 std::string name_for(const KatmedImportFile *f, unsigned ordinal, bool temp) {
     char name[64];
-    if (temp) std::snprintf(name, sizeof(name), "/user-images/.migration-%03u.tmp", ordinal);
+    if (temp) std::snprintf(name, sizeof(name), "%s/.migration-%03u.tmp",
+                            f->kind == 3 ? "/acme" : "/user-images", ordinal);
     else if (f->kind == 1)
         std::snprintf(name, sizeof(name), "/user-images/img-%08x.jpg", unsigned(f->id));
-    else std::snprintf(name, sizeof(name), "/user-images/cat-%02x-%u.jpg",
-                       unsigned(f->id >> 1), unsigned(f->id & 1));
+    else if (f->kind == 2)
+        std::snprintf(name, sizeof(name), "/user-images/cat-%02x-%u.jpg",
+                      unsigned(f->id >> 1), unsigned(f->id & 1));
+    else {
+        static const char *const acme[] = {
+            "account.json", "directory.json", "account.pem", "order.json",
+            "certkey.pem", "certificate.pem", "renewal.json"
+        };
+        assert(f->kind == 3 && f->id < 7);
+        std::snprintf(name, sizeof(name), "/acme/%s", acme[f->id]);
+    }
     return name;
 }
 int presence(const std::string &path) {
@@ -108,22 +118,25 @@ bool lfs_empty(void *, size_t bytes, size_t count) {
     bool ok = true;
     for (int r; (r = lfs_dir_read(&fs, &root, &info)) > 0;)
         if (std::strcmp(info.name, ".") && std::strcmp(info.name, "..") &&
-            std::strcmp(info.name, "user-images")) ok = false;
+            std::strcmp(info.name, "user-images") &&
+            std::strcmp(info.name, "acme")) ok = false;
     if (lfs_dir_close(&fs, &root) != 0) ok = false;
     if (!ok) return false;
-    int r = lfs_dir_open(&fs, &root, "/user-images");
-    if (r == LFS_ERR_NOENT) return true;
-    if (r != 0) return false;
-    for (; (r = lfs_dir_read(&fs, &root, &info)) > 0;)
-        if (std::strcmp(info.name, ".") && std::strcmp(info.name, "..")) ok = false;
-    if (r < 0 || lfs_dir_close(&fs, &root) != 0) ok = false;
+    for (const char *path : {"/user-images", "/acme"}) {
+        int r = lfs_dir_open(&fs, &root, path);
+        if (r == LFS_ERR_NOENT) continue;
+        if (r != 0) return false;
+        for (; (r = lfs_dir_read(&fs, &root, &info)) > 0;)
+            if (std::strcmp(info.name, ".") && std::strcmp(info.name, "..")) ok = false;
+        if (r < 0 || lfs_dir_close(&fs, &root) != 0) ok = false;
+    }
     return ok;
 }
 bool lfs_stage(void *, unsigned ordinal, const KatmedImportFile *f,
                const KatmedImportInput *in) {
     const bool partial = int(ordinal) == fail_stage_at;
     if (partial) fail_stage_at = -1;
-    int mk = lfs_mkdir(&fs, "/user-images");
+    int mk = lfs_mkdir(&fs, f->kind == 3 ? "/acme" : "/user-images");
     if (mk != 0 && mk != LFS_ERR_EXIST) return false;
     const auto path = name_for(f, ordinal, true);
     lfs_file_t file;
@@ -242,7 +255,7 @@ void populate_source_images(const std::vector<uint8_t> &capsule) {
 }
 
 int main(int argc, char **argv) {
-    if (argc != 5) return 2;
+    if (argc != 7) return 2;
     std::ifstream stream(argv[1], std::ios::binary);
     if (!stream) return 2;
     std::vector<uint8_t> capsule((std::istreambuf_iterator<char>(stream)),
@@ -409,7 +422,6 @@ int main(int argc, char **argv) {
     assert(occupied.writes == 0 && occupied.erases == 0);
     assert(presence("/user-images/img-00000007.jpg") == 1);
     assert(lfs_unmount(&fs) == 0);
-
     config.block_count = 64; /* The old 256 KiB target cannot hold this package. */
     fresh_fs();
     Memory old_size;
@@ -515,6 +527,57 @@ int main(int argc, char **argv) {
            combined.values.count("katmed_web/identity") == 1 &&
            combined.values.count("katmed_reset/journal") == 1 &&
            combined.values.count("katmed_imp/journal") == 0);
+    assert(lfs_unmount(&fs) == 0);
+
+    std::ifstream acme_stream(argv[5], std::ios::binary);
+    if (!acme_stream) return 2;
+    std::vector<uint8_t> acme_capsule((std::istreambuf_iterator<char>(acme_stream)),
+                                      std::istreambuf_iterator<char>());
+    fresh_fs();
+    Memory acme;
+    acme.capsule = acme_capsule;
+    auto acme_backend = real_backend(acme);
+    auto acme_input = input(acme);
+    fail_publish_at = 6;
+    assert(!katmed_import_apply(&acme_input, &acme_backend));
+    assert(acme.values.count("katmed_imp/journal") == 1);
+    remount();
+    assert(!katmed_import_resume(&acme_backend, 2));
+    assert(katmed_import_resume(&acme_backend, 1));
+    assert(presence("/acme/renewal.json") == 1);
+    assert(presence("/acme/.migration-006.tmp") == 0);
+    assert(acme.values.count("katmed/state") == 1);
+    assert(lfs_unmount(&fs) == 0);
+    std::ifstream mixed_stream(argv[6], std::ios::binary);
+    if (!mixed_stream) return 2;
+    fresh_fs();
+    Memory mixed;
+    mixed.capsule.assign(std::istreambuf_iterator<char>(mixed_stream),
+                         std::istreambuf_iterator<char>());
+    auto mixed_backend = real_backend(mixed);
+    auto mixed_input = input(mixed);
+    assert(katmed_import_apply(&mixed_input, &mixed_backend));
+    remount();
+    assert(katmed_import_resume(&mixed_backend, 1));
+    assert(presence("/acme/renewal.json") == 1);
+    assert(presence("/user-images/img-00000001.jpg") == 1);
+    assert(lfs_unmount(&fs) == 0);
+    fresh_fs();
+    lfs_file_t acme_filler;
+    assert(lfs_file_open(&fs, &acme_filler, "/filler",
+                         LFS_O_WRONLY | LFS_O_CREAT) == 0);
+    uint8_t acme_fill[512] = {0x37};
+    for (size_t at = 0; at < 224 * 1024; at += sizeof(acme_fill))
+        assert(lfs_file_write(&fs, &acme_filler, acme_fill,
+                              sizeof(acme_fill)) == sizeof(acme_fill));
+    assert(lfs_file_close(&fs, &acme_filler) == 0);
+    Memory acme_full;
+    acme_full.capsule = acme_capsule;
+    auto acme_full_backend = real_backend(acme_full);
+    auto acme_full_input = input(acme_full);
+    assert(!katmed_import_apply(&acme_full_input, &acme_full_backend));
+    assert(acme_full.writes == 0 && acme_full.erases == 0);
+    assert(presence("/filler") == 1);
     assert(lfs_unmount(&fs) == 0);
     puts("actual LittleFS KMI1 import/remount/replay: PASS");
 }

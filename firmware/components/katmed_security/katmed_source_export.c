@@ -36,7 +36,7 @@ static const Key keys[] = {
 };
 static const char *const acme_names[] = {
     "account.json", "directory.json", "account.pem", "order.json",
-    "certkey.pem", "certificate.pem"
+    "certkey.pem", "certificate.pem", "renewal.json"
 };
 
 static void wipe(uint8_t *buffer, size_t length)
@@ -143,6 +143,7 @@ static bool scan_directory(const char *name, size_t *count, size_t *content,
         size_t size;
         n = snprintf(path, sizeof(path), "%s/%s", directory, file);
         if (n <= 0 || (size_t)n >= sizeof(path) || !regular_file(path, &size) ||
+            (strcmp(name, "acme") == 0 && size == 0) ||
             ++*count > MAX_FILES || size > MAX_CONTENT - *content) {
             ok = false; break;
         }
@@ -154,7 +155,7 @@ static bool scan_directory(const char *name, size_t *count, size_t *content,
     return ok;
 }
 
-static bool scan_files(size_t *content, bool *acme_present, size_t nvs_count)
+static bool scan_files(size_t *content, bool *acme_present, size_t *count)
 {
     DIR *root = opendir(FS_ROOT);
     if (!root) return false;
@@ -170,10 +171,9 @@ static bool scan_files(size_t *content, bool *acme_present, size_t nvs_count)
     }
     if (errno != 0) ok = false;
     if (closedir(root) != 0) ok = false;
-    size_t count = nvs_count;
     bool images_present = false;
-    return ok && scan_directory("user-images", &count, content, &images_present) &&
-        images_present && scan_directory("acme", &count, content, acme_present);
+    return ok && scan_directory("user-images", count, content, &images_present) &&
+        images_present && scan_directory("acme", count, content, acme_present);
 }
 
 static bool send_nvs(const KatmedSourceExportSink *sink, const Key *key,
@@ -202,7 +202,7 @@ static bool send_nvs(const KatmedSourceExportSink *sink, const Key *key,
 }
 
 static bool send_directory(const KatmedSourceExportSink *sink, const char *name,
-                           bool expected,
+                           bool expected, size_t *count, size_t *content,
                            uint8_t buffer[512])
 {
     char directory[128];
@@ -225,7 +225,13 @@ static bool send_directory(const KatmedSourceExportSink *sink, const char *name,
         if (!(strcmp(name, "acme") == 0 ? acme_name(file) :
               (image_name(file) || catalog_name(file))) ||
             n <= 0 || (size_t)n >= sizeof(path) || m <= 0 ||
-            (size_t)m >= sizeof(logical) || !regular_file(path, &size)) { ok = false; break; }
+            (size_t)m >= sizeof(logical) || !regular_file(path, &size) ||
+            (strcmp(name, "acme") == 0 && size == 0) ||
+            *count >= MAX_FILES || size > MAX_CONTENT - *content) {
+            ok = false; break;
+        }
+        ++*count;
+        *content += size;
         int fd = open(path, O_RDONLY | O_NOFOLLOW);
         if (fd < 0) { ok = false; break; }
         struct stat st;
@@ -262,15 +268,21 @@ bool katmed_source_export(const KatmedSourceExportSink *sink)
     size_t nvs_count = 0;
     for (unsigned i = 0; i < sizeof(keys) / sizeof(keys[0]); ++i)
         if (mask & (1u << i)) ++nvs_count;
-    if (ok) ok = scan_files(&content, &acme_present, nvs_count);
+    size_t scanned_count = nvs_count;
+    if (ok) ok = scan_files(&content, &acme_present, &scanned_count);
     if (ok) {
         uint8_t buffer[MAX_NVS_BLOB];
         for (unsigned i = 0; i < sizeof(keys) / sizeof(keys[0]) && ok; ++i) {
             if (mask & (1u << i)) ok = send_nvs(sink, &keys[i], buffer);
             wipe(buffer, sizeof(buffer));
         }
-        if (ok) ok = send_directory(sink, "user-images", true, buffer);
-        if (ok) ok = send_directory(sink, "acme", acme_present, buffer);
+        size_t sent_count = nvs_count;
+        size_t sent_content = 0;
+        if (ok) ok = send_directory(sink, "user-images", true,
+                                    &sent_count, &sent_content, buffer);
+        if (ok) ok = send_directory(sink, "acme", acme_present,
+                                    &sent_count, &sent_content, buffer);
+        if (ok) ok = sent_count == scanned_count && sent_content == content;
         wipe(buffer, sizeof(buffer));
     }
     sink->finish(sink->context, ok);

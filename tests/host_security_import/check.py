@@ -205,10 +205,26 @@ with tempfile.TemporaryDirectory(prefix="katmed-import-test-") as temporary:
     duplicate_path = root / "invalid-duplicate.bin"
     duplicate_path.write_bytes(duplicate)
     invalid_classes.append(duplicate_path)
-    renewal = root / "renewal.bin"
-    renewal.write_bytes(migration.firmware_capsule({
+    acme_names = sorted(migration.ACME)
+    acme_files = {"nvs/katmed/state": state}
+    acme_files.update({f"littlefs/acme/{name}":
+                       (b"{\"synthetic\":true}" if name.endswith(".json") else b"SYNTHETIC")
+                       for name in acme_names})
+    renewal = staged_capsule(root, "acme", acme_files, codec)
+    mixed = staged_capsule(root, "mixed-acme-image", {
         "nvs/katmed/state": state,
-        "littlefs/acme/renewal.json": b"{}",
+        "littlefs/acme/renewal.json": b"{\"synthetic\":true}",
+        "littlefs/user-images/img-00000001.jpg": uploaded,
+    }, codec)
+    unknown_acme = root / "unknown-acme.bin"
+    unknown_acme.write_bytes(migration.firmware_capsule({
+        "nvs/katmed/state": state,
+        "littlefs/acme/other.pem": b"SYNTHETIC",
+    }))
+    empty_acme = root / "empty-acme.bin"
+    empty_acme.write_bytes(migration.firmware_capsule({
+        "nvs/katmed/state": state,
+        "littlefs/acme/renewal.json": b"",
     }))
     raw_v10 = root / "raw-v10.bin"
     raw_v10.write_bytes(migration.firmware_capsule({
@@ -292,7 +308,8 @@ with tempfile.TemporaryDirectory(prefix="katmed-import-test-") as temporary:
     subprocess.run([str(binary), str(combined_97), "capacity_97"], check=True)
     subprocess.run([str(binary), str(combined_123), "capacity_123"], check=True)
     subprocess.run([str(lfs_binary), str(full_files), str(near_full),
-                    str(old_near), str(combined_123)], check=True)
+                    str(old_near), str(combined_123), str(renewal),
+                    str(mixed)], check=True)
     subprocess.run([str(binary), str(partial), "legacy_cleanup"], check=True)
     subprocess.run([str(binary), str(full), "full_space"], check=True)
     subprocess.run([str(binary), str(full), "reject_web"], check=True)
@@ -306,8 +323,12 @@ with tempfile.TemporaryDirectory(prefix="katmed-import-test-") as temporary:
     subprocess.run([str(binary), str(image), "reject"], check=True)
     for path in invalid_classes:
         subprocess.run([str(binary), str(path), "reject"], check=True)
-    subprocess.run([str(binary), str(renewal), "reject"], check=True)
+    for mode in ("acme_success", "acme_replay", "files_no_space"):
+        subprocess.run([str(binary), str(renewal), mode], check=True)
+    subprocess.run([str(binary), str(mixed), "mixed_success"], check=True)
+    subprocess.run([str(binary), str(unknown_acme), "reject"], check=True)
+    subprocess.run([str(binary), str(empty_acme), "reject"], check=True)
     subprocess.run([str(binary), str(raw_v10), "reject"], check=True)
     for path in invalid_history:
         subprocess.run([str(binary), str(path), "reject"], check=True)
-print("synthetic product import: 65 cases plus real LittleFS remount passed")
+print("synthetic product import and real LittleFS remount passed")

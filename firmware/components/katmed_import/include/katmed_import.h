@@ -29,7 +29,8 @@ typedef enum {
 
 /* A file name is encoded from kind/id; no arbitrary target path is accepted.
  * kind 1 = uploaded img-ID, kind 2 = catalogue index/profile packed as
- * (index << 1) | profile. input_offset is used only while staging. */
+ * (index << 1) | profile, kind 3 = one of seven fixed ACME names (0..6).
+ * input_offset is used only while staging. */
 typedef struct {
     uint8_t kind;
     uint32_t id;
@@ -65,7 +66,7 @@ typedef struct {
     bool (*file_abort)(void *, unsigned ordinal, const KatmedImportFile *);
 } KatmedImportBackend;
 
-/* Accepts canonical v11 NVS and bounded user-images; ACME fails closed. */
+/* Accepts canonical v11 NVS and bounded user-images/ACME files. */
 bool katmed_import_apply(const KatmedImportInput *input,
                          const KatmedImportBackend *backend);
 /* Called before Store/Web/mesh startup with the locally read device ID.

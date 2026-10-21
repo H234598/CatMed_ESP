@@ -15,6 +15,7 @@
 
 #define MOUNT "/katmed"
 #define DIRECTORY MOUNT "/user-images"
+#define ACME_DIRECTORY MOUNT "/acme"
 #define PARTITION KATMED_USER_IMAGE_PARTITION_LABEL
 #define FS_BYTES (576u * 1024u)
 /* LittleFS allocates whole 4 KiB blocks and copy-on-write metadata. A full
@@ -62,9 +63,16 @@ static bool path_for(const KatmedImportFile *file, unsigned ordinal,
     else if (file->kind == 2 && (file->id >> 1) < 72)
         n = snprintf(final, final_size, DIRECTORY "/cat-%02" PRIx32 "-%u.jpg",
                      file->id >> 1, (unsigned)(file->id & 1));
-    else return false;
+    else if (file->kind == 3 && file->id < 7) {
+        static const char *const names[] = {
+            "account.json", "directory.json", "account.pem", "order.json",
+            "certkey.pem", "certificate.pem", "renewal.json"
+        };
+        n = snprintf(final, final_size, ACME_DIRECTORY "/%s", names[file->id]);
+    } else return false;
     if (n <= 0 || (size_t)n >= final_size) return false;
-    n = snprintf(temporary, temporary_size, DIRECTORY "/.migration-%03u.tmp", ordinal);
+    n = snprintf(temporary, temporary_size, "%s/.migration-%03u.tmp",
+                 file->kind == 3 ? ACME_DIRECTORY : DIRECTORY, ordinal);
     return n > 0 && (size_t)n < temporary_size;
 }
 
@@ -100,6 +108,24 @@ static bool matches(const char *path, const KatmedImportFile *file)
     return ok && total == file->length && crc == file->crc;
 }
 
+static bool empty_directory(const char *path)
+{
+    DIR *directory = opendir(path);
+    if (!directory) return errno == ENOENT;
+    struct dirent *entry;
+    bool ok = true;
+    errno = 0;
+    while ((entry = readdir(directory)) != NULL) {
+        if (strcmp(entry->d_name, ".") && strcmp(entry->d_name, "..")) {
+            ok = false; break;
+        }
+        errno = 0;
+    }
+    if (errno != 0) ok = false;
+    if (closedir(directory) != 0) ok = false;
+    return ok;
+}
+
 bool katmed_import_files_empty(void *context, size_t content_bytes, size_t count)
 {
     (void)context;
@@ -118,24 +144,14 @@ bool katmed_import_files_empty(void *context, size_t content_bytes, size_t count
     errno = 0;
     while ((entry = readdir(root)) != NULL) {
         if (strcmp(entry->d_name, ".") && strcmp(entry->d_name, "..") &&
-            strcmp(entry->d_name, "user-images")) { ok = false; break; }
+            strcmp(entry->d_name, "user-images") &&
+            strcmp(entry->d_name, "acme")) { ok = false; break; }
         errno = 0;
     }
     if (errno != 0) ok = false;
     if (closedir(root) != 0) ok = false;
     if (!ok) return false;
-    DIR *images = opendir(DIRECTORY);
-    if (!images) return errno == ENOENT;
-    errno = 0;
-    while ((entry = readdir(images)) != NULL) {
-        if (strcmp(entry->d_name, ".") && strcmp(entry->d_name, "..")) {
-            ok = false; break;
-        }
-        errno = 0;
-    }
-    if (errno != 0) ok = false;
-    if (closedir(images) != 0) ok = false;
-    return ok;
+    return empty_directory(DIRECTORY) && empty_directory(ACME_DIRECTORY);
 }
 
 bool katmed_import_file_stage(void *context, unsigned ordinal,
@@ -148,9 +164,10 @@ bool katmed_import_file_stage(void *context, unsigned ordinal,
         !path_for(file, ordinal, final, sizeof(final),
                   temporary, sizeof(temporary)) ||
         file_presence(final) != 0) return false;
+    const char *folder = file->kind == 3 ? ACME_DIRECTORY : DIRECTORY;
     struct stat directory;
-    if (stat(DIRECTORY, &directory) != 0) {
-        if (errno != ENOENT || mkdir(DIRECTORY, 0700) != 0) return false;
+    if (stat(folder, &directory) != 0) {
+        if (errno != ENOENT || mkdir(folder, 0700) != 0) return false;
     } else if (!S_ISDIR(directory.st_mode)) return false;
     int fd = open(temporary, O_WRONLY | O_CREAT | O_EXCL, 0600);
     if (fd < 0) return false;

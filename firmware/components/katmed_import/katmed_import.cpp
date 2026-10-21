@@ -68,9 +68,10 @@ KatmedImportFile file_at(const StageView &view, size_t i) {
     return {p[0], le32(p + 1), le32(p + 5), le32(p + 9), 0};
 }
 bool valid_file(const KatmedImportFile &f) {
-    return f.length >= 16 && f.length <= kMaxFile &&
+    return f.length >= (f.kind == 3 ? 1u : 16u) && f.length <= kMaxFile &&
         ((f.kind == 1 && f.id > 0 && f.id < 0x80000000u) ||
-         (f.kind == 2 && (f.id >> 1) < 72));
+         (f.kind == 2 && (f.id >> 1) < 72) ||
+         (f.kind == 3 && f.id < 7));
 }
 bool same_file(const KatmedImportFile &a, const KatmedImportFile &b) {
     return a.kind == b.kind && a.id == b.id;
@@ -97,6 +98,21 @@ bool parse_image(const char *path, KatmedImportFile *f) {
     }
     f->length = 16;
     return valid_file(*f);
+}
+bool parse_acme(const char *path, KatmedImportFile *f) {
+    static const char *const names[] = {
+        "account.json", "directory.json", "account.pem", "order.json",
+        "certkey.pem", "certificate.pem", "renewal.json"
+    };
+    constexpr char prefix[] = "littlefs/acme/";
+    if (std::strncmp(path, prefix, sizeof(prefix) - 1) != 0) return false;
+    for (unsigned i = 0; i < sizeof(names) / sizeof(names[0]); ++i) {
+        if (std::strcmp(path + sizeof(prefix) - 1, names[i]) == 0) {
+            f->kind = 3; f->id = i; f->length = 1;
+            return true;
+        }
+    }
+    return false;
 }
 /* Baseline JPEG header/EOI validation follows the real upload parser's SOF0
  * bounds. A capsule with a truncated tail never reaches NVS staging. */
@@ -176,7 +192,7 @@ bool known_path(const char *p, bool *file) {
     };
     static const char *const acme[] = {
         "account.json", "directory.json", "account.pem", "order.json",
-        "certkey.pem", "certificate.pem"
+        "certkey.pem", "certificate.pem", "renewal.json"
     };
     *file = false;
     for (const char *name : nvs) if (std::strcmp(p, name) == 0) return true;
@@ -187,7 +203,7 @@ bool known_path(const char *p, bool *file) {
             if (std::strcmp(p + sizeof(prefix) - 1, name) == 0) {
                 *file = true; return true;
             }
-    return false; /* renewal.json and any future class fail closed. */
+    return false;
 }
 bool read_blob(const KatmedImportBackend *b, const char *ns, const char *key,
                uint8_t *out, size_t capacity, size_t *length) {
@@ -486,7 +502,8 @@ extern "C" bool katmed_import_apply(const KatmedImportInput *in,
             if (std::strcmp(names[j], names[i]) == 0) ok = false;
         if (!ok) break;
         if (file) {
-            if (length < 16 || length > kMaxFileContent - file_bytes) {
+            if (length < (std::strncmp(names[i], "littlefs/acme/", 14) == 0 ?
+                          1u : 16u) || length > kMaxFileContent - file_bytes) {
                 ok = false; break;
             }
             file_bytes += length;
@@ -503,8 +520,10 @@ extern "C" bool katmed_import_apply(const KatmedImportInput *in,
         const bool this_reset = std::strcmp(names[i], "nvs/katmed_reset/journal") == 0;
         if (file) {
             KatmedImportFile f{};
-            if (!parse_image(names[i], &f) ||
-                !valid_jpeg(in, at, length)) { ok = false; break; }
+            if (!(parse_acme(names[i], &f) ||
+                  (parse_image(names[i], &f) && valid_jpeg(in, at, length)))) {
+                ok = false; break;
+            }
             f.length = uint32_t(length);
             f.crc = le32(record + 8);
             f.input_offset = at;

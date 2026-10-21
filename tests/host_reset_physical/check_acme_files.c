@@ -52,7 +52,8 @@ int main(void)
     create_file(images, "img-00000001.jpg");
     const char *names[] = {"account.json", "directory.json", "account.pem",
         "order.json", "certkey.pem", "certificate.pem", "renewal.json",
-        "account.pem.katmed-0", "renewal.json.katmed-4294967295"};
+        "token", "account.pem.katmed-0", "renewal.json.katmed-4294967295",
+        "token.katmed-1"};
     for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); ++i)
         create_file(acme, names[i]);
     create_file(acme, "future-client-state.json");

@@ -23,6 +23,7 @@
 static const char *const acme_names[] = {
     "account.json", "directory.json", "account.pem", "order.json",
     "certkey.pem", "certificate.pem", "renewal.json",
+    "token",
 };
 
 static bool owned_name(const char *name)

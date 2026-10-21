@@ -13,6 +13,7 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[2]
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("board", choices=("c3", "c6"))
+parser.add_argument("--build-dir", type=Path)
 parser.add_argument("--symbol", choices=("katmed_source_export",
                                          "katmed_import_apply_idf",
                                          "katmed_import_resume_idf",
@@ -22,7 +23,7 @@ parser.add_argument("--symbol", choices=("katmed_source_export",
                                          "katmed_import_file_publish"),
                     default="katmed_source_export")
 args = parser.parse_args()
-build = ROOT / "firmware" / f"build-a61-{args.board}-security"
+build = args.build_dir or ROOT / "firmware" / f"build-a61-{args.board}-security"
 ninja = shutil.which("ninja") or str(Path(os.environ.get(
     "KATMED_TOOLS_DIR", Path.home() / ".local/share/katmed-tools")) /
     "bootstrap/bin/ninja")

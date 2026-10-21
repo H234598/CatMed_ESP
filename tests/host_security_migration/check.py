@@ -230,14 +230,40 @@ class MigrationContract(unittest.TestCase):
         self.assertNotEqual(self.run_tool("export", self.source, self.package).returncode, 0)
         self.assertFalse(self.package.exists())
 
-    def test_acme_ari_renewal_rejected_until_full_contract(self):
+    def test_acme_ari_renewal_roundtrip(self):
         put(self.source / "littlefs/acme/renewal.json", b"{}")
+        inventory = json.loads((self.source / "source-inventory.json").read_text())
+        inventory["littlefs"] = sorted(inventory["littlefs"] +
+                                      ["littlefs/acme/renewal.json"])
+        put(self.source / "source-inventory.json", json.dumps(inventory).encode())
+        self.assertEqual(self.run_tool("export", self.source, self.package).returncode, 0)
+        self.assertEqual(self.run_tool("import-stage", self.package, self.staged).returncode, 0)
+        self.assertEqual((self.staged / "littlefs/acme/renewal.json").read_bytes(), b"{}")
+
+    def test_acme_atomic_remainder_rejected(self):
+        put(self.source / "littlefs/acme/renewal.json.katmed-1", b"synthetic")
+        self.assertNotEqual(self.run_tool("export", self.source, self.package).returncode, 0)
+        self.assertFalse(self.package.exists())
+
+    def test_acme_symlink_rejected(self):
+        (self.source / "littlefs/acme/renewal.json").symlink_to("account.json")
         inventory = json.loads((self.source / "source-inventory.json").read_text())
         inventory["littlefs"] = sorted(inventory["littlefs"] +
                                       ["littlefs/acme/renewal.json"])
         put(self.source / "source-inventory.json", json.dumps(inventory).encode())
         self.assertNotEqual(self.run_tool("export", self.source, self.package).returncode, 0)
         self.assertFalse(self.package.exists())
+
+    def test_acme_renewal_manifest_tamper_rejected(self):
+        put(self.source / "littlefs/acme/renewal.json", b"{}")
+        inventory = json.loads((self.source / "source-inventory.json").read_text())
+        inventory["littlefs"] = sorted(inventory["littlefs"] +
+                                      ["littlefs/acme/renewal.json"])
+        put(self.source / "source-inventory.json", json.dumps(inventory).encode())
+        self.assertEqual(self.run_tool("export", self.source, self.package).returncode, 0)
+        put(self.package / "littlefs/acme/renewal.json", b"{\"changed\":true}")
+        self.assertNotEqual(self.run_tool("import-stage", self.package, self.staged).returncode, 0)
+        self.assertFalse(self.staged.exists())
 
     def test_full_stage_rejected_without_partial_output(self):
         self.assertEqual(self.run_tool("export", self.source, self.package).returncode, 0)

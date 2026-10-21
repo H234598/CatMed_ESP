@@ -20,10 +20,10 @@ STATIC = {
     "nvs/katmed_web/auth", "nvs/katmed_web/identity",
     "nvs/katmed_reset/journal",
 }
-# ARI may also create renewal.json; reject it until source, host, import and
-# reset semantics are decided together. Unknown paths fail inventory().
+# The pinned ACME client can persist ARI state in renewal.json. Unknown and
+# interrupted atomic temporary paths fail inventory() rather than disappearing.
 ACME = {"account.json", "directory.json", "account.pem", "order.json",
-        "certkey.pem", "certificate.pem"}
+        "certkey.pem", "certificate.pem", "renewal.json"}
 IMAGE = re.compile(r"(?:img-[0-9a-f]{8}|cat-[0-9a-f]{2}-[01])\.jpg\Z")
 MAX_FILES = 128
 MAX_FILE = 128 * 1024
@@ -147,6 +147,9 @@ def validated_state(files, bridge):
 
 
 def validate_other(files):
+    if any(len(value) == 0 for name, value in files.items()
+           if name.startswith("littlefs/acme/")):
+        raise Invalid()
     auth = files.get("nvs/katmed_web/auth")
     identity = files.get("nvs/katmed_web/identity")
     if auth is not None and identity is None:
