@@ -72,7 +72,7 @@ esp_err_t nvs_get_blob(nvs_handle_t handle, const char *key, void *dst, size_t *
 }
 void nvs_close(nvs_handle_t handle) { assert(handle > 0); }
 
-typedef struct { unsigned files, mutations; size_t bytes; bool finished; bool success; bool reject; unsigned reject_at; char paths[128][80]; const char *output; FILE *stream; unsigned checks, abort_after, denied_writes; bool test_writer, direct_acme_change, late_acme_change, late_image_change, late_nvs_change, seal_during_export; } Result;
+typedef struct { unsigned files, mutations; size_t bytes; bool finished; bool success; bool reject; unsigned reject_at; char paths[128][80]; const char *output; FILE *stream; unsigned checks, abort_after, mutate_at_check, denied_writes; bool test_writer, direct_acme_change, late_acme_change, late_image_change, late_nvs_change, seal_during_export; } Result;
 static const unsigned char changed_state[] = { 'X', 'M', 'S', 'T', 10, 0 };
 static atomic_bool race_wait_in_begin, race_worker_attempted;
 static pthread_barrier_t race_barrier;
@@ -81,6 +81,13 @@ static void replace_acme(const char *contents)
     FILE *replacement = fopen(KATMED_SOURCE_EXPORT_HOST_TEST "/acme/account.json", "wb");
     assert(replacement && fwrite(contents, 1, 2, replacement) == 2 &&
            fclose(replacement) == 0);
+}
+static void assert_acme_contents(const char *expected)
+{
+    FILE *file = fopen(KATMED_SOURCE_EXPORT_HOST_TEST "/acme/account.json", "rb");
+    char actual[3] = {0};
+    assert(file && fread(actual, 1, 2, file) == 2 && fclose(file) == 0);
+    assert(memcmp(actual, expected, 2) == 0);
 }
 static void replace_image(const char *contents)
 {
@@ -168,7 +175,12 @@ static void finish(void *ctx, bool success)
 static bool keep_going(void *ctx)
 {
     Result *r = ctx;
-    return r->abort_after == 0 || ++r->checks < r->abort_after;
+    ++r->checks;
+    if (r->mutate_at_check && r->checks == r->mutate_at_check) {
+        replace_acme("XY");
+        ++r->mutations;
+    }
+    return r->abort_after == 0 || r->checks < r->abort_after;
 }
 static bool idle(void) { return true; }
 static bool busy(void) { return false; }
@@ -521,6 +533,22 @@ int main(int argc, char **argv)
     assert(changed.finished && !changed.success && changed.files == 13 &&
            changed.mutations == 1);
     entries[0].data = fixture_bytes + 4;
+
+    /* Count the exact final keep_going call on this unchanged fixture. A
+     * direct same-length replacement there must be caught by the following
+     * callback-free verification, with no later sink callback opportunity. */
+    Result measured = {0};
+    bounded.context = &measured;
+    assert(katmed_source_snapshot_boot(&bounded, idle));
+    assert(measured.finished && measured.success && measured.files == 13 &&
+           measured.checks > 0);
+    changed = (Result){ .mutate_at_check = measured.checks };
+    bounded.context = &changed;
+    assert(!katmed_source_snapshot_boot(&bounded, idle));
+    assert(changed.finished && !changed.success && changed.files == 13 &&
+           changed.checks == measured.checks && changed.mutations == 1);
+    assert_acme_contents("XY");
+    replace_acme("{}");
 
     /* The independently maximal image/NVS/ACME populations exceed the
      * shared 128-record limit; none may be silently omitted. */

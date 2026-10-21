@@ -58,14 +58,22 @@ ein blockierter fremder Callback lässt sich aus demselben Thread nicht sicher
 präemptieren. Vor der ersten Ausgabe bindet SHA-256 alle gefundenen NVS- und
 Dateibytes. Eine zweite vollständige Leseprüfung bestätigt diesen Bestand
 vor Ausgabe. Während der Ausgabe werden NVS-Werte vor ihrem `begin` und
-Dateibytes beim Lesen gegen diese Bindung geprüft; eine abschließende
-Inventur und Leseprüfung erkennt Änderungen aus späteren Sink-Callbacks.
+Dateibytes beim Lesen gegen diese Bindung geprüft. Der letzte
+`keep_going`-Aufruf liegt **vor** einer abschließenden Inventur und
+Leseprüfung, die nur noch interne Deadlineprüfungen ausführt. Zwischen
+dieser Prüfung und `finish` werden keine weiteren `keep_going`-, `begin`-,
+`bytes`- oder `end`-Callbacks aufgerufen. So werden auch gleichlange
+Änderungen aus dem letzten fremden Callback erkannt.
 Ein gleichlanger Inhaltswechsel führt zu `finish(false)`. Nur `finish(true)`
 nach vollständiger Inventur und Übertragung ist verwendbar; ein Empfänger
 muss alle Bytes eines `finish(false)`-Laufs
 verwerfen. Der Adapter initialisiert oder formatiert keine Quelle und schreibt
 keine privaten Werte in Logs. Ein externer Transport und ein Empfänger, der
 daraus geschützte Dateien sowie `source-inventory.json` erstellt, fehlen noch.
+Die Garantie setzt die erfassten produktiven Schreibleases und das ruhende
+Bootfenster voraus. Ein beliebiger roher paralleler Schreiber, der zwischen
+Prüfung und Abschluss mutiert oder seinen alten Inhalt wiederherstellt,
+ist damit nicht allgemein kontrolliert; ein Live-Backup ist nicht abgedeckt.
 
 Der Adapter inventarisiert **alle** sichtbaren Einträge der Standard-NVS-Partition
 mittels `nvs_entry_find("nvs", NULL, NVS_TYPE_ANY, ...)`. Er übernimmt nur die

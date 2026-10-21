@@ -75,7 +75,9 @@ static uint64_t monotonic_us(void)
 
 static bool checkpoint(const KatmedSourceExportSink *sink)
 {
-    if (sink->keep_going && !sink->keep_going(sink->context)) return false;
+    /* NULL is the callback-free final verification phase. The internal
+     * deadline still applies, but no sink can mutate the source here. */
+    if (sink && sink->keep_going && !sink->keep_going(sink->context)) return false;
     unsigned phase = atomic_load_explicit(&snapshot_state, memory_order_acquire) & PHASE_MASK;
     if ((phase == 2u || phase == 4u) &&
         monotonic_us() >= atomic_load_explicit(&snapshot_deadline_us, memory_order_acquire))
@@ -593,12 +595,15 @@ bool katmed_source_export(const KatmedSourceExportSink *sink)
         checked_count = nvs_count;
         checked_content = 0;
         checked_acme = false;
+        /* This is the last externally supplied callback before finish().
+         * All subsequent source checks pass NULL, including nested reads. */
         if (ok) ok = sent_count == scanned_count && sent_content == content &&
-                     scan_nvs(sink, &checked_mask) && checked_mask == mask &&
-                     scan_files(sink, &checked_content, &checked_acme,
+                     checkpoint(sink) &&
+                     scan_nvs(NULL, &checked_mask) && checked_mask == mask &&
+                     scan_files(NULL, &checked_content, &checked_acme,
                                 &checked_count, true) && checked_acme == acme_present &&
                      checked_count == scanned_count && checked_content == content &&
-                     bind_nvs(sink, mask, buffer, true) && checkpoint(sink);
+                     bind_nvs(NULL, mask, buffer, true) && checkpoint(NULL);
         wipe(buffer, sizeof(buffer));
     }
     sink->finish(sink->context, ok);

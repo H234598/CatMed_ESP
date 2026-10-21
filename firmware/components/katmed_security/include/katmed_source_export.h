@@ -22,7 +22,9 @@ typedef struct {
      * On true, receiver may create source-inventory.json from begin paths. */
     void (*finish)(void *context, bool success);
     /* Cooperative cancellation; the boot snapshot requires this callback.
-     * All callbacks must return promptly. */
+     * All callbacks must return promptly. The last keep_going precedes a
+     * callback-free final source verification; no begin/bytes/end/keep_going
+     * follows it before finish. finish reports the result at that boundary. */
     bool (*keep_going)(void *context);
 } KatmedSourceExportSink;
 
