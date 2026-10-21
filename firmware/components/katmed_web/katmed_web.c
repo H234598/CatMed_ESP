@@ -405,7 +405,8 @@ static const char *json_string(const cJSON *obj, const char *key, size_t max_len
 }
 
 static esp_err_t asset_reply(httpd_req_t *req, const unsigned char *start,
-                              const unsigned char *end, const char *type)
+                              const unsigned char *end, const char *type,
+                              bool gzip_encoded)
 {
     char host[INET_ADDRSTRLEN];
     if (!request_host(req, host)) return error_reply(req, "403 Forbidden", "host");
@@ -413,6 +414,10 @@ static esp_err_t asset_reply(httpd_req_t *req, const unsigned char *start,
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
     httpd_resp_set_hdr(req, "X-Content-Type-Options", "nosniff");
     httpd_resp_set_hdr(req, "Referrer-Policy", "no-referrer");
+    if (gzip_encoded) {
+        httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
+        httpd_resp_set_hdr(req, "Vary", "Accept-Encoding");
+    }
     httpd_resp_set_hdr(req, "Content-Security-Policy",
         "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; "
         "img-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'");
@@ -422,22 +427,32 @@ static esp_err_t asset_reply(httpd_req_t *req, const unsigned char *start,
 static esp_err_t page_get(httpd_req_t *req)
 {
     return asset_reply(req, _binary_index_html_start, _binary_index_html_end,
-                       "text/html; charset=utf-8");
+                       "text/html; charset=utf-8", false);
 }
 static esp_err_t style_get(httpd_req_t *req)
 {
     return asset_reply(req, _binary_style_css_start, _binary_style_css_end,
-                       "text/css; charset=utf-8");
+                       "text/css; charset=utf-8", false);
 }
 static esp_err_t script_get(httpd_req_t *req)
 {
     return asset_reply(req, _binary_app_js_start, _binary_app_js_end,
-                       "application/javascript; charset=utf-8");
+                       "application/javascript; charset=utf-8",
+#ifdef KATMED_WEB_SECURITY_JS_GZIP
+                       true);
+#else
+                       false);
+#endif
 }
 static esp_err_t language_script_get(httpd_req_t *req)
 {
     return asset_reply(req, _binary_i18n_js_start, _binary_i18n_js_end,
-                       "application/javascript; charset=utf-8");
+                       "application/javascript; charset=utf-8",
+#ifdef KATMED_WEB_SECURITY_JS_GZIP
+                       true);
+#else
+                       false);
+#endif
 }
 
 static const char *const language_codes[KATMED_LANGUAGE_COUNT] = {
