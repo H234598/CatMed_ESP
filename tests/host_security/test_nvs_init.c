@@ -20,13 +20,13 @@ uint32_t esp_rom_crc32_le(uint32_t crc, const uint8_t *data, uint32_t length)
 /* After the bootloader encrypts an empty key sector, raw flash is ciphertext
  * while esp_partition_read decrypts it back to erased (0xff) bytes. */
 static uint8_t key_bytes[0x1000], key_raw_bytes[0x1000];
-static uint8_t nvs_bytes[0x6000], image_bytes[0x40000], guard_bytes[0x1000];
+static uint8_t nvs_bytes[0x6000], image_bytes[0x90000], guard_bytes[0x1000];
 static esp_partition_t keys = {ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_NVS_KEYS,
     0x18000, sizeof(key_bytes), "nvs_keys", true, false, key_bytes};
 static esp_partition_t data = {ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_NVS,
     0x11000, sizeof(nvs_bytes), "nvs", false, false, nvs_bytes};
 static esp_partition_t images = {ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_LITTLEFS,
-    0x280000, sizeof(image_bytes), "user_images", true, false, image_bytes};
+    0x230000, sizeof(image_bytes), "user_images", true, false, image_bytes};
 static esp_partition_t guard = {ESP_PARTITION_TYPE_DATA, 0x40,
     0x19000, sizeof(guard_bytes), "nvs_guard", false, false, guard_bytes};
 static bool enabled = true;

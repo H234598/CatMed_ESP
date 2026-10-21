@@ -68,11 +68,11 @@ esp_err_t nvs_get_blob(nvs_handle_t handle, const char *key, void *dst, size_t *
 }
 void nvs_close(nvs_handle_t handle) { assert(handle > 0); }
 
-typedef struct { unsigned files; size_t bytes; bool finished; bool success; bool reject; unsigned reject_at; char paths[8][80]; const char *output; FILE *stream; } Result;
+typedef struct { unsigned files; size_t bytes; bool finished; bool success; bool reject; unsigned reject_at; char paths[128][80]; const char *output; FILE *stream; } Result;
 static bool begin(void *ctx, const char *path, size_t size)
 {
     Result *r = ctx;
-    assert(r->files < 8 && size <= 128 * 1024);
+    assert(r->files < 128 && size <= 128 * 1024);
     snprintf(r->paths[r->files], sizeof(r->paths[0]), "%s", path);
     ++r->files;
     if (r->reject || (r->reject_at && r->files >= r->reject_at)) return false;
@@ -250,6 +250,39 @@ int main(int argc, char **argv)
     sink.context = &emitted;
     assert(katmed_source_export(&sink));
     assert(emitted.finished && emitted.success && emitted.files == 7);
+
+    /* Full read-only source inventory: 127 files and exactly 248 KiB of
+     * synthetic content remain intact; one more path fails before emission. */
+    assert(remove(KATMED_SOURCE_EXPORT_HOST_TEST "/acme/account.json") == 0);
+    entry_count = 1;
+    for (unsigned id = 1; id <= 127; ++id) {
+        char path[160];
+        int n = snprintf(path, sizeof(path),
+                         KATMED_SOURCE_EXPORT_HOST_TEST "/user-images/img-%08x.jpg", id);
+        assert(n > 0 && (size_t)n < sizeof(path));
+        FILE *image = fopen(path, "wb");
+        assert(image);
+        const size_t length = 253952u / 127u + (id <= 253952u % 127u);
+        for (size_t i = 0; i < length; ++i) assert(fputc('S', image) != EOF);
+        assert(fclose(image) == 0);
+    }
+    r = run(true);
+    assert(r.files == 128 && r.bytes == state_size + 253952u);
+    extra = fopen(KATMED_SOURCE_EXPORT_HOST_TEST "/user-images/img-00000080.jpg", "wb");
+    assert(extra);
+    assert(fclose(extra) == 0);
+    r = run(false);
+    assert(r.files == 0);
+    for (unsigned id = 1; id <= 128; ++id) {
+        char path[160];
+        int n = snprintf(path, sizeof(path),
+                         KATMED_SOURCE_EXPORT_HOST_TEST "/user-images/img-%08x.jpg", id);
+        assert(n > 0 && (size_t)n < sizeof(path) && remove(path) == 0);
+    }
+    FILE *original = fopen(KATMED_SOURCE_EXPORT_HOST_TEST "/user-images/img-00000001.jpg", "wb");
+    assert(original && fwrite("jpeg", 1, 4, original) == 4 && fclose(original) == 0);
+    original = fopen(KATMED_SOURCE_EXPORT_HOST_TEST "/acme/account.json", "wb");
+    assert(original && fwrite("{}", 1, 2, original) == 2 && fclose(original) == 0);
     free(fixture_bytes);
     return 0;
 }

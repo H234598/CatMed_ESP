@@ -12,12 +12,12 @@
 #endif
 
 namespace {
-constexpr size_t kMaxCapsule = 0x40000;
+constexpr size_t kMaxCapsule = 0x50000;
 constexpr size_t kMaxFiles = 128;
 constexpr size_t kMaxFile = 128 * 1024;
-/* 64 KiB is reserved for LittleFS metadata, directory entries and writes.
- * This is a conservative preflight bound, never a capacity guarantee. */
-constexpr size_t kMaxFileContent = 0x40000 - 65536;
+/* The source contract permits 248 KiB; the expanded 576 KiB security target
+ * still reserves space for LittleFS metadata and copy-on-write operations. */
+constexpr size_t kMaxFileContent = 0x40000 - 8192;
 constexpr char kImportNs[] = "katmed_imp";
 constexpr char kStage[] = "stage";
 constexpr char kJournal[] = "journal";

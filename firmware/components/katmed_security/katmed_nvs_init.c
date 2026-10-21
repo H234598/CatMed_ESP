@@ -124,7 +124,7 @@ esp_err_t katmed_nvs_init(void)
                         0x19000, 0x1000, false) ||
         !layout_matches(user_images, KATMED_USER_IMAGE_PARTITION_LABEL,
                         ESP_PARTITION_SUBTYPE_DATA_LITTLEFS,
-                        0x280000, 0x40000, true))
+                        0x230000, 0x90000, true))
         return ESP_ERR_INVALID_STATE;
 
     guard_state_t state = guard_state(guard);

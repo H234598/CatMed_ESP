@@ -97,7 +97,7 @@ def check_layout(repo: Path, board: str, build: Path, security_profile: bool = F
             "nvs": (0x11000, 0x6000, "data", "nvs", ""),
             "nvs_keys": (0x18000, 0x1000, "data", "nvs_keys", "encrypted"),
             "nvs_guard": (0x19000, 0x1000, "data", "0x40", ""),
-            "user_images": (0x280000, 0x40000, "data", "littlefs", "encrypted"),
+            "user_images": (0x230000, 0x90000, "data", "littlefs", "encrypted"),
         }
         for name, expected in critical.items():
             if partitions.get(name) != expected:

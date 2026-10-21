@@ -26,7 +26,7 @@ struct Memory {
     unsigned erases = 0;
     std::map<std::string, std::vector<uint8_t>> staged_files;
     std::map<std::string, std::vector<uint8_t>> final_files;
-    size_t fs_free = 256 * 1024;
+    size_t fs_free = 576 * 1024;
     int fail_publish_at = -1;
     int fail_stage_at = -1;
     bool fail_file_abort_once = false;

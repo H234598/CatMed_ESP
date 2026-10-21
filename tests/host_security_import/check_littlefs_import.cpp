@@ -10,7 +10,7 @@ extern "C" {
 #include <cassert>
 
 namespace {
-constexpr size_t block_size = 4096, block_count = 64, cache_size = 256;
+constexpr size_t block_size = 4096, block_count = 144, cache_size = 256;
 uint8_t flash[block_size * block_count];
 uint8_t read_cache[cache_size], prog_cache[cache_size], lookahead[cache_size];
 lfs_t fs;
@@ -98,8 +98,9 @@ bool matches_file(const std::string &path, const KatmedImportFile *f) {
 }
 bool lfs_empty(void *, size_t bytes, size_t count) {
     lfs_ssize_t used_blocks = lfs_fs_size(&fs);
-    if (used_blocks < 0 || size_t(used_blocks) * block_size > sizeof(flash)) return false;
-    size_t free = sizeof(flash) - size_t(used_blocks) * block_size;
+    const size_t fs_bytes = size_t(config.block_count) * block_size;
+    if (used_blocks < 0 || size_t(used_blocks) * block_size > fs_bytes) return false;
+    size_t free = fs_bytes - size_t(used_blocks) * block_size;
     if (free < bytes + 32768 + count * 256) return false;
     lfs_dir_t root;
     if (lfs_dir_open(&fs, &root, "/") != 0) return false;
@@ -140,7 +141,10 @@ bool lfs_stage(void *, unsigned ordinal, const KatmedImportFile *f,
     }
     if (crc != f->crc || lfs_file_sync(&fs, &file) != 0) ok = false;
     if (lfs_file_close(&fs, &file) != 0) ok = false;
-    return ok && matches_file(path, f);
+    const lfs_ssize_t used_blocks = lfs_fs_size(&fs);
+    return ok && matches_file(path, f) && used_blocks >= 0 &&
+        size_t(used_blocks) * block_size <= size_t(config.block_count) * block_size &&
+        (size_t(config.block_count) - size_t(used_blocks)) * block_size >= 8192;
 }
 bool lfs_final(void *, unsigned ordinal, const KatmedImportFile *f) {
     return presence(name_for(f, ordinal, true)) == 0 &&
@@ -174,14 +178,83 @@ KatmedImportBackend real_backend(Memory &m) {
     b.file_abort = lfs_abort;
     return b;
 }
+bool capsule_images_match(const std::vector<uint8_t> &capsule, size_t expected) {
+    if (capsule.size() < 16) return false;
+    const size_t count = size_t(capsule[8]) | size_t(capsule[9]) << 8;
+    size_t at = 16, images = 0;
+    for (size_t i = 0; i < count; ++i) {
+        if (at + 12 > capsule.size()) return false;
+        const size_t path_len = size_t(capsule[at]) | size_t(capsule[at + 1]) << 8;
+        const uint32_t length = uint32_t(capsule[at + 4]) |
+            uint32_t(capsule[at + 5]) << 8 | uint32_t(capsule[at + 6]) << 16 |
+            uint32_t(capsule[at + 7]) << 24;
+        const uint32_t crc = uint32_t(capsule[at + 8]) |
+            uint32_t(capsule[at + 9]) << 8 | uint32_t(capsule[at + 10]) << 16 |
+            uint32_t(capsule[at + 11]) << 24;
+        at += 12;
+        if (path_len > capsule.size() - at ||
+            length > capsule.size() - at - path_len) return false;
+        const std::string path(reinterpret_cast<const char *>(capsule.data() + at),
+                               path_len);
+        at += path_len;
+        if (path.rfind("littlefs/user-images/", 0) == 0) {
+            const KatmedImportFile file{0, 0, length, crc, 0};
+            if (!matches_file("/" + path.substr(9), &file)) return false;
+            ++images;
+        }
+        at += length;
+    }
+    return at == capsule.size() && images == expected;
+}
+void populate_source_images(const std::vector<uint8_t> &capsule) {
+    assert(lfs_mkdir(&fs, "/user-images") == 0);
+    const size_t count = size_t(capsule[8]) | size_t(capsule[9]) << 8;
+    size_t at = 16;
+    for (size_t i = 0; i < count; ++i) {
+        assert(at + 12 <= capsule.size());
+        const size_t path_len = size_t(capsule[at]) | size_t(capsule[at + 1]) << 8;
+        const size_t length = size_t(capsule[at + 4]) |
+            size_t(capsule[at + 5]) << 8 | size_t(capsule[at + 6]) << 16 |
+            size_t(capsule[at + 7]) << 24;
+        at += 12;
+        assert(path_len <= capsule.size() - at &&
+               length <= capsule.size() - at - path_len);
+        const std::string path(reinterpret_cast<const char *>(capsule.data() + at),
+                               path_len);
+        at += path_len;
+        if (path.rfind("littlefs/user-images/", 0) == 0) {
+            lfs_file_t file;
+            assert(lfs_file_open(&fs, &file, ("/" + path.substr(9)).c_str(),
+                                 LFS_O_WRONLY | LFS_O_CREAT | LFS_O_EXCL) == 0);
+            for (size_t off = 0; off < length;) {
+                const size_t n = std::min(size_t(512), length - off);
+                assert(lfs_file_write(&fs, &file, capsule.data() + at + off, n) ==
+                       lfs_ssize_t(n));
+                off += n;
+            }
+            assert(lfs_file_sync(&fs, &file) == 0 &&
+                   lfs_file_close(&fs, &file) == 0);
+        }
+        at += length;
+    }
+    assert(at == capsule.size());
+}
 }
 
 int main(int argc, char **argv) {
-    if (argc != 2) return 2;
+    if (argc != 4) return 2;
     std::ifstream stream(argv[1], std::ios::binary);
     if (!stream) return 2;
     std::vector<uint8_t> capsule((std::istreambuf_iterator<char>(stream)),
                                  std::istreambuf_iterator<char>());
+    std::ifstream near_stream(argv[2], std::ios::binary);
+    if (!near_stream) return 2;
+    std::vector<uint8_t> near_capsule((std::istreambuf_iterator<char>(near_stream)),
+                                      std::istreambuf_iterator<char>());
+    std::ifstream old_stream(argv[3], std::ios::binary);
+    if (!old_stream) return 2;
+    std::vector<uint8_t> old_capsule((std::istreambuf_iterator<char>(old_stream)),
+                                     std::istreambuf_iterator<char>());
     fresh_fs();
     Memory m;
     m.capsule = capsule;
@@ -269,7 +342,7 @@ int main(int argc, char **argv) {
     assert(lfs_file_open(&fs, &filler, "/filler",
                          LFS_O_WRONLY | LFS_O_CREAT) == 0);
     uint8_t fill[512] = {0x5a};
-    for (size_t at = 0; at < 224 * 1024; at += sizeof(fill))
+    for (size_t at = 0; at < 544 * 1024; at += sizeof(fill))
         assert(lfs_file_write(&fs, &filler, fill, sizeof(fill)) == sizeof(fill));
     assert(lfs_file_close(&fs, &filler) == 0);
     const lfs_ssize_t used_blocks = lfs_fs_size(&fs);
@@ -330,6 +403,91 @@ int main(int argc, char **argv) {
     assert(!katmed_import_apply(&occupied_input, &occupied_backend));
     assert(occupied.writes == 0 && occupied.erases == 0);
     assert(presence("/user-images/img-00000007.jpg") == 1);
+    assert(lfs_unmount(&fs) == 0);
+
+    config.block_count = 64; /* The old 256 KiB target cannot hold this package. */
+    fresh_fs();
+    Memory old_size;
+    old_size.capsule = near_capsule;
+    auto old_backend = real_backend(old_size);
+    auto old_input = input(old_size);
+    assert(!katmed_import_apply(&old_input, &old_backend));
+    assert(old_size.writes == 0 && old_size.erases == 0 &&
+           old_size.values.empty() && presence("/user-images") == 0);
+    assert(lfs_unmount(&fs) == 0);
+
+    config.block_count = 64;
+    fresh_fs();
+    populate_source_images(old_capsule);
+    const lfs_ssize_t old_used = lfs_fs_size(&fs);
+    assert(old_used >= 56 && old_used < 64); /* A real near-full old FS. */
+    remount();
+    assert(capsule_images_match(old_capsule, 4));
+    assert(lfs_unmount(&fs) == 0);
+    config.block_count = block_count;
+
+    fresh_fs();
+    Memory migrated_old;
+    migrated_old.capsule = old_capsule;
+    auto migrated_backend = real_backend(migrated_old);
+    auto migrated_input = input(migrated_old);
+    assert(katmed_import_apply(&migrated_input, &migrated_backend));
+    remount();
+    assert(migrated_old.values.count("katmed/state") == 1 &&
+           capsule_images_match(old_capsule, 4));
+    assert(lfs_unmount(&fs) == 0);
+
+    config.block_count = 128;
+    fresh_fs();
+    Memory mid_size;
+    mid_size.capsule = near_capsule;
+    auto mid_backend = real_backend(mid_size);
+    auto mid_input = input(mid_size);
+    assert(!katmed_import_apply(&mid_input, &mid_backend));
+    assert(mid_size.values.count("katmed/state") == 0 &&
+           mid_size.values.count("katmed_imp/journal") == 0 &&
+           mid_size.values.count("katmed_imp/stage") == 0 &&
+           lfs_empty(&mid_size, 0, 0));
+    remount();
+    assert(katmed_import_resume(&mid_backend, 1) &&
+           lfs_empty(&mid_size, 0, 0));
+    assert(lfs_unmount(&fs) == 0);
+    config.block_count = block_count;
+
+    fresh_fs();
+    Memory near_full;
+    near_full.capsule = near_capsule;
+    auto near_backend = real_backend(near_full);
+    auto near_input = input(near_full);
+    assert(katmed_import_apply(&near_input, &near_backend));
+    assert(near_full.values.count("katmed/state") == 1 &&
+           near_full.values.count("katmed_imp/journal") == 0);
+    remount();
+    assert(capsule_images_match(near_capsule, 127));
+    assert(katmed_import_resume(&near_backend, 1));
+    const unsigned near_writes = near_full.writes, near_erases = near_full.erases;
+    assert(!katmed_import_apply(&near_input, &near_backend));
+    assert(near_full.writes == near_writes && near_full.erases == near_erases &&
+           capsule_images_match(near_capsule, 127));
+    assert(lfs_unmount(&fs) == 0);
+
+    fresh_fs();
+    Memory near_replay;
+    near_replay.capsule = near_capsule;
+    auto replay_backend = real_backend(near_replay);
+    auto replay_input = input(near_replay);
+    fail_publish_at = 126;
+    assert(!katmed_import_apply(&replay_input, &replay_backend));
+    assert(near_replay.values.count("katmed_imp/journal") == 1 &&
+           near_replay.values.count("katmed/state") == 0);
+    remount();
+    assert(!katmed_import_resume(&replay_backend, 2));
+    assert(near_replay.values.count("katmed_imp/journal") == 1 &&
+           near_replay.values.count("katmed/state") == 0);
+    assert(katmed_import_resume(&replay_backend, 1));
+    assert(near_replay.values.count("katmed/state") == 1 &&
+           near_replay.values.count("katmed_imp/journal") == 0 &&
+           capsule_images_match(near_capsule, 127));
     assert(lfs_unmount(&fs) == 0);
     puts("actual LittleFS KMI1 import/remount/replay: PASS");
 }

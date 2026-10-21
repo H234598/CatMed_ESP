@@ -1682,6 +1682,14 @@ void app_main(void)
     ESP_LOGI(tag, "read-only image partition status=%d", image_status);
     const KatmedImageStatus user_image_status = katmed_image_store_mount();
     ESP_LOGI(tag, "writable user image filesystem status=%d", user_image_status);
+#if CONFIG_NVS_ENCRYPTION
+    /* A relocated security partition must never turn a missing old image
+     * filesystem into a normal boot with apparently absent user pictures. */
+    if (user_image_status != KATMED_IMAGE_OK) {
+        ESP_LOGE(tag, "secure user image filesystem unavailable; startup held");
+        return;
+    }
+#endif
     if (!resume_reset_at_startup()) {
         ESP_LOGE(tag,"reset journal unavailable; normal startup is held");
         return;

@@ -16,10 +16,10 @@
 #define MOUNT "/katmed"
 #define DIRECTORY MOUNT "/user-images"
 #define PARTITION KATMED_USER_IMAGE_PARTITION_LABEL
-#define FS_BYTES (256u * 1024u)
-/* LittleFS uses copy-on-write metadata. Reserve a baseline and a per-file
- * allowance in addition to all staged payloads; the actual write and sync
- * remain authoritative. A full but valid source can be rejected safely. */
+#define FS_BYTES (576u * 1024u)
+/* LittleFS allocates whole 4 KiB blocks and copy-on-write metadata. A full
+ * 127-file source inventory needs a larger target than its byte sum suggests;
+ * actual write, sync and readback remain authoritative. */
 #define BASE_RESERVE (32u * 1024u)
 #define FILE_RESERVE 256u
 #define RUN_RESERVE (8u * 1024u)
@@ -103,11 +103,11 @@ static bool matches(const char *path, const KatmedImportFile *file)
 bool katmed_import_files_empty(void *context, size_t content_bytes, size_t count)
 {
     (void)context;
-    if (!count || count > 128 || content_bytes > 192u * 1024u ||
+    if (!count || count > 128 || content_bytes > 248u * 1024u ||
         !mount_files()) return false;
     size_t total = 0, used = 0;
     if (esp_littlefs_info(PARTITION, &total, &used) != ESP_OK ||
-        total == 0 || total > FS_BYTES || used > total ||
+        total != FS_BYTES || used > total ||
         content_bytes > total - used ||
         BASE_RESERVE + count * FILE_RESERVE > total - used - content_bytes)
         return false;

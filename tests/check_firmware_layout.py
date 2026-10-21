@@ -89,7 +89,19 @@ class FirmwareLayoutTests(unittest.TestCase):
         self.security_fixture()
         result = layout.check_layout(self.root, "c3", self.build, True)
         self.assertTrue(result["security_profile"])
+        self.assertEqual(result["app_budget"], 0x210000)
         self.assertGreater(result["app_free"], 0)
+
+    def test_security_profile_rejects_old_image_boundary(self):
+        self.security_fixture()
+        partition = self.root / "firmware/boards/c3.security.partitions.csv"
+        partition.write_text(partition.read_text().replace(
+            "user_images, data, littlefs, 0x230000, 0x90000, encrypted",
+            "user_images, data, littlefs, 0x280000, 0x40000, encrypted"))
+        self.write_partition_fixture(partition,
+                                     self.build / "partition_table/partition-table.bin")
+        with self.assertRaisesRegex(ValueError, "Security partition user_images differs"):
+            layout.check_layout(self.root, "c3", self.build, True)
 
     def test_security_profile_rejects_missing_release_mode(self):
         self.security_fixture()

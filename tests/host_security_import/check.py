@@ -35,7 +35,7 @@ def staged_capsule(root, label, files, codec):
     declared.chmod(0o600)
     package, stage = root / f"{label}-package", root / f"{label}-stage"
     migration.export(source, package, codec)
-    migration.import_stage(package, stage, codec, migration.MAX_CONTENT)
+    migration.import_stage(package, stage, codec, migration.MAX_STAGE_BYTES)
     return stage / "firmware-import-v1.bin"
 
 with tempfile.TemporaryDirectory(prefix="katmed-import-test-") as temporary:
@@ -107,6 +107,34 @@ with tempfile.TemporaryDirectory(prefix="katmed-import-test-") as temporary:
     many_images.update({f"littlefs/user-images/img-{number:08x}.jpg": uploaded
                         for number in range(1, 127)})
     many_files = staged_capsule(root, "many-files", many_images, codec)
+    def padded_jpeg(base, length):
+        padding = length - len(base)
+        assert 4 <= padding < 65535
+        # A JPEG COM marker before SOF0 carries synthetic padding while the
+        # image remains independently decodable by Pillow.
+        result = base[:2] + b"\xff\xfe" + struct.pack(">H", padding - 2) + \
+            bytes(padding - 4) + base[2:]
+        with Image.open(BytesIO(result)) as decoded:
+            decoded.load()
+        assert len(result) == length
+        return result
+    near_files = {"nvs/katmed/state": state}
+    for number in range(127):
+        length = migration.MAX_CONTENT // 127 + (number < migration.MAX_CONTENT % 127)
+        name = ("littlefs/user-images/cat-00-0.jpg" if number == 0 else
+                f"littlefs/user-images/img-{number:08x}.jpg")
+        near_files[name] = padded_jpeg(cached if number == 0 else uploaded, length)
+    near_full = staged_capsule(root, "near-full", near_files, codec)
+    assert sum(len(value) for name, value in near_files.items()
+               if name.startswith("littlefs/")) == migration.MAX_CONTENT
+    assert 0x40000 < near_full.stat().st_size <= migration.MAX_CAPSULE_BYTES
+    old_near_files = {"nvs/katmed/state": state,
+                      "littlefs/user-images/cat-00-0.jpg": padded_jpeg(cached, 55 * 1024)}
+    old_near_files.update({
+        f"littlefs/user-images/img-{number:08x}.jpg": padded_jpeg(uploaded, 55 * 1024)
+        for number in range(1, 4)
+    })
+    old_near = staged_capsule(root, "old-near-full", old_near_files, codec)
     image = root / "image.bin"
     image.write_bytes(migration.firmware_capsule({
         "nvs/katmed/state": state,
@@ -221,7 +249,9 @@ with tempfile.TemporaryDirectory(prefix="katmed-import-test-") as temporary:
         str(ROOT / "firmware/components/katmed_core/katmed_core.cpp"),
         *lfs_objects, "-lz", "-o", str(lfs_binary),
     ], check=True)
-    subprocess.run([str(lfs_binary), str(full_files)], check=True)
+    subprocess.run([str(binary), str(near_full), "files_many"], check=True)
+    subprocess.run([str(lfs_binary), str(full_files), str(near_full),
+                    str(old_near)], check=True)
     subprocess.run([str(binary), str(partial), "legacy_cleanup"], check=True)
     subprocess.run([str(binary), str(full), "full_space"], check=True)
     subprocess.run([str(binary), str(full), "reject_web"], check=True)
@@ -239,4 +269,4 @@ with tempfile.TemporaryDirectory(prefix="katmed-import-test-") as temporary:
     subprocess.run([str(binary), str(raw_v10), "reject"], check=True)
     for path in invalid_history:
         subprocess.run([str(binary), str(path), "reject"], check=True)
-print("synthetic product import: 62 cases plus real LittleFS remount passed")
+print("synthetic product import: 63 cases plus real LittleFS remount passed")

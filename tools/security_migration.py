@@ -28,6 +28,8 @@ IMAGE = re.compile(r"(?:img-[0-9a-f]{8}|cat-[0-9a-f]{2}-[01])\.jpg\Z")
 MAX_FILES = 128
 MAX_FILE = 128 * 1024
 MAX_CONTENT = 0x40000 - 8192  # preflight only; LittleFS metadata needs a later runtime test
+MAX_STAGE_BYTES = MAX_CONTENT + 16384  # bounded NVS inventory alongside all image bytes
+MAX_CAPSULE_BYTES = 0x50000
 MESH_HISTORY_SIZES = (2080, 2152)  # MESH_HISTORY_LEGACY_BLOB, MESH_HISTORY_BLOB
 DIRECTORIES = {"nvs", "nvs/katmed", "nvs/katmed_web", "nvs/katmed_reset",
                "littlefs", "littlefs/user-images", "littlefs/acme"}
@@ -222,7 +224,7 @@ def firmware_capsule(files):
         path = name.encode("ascii")
         records += struct.pack("<HHII", len(path), 0, len(data),
                                zlib.crc32(data)) + path + data
-    if len(records) + 16 > 0x40000 or len(files) > MAX_FILES:
+    if len(records) + 16 > MAX_CAPSULE_BYTES or len(files) > MAX_FILES:
         raise Invalid()
     return (b"KMI1" + struct.pack("<IHHI", len(records) + 16,
                                  len(files), 0, zlib.crc32(records))
@@ -276,7 +278,7 @@ def main():
     parser.add_argument("action", choices=("export", "import-stage"))
     parser.add_argument("--source", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
-    parser.add_argument("--max-stage-bytes", type=int, default=MAX_CONTENT)
+    parser.add_argument("--max-stage-bytes", type=int, default=MAX_STAGE_BYTES)
     args = parser.parse_args()
     os.umask(0o077)
     try:
