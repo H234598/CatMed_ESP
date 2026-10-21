@@ -302,7 +302,7 @@ static bool scan_nvs(const KatmedSourceExportSink *sink, uint8_t *mask)
     }
     nvs_release_iterator(it);
     return err == ESP_ERR_NVS_NOT_FOUND && (*mask & 1u) &&
-        (((*mask >> 2u) & 1u) == ((*mask >> 3u) & 1u));
+        (!(*mask & (1u << 2u)) || (*mask & (1u << 3u)));
 }
 
 static bool regular_file(const char *path, size_t *size)

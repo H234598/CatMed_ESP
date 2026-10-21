@@ -252,6 +252,14 @@ int main(int argc, char **argv)
     entry_count = 3;
     r = run(false);
     assert(r.files == 0); /* Auth without its server identity is incomplete. */
+    Entry saved_auth = entries[2];
+    entries[2] = entries[3]; /* Identity exists before account provisioning. */
+    r = run(true);
+    assert(r.files == 5);
+    assert(strcmp(r.paths[2], "nvs/katmed_web/identity") == 0);
+    assert(strcmp(r.paths[3], "littlefs/user-images/img-00000001.jpg") == 0);
+    assert(strcmp(r.paths[4], "littlefs/acme/account.json") == 0);
+    entries[2] = saved_auth;
     entry_count = 5;
 
     entries[4].data = bad_journal;
