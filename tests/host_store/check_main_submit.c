@@ -497,13 +497,17 @@ int main(void)
            runtime.manual_restore_status==KATMED_RESTORE_CONFLICT);
     initialize_runtime();
     runtime.mesh_started=true;
+    /* This guard fixture represents an already-bound group, not the newly
+     * supported fresh-unbound local-settings case. */
+    runtime.store.record.group_origin=STORE_GROUP_ORIGIN_FIRST_BOUND;
+    runtime.store.record.bound_group[0]=1;
     const unsigned committed_settings=writes;
     fake_mesh_connected=false;
     fake_mesh_coordinator=false; /* Disconnected follower must not self-authorize. */
     image.value.seconds=3600;
     assert(submit_ui(&runtime,&image)==UI_SUBMIT_UNAVAILABLE && writes==committed_settings);
     fake_mesh_coordinator=true;
-    runtime.mesh_started=false; /* Unstarted/unconfigured runtime stays blocked. */
+    runtime.mesh_started=false; /* A stopped bound runtime stays blocked. */
     assert(submit_ui(&runtime,&image)==UI_SUBMIT_UNAVAILABLE && writes==committed_settings);
     runtime.mesh_started=true;
     fail_commit=true;

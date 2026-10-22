@@ -857,6 +857,12 @@ static void build_settings(void)
     int row_w = ui.width - (ui.width == 240 ? 100 : 18) - 4;
     if (ui.advanced_open) {
         label(ui.settings, T("Advanced"), row_w);
+        button(ui.settings, T("Medikamente: Stunden"), row_w, 34, edit_button,
+               (void *)(intptr_t)EDIT_MEDICATION);
+        button(ui.settings, T("Bilder: Stunden"), row_w, 34, edit_button,
+               (void *)(intptr_t)EDIT_IMAGE);
+        button(ui.settings, T("Nächste Fälligkeit HH:MM"), row_w, 40, edit_button,
+               (void *)(intptr_t)EDIT_NEXT_TIME);
         label(ui.settings, T("Sprache"), row_w);
         static const struct { uint8_t id; const char *name; } languages[] = {
             {KATMED_LANG_EN, "English"}, {KATMED_LANG_DE, "Deutsch"},
@@ -872,12 +878,6 @@ static void build_settings(void)
             if (languages[i].id==katmed_i18n_selected())
                 lv_obj_set_style_bg_color(choice,lv_color_hex(0x13708b),0);
         }
-        button(ui.settings, T("Medikamente: Stunden"), row_w, 34, edit_button,
-               (void *)(intptr_t)EDIT_MEDICATION);
-        button(ui.settings, T("Bilder: Stunden"), row_w, 34, edit_button,
-               (void *)(intptr_t)EDIT_IMAGE);
-        button(ui.settings, T("Nächste Fälligkeit HH:MM"), row_w, 40, edit_button,
-               (void *)(intptr_t)EDIT_NEXT_TIME);
         restore_scroll(ui.settings, 9);
         if (ui.feedback && !lv_obj_is_hidden(ui.feedback))
             lv_obj_move_foreground(ui.feedback);
@@ -2008,8 +2008,10 @@ static void update_alarm_bar(const AppState *state, const ClockSample *clock)
         if (end > fill) end = fill;
         bool visible = timed && end > start;
         lv_obj_t *strip = ui.alarm_strips[i];
-        if (visible && (lv_obj_get_y(strip) != top + (int)start ||
-                        lv_obj_get_height(strip) != (int)(end - start))) {
+        /* Layout coordinates can still describe the previous render. Compare
+         * the requested styles so coalesced updates cannot retain a shrink. */
+        if (visible && (lv_obj_get_style_y(strip, 0) != top + (int)start ||
+                        lv_obj_get_style_height(strip, 0) != (int)(end - start))) {
             if (blink_metrics.pending_changes < UINT32_MAX) ++blink_metrics.pending_changes;
             lv_obj_set_pos(strip, 0, top + (int)start);
             lv_obj_set_height(strip, (int)(end - start));

@@ -666,10 +666,22 @@ static UiSubmitResult submit_ui_with_id(void *context, const UiRequest *request,
             return UI_SUBMIT_REJECTED;
         return UI_SUBMIT_UNAVAILABLE;
     }
-    /* A provisioned coordinator accepts its own durable settings even when
-     * there is no authenticated peer. Followers still require that session. */
-    if (rt->shared_pending || !rt->mesh_started ||
-        (!katmed_mesh_is_coordinator() && !katmed_mesh_connected()))
+    /* A provably fresh, never-bound device owns its local settings before
+     * provisioning. A reset/unknown former group must not gain this bypass. */
+    const bool local_interval_or_rotation =
+        request->kind == UI_REQUEST_SET_MEDICATION_SECONDS ||
+        request->kind == UI_REQUEST_SET_IMAGE_SECONDS ||
+        request->kind == UI_REQUEST_SET_ROTATION_MODE;
+    bool standalone = local_interval_or_rotation &&
+        !rt->mesh_started && !rt->store.record.provision.configured &&
+        rt->store.record.group_origin == STORE_GROUP_ORIGIN_FRESH_UNBOUND &&
+        rt->state.revision.coordinator == rt->boot.device;
+    for (size_t i = 0; i < sizeof(rt->store.record.bound_group); ++i)
+        if (rt->store.record.bound_group[i]) standalone = false;
+    /* Bound coordinators keep their existing authenticated settings path;
+     * followers still require their coordinator session. */
+    if (rt->shared_pending || (!standalone && (!rt->mesh_started ||
+        (!katmed_mesh_is_coordinator() && !katmed_mesh_connected()))))
         return UI_SUBMIT_UNAVAILABLE;
     AppEventKind kind;
     switch (request->kind) {
@@ -679,6 +691,9 @@ static UiSubmitResult submit_ui_with_id(void *context, const UiRequest *request,
     case UI_REQUEST_SET_NEXT_LOCAL_TIME: kind = EVENT_SET_NEXT_LOCAL_TIME; break;
     default: return UI_SUBMIT_REJECTED;
     }
+    /* Preserve the active-alarm medical guard before reserving durable IDs. */
+    if (standalone && rt->state.alarm_active && kind == EVENT_SET_MEDICATION_INTERVAL)
+        return UI_SUBMIT_UNAVAILABLE;
     EventId id;
     if (retry_id) id=*retry_id;
     else if (store_next_event_id(&rt->store, &id) != STORE_OK)
@@ -704,6 +719,15 @@ static UiSubmitResult submit_ui_with_id(void *context, const UiRequest *request,
             request->value.local_time.preview.effective_utc;
     }
     AppEffects effects;
+    if (standalone) {
+        /* Same reducer and durable commit as coordinator settings, but no
+         * transport/confirmation queue and no relaxation of Core guards. */
+        event.coordinator_accepted = true;
+        AppResult core_result = APP_INVALID;
+        return store_apply_event(&rt->store, &rt->state, &event, &now, false,
+                                 &effects, &core_result) == STORE_OK
+            ? UI_SUBMIT_COMMITTED : UI_SUBMIT_UNAVAILABLE;
+    }
     const KatmedMeshResult result = katmed_mesh_submit_shared(&event, &now, &effects);
     if (result == MESH_ACCEPTED) return UI_SUBMIT_COMMITTED;
     if (result == MESH_PENDING) {

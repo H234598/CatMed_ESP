@@ -248,3 +248,48 @@ add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/c3_image_stream_fixture.b
             "${ROOT}/tests/image_stream_fixture.py" VERBATIM)
 add_custom_target(image_stream_fixture_c3 ALL
     DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/c3_image_stream_fixture.bin")
+
+# Alarm rectangles must agree with actual partial-frame pixel output.
+get_target_property(ALARM_RENDER_SOURCES check_ui_surface SOURCES)
+list(REMOVE_ITEM ALARM_RENDER_SOURCES "${ROOT}/tests/check_ui_surface.c")
+add_executable(check_alarm_render "${ROOT}/tests/check_alarm_render.c" ${ALARM_RENDER_SOURCES})
+get_target_property(ALARM_RENDER_INCLUDES check_ui_surface INCLUDE_DIRECTORIES)
+target_include_directories(check_alarm_render PRIVATE ${ALARM_RENDER_INCLUDES})
+target_compile_definitions(check_alarm_render PRIVATE LV_LVGL_H_INCLUDE_SIMPLE)
+target_compile_options(check_alarm_render PRIVATE -Wall -Wextra -Werror)
+target_compile_features(check_alarm_render PRIVATE cxx_std_17)
+target_sources(check_alarm_render PRIVATE
+    "${ROOT}/firmware/components/katmed_images/katmed_images_reader.c"
+    "${ROOT}/firmware/components/katmed_images/katmed_images_lvgl.c"
+    "${ROOT}/firmware/components/katmed_images/katmed_images_hash.c"
+    "${CMAKE_CURRENT_BINARY_DIR}/refinement_catalog.c")
+get_target_property(ALARM_REAL_INCLUDES check_ui_refinement INCLUDE_DIRECTORIES)
+target_include_directories(check_alarm_render PRIVATE ${ALARM_REAL_INCLUDES})
+target_link_libraries(check_alarm_render PRIVATE lvgl m z tfpsacrypto)
+foreach(format IN ITEMS "240;240" "172;320" "320;172")
+    list(GET format 0 width)
+    list(GET format 1 height)
+    add_test(NAME alarm_render_${width}x${height} COMMAND check_alarm_render ${width} ${height} "${CMAKE_CURRENT_BINARY_DIR}/c3_image_stream_fixture.bin")
+endforeach()
+
+# Neutral, unprovisioned/no-UTC settings must save through the real main/store.
+get_target_property(UNCONFIGURED_SOURCES check_settings_values SOURCES)
+list(REMOVE_ITEM UNCONFIGURED_SOURCES "${ROOT}/tests/host_store/check_settings_values.c")
+add_executable(check_unconfigured_settings
+    "${ROOT}/tests/host_store/check_unconfigured_settings.c" ${UNCONFIGURED_SOURCES})
+get_target_property(UNCONFIGURED_INCLUDES check_settings_values INCLUDE_DIRECTORIES)
+target_include_directories(check_unconfigured_settings PRIVATE ${UNCONFIGURED_INCLUDES})
+target_compile_definitions(check_unconfigured_settings PRIVATE LV_LVGL_H_INCLUDE_SIMPLE)
+target_compile_options(check_unconfigured_settings PRIVATE -Wall -Wextra -Werror
+    -Wno-unused-variable -ffunction-sections -fdata-sections)
+target_compile_features(check_unconfigured_settings PRIVATE cxx_std_17)
+target_link_options(check_unconfigured_settings PRIVATE -Wl,--gc-sections)
+target_link_libraries(check_unconfigured_settings PRIVATE lvgl m z)
+foreach(format IN ITEMS "240;240" "172;320" "320;172")
+    list(GET format 0 width)
+    list(GET format 1 height)
+    foreach(mode IN ITEMS order save)
+        add_test(NAME unconfigured_${mode}_${width}x${height}
+            COMMAND check_unconfigured_settings ${width} ${height} ${mode})
+    endforeach()
+endforeach()

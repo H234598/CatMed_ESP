@@ -82,7 +82,10 @@ static void expect_text(const char *text)
     assert(!lv_obj_is_hidden(label));
 }
 
-int main(int argc, char **argv)
+#ifndef SETTINGS_VALUES_ENTRYPOINT
+#define SETTINGS_VALUES_ENTRYPOINT main
+#endif
+int SETTINGS_VALUES_ENTRYPOINT(int argc, char **argv)
 {
     assert(argc == 3);
     const int width = atoi(argv[1]), height = atoi(argv[2]);
