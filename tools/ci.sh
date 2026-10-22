@@ -72,6 +72,7 @@ elif [[ "$mode" == host ]]; then
     python3 tests/host_web_ui/check_contract.py
     python3 -m unittest discover -s tests/host_web_ui -p 'test_security_js_gzip.py'
     python3 -m unittest discover -s tests/host_web_ui -p 'test_security_js_handler.py'
+    python3 -m unittest discover -s tests/host_web_ui -p 'test_network_startup.py'
     bash tests/host_store/check_main_submit.sh
     bash tests/host_mesh/check_engine.sh
     bash tests/host_mesh/check_status.sh

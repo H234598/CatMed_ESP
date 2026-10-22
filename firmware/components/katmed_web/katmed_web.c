@@ -14,6 +14,7 @@
 #include "esp_https_server.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
+#include "esp_netif.h"
 #include "esp_random.h"
 #include "esp_timer.h"
 #include "katmed_config_bridge.h"
@@ -1299,6 +1300,11 @@ bool katmed_web_start(const KatmedWebServices *services)
     if (web.started || web.nvs_open) return web.started;
     if (!resources_allow(false)) {
         ESP_LOGW(WEB_TAG, "HTTPS resource admission rejected");
+        return false;
+    }
+    /* Fresh devices reach Web before any provisioned Mesh/Wi-Fi startup. */
+    if (esp_netif_init() != ESP_OK) {
+        ESP_LOGE(WEB_TAG, "TCP/IP initialization failed");
         return false;
     }
     web.certificate_fd = -1;
