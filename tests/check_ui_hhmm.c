@@ -157,7 +157,7 @@ int main(int argc,char **argv)
     ClockSample now=refinement_clock();
     ui_render(refinement_state(),refinement_local(),SETTINGS,&now);draw();
     lv_obj_t *screen=lv_screen_active();
-    click_label(screen,"Advanced");
+    click_label(screen,"Zeiten");
 
     unsigned writes=refinement_writes();
     AppState opening=*refinement_state();

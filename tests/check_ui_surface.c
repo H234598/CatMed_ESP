@@ -217,6 +217,12 @@ static void swipe(int x0, int x1, uint64_t t)
     ui_touch_sample(false, 0, 0, true, t + 130);
 }
 
+static void settings_parent(void)
+{
+    static uint64_t tick=UINT64_C(40000000);tick+=1000;
+    swipe(35,185,tick);
+}
+
 static lv_obj_t *find_label(lv_obj_t *node, const char *text)
 {
     if (lv_obj_check_type(node, &lv_label_class) &&
@@ -383,7 +389,7 @@ static void cycle_views(lv_obj_t *screen)
 {
     click_label(screen, "Uhrdesign");
     click_label(screen, "Abbrechen");
-    click_label(screen, "Advanced");
+    click_label(screen, "Zeiten");
     click_label(screen, "Medikamente: Stunden");
     click_label(screen, "Abbrechen");
     static uint64_t nav_time = UINT64_C(30000000);
@@ -403,8 +409,102 @@ static void enter_keys(lv_obj_t *screen, const char *text)
     }
 }
 
+/* Accepted-model projection must update an already open submenu without writes. */
+static AppState option_model;
+static LocalSettings option_local;
+static ClockSample option_clock;
+static bool read_option_model(void *context, AppState *state,
+                              LocalSettings *local, ClockSample *clock)
+{
+    (void)context;
+    *state = option_model; *local = option_local; *clock = option_clock;
+    return true;
+}
+
+static void assert_option(lv_obj_t *matrix, unsigned selected, unsigned count)
+{
+    assert(lv_buttonmatrix_get_selected_button(matrix) == selected);
+    for (unsigned i = 0; i < count; ++i)
+        assert(lv_buttonmatrix_has_button_ctrl(matrix, i,
+                   LV_BUTTONMATRIX_CTRL_CHECKED) == (i == selected));
+}
+
+static int check_option_sync(int width, int height)
+{
+    Host host = {.width = width, .height = height, .result = UI_SUBMIT_PENDING_SHARED};
+    lv_init();
+    assert(lv_display_create(width, height));
+    option_clock = (ClockSample){.monotonic_ms=1000, .domain=17,
+                                .quality=CLOCK_UNAVAILABLE};
+    SharedSettings settings = app_default_settings();
+    const uint8_t catalog[KATMED_CATALOG_BYTES] = {1};
+    assert(app_init(&option_model, &settings, &option_clock,
+                    (EventId){1,17,1}, 1, catalog) == APP_OK);
+    option_model.alarm_active = false;
+    option_local = (LocalSettings){.clock_style=DIGITAL_LARGE,
+                                   .orientation=ORIENTATION_0};
+    katmed_i18n_select(KATMED_LANG_EN);
+    UiServices services = {.context=&host, .submit=submit, .read_model=read_option_model};
+    ui_set_services(&services);
+    ui_render(&option_model, &option_local, SETTINGS, &option_clock);
+    lv_obj_t *screen = lv_screen_active();
+    click_label(screen, "Slideshow / playback order");
+    lv_obj_t *matrix = find_matrix_with_first_button(screen, "Off"); assert(matrix);
+    const unsigned before = option_model.settings.rotation;
+    const unsigned target = before == ROTATION_RANDOM ? ROTATION_NAME_ORDER : ROTATION_RANDOM;
+    click_label(screen, lv_buttonmatrix_get_button_text(matrix, target));
+    assert(host.last_request.kind == UI_REQUEST_SET_ROTATION_MODE);
+    assert_option(matrix, before, 3); /* Pending does not predict coordinator acceptance. */
+    ui_shared_result(false);
+    ui_render(&option_model, &option_local, SETTINGS, &option_clock);
+    assert_option(matrix, before, 3);
+    click_label(screen, lv_buttonmatrix_get_button_text(matrix, target));
+    option_model.settings.rotation = (RotationMode)target;
+    ui_shared_result(true);
+    ui_render(&option_model, &option_local, SETTINGS, &option_clock);
+    assert_option(matrix, target, 3); /* Same live matrix, no submenu rebuild. */
+    int calls = host.submit_calls;
+    option_model.settings.rotation = ROTATION_OFF;
+    ui_render(&option_model, &option_local, SETTINGS, &option_clock);
+    assert_option(matrix, ROTATION_OFF, 3); /* Externally accepted state. */
+    ui_render(&option_model, &option_local, SETTINGS, &option_clock);
+    assert_option(matrix, ROTATION_OFF, 3);
+    assert(host.submit_calls == calls);
+    settings_parent(); click_label(screen, "Rotation");
+    matrix = find_matrix_with_first_button(screen, "0°"); assert(matrix);
+    assert_option(matrix, ORIENTATION_0, 4);
+    host.result = UI_SUBMIT_REJECTED;
+    click_label(screen, "90°");
+    assert_option(matrix, ORIENTATION_0, 4);
+    host.result = UI_SUBMIT_PENDING_SHARED;
+    click_label(screen, "180°");
+    assert_option(matrix, ORIENTATION_0, 4);
+    ui_shared_result(false);
+    assert_option(matrix, ORIENTATION_0, 4);
+    host.result = UI_SUBMIT_COMMITTED;
+    option_local.orientation = ORIENTATION_90;
+    click_label(screen, "90°");
+    assert_option(matrix, ORIENTATION_90, 4);
+    ui_render(&option_model, &option_local, SETTINGS, &option_clock);
+    matrix = find_matrix_with_first_button(screen, "0°"); assert(matrix);
+    assert_option(matrix, ORIENTATION_90, 4);
+    option_local.orientation = ORIENTATION_270;
+    calls = host.submit_calls;
+    ui_render(&option_model, &option_local, SETTINGS, &option_clock);
+    matrix = find_matrix_with_first_button(screen, "0°"); assert(matrix);
+    assert_option(matrix, ORIENTATION_270, 4);
+    settings_parent(); click_label(screen, "Slideshow / playback order");
+    matrix = find_matrix_with_first_button(screen, "Off"); assert(matrix);
+    assert_option(matrix, ROTATION_OFF, 3);
+    assert(host.submit_calls == calls && host.store_calls == 0);
+    puts("option-sync: pending/rejected/accepted/external/orientation/navigation PASS");
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
+    if (argc == 4 && strcmp(argv[1], "option-sync") == 0)
+        return check_option_sync(atoi(argv[2]), atoi(argv[3]));
     assert(argc == 6);
     Host host = {.width = atoi(argv[1]), .height = atoi(argv[2]),
                  .result = UI_SUBMIT_COMMITTED, .reset_now_ms = 1000};
@@ -943,12 +1043,14 @@ int main(int argc, char **argv)
     assert(host.submit_calls == previous && host.network_calls == old_network &&
            host.store_calls == old_store);
     assert(ui_current_view() == SETTINGS);
+    click_label(screen, "Rotation");
     const char *angle_names[] = {"0°", "90°", "180°", "270°"};
     for (int i = 0; i < 4; ++i) {
         click_label(screen, angle_names[i]);
         assert(host.last_request.kind == UI_REQUEST_SET_ORIENTATION);
         assert(host.last_request.value.orientation == (Orientation)i);
     }
+    settings_parent();click_label(screen,"Diashow / Abspielreienfolge");
     const char *rotation_names[] = {"Aus", "Nach Namen", "Zufall"};
     for (int i = 0; i < 3; ++i) {
         click_label(screen, rotation_names[i]);
@@ -956,6 +1058,7 @@ int main(int argc, char **argv)
         assert(host.last_request.value.rotation == (RotationMode)i);
     }
 
+    settings_parent();
     int before_style = host.submit_calls;
     click_label(screen, "Uhrdesign");
     report_memory("style-dialog");
@@ -991,7 +1094,7 @@ int main(int argc, char **argv)
     clock.quality = CLOCK_SYNCHRONIZED;
     clock.utc_ms = 1774744200000LL; /* 2026-03-29 01:30 CET. */
     ui_render(&state, &local, SETTINGS, &clock);
-    click_label(screen, "Advanced");
+    click_label(screen, "Sprachen");
     assert(find_label(screen, "Ostfränkisch"));
     assert(find_label(screen, "tlhIngan Hol"));
     int before_language = host.submit_calls;
@@ -1003,6 +1106,7 @@ int main(int argc, char **argv)
     assert(host.submit_calls == before_language + 2 &&
            host.last_request.kind == UI_REQUEST_SET_LANGUAGE &&
            host.last_request.value.language == KATMED_LANG_TLH_LATN);
+    settings_parent();click_label(screen,"Zeiten");
     click_label(screen, "Nächste Fälligkeit HH:MM");
     report_memory("time-keypad");
     click_label(screen, "0");
@@ -1108,7 +1212,7 @@ int main(int argc, char **argv)
     assert(find_label(screen, "Einstellungen"));
     const char *hour_values[] = {"1.5", "1,5", "0", "999999999999999999999999",
                                  "1..2"};
-    click_label(screen, "Advanced");
+    click_label(screen, "Zeiten");
     for (unsigned i = 0; i < 5; ++i) {
         int before = host.submit_calls;
         click_label(screen, "Bilder: Stunden");
@@ -1125,14 +1229,15 @@ int main(int argc, char **argv)
         }
     }
     swipe(35, 185, 31000);
-    lv_obj_t *angle_matrix = find_matrix_with_first_button(screen, "0°");
-    lv_obj_t *rotation_matrix = find_matrix_with_first_button(screen, "Aus");
-    assert(angle_matrix && rotation_matrix);
-    for (uint32_t i = 0; i < 4; ++i)
-        assert(lv_buttonmatrix_has_button_ctrl(angle_matrix, i,
-               LV_BUTTONMATRIX_CTRL_CLICK_TRIG | LV_BUTTONMATRIX_CTRL_NO_REPEAT));
+    click_label(screen,"Diashow / Abspielreienfolge");
+    lv_obj_t *rotation_matrix = find_matrix_with_first_button(screen, "Aus");assert(rotation_matrix);
     for (uint32_t i = 0; i < 3; ++i)
         assert(lv_buttonmatrix_has_button_ctrl(rotation_matrix, i,
+               LV_BUTTONMATRIX_CTRL_CLICK_TRIG | LV_BUTTONMATRIX_CTRL_NO_REPEAT));
+    settings_parent();click_label(screen,"Rotation");
+    lv_obj_t *angle_matrix = find_matrix_with_first_button(screen, "0°");assert(angle_matrix);
+    for (uint32_t i = 0; i < 4; ++i)
+        assert(lv_buttonmatrix_has_button_ctrl(angle_matrix, i,
                LV_BUTTONMATRIX_CTRL_CLICK_TRIG | LV_BUTTONMATRIX_CTRL_NO_REPEAT));
 
     lv_indev_t *pointer = lv_indev_create();
@@ -1171,6 +1276,7 @@ int main(int argc, char **argv)
     draw();
     report_memory("final");
 
+    settings_parent();
     /* Settings right -> home, then vertical home gesture reuses status. */
     ui_render(&state, &local, SETTINGS, &clock);
     swipe(60, 140, 50000);

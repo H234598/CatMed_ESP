@@ -123,7 +123,7 @@ int SETTINGS_VALUES_ENTRYPOINT(int argc, char **argv)
     ui_set_services(&services);
     katmed_i18n_select(KATMED_LANG_DE); /* This fixture asserts German UI copy. */
     render();
-    click("Advanced");
+    click("Zeiten");
     const AppState before_medication_open = runtime.state;
     const unsigned medication_open_writes = writes;
     const unsigned medication_open_submits = fake_shared_calls;

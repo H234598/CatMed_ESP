@@ -25,6 +25,11 @@
 
 typedef enum { EDIT_NONE, EDIT_MEDICATION, EDIT_IMAGE, EDIT_NEXT_TIME } EditKind;
 #define ALARM_STRIPS 6u
+typedef enum {
+    SETTINGS_ROOT, SETTINGS_TIMES, SETTINGS_LANGUAGES,
+    SETTINGS_ROTATION, SETTINGS_PLAYBACK
+} SettingsMenu;
+
 typedef struct {
     UiServices services;
     UiView view;
@@ -59,7 +64,7 @@ typedef struct {
     lv_obj_t *screen, *background, *fallback;
     lv_obj_t *clock_view, *alarm_bar, *alarm_strips[ALARM_STRIPS], *alarm_text;
     lv_obj_t *settings, *status, *keypad, *feedback, *morse_layer, *reset_dialog;
-    lv_obj_t *pairing_label;
+    lv_obj_t *pairing_label, *settings_options;
     char pairing_code[7];
     lv_obj_t *entry_label, *preview_label;
     lv_obj_t *style_dialog, *style_title, *style_options[3];
@@ -71,7 +76,7 @@ typedef struct {
     ClockStyle pending_style;
     char entry[24];
     bool preview_valid;
-    bool advanced_open;
+    SettingsMenu settings_menu;
     bool reset_dialog_pressed;
     uint8_t reset_stage; /* 0 idle, 1 physical button tile, 2 warning. */
     char reset_token[33];
@@ -96,7 +101,7 @@ typedef struct {
     bool morse_alarm_confirmed;
     bool morse_color_valid;
     bool morse_shown_white;
-    int32_t scroll_y[10]; /* Tile positions plus the Advanced subpage. */
+    int32_t scroll_y[13]; /* Nine tiles and four independent settings submenus. */
     uint8_t status_scroll_slot;
     uint8_t applied_language;
 } UiContext;
@@ -200,8 +205,9 @@ static void update_interaction(uint64_t now);
 static void change_page(int horizontal, int vertical, uint64_t now);
 static void update_status(void);
 static void build_settings(void);
+static void sync_settings_options(void);
 static void status_button(lv_event_t *event);
-static void advanced_button(lv_event_t *event);
+static void settings_submenu_button(lv_event_t *event);
 static void language_select(lv_event_t *event);
 static void reset_open(lv_event_t *event);
 static void reset_cancel(lv_event_t *event);
@@ -225,7 +231,7 @@ static void retire_clock_for_menu(void)
 
 static void remember_scroll(lv_obj_t *panel, unsigned slot)
 {
-    if (panel && lv_obj_is_valid(panel) && slot < 10)
+    if (panel && lv_obj_is_valid(panel) && slot < sizeof(ui.scroll_y)/sizeof(ui.scroll_y[0]))
         ui.scroll_y[slot] = lv_obj_get_scroll_y(panel);
 }
 
@@ -245,9 +251,10 @@ static void restore_scroll(lv_obj_t *panel, unsigned slot)
 
 static void destroy_menu(void)
 {
-    remember_scroll(ui.settings, ui.advanced_open ? 9u : 5u);
+    remember_scroll(ui.settings, ui.settings_menu ? 8u + (unsigned)ui.settings_menu : 5u);
     if (ui.settings) lv_obj_delete(ui.settings);
     ui.settings = NULL;
+    ui.settings_options = NULL;
     ui.pairing_label = NULL;
 }
 
@@ -354,6 +361,7 @@ void ui_shared_result(bool accepted)
         if (ui.view != ALARM && !ui.state.alarm_active)
             show_feedback(T("Koordinator hat Änderung nicht übernommen"));
     }
+    sync_settings_options();
     if (ui.status) update_status();
 }
 
@@ -665,6 +673,26 @@ static void edit_button(lv_event_t *event)
     open_edit((EditKind)(intptr_t)lv_event_get_user_data(event));
 }
 
+/* Project accepted state into the existing submenu, without sending requests. */
+static void sync_settings_options(void)
+{
+    lv_obj_t *matrix = ui.settings_options;
+    if (!matrix) return;
+    const unsigned current = ui.settings_menu == SETTINGS_ROTATION ?
+        (unsigned)ui.local.orientation : (unsigned)ui.state.settings.rotation;
+    const unsigned count = ui.settings_menu == SETTINGS_ROTATION ?
+        (unsigned)ORIENTATION_270 + 1u : (unsigned)ROTATION_RANDOM + 1u;
+    if (current >= count) return;
+    bool matches = lv_buttonmatrix_get_selected_button(matrix) == current;
+    for (unsigned i = 0; i < count && matches; ++i)
+        matches = lv_buttonmatrix_has_button_ctrl(matrix, i,
+                      LV_BUTTONMATRIX_CTRL_CHECKED) == (i == current);
+    if (matches) return;
+    lv_buttonmatrix_clear_button_ctrl_all(matrix, LV_BUTTONMATRIX_CTRL_CHECKED);
+    lv_buttonmatrix_set_selected_button(matrix, current);
+    lv_buttonmatrix_set_button_ctrl(matrix, current, LV_BUTTONMATRIX_CTRL_CHECKED);
+}
+
 static void option_selected(lv_event_t *event)
 {
     lv_obj_t *matrix = lv_event_get_target(event);
@@ -681,6 +709,8 @@ static void option_selected(lv_event_t *event)
         request.value.rotation = (RotationMode)selected;
     }
     request_action(&request);
+    /* Show the accepted model, including rejection/pending, not a speculative choice. */
+    sync_settings_options();
 }
 
 static lv_obj_t *option_matrix(lv_obj_t *parent, const char *const map[],
@@ -699,6 +729,15 @@ static lv_obj_t *option_matrix(lv_obj_t *parent, const char *const map[],
     for (int i = 0; i < rows; ++i)
         lv_buttonmatrix_set_button_ctrl(matrix, i,
             LV_BUTTONMATRIX_CTRL_CLICK_TRIG | LV_BUTTONMATRIX_CTRL_NO_REPEAT);
+    const unsigned selected=orientation ? (unsigned)ui.local.orientation :
+                                          (unsigned)ui.state.settings.rotation;
+    lv_buttonmatrix_set_one_checked(matrix, true);
+    lv_buttonmatrix_set_button_ctrl_all(matrix, LV_BUTTONMATRIX_CTRL_CHECKABLE);
+    if (selected < (unsigned)rows) {
+        lv_buttonmatrix_set_selected_button(matrix, selected);
+        lv_buttonmatrix_set_button_ctrl(matrix, selected, LV_BUTTONMATRIX_CTRL_CHECKED);
+    }
+    ui.settings_options = matrix;
     lv_obj_add_event_cb(matrix, option_selected, LV_EVENT_VALUE_CHANGED,
                         (void *)(intptr_t)orientation);
     return matrix;
@@ -855,30 +894,43 @@ static void build_settings(void)
     lv_obj_set_flex_flow(ui.settings, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_style_pad_row(ui.settings, 5, 0);
     int row_w = ui.width - (ui.width == 240 ? 100 : 18) - 4;
-    if (ui.advanced_open) {
-        label(ui.settings, T("Advanced"), row_w);
-        button(ui.settings, T("Medikamente: Stunden"), row_w, 34, edit_button,
-               (void *)(intptr_t)EDIT_MEDICATION);
-        button(ui.settings, T("Bilder: Stunden"), row_w, 34, edit_button,
-               (void *)(intptr_t)EDIT_IMAGE);
-        button(ui.settings, T("Nächste Fälligkeit HH:MM"), row_w, 40, edit_button,
-               (void *)(intptr_t)EDIT_NEXT_TIME);
-        label(ui.settings, T("Sprache"), row_w);
-        static const struct { uint8_t id; const char *name; } languages[] = {
-            {KATMED_LANG_EN, "English"}, {KATMED_LANG_DE, "Deutsch"},
-            {KATMED_LANG_FR, "Français"}, {KATMED_LANG_NL, "Nederlands"},
-            {KATMED_LANG_UK, "Українська"}, {KATMED_LANG_AR, "العربية"},
-            {KATMED_LANG_ZH_HANS, "简体中文"}, {KATMED_LANG_ES, "Español"},
-            {KATMED_LANG_JA, "日本語"}, {KATMED_LANG_BAR, "Ostfränkisch"},
-            {KATMED_LANG_EO, "Esperanto"}, {KATMED_LANG_TLH_LATN, "tlhIngan Hol"},
-        };
-        for (size_t i = 0; i < sizeof(languages)/sizeof(languages[0]); ++i) {
-            lv_obj_t *choice=button(ui.settings,languages[i].name,row_w,34,
-                                    language_select,(void *)(intptr_t)languages[i].id);
-            if (languages[i].id==katmed_i18n_selected())
-                lv_obj_set_style_bg_color(choice,lv_color_hex(0x13708b),0);
+    if (ui.settings_menu != SETTINGS_ROOT) {
+        if (ui.settings_menu == SETTINGS_TIMES) {
+            label(ui.settings, T("Zeiten"), row_w);
+            button(ui.settings, T("Medikamente: Stunden"), row_w, 34, edit_button,
+                   (void *)(intptr_t)EDIT_MEDICATION);
+            button(ui.settings, T("Bilder: Stunden"), row_w, 34, edit_button,
+                   (void *)(intptr_t)EDIT_IMAGE);
+            button(ui.settings, T("Nächste Fälligkeit HH:MM"), row_w, 40, edit_button,
+                   (void *)(intptr_t)EDIT_NEXT_TIME);
+        } else if (ui.settings_menu == SETTINGS_LANGUAGES) {
+            label(ui.settings, T("Sprachen"), row_w);
+            static const struct { uint8_t id; const char *name; } languages[] = {
+                {KATMED_LANG_EN, "English"}, {KATMED_LANG_DE, "Deutsch"},
+                {KATMED_LANG_FR, "Français"}, {KATMED_LANG_NL, "Nederlands"},
+                {KATMED_LANG_UK, "Українська"}, {KATMED_LANG_AR, "العربية"},
+                {KATMED_LANG_ZH_HANS, "简体中文"}, {KATMED_LANG_ES, "Español"},
+                {KATMED_LANG_JA, "日本語"}, {KATMED_LANG_BAR, "Ostfränkisch"},
+                {KATMED_LANG_EO, "Esperanto"}, {KATMED_LANG_TLH_LATN, "tlhIngan Hol"},
+            };
+            for (size_t i = 0; i < sizeof(languages)/sizeof(languages[0]); ++i) {
+                lv_obj_t *choice=button(ui.settings,languages[i].name,row_w,34,
+                                        language_select,(void *)(intptr_t)languages[i].id);
+                if (languages[i].id==katmed_i18n_selected())
+                    lv_obj_set_style_bg_color(choice,lv_color_hex(0x13708b),0);
+            }
+        } else if (ui.settings_menu == SETTINGS_ROTATION) {
+            label(ui.settings, T("Rotation"), row_w);
+            static const char *angle_map[] = {"0°", "\n", "90°", "\n",
+                                              "180°", "\n", "270°", ""};
+            option_matrix(ui.settings, angle_map, row_w, 4, true);
+        } else if (ui.settings_menu == SETTINGS_PLAYBACK) {
+            label(ui.settings, T("Diashow / Abspielreienfolge"), row_w);
+            static const char *rotation_map[] = {"", "\n", "", "\n", "", ""};
+            rotation_map[0]=T("Aus");rotation_map[2]=T("Nach Namen");rotation_map[4]=T("Zufall");
+            option_matrix(ui.settings, rotation_map, row_w, 3, false);
         }
-        restore_scroll(ui.settings, 9);
+        restore_scroll(ui.settings, 8u + (unsigned)ui.settings_menu);
         if (ui.feedback && !lv_obj_is_hidden(ui.feedback))
             lv_obj_move_foreground(ui.feedback);
         return;
@@ -890,23 +942,20 @@ static void build_settings(void)
     else lv_obj_set_hidden(ui.pairing_label, true);
     button(ui.settings, T("Seltsam"), row_w, 34, morse_open, NULL);
     button(ui.settings, T("Morsecode"), row_w, 34, interaction_open, NULL);
-    label(ui.settings, T("Zeiten"), row_w);
-    button(ui.settings, T("Advanced"), row_w, 34, advanced_button, NULL);
+    label(ui.settings, T("Intervalle"), row_w);
+    button(ui.settings, T("Zeiten"), row_w, 34, settings_submenu_button,
+           (void *)(intptr_t)SETTINGS_TIMES);
+    button(ui.settings, T("Sprachen"), row_w, 34, settings_submenu_button,
+           (void *)(intptr_t)SETTINGS_LANGUAGES);
+    button(ui.settings, T("Rotation"), row_w, 34, settings_submenu_button,
+           (void *)(intptr_t)SETTINGS_ROTATION);
+    button(ui.settings, T("Diashow / Abspielreienfolge"), row_w, 48, settings_submenu_button,
+           (void *)(intptr_t)SETTINGS_PLAYBACK);
     button(ui.settings, T("Uhrdesign"), row_w, 34, style_open, NULL);
-    label(ui.settings, T("Ausrichtung"), row_w);
-    static const char *angle_map[] = {"0°", "\n", "90°", "\n",
-                                      "180°", "\n", "270°", ""};
-    option_matrix(ui.settings, angle_map, row_w, 4, true);
-    label(ui.settings, T("Diashow / Abspielreienfolge"), row_w);
-    static const char *rotation_map[] = {"Aus", "\n", "Nach Namen", "\n",
-                                         "Zufall", ""};
-    rotation_map[0]=T("Aus");
-    rotation_map[2]=T("Nach Namen");
-    rotation_map[4]=T("Zufall");
-    option_matrix(ui.settings, rotation_map, row_w, 3, false);
     lv_obj_t *import = button(ui.settings, T("Lade Bilder von URL/Github\nSpäter verfügbar"),
                               row_w, 48, NULL, NULL);
     lv_obj_add_state(import, LV_STATE_DISABLED);
+    label(ui.settings, T("Reset"), row_w);
     button(ui.settings, T("Werkseinstellungen zurücksetzen"), row_w, 42,
            reset_open, NULL);
     restore_scroll(ui.settings, 5);
@@ -914,12 +963,12 @@ static void build_settings(void)
         lv_obj_move_foreground(ui.feedback);
 }
 
-static void advanced_button(lv_event_t *event)
+static void settings_submenu_button(lv_event_t *event)
 {
-    (void)event;
-    remember_scroll(ui.settings, ui.advanced_open ? 9u : 5u);
+    const SettingsMenu next=(SettingsMenu)(intptr_t)lv_event_get_user_data(event);
+    if (next < SETTINGS_TIMES || next > SETTINGS_PLAYBACK) return;
     destroy_menu();
-    ui.advanced_open = !ui.advanced_open;
+    ui.settings_menu=next;
     build_settings();
 }
 
@@ -1288,7 +1337,7 @@ void ui_set_pairing_code(const char code[7])
 
 static void build_screen(int16_t width, int16_t height)
 {
-    remember_scroll(ui.settings, ui.advanced_open ? 9u : 5u);
+    remember_scroll(ui.settings, ui.settings_menu ? 8u + (unsigned)ui.settings_menu : 5u);
     remember_scroll(ui.status, ui.status_scroll_slot);
     ui.page = ui.interaction_title = ui.send_button = NULL;
     ui.rx_layer = ui.notice = NULL;
@@ -1310,6 +1359,7 @@ static void build_screen(int16_t width, int16_t height)
     ui.alarm_color_shown = false;
     ui.alarm_text = NULL;
     ui.settings = NULL;
+    ui.settings_options = NULL;
     ui.pairing_label = NULL;
     ui.status = NULL;
     ui.keypad = NULL;
@@ -1902,14 +1952,12 @@ void ui_touch_sample(bool touched, int16_t x, int16_t y,
             ui.reject_confirm_motion = false;
             return;
         }
-        if (ui.view == SETTINGS && ui.advanced_open && dx >= 40 &&
+        if (ui.view == SETTINGS && ui.settings_menu != SETTINGS_ROOT && dx >= 40 &&
             dx >= 2 * abs(dy)) {
-            /* A detail editor belongs to Advanced. Dismiss it before
-             * returning to the main menu or its keypad remains overlaid. */
-            if (ui.keypad) cancel_edit(NULL);
-            remember_scroll(ui.settings, 9);
+            /* A detail editor returns to its owning submenu first. */
+            if (ui.keypad) { cancel_edit(NULL); return; }
             destroy_menu();
-            ui.advanced_open = false;
+            ui.settings_menu = SETTINGS_ROOT;
             build_settings();
             return;
         }
@@ -2129,6 +2177,7 @@ void ui_render(const AppState *state, const LocalSettings *local,
     }
     if (ui.view == SETTINGS && !ui.keypad && !ui.style_dialog && !ui.status)
         build_settings();
+    sync_settings_options();
     if (ui.image_id != state->image_id || ui.image_orientation != local->orientation) {
         katmed_images_present(ui.background, ui.fallback, state->image_id,
                               local->orientation);

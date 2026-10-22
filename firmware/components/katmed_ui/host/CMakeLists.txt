@@ -293,3 +293,11 @@ foreach(format IN ITEMS "240;240" "172;320" "320;172")
             COMMAND check_unconfigured_settings ${width} ${height} ${mode})
     endforeach()
 endforeach()
+
+# Real open-submenu projection across asynchronous accepted model changes.
+foreach(format "240;240" "172;320" "320;172")
+    list(GET format 0 width)
+    list(GET format 1 height)
+    add_test(NAME ui_option_sync_${width}x${height}
+        COMMAND check_ui_surface option-sync ${width} ${height})
+endforeach()

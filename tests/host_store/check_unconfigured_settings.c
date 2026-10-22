@@ -2,6 +2,7 @@
 #define SETTINGS_VALUES_ENTRYPOINT existing_settings_values_regression
 #include "check_settings_values.c"
 #undef SETTINGS_VALUES_ENTRYPOINT
+#include "src/misc/lv_text_ap.h"
 
 static void dismiss_start(void)
 {
@@ -11,6 +12,24 @@ static void dismiss_start(void)
     assert(writes==before && fake_mesh_notifications==notifications);
     assert(!runtime.state.has_last_confirmation &&
            runtime.state.deadline.effective_monotonic_ms==0);
+}
+
+static void menu_right_swipe(void)
+{
+    static uint64_t tick=UINT64_C(10000000);tick+=1000;
+    ui_touch_sample(false,0,0,true,tick);
+    ui_touch_sample(true,60,90,true,tick+30);
+    ui_touch_sample(true,155,90,true,tick+130);
+    ui_touch_sample(false,0,0,true,tick+230);
+    lv_obj_update_layout(lv_screen_active());
+}
+static lv_obj_t *menu_matrix(lv_obj_t *node)
+{
+    if(lv_obj_check_type(node,&lv_buttonmatrix_class))return node;
+    for(uint32_t i=0;i<lv_obj_get_child_count(node);++i){
+        lv_obj_t *found=menu_matrix(lv_obj_get_child(node,i));if(found)return found;
+    }
+    return NULL;
 }
 
 int main(int argc,char **argv)
@@ -26,24 +45,74 @@ int main(int argc,char **argv)
     lv_init();lv_display_t *display=lv_display_create(width,height);assert(display);
     UiServices services={.context=&runtime,.submit=submit_ui,.read_model=read_ui_model};
     ui_set_services(&services);katmed_i18n_select(KATMED_LANG_EN);
-    render();click("Advanced");
+    render();
     if(!strcmp(argv[3],"order")) {
-        const char *texts[]={"Advanced","Medication: hours","Images: hours",
-                             "Next due date HH:MM","Language","English"};
-        lv_obj_update_layout(lv_screen_active());
+        const char *root_labels[]={"Intervalls","Times","Languages","Rotation",
+                                  "Slideshow / playback order","Reset","Factory reset"};
         int previous=INT32_MIN;
-        for(unsigned i=0;i<sizeof(texts)/sizeof(texts[0]);++i) {
-            lv_obj_t *label=find_text(lv_screen_active(),texts[i]);assert(label);
+        for(unsigned i=0;i<sizeof(root_labels)/sizeof(root_labels[0]);++i) {
+            lv_obj_t *label=find_text(lv_screen_active(),root_labels[i]);
+            if(!label) {fprintf(stderr,"missing new menu: %s\n",root_labels[i]);return 1;}
             lv_area_t area;lv_obj_get_coords(label,&area);
-            printf("category_order[%u]=%s y=%ld\n",i,texts[i],(long)area.y1);
-            if(area.y1<=previous) {
-                fprintf(stderr,"Advanced controls must precede the separate Language section\n");
-                return 1;
-            }
+            if(area.y1<=previous)return 1;
             previous=area.y1;
         }
+        UiRequest image={.kind=UI_REQUEST_SET_IMAGE_SECONDS,.value.seconds=28800};
+        assert(submit_ui(&runtime,&image)==UI_SUBMIT_COMMITTED);render();
+        const unsigned before=writes,mesh_before=fake_shared_calls;
+        const AppState state_before=runtime.state;
+        const StoreRecord record_before=runtime.store.record;
+        lv_obj_t *main_menu=lv_obj_get_parent(find_text(lv_screen_active(),"Intervalls"));
+        lv_obj_update_layout(main_menu);lv_obj_scroll_to_y(main_menu,70,LV_ANIM_OFF);
+        int main_scroll=lv_obj_get_scroll_y(main_menu);
+        click("Times");lv_obj_update_layout(lv_screen_active());
+        const char *times[]={"Times","Medication: hours","Images: hours","Next due date HH:MM"};
+        previous=INT32_MIN;
+        for(unsigned i=0;i<4;++i) {
+            lv_obj_t *label=find_text(lv_screen_active(),times[i]);assert(label);
+            lv_area_t area;lv_obj_get_coords(label,&area);assert(area.y1>previous);previous=area.y1;
+        }
+        assert(!find_text(lv_screen_active(),"English")&&!find_text(lv_screen_active(),"0°"));
+        click("Images: hours");expect_text("8");menu_right_swipe();
+        assert(find_text(lv_screen_active(),"Images: hours")&&!find_text(lv_screen_active(),"Save"));
+        menu_right_swipe();
+        main_menu=lv_obj_get_parent(find_text(lv_screen_active(),"Intervalls"));
+        assert(lv_obj_get_scroll_y(main_menu)==main_scroll);
+        click("Languages");
+        const char *languages[]={"English","Deutsch","Français","Nederlands","Українська",
+            "العربية","简体中文","Español","日本語","Ostfränkisch","Esperanto","tlhIngan Hol"};
+        for(unsigned i=0;i<12;++i) {
+            char shaped[128];const char *text=languages[i];
+            if(i==5){lv_text_ap_proc(text,shaped);text=shaped;}
+            assert(find_text(lv_screen_active(),text));
+        }
+        assert(!find_text(lv_screen_active(),"Images: hours"));
+        lv_obj_t *language_menu=lv_obj_get_parent(find_text(lv_screen_active(),"Languages"));
+        lv_obj_update_layout(language_menu);lv_obj_scroll_to_y(language_menu,110,LV_ANIM_OFF);
+        int language_scroll=lv_obj_get_scroll_y(language_menu);assert(language_scroll>0);
+        menu_right_swipe();click("Rotation");
+        lv_obj_t *matrix=menu_matrix(lv_screen_active());assert(matrix);
+        assert(lv_buttonmatrix_get_selected_button(matrix)==runtime.local.orientation);
+        assert(lv_buttonmatrix_has_button_ctrl(matrix,runtime.local.orientation,LV_BUTTONMATRIX_CTRL_CHECKED));
+        assert(!find_text(lv_screen_active(),"English"));menu_right_swipe();
+        click("Slideshow / playback order");matrix=menu_matrix(lv_screen_active());assert(matrix);
+        assert(lv_buttonmatrix_get_selected_button(matrix)==runtime.state.settings.rotation);
+        assert(lv_buttonmatrix_has_button_ctrl(matrix,runtime.state.settings.rotation,LV_BUTTONMATRIX_CTRL_CHECKED));
+        menu_right_swipe();click("Languages");
+        language_menu=lv_obj_get_parent(find_text(lv_screen_active(),"Languages"));
+        assert(lv_obj_get_scroll_y(language_menu)==language_scroll);menu_right_swipe();
+        main_menu=lv_obj_get_parent(find_text(lv_screen_active(),"Intervalls"));
+        assert(lv_obj_get_scroll_y(main_menu)==main_scroll);
+        lv_obj_t *reset=find_text(main_menu,"Factory reset");assert(reset);
+        assert(lv_obj_get_index(lv_obj_get_parent(reset))==(int)lv_obj_get_child_count(main_menu)-1);
+        assert(writes==before && fake_shared_calls==mesh_before &&
+               memcmp(&runtime.state,&state_before,sizeof(state_before))==0 &&
+               memcmp(&runtime.store.record,&record_before,sizeof(record_before))==0);
+        katmed_i18n_select(KATMED_LANG_DE);render();
+        assert(find_text(lv_screen_active(),"Sprachen"));
+        katmed_i18n_select(KATMED_LANG_EN);
     } else {
-        assert(!strcmp(argv[3],"save"));
+        assert(!strcmp(argv[3],"save"));click("Times");
         click("Images: hours");expect_text("6");
         const unsigned before=writes, before_mesh=fake_shared_calls;
         const Deadline deadline=runtime.state.deadline;

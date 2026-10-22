@@ -120,6 +120,7 @@ int UI_REFINEMENT_ENTRYPOINT(int argc,char **argv)
     if (!strcmp(argv[1],"tick")) refinement_tick_contract();
     if (!strcmp(argv[1],"indices")) refinement_index_contract();
     if (!strcmp(argv[1],"random")) {
+        click_label(screen,"Diashow / Abspielreienfolge");
         const uint32_t medication=refinement_state()->settings.medication_seconds;
         const int64_t deadline=refinement_state()->deadline.effective_utc.ms;
         lv_mem_monitor_t before,after;lv_mem_monitor(&before);
@@ -140,7 +141,7 @@ int UI_REFINEMENT_ENTRYPOINT(int argc,char **argv)
         assert(after.free_size>=before.free_size);
     }
     if (!strcmp(argv[1],"save")) {
-        click_label(screen,"Advanced");
+        click_label(screen,"Zeiten");
         click_label(screen,"Nächste Fälligkeit HH:MM");
         enter_keys(screen,"1111");click_label(screen,"Speichern");
         assert(refinement_state()->deadline.effective_utc.valid);
@@ -170,26 +171,29 @@ int UI_REFINEMENT_ENTRYPOINT(int argc,char **argv)
         row=find_label_prefix(screen,"Nächster Alarm:");assert(strstr(lv_label_get_text(row),"12:22"));
     }
     if (!strcmp(argv[1],"nav")) {
-        click_label(screen,"Advanced");
         lv_obj_t *menu=lv_obj_get_parent(find_label(screen,"Einstellungen"));
         lv_obj_update_layout(menu);lv_obj_scroll_to_y(menu,140,LV_ANIM_OFF);
         const int saved=lv_obj_get_scroll_y(menu);
         unsigned writes=refinement_writes();
+        click_label(screen,"Zeiten");
         click_label(screen,"Bilder: Stunden");
         click_label(screen,"3");
         right_swipe();
         assert(!find_matrix_with_first_button(screen,"1")&&
                "right swipe must dismiss the Advanced editor keypad");
+        assert(find_label(screen,"Bilder: Stunden"));
+        right_swipe();
         menu=lv_obj_get_parent(find_label(screen,"Einstellungen"));
-        assert(menu&&"detail right swipe must cancel and return to settings");
+        assert(menu&&"submenu right swipe must return to settings");
         lv_obj_update_layout(menu);
         assert(lv_obj_get_scroll_y(menu)==saved);
         assert(refinement_writes()==writes);
         assert(!find_label(menu,"Status")&&!find_label(menu,"Zurück"));
         const char *details[]={"Medikamente: Stunden","Nächste Fälligkeit HH:MM","Uhrdesign"};
         for(unsigned i=0;i<3;++i) {
-            if(i<2) click_label(screen,"Advanced");
+            if(i<2) click_label(screen,"Zeiten");
             click_label(screen,details[i]);right_swipe();
+            if(i<2) right_swipe();
             assert(!find_matrix_with_first_button(screen,"1")&&
                    "detail right swipe must dismiss its keypad");
             menu=lv_obj_get_parent(find_label(screen,"Einstellungen"));assert(menu);
