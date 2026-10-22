@@ -1,8 +1,9 @@
 /* Composite recovery drives the real IDF Mesh adapter and authenticated wire.
  * Sparse state is a declared synthetic codec fixture, not a natural run.
  * Its remote endpoint uses the same production ledger, not an allocator model. */
-if(argc==2&&(!strcmp(argv[1],"names_merge_recovery")||!strcmp(argv[1],"names_merge_bank_old")||!strcmp(argv[1],"names_merge_bank_new")||!strcmp(argv[1],"names_bounded_open"))){
-    const bool bounded_open=!strcmp(argv[1],"names_bounded_open");
+if(argc==2&&(!strcmp(argv[1],"names_merge_recovery")||!strcmp(argv[1],"names_merge_bank_old")||!strcmp(argv[1],"names_merge_bank_new")||!strcmp(argv[1],"names_bounded_open")||!strcmp(argv[1],"names_bounded_open_corrupt"))){
+    const bool corrupt_open=!strcmp(argv[1],"names_bounded_open_corrupt");
+    const bool bounded_open=corrupt_open||!strcmp(argv[1],"names_bounded_open");
     const bool bank_fault=!bounded_open&&strcmp(argv[1],"names_merge_recovery")!=0;
     const bool bank_new=!strcmp(argv[1],"names_merge_bank_new");
     const uint8_t reg[16]={37};
@@ -24,7 +25,10 @@ if(argc==2&&(!strcmp(argv[1],"names_merge_recovery")||!strcmp(argv[1],"names_mer
     std::vector<uint64_t> source(200);for(size_t i=0;i<source.size();++i)source[i]=1000+i;
     source[0]=11;source[1]=22;source[2]=33;source[3]=44;source.back()=99;
     NamesMemory root_bytes,remote_bytes;NamesStore local_seed{},remote{};
-    if(bounded_open){std::vector<uint64_t> large(5000);for(size_t i=0;i<large.size();++i)large[i]=i+11;seed(local_seed,root_bytes,11,large,77);}
+    if(bounded_open){
+        std::vector<uint64_t> large(5000);for(size_t i=0;i<large.size();++i)large[i]=i+11;seed(local_seed,root_bytes,11,large,77);
+        if(corrupt_open){assert(names_reserve(&local_seed,999999,nullptr,0)==NAMES_OK);root_bytes.files[0][64+8*5000]^=1;}
+    }
     else seed(local_seed,root_bytes,11,{11,22,0,44},77);
     seed(remote,remote_bytes,99,source,99);
     const std::vector<uint8_t> exact_source(names_published(&remote),names_published(&remote)+80);
@@ -42,10 +46,11 @@ if(argc==2&&(!strcmp(argv[1],"names_merge_recovery")||!strcmp(argv[1],"names_mer
     };
     if(bounded_open){
         unsigned calls=0;char value[32];bool assigned=false,uncertain=true;
-        do {poll();katmed_mesh_device_name(value,sizeof(value),&assigned,&uncertain);assert(++calls<20);}while(!assigned||uncertain);
-        assert(!strcmp(value,"KatmedESP-001"));
-        NamesStore durable{};assert(names_open(&durable,root_bytes.backend(),11,provision.group)==NAMES_OK&&names_cursor(&durable)==5001);
-        printf("actual Mesh backend bind and cold-open continuation for seeded 5000 slots: %u polls, max/poll reads=%llu; no fresh start\n",calls,(unsigned long long)max_reads);return 0;
+        do {poll();katmed_mesh_device_name(value,sizeof(value),&assigned,&uncertain);assert(++calls<20);}while(corrupt_open?calls<10:!assigned||uncertain);
+        assert(assigned&&!strcmp(value,"KatmedESP-001")&&!strcmp(host_hostname,value));
+        NamesStore durable{};assert(names_open(&durable,root_bytes.backend(),11,provision.group)==(corrupt_open?NAMES_CORRUPT:NAMES_OK)&&names_cursor(&durable)==5001);
+        assert(!corrupt_open||(uncertain&&durable.visible_index==1));
+        printf("actual Mesh backend bind and cold-open continuation for seeded 5000 slots: %u polls, max/poll reads=%llu; getter/hostname agree%s; no fresh start\n",calls,(unsigned long long)max_reads,corrupt_open?", valid old P/View retained despite corrupt T":"");return 0;
     }
     poll();uint64_t counter=1;uint8_t nonce[16];for(unsigned j=0;j<16;++j)nonce[j]=uint8_t(40+j);
     auto frame=[&](KatmedMeshKind kind){auto f=peer_frame(kind,counter++);memcpy(f.session_nonce,nonce,16);return f;};

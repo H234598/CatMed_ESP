@@ -22,7 +22,16 @@ void names_publish_status(){
     const uint32_t projection=(assigned?names.visible_index:0)|(uncertain?(1u<<16):0)|(names.opened?(1u<<17):0);
     names_publication.store(projection,std::memory_order_release);
 }
-struct NamesStatusPublication {~NamesStatusPublication(){names_publish_status();}};
+struct NamesStatusPublication {
+    ~NamesStatusPublication(){
+        const uint32_t before=names_publication.load(std::memory_order_relaxed);
+        names_publish_status();
+        // Bounded open may reveal a previously confirmed View on a later
+        // poll, including while a separate candidate remains erroneous.
+        // Publish the same name to netif then; avoid a setter on every poll.
+        if((before^names_publication.load(std::memory_order_relaxed))&0xffffu)apply_hostname();
+    }
+};
 union NamesJobs {NamesMerge merge;NamesRetarget verify;} names_jobs{};
 uint8_t names_job_kind=0;
 #define names_verify names_jobs.verify

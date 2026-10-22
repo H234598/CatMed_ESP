@@ -92,3 +92,5 @@ fi
 "$out" names_retarget_new
 
 "$out" names_bounded_open
+
+"$out" names_bounded_open_corrupt
