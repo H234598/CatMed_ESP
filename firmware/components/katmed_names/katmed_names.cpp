@@ -925,14 +925,17 @@ namespace {
 Hash *merge_source_hash(NamesMerge *m){return reinterpret_cast<Hash *>(m->hashes);}
 Hash *merge_target_hash(NamesMerge *m){return reinterpret_cast<Hash *>(m->hashes+32);}
 NamesResult merge_start_hashes(NamesStore *s,NamesMerge *m){
-    new(m->hashes)Hash();new(m->hashes+32)Hash();m->active=true;m->hashes_active=true;m->stage=0;
+    new(m->hashes)Hash();m->hash_count=1;
+    if(!m->writing){new(m->hashes+32)Hash();m->hash_count=2;}
+    m->active=true;m->stage=0;
     uint8_t h[64];header(s,m->source,h);
     if(!merge_source_hash(m)->add(h,64))return NAMES_IO;
+    if(m->writing)return NAMES_OK;
     header(s,m->target,h);return merge_target_hash(m)->add(h,64)?NAMES_OK:NAMES_IO;
 }
 }
 extern "C" void names_merge_cancel(NamesMerge *m){
-    if(m&&m->hashes_active){merge_source_hash(m)->~Hash();merge_target_hash(m)->~Hash();}
+    if(m&&m->hash_count){merge_source_hash(m)->~Hash();if(m->hash_count==2)merge_target_hash(m)->~Hash();}
     if(m)std::memset(m,0,sizeof(*m));
 }
 extern "C" NamesResult names_merge_begin(NamesStore *s,NamesMerge *m,uint64_t source_device,const uint8_t source[80]){
@@ -987,7 +990,7 @@ extern "C" NamesResult names_merge_advance(NamesStore *s,NamesMerge *m,const uin
             uint64_t id=0;NamesResult nr=slot(s,bank(s,false),at,&id);
             if(nr!=NAMES_OK)return fail(s,nr);
             put(bytes,id,8);
-            if(!merge_target_hash(m)->add(bytes,8))return NAMES_IO;
+            if(!m->writing&&!merge_target_hash(m)->add(bytes,8))return NAMES_IO;
             if(id)++m->assigned;
             if(m->writing){
                 if(durable){uint64_t prior=0;nr=slot(s,bank(s,true),at,&prior);
@@ -1004,11 +1007,14 @@ extern "C" NamesResult names_merge_advance(NamesStore *s,NamesMerge *m,const uin
     }
     if(m->stage==2){
         uint8_t sh[32],th[32];
-        if(!merge_source_hash(m)->finish(sh)||!merge_target_hash(m)->finish(th))return NAMES_IO;
+        if(!merge_source_hash(m)->finish(sh))return NAMES_IO;
+        if(!m->writing&&!merge_target_hash(m)->finish(th))return NAMES_IO;
         if(std::memcmp(sh,m->source+32,32)||m->source_assigned!=get(m->source+72,4))return NAMES_CORRUPT;
-        merge_source_hash(m)->~Hash();merge_target_hash(m)->~Hash();m->hashes_active=false;
+        merge_source_hash(m)->~Hash();if(m->hash_count==2)merge_target_hash(m)->~Hash();m->hash_count=0;
         if(m->writing){
-            if(std::memcmp(th,m->target+32,32)||m->assigned!=get(m->target+72,4))return NAMES_CORRUPT;
+            // The shared resumable progress digest below validates the actual
+            // complete result file. Do not hold a redundant third SHA context.
+            if(m->assigned!=get(m->target+72,4))return NAMES_CORRUPT;
             m->stage=3;
         }else{
             m->active=false;
@@ -1078,7 +1084,7 @@ extern "C" NamesResult names_merge_page(NamesStore *s,NamesMerge *m,uint32_t sta
             if(!merge_source_hash(m)->add(encoded,8))return NAMES_IO;
             const uint64_t merged=old_id?old_id:source_id;
             put(encoded,merged,8);
-            if(!merge_target_hash(m)->add(encoded,8))return NAMES_IO;
+            if(!m->writing&&!merge_target_hash(m)->add(encoded,8))return NAMES_IO;
             if(merged)++m->assigned;
             if(m->writing){
                 if(at<=durable){if(get(prior+8*j,8)!=merged)return NAMES_CONFLICT;}

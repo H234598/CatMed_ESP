@@ -116,7 +116,8 @@ typedef struct {
     uint8_t source[80],target[80];
     uint64_t hashes[64],source_device;
     uint32_t progress,assigned,source_assigned;
-    bool active,writing,hashes_active;
+    bool active,writing;
+    uint8_t hash_count; /* Pass one: source/result; pass two: source + shared file digest. */
     uint8_t stage; /* 0 pages, 1 suffix, 2 hashes, 3 final checkpoint, 4 checks, 5 page checkpoint */
 } NamesMerge;
 NamesResult names_merge_begin(NamesStore *,NamesMerge *,uint64_t,const uint8_t source[80]);

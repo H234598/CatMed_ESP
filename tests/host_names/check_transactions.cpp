@@ -188,9 +188,25 @@ int main(){
      assert(names_merge_page(&s,&job,0,source.data(),source.size(),nullptr,0)==NAMES_OK&&job.writing);
      names_poll_budget(&s,6);
      assert(names_merge_page(&s,&job,0,source.data(),source.size(),nullptr,0)==NAMES_BUSY&&job.stage==5);
+     assert(live_hash_contexts<=baseline+2);
      names_merge_cancel(&job);names_cancel_scan(&s);
      assert(live_hash_contexts==baseline);
-     puts("rekey cancellation during merge checkpoint frees both real library hash contexts and scan context");
+     puts("merge checkpoint/rekey uses at most two real library hash contexts and frees both");
+    }
+    {
+     NamesStore s{};NamesMemory b;seed(s,b,11,{11,22,0,44});
+     const std::vector<uint64_t> source={11,22,33,44,55};const auto offer=descriptor(source,99,3);
+     NamesMerge job{};assert(names_merge_begin(&s,&job,99,offer.data())==NAMES_OK);
+     assert(names_merge_page(&s,&job,0,source.data(),source.size(),nullptr,0)==NAMES_OK&&job.writing);
+     const auto view=b.keys[1],published=b.files[0];b.corrupt_write_once=true;
+     assert(names_merge_page(&s,&job,0,source.data(),source.size(),nullptr,0)==NAMES_CORRUPT);
+     assert(names_cursor(&s)==5&&s.visible_index==1&&b.keys[1]==view&&b.files[0]==published);
+     names_merge_cancel(&job);assert(names_reopen(&s)==NAMES_OK&&names_cursor(&s)==5);
+     assert(names_merge_resume(&s,&job)==NAMES_OK&&job.source_device==99&&!memcmp(job.source,offer.data(),80));
+     assert(names_merge_page(&s,&job,0,source.data(),source.size(),nullptr,0)==NAMES_OK);
+     assert(names_phase(&s)==NAMES_PREPARED);publish(s);names_merge_cancel(&job);
+     assert(names_cursor(&s)==6&&s.visible_index==1);
+     puts("two-context merge still rejects corrupted written candidate before PREPARED and resumes exact S after reopen");
     }
     {
      NamesStore s{};NamesMemory b;std::vector<uint64_t> ids(5000);
