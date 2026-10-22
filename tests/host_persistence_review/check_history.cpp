@@ -11,6 +11,7 @@ uint8_t catalog[KATMED_CATALOG_BYTES] = {1};
 struct Memory {
     uint8_t blob[KATMED_STORE_BLOB_MAX]{};
     size_t length = 0;
+    unsigned commits = 0;
 };
 StoreResult read_blob(void *ctx, uint8_t *out, size_t *length) {
     auto &m = *static_cast<Memory *>(ctx);
@@ -25,6 +26,7 @@ StoreResult write_blob(void *ctx, const uint8_t *data, size_t length) {
     if (length > sizeof(m.blob)) return STORE_FULL;
     std::memcpy(m.blob, data, length);
     m.length = length;
+    ++m.commits;
     return STORE_OK;
 }
 StoreBackend backend(Memory &m) { return {&m, read_blob, write_blob}; }
@@ -37,6 +39,54 @@ AppState boot(const StoreRecovery &r, uint64_t ms) {
     assert(app_init(&state, &r.shared, &now, r.boot_identity, 75, catalog) == APP_OK);
     return state;
 }
+// Use the same valid Core/Store flow as the qualified rebind fixture.
+// Closing a boot notice must not create a medication confirmation.
+void prepare_due_alarm(Store &store, AppState &state, ClockSample &now) {
+    assert(state.alarm_active && state.start_reason == START_BOOT);
+    AppEvent boot_confirm{};
+    boot_confirm.kind = EVENT_CONFIRM;
+    assert(store_next_event_id(&store, &boot_confirm.id) == STORE_OK);
+    boot_confirm.sender = device;
+    boot_confirm.round = state.round;
+    boot_confirm.parent_revision = state.revision;
+    boot_confirm.occurred_at = now;
+    const StoreRecord record_before = store.record;
+    const AppState state_before = state;
+    const auto &memory = *static_cast<Memory *>(store.backend.context);
+    const unsigned commits_before = memory.commits;
+    AppEffects effects{};
+    AppResult core = APP_INVALID;
+    assert(store_apply_event(&store, &state, &boot_confirm, &now,
+                             true, &effects, &core) == STORE_STALE);
+    assert(core == APP_STALE && !store.uncertain &&
+           std::memcmp(&record_before, &store.record, sizeof(record_before)) == 0 &&
+           std::memcmp(&state_before, &state, sizeof(state_before)) == 0 &&
+           memory.commits == commits_before &&
+           !effects.persistence_required && !effects.broadcast_required);
+    assert(app_dismiss_boot_alarm(&state, &now, &effects) == APP_OK);
+    assert(!state.alarm_active && !state.has_last_confirmation &&
+           !effects.persistence_required && !effects.broadcast_required &&
+           memory.commits == commits_before);
+
+    AppEvent interval{};
+    interval.kind = EVENT_SET_MEDICATION_INTERVAL;
+    assert(store_next_event_id(&store, &interval.id) == STORE_OK);
+    interval.sender = device;
+    interval.round = state.round;
+    interval.parent_revision = state.revision;
+    interval.occurred_at = now;
+    interval.coordinator_accepted = true;
+    interval.value.interval_seconds = 1;
+    assert(store_apply_event(&store, &state, &interval, &now,
+                             false, &effects, &core) == STORE_OK);
+    assert(core == APP_OK && effects.persistence_required &&
+           state.start_reason == START_SETTINGS && !state.alarm_active &&
+           !store.record.last_confirmation.valid && store.record.pending_count == 0);
+    now.monotonic_ms += 1000;
+    assert(app_tick(&state, &now, &effects) == APP_OK);
+    assert(state.alarm_active && state.start_reason == START_SETTINGS &&
+           !state.has_last_confirmation);
+}
 }
 
 int main() {
@@ -45,7 +95,8 @@ int main() {
     StoreRecovery recovery{};
     assert(store_open(&first, backend(m), device, catalog, 75, &recovery) == STORE_OK);
     AppState first_state = boot(recovery, 1000);
-    const ClockSample confirmed_at = clock(recovery.boot_identity.epoch, 2000);
+    ClockSample confirmed_at = clock(recovery.boot_identity.epoch, 1000);
+    prepare_due_alarm(first, first_state, confirmed_at);
     EventId confirm_id{};
     assert(store_next_event_id(&first, &confirm_id) == STORE_OK);
     AppEvent confirm{};
@@ -60,6 +111,8 @@ int main() {
     const ClockSample delivered_at = clock(recovery.boot_identity.epoch, 3500);
     assert(store_apply_event(&first, &first_state, &confirm, &delivered_at,
                              true, &effects, &core) == STORE_OK);
+    assert(core == APP_OK && first_state.has_last_confirmation &&
+           first_state.start_reason == START_CONFIRMATION);
     StorePendingConfirm queued{};
     assert(store_pending_at(&first, 0, &queued) == STORE_OK);
     assert(queued.occurred_at.monotonic_ms == confirmed_at.monotonic_ms);
@@ -94,5 +147,8 @@ int main() {
         std::fprintf(stderr, "historical confirmation lost after a valid persistent event\n");
         return 1;
     }
-    std::puts("historical confirmation retained");
+    assert(recovery.pending_count == 1 &&
+           recovery.last_confirmation.monotonic_ms == confirmed_at.monotonic_ms &&
+           recovery.last_confirmation.domain == confirmed_at.domain);
+    std::puts("boot confirmation rejected without mutation; valid due-alarm confirmation retained across reopens and persistent settings change");
 }
