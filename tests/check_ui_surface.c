@@ -338,6 +338,18 @@ static void pointer_click(lv_display_t *display, lv_obj_t *target)
     lv_indev_delete(pointer);
 }
 
+static lv_obj_t *find_control_caption(lv_obj_t *node, const char *text)
+{
+    if (lv_obj_check_type(node, &lv_label_class) &&
+        lv_obj_check_type(lv_obj_get_parent(node), &lv_button_class) &&
+        strcmp(lv_label_get_text(node), text) == 0) return node;
+    for (uint32_t i = 0; i < lv_obj_get_child_count(node); ++i) {
+        lv_obj_t *found = find_control_caption(lv_obj_get_child(node, i), text);
+        if (found) return found;
+    }
+    return NULL;
+}
+
 static void click_label(lv_obj_t *screen, const char *text)
 {
     if ((strcmp(text, "Status") == 0 && ui_current_view() == SETTINGS && !find_label(screen, text)) ||
@@ -355,7 +367,7 @@ static void click_label(lv_obj_t *screen, const char *text)
     }
     if (strlen(text) == 1 && strchr("0123456789.,:<", text[0]) &&
         click_matrix_button(screen, text)) return;
-    lv_obj_t *caption = find_label(screen, text);
+    lv_obj_t *caption = find_control_caption(screen, text);
     if (caption) {
         lv_obj_send_event(lv_obj_get_parent(caption), LV_EVENT_CLICKED, NULL);
         return;

@@ -945,13 +945,18 @@ static void build_settings(void)
     label(ui.settings, T("Intervalle"), row_w);
     button(ui.settings, T("Zeiten"), row_w, 34, settings_submenu_button,
            (void *)(intptr_t)SETTINGS_TIMES);
+    label(ui.settings, T("Sprachen"), row_w);
     button(ui.settings, T("Sprachen"), row_w, 34, settings_submenu_button,
            (void *)(intptr_t)SETTINGS_LANGUAGES);
+    label(ui.settings, T("Rotation"), row_w);
     button(ui.settings, T("Rotation"), row_w, 34, settings_submenu_button,
            (void *)(intptr_t)SETTINGS_ROTATION);
+    label(ui.settings, T("Diashow / Abspielreienfolge"), row_w);
     button(ui.settings, T("Diashow / Abspielreienfolge"), row_w, 48, settings_submenu_button,
            (void *)(intptr_t)SETTINGS_PLAYBACK);
+    label(ui.settings, T("Uhrdesign"), row_w);
     button(ui.settings, T("Uhrdesign"), row_w, 34, style_open, NULL);
+    label(ui.settings, T("Bilder"), row_w);
     lv_obj_t *import = button(ui.settings, T("Lade Bilder von URL/Github\nSpäter verfügbar"),
                               row_w, 48, NULL, NULL);
     lv_obj_add_state(import, LV_STATE_DISABLED);

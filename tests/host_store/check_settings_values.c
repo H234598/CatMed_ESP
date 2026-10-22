@@ -23,6 +23,18 @@ static lv_obj_t *find_text(lv_obj_t *node, const char *text)
     return NULL;
 }
 
+static lv_obj_t *find_control_caption(lv_obj_t *node, const char *text)
+{
+    if (lv_obj_check_type(node, &lv_label_class) &&
+        lv_obj_check_type(lv_obj_get_parent(node), &lv_button_class) &&
+        strcmp(lv_label_get_text(node), text) == 0) return node;
+    for (uint32_t i = 0; i < lv_obj_get_child_count(node); ++i) {
+        lv_obj_t *found = find_control_caption(lv_obj_get_child(node, i), text);
+        if (found) return found;
+    }
+    return NULL;
+}
+
 static void click(const char *text)
 {
     if ((strcmp(text,"Status")==0 && ui_current_view()==SETTINGS) ||
@@ -37,7 +49,7 @@ static void click(const char *text)
         ui_touch_sample(false,0,0,true,tick+230);
         return;
     }
-    lv_obj_t *caption = find_text(lv_screen_active(), text);
+    lv_obj_t *caption = find_control_caption(lv_screen_active(), text);
     assert(caption && "expected visible control");
     lv_obj_send_event(lv_obj_get_parent(caption), LV_EVENT_CLICKED, NULL);
 }

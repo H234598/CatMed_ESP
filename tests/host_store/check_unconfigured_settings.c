@@ -57,6 +57,32 @@ int main(int argc,char **argv)
             if(area.y1<=previous)return 1;
             previous=area.y1;
         }
+        /* Each existing root control owns exactly one immediately preceding
+         * direct-child category; captions inside buttons are not headings. */
+        lv_obj_t *categories=lv_obj_get_parent(find_text(lv_screen_active(),"Intervalls"));
+        const char *headings[]={"Intervalls","Languages","Rotation",
+            "Slideshow / playback order","Clock design","Images","Reset"};
+        const char *controls[]={"Times","Languages","Rotation",
+            "Slideshow / playback order","Clock design",
+            "Load images from URL/Github\nAvailable later","Factory reset"};
+        unsigned section=0;
+        for(uint32_t i=0;i<lv_obj_get_child_count(categories);++i) {
+            lv_obj_t *heading=lv_obj_get_child(categories,i);
+            if(!lv_obj_check_type(heading,&lv_label_class) ||
+               strcmp(lv_label_get_text(heading),"Intervalls"))continue;
+            for(;section<7;++section,i+=2) {
+                heading=lv_obj_get_child(categories,i);
+                assert(lv_obj_check_type(heading,&lv_label_class));
+                assert(!strcmp(lv_label_get_text(heading),headings[section]));
+                lv_obj_t *control=lv_obj_get_child(categories,i+1);
+                assert(lv_obj_check_type(control,&lv_button_class));
+                assert(find_text(control,controls[section]));
+                assert(lv_obj_has_state(control,LV_STATE_DISABLED)==(section==5));
+            }
+            assert(i==lv_obj_get_child_count(categories));
+            break;
+        }
+        assert(section==7);
         UiRequest image={.kind=UI_REQUEST_SET_IMAGE_SECONDS,.value.seconds=28800};
         assert(submit_ui(&runtime,&image)==UI_SUBMIT_COMMITTED);render();
         const unsigned before=writes,mesh_before=fake_shared_calls;
