@@ -50,6 +50,9 @@ if(argc==2&&(!strcmp(argv[1],"names_merge_recovery")||!strcmp(argv[1],"names_mer
         assert(assigned&&!strcmp(value,"KatmedESP-001")&&!strcmp(host_hostname,value));
         NamesStore durable{};assert(names_open(&durable,root_bytes.backend(),11,provision.group)==(corrupt_open?NAMES_CORRUPT:NAMES_OK)&&names_cursor(&durable)==5001);
         assert(!corrupt_open||(uncertain&&durable.visible_index==1));
+        const unsigned installed=host_hostname_set_calls;
+        for(unsigned repeat=0;repeat<3;++repeat)poll();
+        assert(host_hostname_set_calls==installed);
         printf("actual Mesh backend bind and cold-open continuation for seeded 5000 slots: %u polls, max/poll reads=%llu; getter/hostname agree%s; no fresh start\n",calls,(unsigned long long)max_reads,corrupt_open?", valid old P/View retained despite corrupt T":"");return 0;
     }
     poll();uint64_t counter=1;uint8_t nonce[16];for(unsigned j=0;j<16;++j)nonce[j]=uint8_t(40+j);
@@ -90,7 +93,15 @@ if(argc==2&&(!strcmp(argv[1],"names_merge_recovery")||!strcmp(argv[1],"names_mer
             }else if(m.opcode==NAMES_COMMIT){
                 if(memcmp(names_published(&remote),m.target,80))assert(names_publish(&remote)==NAMES_OK);
                 assert(names_confirm(&remote,names_published(&remote))==NAMES_OK);assert(names_finish(&remote)==NAMES_OK);
-                if(!dropped_commit_ack){dropped_commit_ack=true;continue;}
+                if(!dropped_commit_ack){
+                    dropped_commit_ack=true;
+                    const unsigned setters=host_hostname_set_calls;
+                    const auto reads=root_bytes.file_reads;
+                    for(unsigned wait=0;wait<5;++wait)poll();
+                    assert(host_hostname_set_calls==setters&&root_bytes.file_reads==reads);
+                    assert(!strcmp(host_hostname,"KatmedESP-001"));
+                    continue;
+                }
                 m.opcode=NAMES_COMMIT_ACK;m.progress=uint32_t(le(m.target+64,4));memcpy(m.progress_hash,m.target+32,32);send(m);send(m);
             }
         }

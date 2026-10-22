@@ -17,18 +17,25 @@ using esp_event_handler_t=void (*)(void *,esp_event_base_t,int32_t,void *);
 esp_err_t esp_event_loop_create_default();
 esp_err_t esp_event_handler_register(esp_event_base_t,int32_t,esp_event_handler_t,void *);
 esp_err_t esp_netif_init();
-struct esp_netif_t {};
+struct esp_netif_t { char hostname[32]{}; };
 struct esp_netif_ip_info_t { struct { uint32_t addr; } ip; };
 enum esp_netif_dhcp_status_t { ESP_NETIF_DHCP_INIT, ESP_NETIF_DHCP_STARTED, ESP_NETIF_DHCP_STOPPED };
 inline esp_netif_t host_station;
+inline esp_netif_t host_replacement,host_ap;
+inline esp_netif_t *host_station_handle=&host_station;
 inline bool host_station_present=false, host_station_up=false;
+inline bool host_ap_present=false;
 inline char host_hostname[32]{};
+inline unsigned host_hostname_set_calls=0,host_hostname_set_successes=0;
+inline unsigned host_hostname_failures_remaining=0;
 inline uint32_t host_station_ip=0;
 inline esp_err_t host_station_ip_result=ESP_OK, host_station_dhcp_result=ESP_OK;
 inline esp_netif_dhcp_status_t host_station_dhcp=ESP_NETIF_DHCP_INIT;
 inline esp_netif_t *esp_netif_get_handle_from_ifkey(const char *key){
-    return host_station_present && key && __builtin_strcmp(key,"WIFI_STA_DEF")==0
-        ? &host_station : nullptr;
+    if(!key)return nullptr;
+    if(host_station_present&&__builtin_strcmp(key,"WIFI_STA_DEF")==0)return host_station_handle;
+    if(host_ap_present&&__builtin_strcmp(key,"WIFI_AP_DEF")==0)return &host_ap;
+    return nullptr;
 }
 inline esp_err_t esp_netif_get_ip_info(esp_netif_t *,esp_netif_ip_info_t *out){
     out->ip.addr=host_station_ip;return host_station_ip_result;
@@ -37,8 +44,21 @@ inline esp_err_t esp_netif_dhcpc_get_status(esp_netif_t *,esp_netif_dhcp_status_
     *out=host_station_dhcp;return host_station_dhcp_result;
 }
 inline bool esp_netif_is_netif_up(esp_netif_t *){return host_station_up;}
-inline esp_err_t esp_netif_set_hostname(esp_netif_t *,const char *name){
-    if(name) __builtin_strncpy(host_hostname,name,sizeof(host_hostname)-1);
+inline esp_err_t esp_netif_get_hostname(esp_netif_t *netif,const char **name){
+    if(!netif||!name||!netif->hostname[0])return ESP_FAIL;
+    *name=netif->hostname;return ESP_OK;
+}
+inline esp_err_t esp_netif_set_hostname(esp_netif_t *netif,const char *name){
+    ++host_hostname_set_calls;
+    if(host_hostname_failures_remaining){--host_hostname_failures_remaining;return ESP_FAIL;}
+    if(!netif||!name)return ESP_FAIL;
+    __builtin_strncpy(netif->hostname,name,sizeof(netif->hostname)-1);
+    netif->hostname[sizeof(netif->hostname)-1]=0;
+    if(netif==host_station_handle){
+        __builtin_strncpy(host_hostname,name,sizeof(host_hostname)-1);
+        host_hostname[sizeof(host_hostname)-1]=0;
+    }
+    ++host_hostname_set_successes;
     return ESP_OK;
 }
 void esp_bridge_create_all_netif();

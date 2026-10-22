@@ -901,7 +901,13 @@ void apply_hostname(){
     char name[32];names_current(name,nullptr,nullptr);
     for(const char *key:{"WIFI_STA_DEF","WIFI_AP_DEF"}){
         esp_netif_t *netif=esp_netif_get_handle_from_ifkey(key);
-        if(netif)(void)esp_netif_set_hostname(netif,name);
+        if(!netif)continue;
+        const char *current=nullptr;
+        if(esp_netif_get_hostname(netif,&current)==ESP_OK&&current&&
+           std::strcmp(current,name)==0)continue;
+        // A failed setter is deliberately not remembered as an application.
+        // The next poll also notices a newly created or replaced netif.
+        (void)esp_netif_set_hostname(netif,name);
     }
 }
 void ensure_root_name(){

@@ -29,7 +29,10 @@ if(argc==2&&(!std::strcmp(argv[1],"names_leaf")||!std::strcmp(argv[1],"names_suc
 
     katmed_mesh_device_name(value,sizeof(value),&a,&u);assert(!a&&!strcmp(value,"KatmedESP"));
     auto prepared=latest_kind(MESH_NAME_SYNC);NamesMessage ack{};assert(names_wire_decode(prepared.payload,prepared.payload_length,&ack)&&ack.opcode==NAMES_PREPARED_ACK);
-    assert(names_publish(&remote)==NAMES_OK);m.opcode=NAMES_COMMIT;m.start=0;deliver(m);
+    assert(names_publish(&remote)==NAMES_OK);m.opcode=NAMES_COMMIT;m.start=0;
+    const unsigned setters_before_commit=host_hostname_set_successes;
+    deliver(m);
+    assert(host_hostname_set_successes==setters_before_commit+1);
     katmed_mesh_device_name(value,sizeof(value),&a,&u);assert(a&&!u&&!strcmp(value,"KatmedESP-002"));assert(!strcmp(host_hostname,value));
     if(!strcmp(argv[1],"names_mixed")){unsigned before=leaf_bytes.commits;legacy();katmed_mesh_device_name(value,sizeof(value),&a,&u);assert(a&&u&&!strcmp(value,"KatmedESP-002")&&!strcmp(host_hostname,value)&&leaf_bytes.commits==before);puts("mixed version: confirmed new-procedure name survives old map, no replacement or false extended replica OK");return 0;}
     if(!strcmp(argv[1],"names_successor")){
@@ -47,11 +50,12 @@ if(argc==2&&(!std::strcmp(argv[1],"names_leaf")||!std::strcmp(argv[1],"names_suc
         assert(names_lookup(&root_after,99,&index,&reserved)==NAMES_OK&&index==1);assert(names_lookup(&root_after,11,&index,&reserved)==NAMES_OK&&index==2);assert(names_lookup(&root_after,88,&index,&reserved)==NAMES_OK&&index==3);assert(names_cursor(&root_after)==4);
         katmed_mesh_device_name(value,sizeof(value),&a,&u);assert(a&&!u&&!strcmp(value,"KatmedESP-002"));puts("ordinary valid production root succession: old root001/new root002 preserved, next peer003 confirmed OK");return 0;
     }
-    const unsigned commits=leaf_bytes.commits;deliver(m);assert(leaf_bytes.commits==commits); // duplicate COMMIT in IDLE
+    const unsigned commits=leaf_bytes.commits,applied=host_hostname_set_calls;
+    deliver(m);assert(leaf_bytes.commits==commits&&host_hostname_set_calls==applied); // duplicate COMMIT in IDLE
     // Real reopen and fresh authenticated session, then same published P.
     assert(katmed_mesh_names_backend(leaf_bytes.backend(),11,provision.group)==NAMES_OK);
     level=ROOT;katmed_mesh_poll(&now);level=ROOT+1;katmed_mesh_poll(&now);handshake();deliver(m);
     auto committed=latest_kind(MESH_NAME_SYNC);assert(names_wire_decode(committed.payload,committed.payload_length,&ack)&&ack.opcode==NAMES_COMMIT_ACK);
-    katmed_mesh_device_name(value,sizeof(value),&a,&u);assert(a&&!u&&!strcmp(value,"KatmedESP-002"));(void)partial;
+    katmed_mesh_device_name(value,sizeof(value),&a,&u);assert(a&&!u&&!strcmp(value,"KatmedESP-002")&&host_hostname_set_calls==applied);(void)partial;
     puts(prepare_unknown?"actual leaf PREPARED CommitUnknown: no ACK before reopen/rekey, exact RX-full or PREPARED state resumes and commits OK":"actual leaf: durable partial target, incomplete root, prepared/view barrier and same-P COMMIT after IDLE/reopen/fresh session OK");return 0;
 }

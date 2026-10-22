@@ -24,12 +24,11 @@ void names_publish_status(){
 }
 struct NamesStatusPublication {
     ~NamesStatusPublication(){
-        const uint32_t before=names_publication.load(std::memory_order_relaxed);
         names_publish_status();
-        // Bounded open may reveal a previously confirmed View on a later
-        // poll, including while a separate candidate remains erroneous.
-        // Publish the same name to netif then; avoid a setter on every poll.
-        if((before^names_publication.load(std::memory_order_relaxed))&0xffffu)apply_hostname();
+        // The getter comparison in apply_hostname protects every caller. Poll
+        // again so a failed first setter or a replaced netif is retried even
+        // when the confirmed View and its index have not changed.
+        if(names_enabled())apply_hostname();
     }
 };
 union NamesJobs {NamesMerge merge;NamesRetarget verify;} names_jobs{};

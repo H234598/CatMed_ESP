@@ -68,6 +68,8 @@ fi
 
 "$out" names_lifetime
 
+"$out" names_hostname_retry_netif
+
 "$out" names_leaf
 
 "$out" names_barrier

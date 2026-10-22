@@ -203,6 +203,33 @@ int main(int argc,char **argv){
     }
     KatmedMeshServices services{&store,&state,nullptr,shared_result,utc_received};
     assert(katmed_mesh_start(&provision,&services)==MESH_ACCEPTED);
+    if(argc==2&&!std::strcmp(argv[1],"names_hostname_retry_netif")){
+        NamesMemory bytes;
+        assert(katmed_mesh_names_backend(bytes.backend(),11,provision.group)==NAMES_OK);
+        host_station_present=host_ap_present=true;level=ROOT;
+        host_hostname_failures_remaining=100;
+        katmed_mesh_poll(&now);advance_now(now.monotonic_ms+1);
+        const unsigned failed=host_hostname_set_calls;
+        assert(failed>0&&!host_hostname[0]&&!host_ap.hostname[0]);
+        host_hostname_failures_remaining=0;
+        for(unsigned i=0;i<8;++i){katmed_mesh_poll(&now);advance_now(now.monotonic_ms+1);}
+        char value[32];bool assigned=false,uncertain=true;
+        katmed_mesh_device_name(value,sizeof(value),&assigned,&uncertain);
+        assert(assigned&&!uncertain&&!std::strcmp(value,"KatmedESP-001"));
+        assert(!std::strcmp(host_hostname,value)&&!std::strcmp(host_ap.hostname,value));
+        assert(host_hostname_set_successes==2&&host_hostname_set_calls==failed+2);
+        const unsigned stable=host_hostname_set_calls;
+        for(unsigned i=0;i<5;++i){katmed_mesh_poll(&now);advance_now(now.monotonic_ms+1);}
+        assert(host_hostname_set_calls==stable);
+        host_station_handle=&host_replacement;
+        katmed_mesh_poll(&now);
+        assert(!std::strcmp(host_replacement.hostname,value)&&
+               host_hostname_set_calls==stable+1);
+        const unsigned changed=host_hostname_set_calls;
+        katmed_mesh_poll(&now);assert(host_hostname_set_calls==changed);
+        std::puts("SDK setter retries after failure, applies once to replacement netif and skips unchanged STA/AP names OK");
+        return 0;
+    }
     #include "check_names_barrier.inc"
     #include "check_names_leaf.inc"
     #include "check_names_engine.inc"
