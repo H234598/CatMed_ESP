@@ -5,6 +5,11 @@
 #include <limits>
 #include <zlib.h>
 extern "C" unsigned char *SHA256(const unsigned char *,size_t,unsigned char *);
+static unsigned live_hash_contexts=0;
+extern "C" void *__real_EVP_MD_CTX_new();
+extern "C" void __real_EVP_MD_CTX_free(void *);
+extern "C" void *__wrap_EVP_MD_CTX_new(){void *p=__real_EVP_MD_CTX_new();if(p)++live_hash_contexts;return p;}
+extern "C" void __wrap_EVP_MD_CTX_free(void *p){if(p){assert(live_hash_contexts);--live_hash_contexts;}__real_EVP_MD_CTX_free(p);}
 static const uint8_t group[16]={1},registry[16]={2};
 static void put(uint8_t *p,uint64_t v,unsigned n){for(unsigned i=0;i<n;++i)p[i]=uint8_t(v>>(8*i));}
 static std::vector<uint8_t> descriptor(const std::vector<uint64_t> &ids,uint64_t writer,uint64_t serial){
@@ -141,9 +146,212 @@ int main(){
      names_retarget_cancel(&verify);
      puts("retarget maximum serial rejected before intent or file mutation");
     }
+    {
+     NamesStore s{};NamesMemory b;seed(s,b,11,{11});
+     auto old=descriptor({11,22,33,44},99,1);put(old.data()+8,2,8);
+     assert(names_receive_begin(&s,registry,old.data(),true,99,2,nullptr,0,0,0)==NAMES_OK);
+     auto newer=descriptor({11,0,33,44,55},77,5);NamesRetarget v{};
+     assert(names_retarget_begin(&s,&v,newer.data())==NAMES_OK);
+     const uint64_t first[]={11,0};assert(names_retarget_page(&s,&v,0,first,2)==NAMES_OK);
+     uint64_t received=22;assert(names_receive_page(&s,1,&received,1)==NAMES_OK);
+     const auto ctl=b.keys[0],a=b.files[0],z=b.files[1];const unsigned commits=b.commits;
+     const uint64_t rest[]={33,44,55};
+     assert(names_retarget_page(&s,&v,2,rest,3)==NAMES_STALE);
+     assert(b.keys[0]==ctl&&b.files[0]==a&&b.files[1]==z&&b.commits==commits);
+     names_retarget_cancel(&v);
+     puts("retarget first pass invalidated by newly durable old-T prefix; no known pair silently lost");
+    }
+    {
+     NamesStore s{};NamesMemory b;seed(s,b,11,{11});
+     auto t=descriptor({11,22,33},77,2);
+     assert(names_receive_begin(&s,registry,t.data(),false,77,2,nullptr,0,0,0)==NAMES_OK);
+     uint64_t first=11;assert(names_receive_page(&s,0,&first,1)==NAMES_OK);
+     uint16_t known=0,held=0;assert(names_lookup(&s,22,&known,&held)==NAMES_OK&&!known&&!held);
+     uint64_t next=22;assert(names_receive_page(&s,1,&next,1)==NAMES_OK);
+     assert(names_lookup(&s,22,&known,&held)==NAMES_OK&&!known&&held==2);
+     puts("lookup miss cache bound to durable target progress");
+    }
+    {
+     NamesStore s{};NamesMemory b;seed(s,b,11,{11});
+     auto t=descriptor({11,22},77,2);put(t.data()+72,1,4);
+     assert(names_receive_begin(&s,registry,t.data(),false,77,2,nullptr,0,0,0)==NAMES_OK);
+     uint64_t ids[]={11,22};assert(names_receive_page(&s,0,ids,2)==NAMES_CORRUPT);
+     assert(names_cursor(&s)==2&&s.visible_index==1);
+     puts("valid hash with incorrect assigned count rejected before PREPARED");
+    }
+    {
+     const unsigned baseline=live_hash_contexts;
+     NamesStore s{};NamesMemory b;seed(s,b,11,{11});
+     std::vector<uint64_t> source(89);for(size_t i=0;i<source.size();++i)source[i]=i+11;
+     auto d=descriptor(source,99,3);NamesMerge job{};
+     assert(names_merge_begin(&s,&job,99,d.data())==NAMES_OK);
+     assert(names_merge_page(&s,&job,0,source.data(),source.size(),nullptr,0)==NAMES_OK&&job.writing);
+     names_poll_budget(&s,6);
+     assert(names_merge_page(&s,&job,0,source.data(),source.size(),nullptr,0)==NAMES_BUSY&&job.stage==5);
+     names_merge_cancel(&job);names_cancel_scan(&s);
+     assert(live_hash_contexts==baseline);
+     puts("rekey cancellation during merge checkpoint frees both real library hash contexts and scan context");
+    }
+    {
+     NamesStore s{};NamesMemory b;std::vector<uint64_t> ids(5000);
+     for(size_t i=0;i<ids.size();++i)ids[i]=i+11;
+     seed(s,b,11,ids);
+     uint16_t confirmed=99,reserved=99;
+     NamesResult r=NAMES_BUSY;unsigned polls=0;
+     do {
+         names_poll_budget(&s,32);
+         const uint64_t before=b.file_reads;
+         r=names_lookup(&s,999999,&confirmed,&reserved);
+         assert(b.file_reads-before<=32);
+         assert(++polls<400);
+     } while(r==NAMES_BUSY);
+     assert(r==NAMES_OK&&!confirmed&&!reserved&&polls>100);
+     puts("5000-slot absent production lookup resumes with at most 32 actual file reads per call");
+     r=NAMES_BUSY;polls=0;
+     do {
+         names_poll_budget(&s,32);
+         const uint64_t before=b.file_reads;
+         r=names_phase(&s)==NAMES_IDLE?names_reserve(&s,999999,nullptr,0):names_resume(&s);
+         assert(b.file_reads-before<=32);
+         assert(++polls<2000);
+     } while(r==NAMES_BUSY);
+     assert(r==NAMES_OK&&names_phase(&s)==NAMES_PREPARED);
+     std::printf("5000-slot production reservation/planned digest/preservation completed in %u bounded calls\n",polls);
+     r=NAMES_BUSY;polls=0;
+     do {
+         names_poll_budget(&s,32);
+         const uint64_t before=b.file_reads;
+         r=names_publish(&s);
+         assert(b.file_reads-before<=32);
+         assert(++polls<50);
+     } while(r==NAMES_BUSY);
+     assert(r==NAMES_OK&&names_phase(&s)==NAMES_FINALIZING);
+     do {
+         names_poll_budget(&s,32);
+         const uint64_t before=b.file_reads;
+         r=names_confirm(&s,names_published(&s));
+         assert(b.file_reads-before<=32);
+     } while(r==NAMES_BUSY);
+     assert(r==NAMES_OK&&names_finish(&s)==NAMES_OK&&names_cursor(&s)==5002);
+     puts("5001-slot publish/view/finish retained with bounded file reads");
+     names_poll_budget(&s,32);
+     uint64_t before=b.file_reads;
+     r=names_reopen(&s);
+     assert(b.file_reads-before<=32);
+     polls=1;
+     while(r==NAMES_BUSY){
+         char shown[32];bool uncertain=false;
+         names_visible(&s,shown,nullptr,&uncertain);
+         assert(uncertain);
+         names_poll_budget(&s,32);
+         before=b.file_reads;
+         r=names_reopen(&s);
+         assert(b.file_reads-before<=32);
+         assert(++polls<20);
+     }
+     assert(r==NAMES_OK&&s.visible_index==1&&names_cursor(&s)==5002);
+     std::printf("5001-slot durable reopen completed in %u bounded calls\n",polls);
+    }
+    {
+     NamesStore s{};NamesMemory b;std::vector<uint64_t> ids(5000);
+     for(size_t i=0;i<ids.size();++i)ids[i]=i+11;
+     const auto target=descriptor(ids,77,1);
+     assert(names_open(&s,b.backend(),11,group)==NAMES_OK);
+     names_poll_budget(&s,32);
+     assert(names_receive_begin(&s,registry,target.data(),false,77,1,nullptr,0,0,0)==NAMES_OK);
+     unsigned calls=0;
+     for(size_t at=0;at<ids.size();){
+         const size_t n=(ids.size()-at)>89?89:ids.size()-at;
+         names_poll_budget(&s,32);
+         const uint64_t before=b.file_reads;
+         const NamesResult r=names_receive_page(&s,uint32_t(at),ids.data()+at,n);
+         assert(b.file_reads-before<=32);
+         assert(++calls<4000);
+         if(r==NAMES_OK)at+=n;
+         else assert(r==NAMES_BUSY);
+     }
+     while(names_phase(&s)!=NAMES_PREPARED){
+         names_poll_budget(&s,32);
+         const uint64_t before=b.file_reads;
+         const NamesResult r=names_resume(&s);
+         assert(b.file_reads-before<=32);
+         assert(r==NAMES_BUSY||r==NAMES_OK);
+         assert(++calls<4000);
+     }
+     std::printf("5000-slot production receive/progress/uniqueness completed in %u bounded calls\n",calls);
+    }
+    {
+     NamesStore s{};NamesMemory b;std::vector<uint64_t> base(5000);
+     for(size_t i=0;i<base.size();++i)base[i]=i+11;
+     base[250]=0;
+     seed(s,b,11,base);
+     std::vector<uint64_t> source(base.begin(),base.begin()+500);
+     source[250]=999999;
+     const auto offer=descriptor(source,88,1);
+     NamesMerge job{};
+     names_poll_budget(&s,32);uint16_t missing=0,pending=0;
+     assert(names_lookup(&s,777777,&missing,&pending)==NAMES_BUSY);
+     assert(names_merge_begin(&s,&job,999999,offer.data())==NAMES_OK);
+     assert(s.scan_kind!=2); // A pre-merge lookup cannot pin the shared scan workspace forever.
+     unsigned calls=0;
+     auto advance=[&](){
+         names_poll_budget(&s,32);
+         const uint64_t before=b.file_reads;
+         const uint64_t before_writes=b.file_writes;
+         const NamesResult r=names_merge_advance(&s,&job,nullptr,0);
+         assert(b.file_reads-before<=32);
+         assert(b.file_writes-before_writes<=33);
+         assert(r==NAMES_OK||r==NAMES_BUSY);
+         assert(++calls<4000);
+     };
+     for(unsigned pass=0;pass<2;++pass){
+         for(size_t at=0;at<source.size();){
+             const size_t n=(source.size()-at)>89?89:source.size()-at;
+             names_poll_budget(&s,32);
+             const uint64_t before=b.file_reads;
+             const uint64_t before_writes=b.file_writes;
+             const NamesResult r=names_merge_page(&s,&job,uint32_t(at),source.data()+at,n,nullptr,0);
+             assert(b.file_reads-before<=32);
+             assert(b.file_writes-before_writes<=122);
+             assert(r==NAMES_OK||r==NAMES_BUSY);
+             assert(++calls<4000);
+             if(r==NAMES_OK||job.stage!=0)at+=n;
+             while(job.active&&job.stage!=0)advance();
+         }
+         if(!pass)assert(job.active&&job.writing&&names_phase(&s)==NAMES_LOCAL_PREPARE);
+     }
+     assert(!job.active&&names_phase(&s)==NAMES_PREPARED);
+     puts("5000-slot production merge with 4500-slot suffix and final checks respects 32 actual reads per call");
+     names_merge_cancel(&job);
+    }
+    {
+     NamesStore s{};NamesMemory b;std::vector<uint64_t> base(5000);
+     for(size_t i=0;i<base.size();++i)base[i]=i+11;
+     seed(s,b,11,base);
+     auto candidate=base;candidate.push_back(999999);
+     const auto old=descriptor(candidate,99,2),replacement=descriptor(candidate,77,3);
+     assert(names_receive_begin(&s,registry,old.data(),false,99,2,nullptr,0,0,0)==NAMES_OK);
+     NamesRetarget job{};assert(names_retarget_begin(&s,&job,replacement.data())==NAMES_OK);
+     const unsigned commits=b.commits;const uint64_t start_reads=b.file_reads,start_writes=b.file_writes;
+     for(size_t at=0;at<candidate.size();){
+         const size_t n=(candidate.size()-at)>89?89:candidate.size()-at;
+         names_poll_budget(&s,32);
+         const uint64_t before=b.file_reads;
+         assert(names_retarget_page(&s,&job,uint32_t(at),candidate.data()+at,n)==NAMES_OK);
+         assert(b.file_reads-before<=32);
+         at+=n;
+     }
+     assert(job.complete&&b.commits==commits&&b.file_writes==start_writes&&b.file_reads-start_reads<500);
+     names_poll_budget(&s,32);
+     assert(names_retarget_accept(&s,&job,77,3,nullptr,0)==NAMES_OK);
+     assert(!std::memcmp(names_target(&s),replacement.data(),80));
+     names_retarget_cancel(&job);
+     puts("5001-slot production retarget verification remains read-only and bounded per page");
+    }
     {NamesStore s{};NamesMemory b;std::vector<uint64_t> ids(65535);for(size_t i=0;i<ids.size();++i)ids[i]=i+1;seed(s,b,65535,ids);assert(names_cursor(&s)==65536);auto ctl=b.keys[0];assert(names_reserve(&s,999999,nullptr,0)==NAMES_INDEX_EXHAUSTED);assert(b.keys[0]==ctl);char value[32];names_visible(&s,value,nullptr,nullptr);assert(!strcmp(value,"KatmedESP-65535"));puts("bounded seeded format/range probe: 65535 name, cursor65536 explicit exhaustion; NOT a natural join run");}    {NamesMemory orphan;orphan.exists[0]=true;orphan.files[0]={1};NamesStore s{};assert(names_open(&s,orphan.backend(),11,group)==NAMES_CORRUPT&&orphan.commits==0);}
     {NamesMemory b;NamesStore s{};seed(s,b,11,{11,22});auto ctl=b.keys[0];b.files[0][0]^=1;unsigned commits=b.commits;assert(names_open(&s,b.backend(),11,group)==NAMES_CORRUPT);assert(b.commits==commits&&b.keys[0]==ctl);}
     {NamesMemory b;NamesStore s{};seed(s,b,11,{11,22});auto target=descriptor({11,22,33},77,2);assert(names_receive_begin(&s,registry,target.data(),false,77,2,nullptr,0,33,3)==NAMES_OK);uint64_t first=11;assert(names_receive_page(&s,0,&first,1)==NAMES_OK);b.files[1][64]^=1;assert(names_open(&s,b.backend(),11,group)==NAMES_CORRUPT);char name[32];bool assigned=false,uncertain=false;names_visible(&s,name,&assigned,&uncertain);assert(assigned&&uncertain&&!strcmp(name,"KatmedESP-001"));}
     puts("exact old/new bank anchor selection, larger unreferenced file ignored, orphan/corrupt objects failclosed passed");
+    assert(live_hash_contexts==0);
 
 }

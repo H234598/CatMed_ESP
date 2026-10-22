@@ -681,8 +681,15 @@ void receive(const KatmedMeshFrame &f,const ClockSample *now){
             if(peer.live&&peer.device==f.sender)
                 peer.advertised_pending=advertised;
         if(!root()){
-            if(ctx.coordinator_device&&ctx.coordinator_device!=f.sender)
+            if(ctx.coordinator_device&&ctx.coordinator_device!=f.sender){
+                if(names_enabled()){
+                    // Forget alone would let an old echoed challenge restore
+                    // the former coordinator and its in-flight name job.
+                    if(!rekey()){katmed_mesh_stop();return;}
+                    send_hello(f.sender,f.session_nonce);return;
+                }
                 katmed_mesh_sessions_forget(&ctx.sessions,ctx.coordinator_device);
+            }
             if(ctx.coordinator_device!=f.sender){
                 ctx.status.current_valid=false;
                 for(auto &m:ctx.status.peers){m.mask=0;m.status_valid=false;m.generation=0;}
@@ -998,7 +1005,7 @@ extern "C" bool katmed_mesh_radio_channel(uint8_t *channel){
 extern "C" void katmed_mesh_history_backend(StoreBackend backend){history.backend=backend;}
 extern "C" NamesResult katmed_mesh_names_backend(NamesBackend backend,uint64_t device,const uint8_t group[16]){
     names_bound=true;names_reset_rights();
-    NamesResult result=names_open(&names,backend,device,group);names_publish_status();return result;
+    NamesResult result=names_open_bounded(&names,backend,device,group,32);names_publish_status();return result;
 }
 extern "C" void katmed_mesh_device_name(char *out,size_t capacity,bool *assigned,bool *uncertain){char value[32];names_current(value,assigned,uncertain);if(out&&capacity)std::snprintf(out,capacity,"%s",value);}
 extern "C" void katmed_mesh_counts(KatmedMeshCounts *out){

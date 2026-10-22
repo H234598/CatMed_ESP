@@ -29,6 +29,7 @@ uint8_t names_job_kind=0;
 #define names_merge names_jobs.merge
 uint64_t names_merge_last=0;
 uint64_t names_verify_controller=0,names_verify_epoch=0;
+uint8_t names_probe_cursor=0;
 NamePeer name_peers[KATMED_MESH_PEERS]{};
 bool names_bound=false,names_round_bound=false;
 uint64_t names_started=0;
@@ -41,6 +42,8 @@ void names_reset_rights(){
     if(names_job_kind==1)names_merge_cancel(&names_merge);
     if(names_job_kind==2)names_retarget_cancel(&names_verify);
     std::memset(&names_jobs,0,sizeof(names_jobs));names_job_kind=0;names_merge_last=0;
+    names_probe_cursor=0;
+    names_cancel_scan(&names);
     names_verify_controller=names_verify_epoch=0;
     for(auto &p:name_peers)p=NamePeer{};
     names_round_bound=false;names_started=ctx.status.now_ms;
@@ -79,6 +82,22 @@ NamesMessage names_message(uint8_t op,const NamePeer *peer){
     for(unsigned i=0;i<m.barrier_count;++i)m.barrier[i]=name_le(names.ctl+272+8*i,8);
     return m;
 }
+bool names_verify_binding(const NamesMessage &m){
+    if(names_verify.controller!=m.controller||names_verify.epoch!=m.epoch||
+       names_verify.barrier_count!=m.barrier_count||
+       names_verify.reserve_device!=m.reserved_device||
+       names_verify.reserve_index!=m.reserved_index||
+       std::memcmp(names_verify.registry,m.registry,16))return false;
+    for(unsigned i=0;i<m.barrier_count;++i)if(names_verify.barrier[i]!=m.barrier[i])return false;
+    return true;
+}
+void names_bind_verify(const NamesMessage &m){
+    names_verify.controller=m.controller;names_verify.epoch=m.epoch;
+    names_verify.barrier_count=m.barrier_count;
+    names_verify.reserve_device=m.reserved_device;names_verify.reserve_index=m.reserved_index;
+    std::memcpy(names_verify.registry,m.registry,16);
+    for(unsigned i=0;i<m.barrier_count;++i)names_verify.barrier[i]=m.barrier[i];
+}
 void names_hello(uint64_t device,uint64_t now){
     if(!names_bound)return;
     NamePeer *p=name_peer(device);
@@ -112,13 +131,18 @@ bool names_expire(uint64_t now){
 }
 __attribute__((noinline)) void names_tick(uint64_t now){
     if(!names_bound||!names.opened)return;
+    if(names.opening){
+        if(names_reopen(&names)!=NAMES_OK)return;
+        if(!rekey()){katmed_mesh_stop();return;}send_hello();return;
+    }
     if(names.poisoned){
         if(names.error!=NAMES_COMMIT_UNKNOWN||names_reopen(&names)!=NAMES_OK)return;
         if(!rekey()){katmed_mesh_stop();return;}send_hello();return;
     }
     if(!root()){
         if((names_phase(&names)==NAMES_RX_APPEND||names_phase(&names)==NAMES_RX_REPLACE)&&
-           names_target(&names)&&name_le(names.ctl+52,4)==name_le(names_target(&names)+64,4))
+           names_target(&names)&&(name_le(names.ctl+52,4)==name_le(names_target(&names)+64,4)||
+             (names.scan_kind==4&&!names.scan.digest.mode&&names.scan.digest.slots>name_le(names.ctl+52,4))))
             (void)names_resume(&names);
         NamePeer *p=name_peer(ctx.coordinator_device);
         if(!p||p->protocol!=2)return;
@@ -143,6 +167,14 @@ __attribute__((noinline)) void names_tick(uint64_t now){
         if(!names_merge.active&&names_merge_resume(&names,&names_merge)!=NAMES_OK)return;
     }else if(names_phase(&names)==NAMES_LOCAL_PREPARE){if(names_resume(&names)!=NAMES_OK)return;}
     if(names_job_kind==1&&names_merge.active){
+        if(names_merge.stage!=0){
+            uint64_t members[8];size_t count=0;
+            for(auto &p:name_peers)if(p.device&&p.protocol==2)members[count++]=p.device;
+            const NamesResult step=names_merge_advance(&names,&names_merge,members,count);
+            if(step==NAMES_BUSY)return;
+            if(step!=NAMES_OK){names.error=step;names_merge_cancel(&names_merge);return;}
+        }
+        if(!names_merge.active)return;
         if(!names_merge_last||now-names_merge_last>=1000){
             NamePeer *source=name_peer(names_merge.source_device);
             if(source&&source->protocol==2){
@@ -154,7 +186,9 @@ __attribute__((noinline)) void names_tick(uint64_t now){
         }
         return;
     }
-    if((names_phase(&names)==NAMES_RX_APPEND||names_phase(&names)==NAMES_RX_REPLACE)&&names_target(&names)&&name_le(names.ctl+52,4)==name_le(names_target(&names)+64,4)){
+    if((names_phase(&names)==NAMES_RX_APPEND||names_phase(&names)==NAMES_RX_REPLACE)&&names_target(&names)&&
+       (name_le(names.ctl+52,4)==name_le(names_target(&names)+64,4)||
+        (names.scan_kind==4&&!names.scan.digest.mode&&names.scan.digest.slots>name_le(names.ctl+52,4)))){
         if(names_resume(&names)!=NAMES_OK)return;
     }
     if(!names_round_bound){
@@ -181,10 +215,18 @@ __attribute__((noinline)) void names_tick(uint64_t now){
     if(names_phase(&names)==NAMES_IDLE){
         uint64_t members[8];size_t count=0;
         for(auto &p:name_peers)if(p.device&&p.protocol==2)members[count++]=p.device;
-        uint16_t own=0,pending=0;
-        if(names_lookup(&names,names.local_device,&own,&pending)!=NAMES_OK)return;
+        uint16_t own=names.visible_index,pending=0;
+        if(!own&&names_lookup(&names,names.local_device,&own,&pending)!=NAMES_OK)return;
         uint64_t next=own?0:names.local_device;
-        if(!next)for(auto &p:name_peers)if(p.device&&p.protocol==2&&p.discovered){uint16_t assigned=0,reserved=0;if(names_lookup(&names,p.device,&assigned,&reserved)!=NAMES_OK)return;if(!assigned){next=p.device;break;}}
+        if(!next)for(unsigned attempt=0;attempt<KATMED_MESH_PEERS;++attempt){
+            const unsigned at=(names_probe_cursor+attempt)%KATMED_MESH_PEERS;
+            auto &p=name_peers[at];
+            if(!p.device||p.protocol!=2||!p.discovered)continue;
+            uint16_t assigned=0,reserved=0;
+            if(names_lookup(&names,p.device,&assigned,&reserved)!=NAMES_OK){names_probe_cursor=uint8_t(at);return;}
+            names_probe_cursor=uint8_t((at+1)%KATMED_MESH_PEERS);
+            if(!assigned){next=p.device;break;}
+        }
         if(next){
             if(names_reserve(&names,next,members,count)!=NAMES_OK)return;
             for(auto &p:name_peers){p.prepared=p.committed=p.retries=0;p.progress=0;p.last_send=0;}
@@ -208,7 +250,7 @@ __attribute__((noinline)) void names_tick(uint64_t now){
     }
 }
 __attribute__((noinline)) void names_frame(const KatmedMeshFrame &f,uint64_t now){
-    if(!names_bound)return;
+    if(!names_bound||names.opening)return;
     if(names.poisoned){if(names_reopen(&names)!=NAMES_OK)return;if(!rekey()){katmed_mesh_stop();return;}send_hello();return;}
     NamesMessage m{};
     if(!names_wire_decode(f.payload,f.payload_length,&m)){
@@ -236,6 +278,9 @@ __attribute__((noinline)) void names_frame(const KatmedMeshFrame &f,uint64_t now
         if(m.opcode==NAMES_PAGE&&names_job_kind==1&&names_merge.active&&f.sender==names_merge.source_device&&
            m.controller==names.local_device&&!std::memcmp(m.registry,names.ctl+24,16)&&
            !std::memcmp(m.target,names_merge.source,80)&&m.epoch==name_le(names.ctl+88,8)){
+            // A delayed/duplicate source response is not a new merge offer.
+            // Keep exact S and both pass cursors; request current progress.
+            if(m.start!=names_merge.progress){names_merge_last=0;return;}
             NamePageScratch page(f);uint64_t members[8];size_t count=0,n=(f.payload_length-328)/8;
             for(auto &p:name_peers)if(p.device&&p.protocol==2)members[count++]=p.device;
             NamesResult r=names_merge_page(&names,&names_merge,m.start,page.ids(),n,members,count);
@@ -271,7 +316,7 @@ __attribute__((noinline)) void names_frame(const KatmedMeshFrame &f,uint64_t now
             NamesMessage page=names_message(NAMES_PAGE,peer);page.start=m.progress;if(m.flags&8)page.flags|=8;
             (void)names_send(f.sender,page,ids,n);return;
         }
-        if(std::memcmp(m.base,peer->base,80)||m.barrier_count!=names.ctl[50]||
+        if(std::memcmp(m.base,peer->base,80)||m.barrier_flags!=1||m.barrier_count!=names.ctl[50]||
            m.reserved_device!=name_le(names.ctl+96,8)||m.reserved_index!=name_le(names.ctl+104,2))return;
         for(unsigned i=0;i<m.barrier_count;++i)if(m.barrier[i]!=name_le(names.ctl+272+8*i,8))return;
         if((m.opcode==NAMES_PREPARED_ACK||m.opcode==NAMES_COMMIT_ACK)&&
@@ -312,9 +357,11 @@ __attribute__((noinline)) void names_frame(const KatmedMeshFrame &f,uint64_t now
         const bool append=p&&!std::memcmp(p+16,m.target+16,16)&&name_le(p+64,4)<=name_le(m.target+64,4);
         NamesResult r=names_receive_begin(&names,m.registry,m.target,append,f.sender,m.epoch,m.barrier,m.barrier_count,m.reserved_device,m.reserved_index);
         if(r==NAMES_BUSY&&names_target(&names)&&std::memcmp(names_target(&names),m.target,80)){
-            if(names_job_kind!=2||!names_verify.active||names_verify_controller!=f.sender||names_verify_epoch!=m.epoch||std::memcmp(names_verify.target,m.target,80)){
+            if(names_job_kind!=2||!names_verify.active||names_verify_controller!=f.sender||names_verify_epoch!=m.epoch||
+               std::memcmp(names_verify.target,m.target,80)||!names_verify_binding(m)){
                 if(names_job_kind!=2){names_jobs.verify=NamesRetarget{};names_job_kind=2;}
                 if(names_retarget_begin(&names,&names_verify,m.target)!=NAMES_OK)return;
+                names_bind_verify(m);
                 names_verify_controller=f.sender;names_verify_epoch=m.epoch;
             }
             NamesMessage verify=m;verify.opcode=NAMES_REQUEST;verify.flags|=8;
@@ -323,14 +370,26 @@ __attribute__((noinline)) void names_frame(const KatmedMeshFrame &f,uint64_t now
         }
         if(r!=NAMES_OK){names.error=r;NamesMessage error=m;error.opcode=NAMES_ERROR;error.status=uint16_t(r);error.start=0;(void)names_send(f.sender,error);return;}
         NamesMessage reply=m;std::memcpy(reply.base,peer->base,80);
-        if(names_phase(&names)==NAMES_PREPARED||(p&&!std::memcmp(p,m.target,80))){reply.opcode=NAMES_PREPARED_ACK;reply.progress=uint32_t(name_le(m.target+64,4));std::memcpy(reply.progress_hash,m.target+32,32);}
+        if(names_phase(&names)==NAMES_PREPARED||(p&&!std::memcmp(p,m.target,80))){
+            // A fresh session has no bound receiver base at the root yet.
+            // Establish it with REQUEST before granting a prepared right.
+            reply.opcode=std::memcmp(m.base,peer->base,80)?NAMES_REQUEST:NAMES_PREPARED_ACK;
+            reply.progress=uint32_t(name_le(m.target+64,4));std::memcpy(reply.progress_hash,m.target+32,32);
+        }
         else {reply.opcode=NAMES_REQUEST;reply.progress=uint32_t(name_le(names.ctl+52,4));std::memcpy(reply.progress_hash,names.ctl+56,32);}
         (void)names_send(f.sender,reply);return;
     }
     if(m.opcode==NAMES_PAGE&&(m.flags&8)){
-        if(names_job_kind!=2||!names_verify.active||names_verify_controller!=f.sender||names_verify_epoch!=m.epoch||std::memcmp(m.target,names_verify.target,80))return;
+        if(names_job_kind!=2||!names_verify.active||names_verify_controller!=f.sender||names_verify_epoch!=m.epoch||
+           std::memcmp(m.target,names_verify.target,80)||!names_verify_binding(m)||
+           std::memcmp(m.base,peer->base,80)||m.barrier_flags!=1)return;
+        if(m.start!=names_verify.progress){
+            NamesMessage request=m;request.opcode=NAMES_REQUEST;request.start=0;
+            request.progress=names_verify.progress;(void)names_send(f.sender,request);return;
+        }
         NamePageScratch page(f);const size_t n=(f.payload_length-328)/8;
         const NamesResult verified=names_retarget_page(&names,&names_verify,m.start,page.ids(),n);
+        if(verified==NAMES_BUSY)return;
         if(verified!=NAMES_OK){names_retarget_cancel(&names_verify);names.error=verified;NamesMessage error=m;error.opcode=NAMES_ERROR;error.status=uint16_t(verified);error.start=0;(void)names_send(f.sender,error);return;}
         NamesMessage request=m;request.opcode=NAMES_REQUEST;request.start=0;
         std::memcpy(request.base,peer->base,80);

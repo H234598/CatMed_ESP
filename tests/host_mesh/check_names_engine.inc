@@ -3,9 +3,22 @@
  * this test is not a second allocator or a map of expected production state. */
 if(argc==2&&std::strcmp(argv[1],"names_lifetime")==0){
     NamesMemory root_bytes;
+    uint64_t lifetime_max_poll_reads=0,max_read_bytes=0,max_write_bytes=0,max_writes=0,max_syncs=0,max_commits=0;
+    auto lifetime_poll=[&](){
+        const uint64_t reads=root_bytes.file_reads,rb=root_bytes.file_read_bytes,wb=root_bytes.file_write_bytes,writes=root_bytes.file_writes,sy=root_bytes.syncs,cm=root_bytes.commits;
+        katmed_mesh_poll(&now);
+        const uint64_t r=root_bytes.file_reads-reads,b=root_bytes.file_read_bytes-rb,w=root_bytes.file_write_bytes-wb,ws=root_bytes.file_writes-writes,ys=root_bytes.syncs-sy,cs=root_bytes.commits-cm;
+        if(r>lifetime_max_poll_reads)lifetime_max_poll_reads=r;
+        if(b>max_read_bytes)max_read_bytes=b;
+        if(w>max_write_bytes)max_write_bytes=w;
+        if(ws>max_writes)max_writes=ws;
+        if(ys>max_syncs)max_syncs=ys;
+        if(cs>max_commits)max_commits=cs;
+        assert(r<=32&&b<=32*512);
+    };
     assert(katmed_mesh_names_backend(root_bytes.backend(),store.record.device,provision.group)==NAMES_OK);
     level=ROOT;host_station_present=true;
-    for(unsigned i=0;i<4;++i){katmed_mesh_poll(&now);advance_now(now.monotonic_ms+1);}
+    for(unsigned i=0;i<4;++i){lifetime_poll();advance_now(now.monotonic_ms+1);}
     char local[32];bool assigned=false,uncertain=true;
     katmed_mesh_device_name(local,sizeof(local),&assigned,&uncertain);
     assert(!std::strcmp(local,"KatmedESP-001")&&assigned&&!uncertain);
@@ -26,14 +39,14 @@ if(argc==2&&std::strcmp(argv[1],"names_lifetime")==0){
             auto challenge=latest_kind(MESH_HELLO);std::memcpy(current_local_nonce,challenge.session_nonce,16);
             auto hello=make(MESH_HELLO);
             assert(katmed_mesh_encode_hello(current_local_nonce,catalog,"d941fae",0,hello.payload,sizeof(hello.payload),&hello.payload_length));
-            inject(hello);katmed_mesh_poll(&now);advance_now(now.monotonic_ms+1);
+            inject(hello);lifetime_poll();advance_now(now.monotonic_ms+1);
         }
         auto respond=[&](const NamesMessage &message){auto f=make(MESH_NAME_SYNC);size_t n=0;assert(names_wire_encode(&message,nullptr,0,f.payload,sizeof(f.payload),&n));f.payload_length=uint16_t(n);inject(f);};
         NamesMessage caps{};caps.opcode=NAMES_CAPS;respond(caps);
         size_t scan=sent.size();
         bool complete=false;uint8_t receiver_base[80]{};const uint8_t *published=names_published(&remote_store);if(published)memcpy(receiver_base,published,80);
         for(unsigned step=0;step<150&&!complete;++step){
-            katmed_mesh_poll(&now);advance_now(now.monotonic_ms+10);
+            lifetime_poll();advance_now(now.monotonic_ms+10);
             const size_t end=sent.size();
             for(;scan<end;++scan){
                 KatmedMeshFrame f{};if(!katmed_mesh_wire_decode(sent[scan].data(),sent[scan].size(),provision.group,provision.secret,&f)||f.kind!=MESH_NAME_SYNC||f.recipient!=remote)continue;
@@ -62,7 +75,7 @@ if(argc==2&&std::strcmp(argv[1],"names_lifetime")==0){
         }
         if(!complete)std::fprintf(stderr,"incomplete natural ordinal %llu\n",(unsigned long long)ordinal);
         assert(complete);
-        katmed_mesh_poll(&now);advance_now(now.monotonic_ms+1);
+        lifetime_poll();advance_now(now.monotonic_ms+1);
         char visible[32],expected[32];bool a=false,u=true;
         names_visible(&remote_store,visible,&a,&u);std::snprintf(expected,sizeof(expected),"KatmedESP-%03u",unsigned(ordinal==1002?2:ordinal));assert(a&&!u&&!std::strcmp(visible,expected));
         if(ordinal==64||ordinal==65||ordinal==999||ordinal==1000||ordinal==1001)std::printf("natural root/mesh/store ordinal %llu confirmed\n",(unsigned long long)ordinal);
@@ -74,5 +87,5 @@ if(argc==2&&std::strcmp(argv[1],"names_lifetime")==0){
     assert(names_cursor(&reopened)==1002);uint16_t index=0,pending=0;
     assert(names_lookup(&reopened,first_remote,&index,&pending)==NAMES_OK&&index==2&&!pending);
     assert(boot_random>root_boots); // challenge rotations occurred, no start/reboot.
-    puts("natural 1001 names (root plus 1000 distinct peers), live root adapter/wire/store/churn, absent peer rejoin without new index OK");return 0;
+    std::printf("natural 1001 names (root plus 1000 distinct peers), live root adapter/wire/store/churn, absent peer rejoin without new index OK; max root poll file reads=%llu readbytes=%llu writes=%llu writebytes=%llu syncs=%llu commits=%llu\n",(unsigned long long)lifetime_max_poll_reads,(unsigned long long)max_read_bytes,(unsigned long long)max_writes,(unsigned long long)max_write_bytes,(unsigned long long)max_syncs,(unsigned long long)max_commits);return 0;
 }

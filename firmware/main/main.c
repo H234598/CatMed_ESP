@@ -1754,7 +1754,7 @@ void app_main(void)
         names_idf_backend(&runtime.names_nvs,&runtime.nvs),runtime.boot.device,
         runtime.store.record.provision.configured?runtime.store.record.provision.group:
                                                   runtime.store.record.bound_group);
-    if(names_result!=NAMES_OK)ESP_LOGE(tag,"durable Mesh names unavailable: %d",names_result);
+    if(names_result!=NAMES_OK&&names_result!=NAMES_BUSY)ESP_LOGE(tag,"durable Mesh names unavailable: %d",names_result);
     runtime.boot_domain = new_boot_domain(runtime.boot);
     katmed_time_init(&runtime.time, runtime.boot_domain);
     ClockSample now = clock_sample(runtime.boot_domain);

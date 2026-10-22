@@ -32,21 +32,48 @@ typedef struct {
     NamesBackend backend;
     uint64_t local_device;
     uint16_t visible_index;
-    bool opened, poisoned, fresh;
+    bool opened, poisoned, fresh, opening;
+    uint8_t open_stage;
     NamesResult error;
-    /* A completed T is checked for duplicate nonzero identities before
-     * PREPARED. The bounded radix selection state survives Mesh polls. */
-    uint8_t unique_target[80];
-    uint64_t unique_heap[16];
-    uint64_t unique_after;
-    uint32_t unique_offset, unique_slots;
-    uint16_t unique_count, unique_equal, unique_budget;
-    uint8_t unique_bank;
-    bool unique_active, unique_done, unique_limited;
+    /* Only one file scan runs in the serial adapter at a time. Share its
+     * workspace while retaining the per-poll read allowance. */
+    uint16_t scan_budget;
+    bool scan_limited;
+    uint8_t scan_kind; /* 0 idle, 1 uniqueness, 2 lookup, 3 cached lookup, 4 digest */
+    uint32_t preserve_offset;
+    bool planning, target_validated;
+    union {
+        struct {
+            uint8_t target[80];
+            uint64_t heap[16],after;
+            uint32_t offset,slots;
+            uint16_t count,equal,assigned;
+            uint8_t bank;
+            bool done;
+        } unique;
+        struct {
+            uint8_t p[80],t[80];
+            uint64_t device,reservation;
+            uint32_t next;
+            uint16_t found,held;
+            uint8_t flags,phase,stage;
+        } lookup;
+        struct {
+            uint8_t descriptor[80];
+            void *hash;
+            uint64_t appended;
+            uint32_t slots,offset;
+            uint8_t bank,mode;
+        } digest;
+    } scan;
 } NamesStore;
-/* One poll grants at most this many file reads to the uniqueness scan. */
+/* One poll grants at most this many file reads to resumable scans. */
 void names_poll_budget(NamesStore *,uint16_t reads);
+void names_cancel_scan(NamesStore *);
+/* Synchronous compatibility entry for isolated host fixture construction. */
 NamesResult names_open(NamesStore *,NamesBackend,uint64_t,const uint8_t group[16]);
+/* Firmware entry: NAMES_BUSY continues through names_reopen on later polls. */
+NamesResult names_open_bounded(NamesStore *,NamesBackend,uint64_t,const uint8_t group[16],uint16_t reads);
 NamesResult names_reopen(NamesStore *);
 /* Called only for a root with no new-format object. registry must be random. */
 NamesResult names_initialize(NamesStore *,const uint8_t registry[16]);
@@ -68,8 +95,15 @@ NamesResult names_receive_begin(NamesStore *,const uint8_t registry[16],
 NamesResult names_receive_page(NamesStore *,uint32_t start,const uint64_t *,size_t);
 typedef struct {
     uint8_t target[80];
+    uint8_t registry[16],anchor_p[80],anchor_t[80];
+    uint64_t barrier[8],controller,epoch,reserve_device,anchor_controller,anchor_epoch;
     uint64_t hash_state[32];
     uint32_t progress,assigned;
+    uint16_t reserve_index,anchor_view,anchor_reserve_index;
+    uint64_t anchor_reserve_device;
+    uint32_t anchor_progress;
+    uint8_t anchor_progress_hash[32];
+    uint8_t barrier_count,anchor_flags,anchor_phase;
     bool active,complete;
 } NamesRetarget;
 NamesResult names_retarget_begin(NamesStore *,NamesRetarget *,const uint8_t target[80]);
@@ -81,12 +115,14 @@ typedef struct {
     uint8_t source[80],target[80];
     uint64_t hashes[64],source_device;
     uint32_t progress,assigned,source_assigned;
-    bool active,writing;
+    bool active,writing,hashes_active;
+    uint8_t stage; /* 0 pages, 1 suffix, 2 hashes, 3 final checkpoint, 4 checks, 5 page checkpoint */
 } NamesMerge;
 NamesResult names_merge_begin(NamesStore *,NamesMerge *,uint64_t,const uint8_t source[80]);
 NamesResult names_merge_resume(NamesStore *,NamesMerge *);
 NamesResult names_merge_page(NamesStore *,NamesMerge *,uint32_t,const uint64_t *,size_t,
                             const uint64_t *barrier,size_t barrier_count);
+NamesResult names_merge_advance(NamesStore *,NamesMerge *,const uint64_t *barrier,size_t barrier_count);
 void names_merge_cancel(NamesMerge *);
 const uint8_t *names_published(const NamesStore *);
 const uint8_t *names_target(const NamesStore *);

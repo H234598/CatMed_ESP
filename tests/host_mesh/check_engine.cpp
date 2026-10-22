@@ -12,6 +12,8 @@
 #include <vector>
 #include <fstream>
 #include <cstdio>
+#include <zlib.h>
+extern "C" unsigned char *SHA256(const unsigned char *,size_t,unsigned char *);
 
 namespace {
 uint8_t level=0;
@@ -204,6 +206,7 @@ int main(int argc,char **argv){
     #include "check_names_barrier.inc"
     #include "check_names_leaf.inc"
     #include "check_names_engine.inc"
+    #include "check_names_recovery.inc"
     if(argc==2&&std::strcmp(argv[1],"name_assignment")==0){
         host_station_present=true;
         level=ROOT;katmed_mesh_poll(&now);

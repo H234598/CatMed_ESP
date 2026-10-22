@@ -82,3 +82,13 @@ fi
 
 "$out" names_prepare_old
 "$out" names_prepare_new
+
+"$out" names_merge_recovery
+"$out" names_merge_bank_old
+"$out" names_merge_bank_new
+
+"$out" names_retarget_recovery
+"$out" names_retarget_old
+"$out" names_retarget_new
+
+"$out" names_bounded_open
