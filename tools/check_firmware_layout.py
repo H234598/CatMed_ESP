@@ -94,11 +94,12 @@ def check_layout(repo: Path, board: str, build: Path, security_profile: bool = F
         raise ValueError("Built partition table does not match board CSV")
     if security_profile:
         critical = {
+            "factory": (0x20000, 0x216000, "app", "factory", ""),
             "nvs": (0x11000, 0x7000, "data", "nvs", ""),
             "nvs_keys": (0x18000, 0x1000, "data", "nvs_keys", "encrypted"),
             "nvs_guard": (0x19000, 0x1000, "data", "0x40", ""),
             "phy_init": (0x1a000, 0x1000, "data", "phy", ""),
-            "user_images": (0x230000, 0x90000, "data", "littlefs", "encrypted"),
+            "user_images": (0x236000, 0x90000, "data", "littlefs", "encrypted"),
         }
         for name, expected in critical.items():
             if partitions.get(name) != expected:
@@ -132,7 +133,12 @@ def check_layout(repo: Path, board: str, build: Path, security_profile: bool = F
     data = (generated / pack_name).read_bytes()
     if len(data) != expected["bytes"] or hashlib.sha256(data).hexdigest() != expected["sha256"]:
         raise ValueError("Image pack differs from verified manifest")
-    if len(data) > image_partition[1] or expected["budget"] != image_partition[1]:
+    pack_budget = {"c3": 0x140000, "c6": 0x540000}[board]
+    expected_image_size = pack_budget - (0x6000 if security_profile else 0)
+    expected_image_offset = 0x2c6000 if security_profile else 0x2c0000
+    if image_partition[:2] != (expected_image_offset, expected_image_size):
+        raise ValueError("Image partition differs from profile contract")
+    if len(data) > image_partition[1] or expected["budget"] != pack_budget:
         raise ValueError("Image pack and partition budgets disagree")
     return {"board": board, "security_profile": security_profile,
             "bootloader_bytes": bootloader_bytes,

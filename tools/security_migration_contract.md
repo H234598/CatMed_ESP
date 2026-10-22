@@ -170,3 +170,48 @@ Die größere Partition ist durch echte gepinnte LittleFS-Blockengineproben moti
 Das Layout verlegt Teile von NVS und Schlüsselbereich in die frühere Factory-App. Weder ein rohes Alt-NVS-Image noch eine alte Partitionstabelle oder ein gewöhnlicher Klartext-Flash sind daher ein zulässiger Import. Der spätere Release-Mode-Update-/Recoveryweg, individuelle Schlüssel, die allgemeine NVS-Integritätsgrenze und echte Geräteabnahme bleiben gesondert offen. Der veröffentlichte ACME-Dateireset einschließlich `renewal.json` bleibt erhalten; Source-, Host- und Importvertrag teilen nun dieselben sieben regulären Namen. Der Gerätebereitschaftsstatus lautet „Noch nicht bereit“.
 
 Primärquellen: [ESP-IDF 6.1 NVS Encryption](https://docs.espressif.com/projects/esp-idf/en/v6.1/esp32c3/api-reference/storage/nvs_encryption.html), [NVS-API](https://docs.espressif.com/projects/esp-idf/en/v6.1/esp32c3/api-reference/storage/nvs_flash.html) und [Flash Encryption/Update-Grenzen](https://docs.espressif.com/projects/esp-idf/en/v6.1/esp32c3/security/flash-encryption.html). Die Hostprüfung bindet außerdem die unveränderten Quellcodecs `katmed_store.cpp` und `katmed_mesh_status.cpp` ein.
+
+
+## Begrenzter Layoutvorschlag für neue Mesh-Namen vom 22. Oktober 2026
+
+Dieser Abschnitt beschreibt einen noch unabhängig zu prüfenden Sourcevorschlag.
+Er ersetzt für diesen Vorschlag die oben historischen Security-Grenzen, ohne den
+alten Migrationsumfang erneut zu bestellen. Alte Gerätedatenübernahme ist nicht
+beauftragt. Die normalen neuen Namensdaten bleiben dauerhaft zu erhalten.
+
+Beide Security-Tabellen lassen Factory bei `0x20000` beginnen und vergrößern
+sie um 24 KiB auf `0x216000` Byte. Das verschlüsselte `user_images` beginnt
+nun bei `0x236000` und behält `0x90000` Byte. Der nur lesbare Bildpack beginnt
+bei `0x2c6000`; seine Partition endet unverändert bei 4 MiB beziehungsweise
+8 MiB und umfasst `0x13a000` beziehungsweise `0x53a000` Byte. Der neutrale
+Partitionsentwurf und die unveränderten Packdateien samt Erzeugungsbudget
+bleiben erhalten. Der Layoutcheck vergleicht deshalb das Manifest mit dem
+ursprünglichen Erzeugungsbudget und zusätzlich die tatsächliche Packlänge mit
+der engeren Security-Partition. Er akzeptiert keine beliebige andere Grenze.
+
+Alle geänderten Datengrenzen sind 4096-Byte-ausgerichtet; die unveränderte
+Appadresse ist 65536-Byte-ausgerichtet. NVS, Schlüssel, Guard, PHY,
+Partitionstisch und Bootloaderadressen bleiben gleich. Der Runtimecheck muss
+denselben neuen FS-Beginn verlangen. Verschlüsselung verwendet die tatsächliche
+Partitionadresse; bereits verschlüsselte alte FS-Bytes dürfen nicht an eine
+andere Adresse kopiert werden. Der labelbasierte Bildreader verwendet die
+neue Tabellenadresse und die unveränderten packinternen relativen Offsets.
+
+Das ist kein in-place Firmwareupdate für belegte alte Geräte. Eine alte
+Partitionstabelle mit neuer App wird durch den Runtimecheck abgewiesen. Ein
+neuer Tisch mit alten FS-Daten führt zum Mountfehler; automatische Formatierung
+bleibt ausgeschaltet. Ein alter Bildpack an der alten Adresse ist ebenfalls
+kein gültiger neuer Pack. Eine spätere ausdrücklich autorisierte Neuinstallation
+oder Recovery muss zusammengehörige App, Tabelle, den Pack an der neuen Adresse
+und ein passendes leeres FS-Image verwenden und den bestehenden
+Verschlüsselungs-/Schlüsselvertrag beachten. Hier wird weder ein Flashbefehl
+noch ein neuer Import-, Migration-, OTA- oder Recoverydienst eingeführt.
+
+`littlefs_create_partition_image(user_images, ...)` liest Größe und Adresse
+aus dem Partitionstisch und registriert einen separaten verschlüsselungsbewussten
+Flash-Target. Ohne `FLASH_IN_PROJECT` gehört dieses Image weiterhin nicht zum
+allgemeinen Flashlauf. Auch der Stockpack wird nicht still zum Flashsatz ergänzt.
+Vorhandene historische Provisionierungs-Captures mit `0x2c0000` gehören zu ihrem
+alten Layout und sind keine ausführbaren Recoveryanweisungen für diesen Vorschlag.
+Der Security-Buildwrapper erlaubt weiterhin nur Bauen. Gerätebereitschaft fehlt;
+keine Geräte- oder Flashaktion ist durch dieses Dokument freigegeben.
