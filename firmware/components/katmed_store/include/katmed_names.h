@@ -34,7 +34,18 @@ typedef struct {
     uint16_t visible_index;
     bool opened, poisoned, fresh;
     NamesResult error;
+    /* A completed T is checked for duplicate nonzero identities before
+     * PREPARED. The bounded radix selection state survives Mesh polls. */
+    uint8_t unique_target[80];
+    uint64_t unique_heap[16];
+    uint64_t unique_after;
+    uint32_t unique_offset, unique_slots;
+    uint16_t unique_count, unique_equal, unique_budget;
+    uint8_t unique_bank;
+    bool unique_active, unique_done, unique_limited;
 } NamesStore;
+/* One poll grants at most this many file reads to the uniqueness scan. */
+void names_poll_budget(NamesStore *,uint16_t reads);
 NamesResult names_open(NamesStore *,NamesBackend,uint64_t,const uint8_t group[16]);
 NamesResult names_reopen(NamesStore *);
 /* Called only for a root with no new-format object. registry must be random. */

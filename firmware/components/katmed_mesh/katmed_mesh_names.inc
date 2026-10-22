@@ -117,6 +117,9 @@ __attribute__((noinline)) void names_tick(uint64_t now){
         if(!rekey()){katmed_mesh_stop();return;}send_hello();return;
     }
     if(!root()){
+        if((names_phase(&names)==NAMES_RX_APPEND||names_phase(&names)==NAMES_RX_REPLACE)&&
+           names_target(&names)&&name_le(names.ctl+52,4)==name_le(names_target(&names)+64,4))
+            (void)names_resume(&names);
         NamePeer *p=name_peer(ctx.coordinator_device);
         if(!p||p->protocol!=2)return;
         const NamesPhase phase=names_phase(&names);
@@ -237,7 +240,7 @@ __attribute__((noinline)) void names_frame(const KatmedMeshFrame &f,uint64_t now
             for(auto &p:name_peers)if(p.device&&p.protocol==2)members[count++]=p.device;
             NamesResult r=names_merge_page(&names,&names_merge,m.start,page.ids(),n,members,count);
             names_merge_last=0;
-            if(r!=NAMES_OK){names.error=r;names_merge_cancel(&names_merge);NamesMessage error=m;error.opcode=NAMES_ERROR;error.status=uint16_t(r);error.start=0;(void)names_send(f.sender,error);}
+            if(r!=NAMES_OK&&r!=NAMES_BUSY){names.error=r;names_merge_cancel(&names_merge);NamesMessage error=m;error.opcode=NAMES_ERROR;error.status=uint16_t(r);error.start=0;(void)names_send(f.sender,error);}
             return;
         }
         const uint8_t *t=names_target(&names);if(!t)t=names_published(&names);
@@ -251,7 +254,7 @@ __attribute__((noinline)) void names_frame(const KatmedMeshFrame &f,uint64_t now
         if(m.opcode==NAMES_PAGE&&(names_phase(&names)==NAMES_RX_APPEND||names_phase(&names)==NAMES_RX_REPLACE)){
             NamePageScratch page(f);const size_t n=(f.payload_length-328)/8;
             const NamesResult r=names_receive_page(&names,m.start,page.ids(),n);
-            peer->retries=0;peer->last_send=0;if(r!=NAMES_OK)names.error=r;
+            peer->retries=0;peer->last_send=0;if(r!=NAMES_OK&&r!=NAMES_BUSY)names.error=r;
             return;
         }
         if(m.opcode==NAMES_REQUEST){
@@ -343,7 +346,9 @@ __attribute__((noinline)) void names_frame(const KatmedMeshFrame &f,uint64_t now
     if(!samep&&(m.epoch!=name_le(names.ctl+88,8)||m.controller!=name_le(names.ctl+336,8)))return;
     if(m.opcode==NAMES_PAGE){
         NamePageScratch page(f);const size_t n=(f.payload_length-328)/8;
-        if(names_receive_page(&names,m.start,page.ids(),n)!=NAMES_OK)return;
+        const NamesResult page_result=names_receive_page(&names,m.start,page.ids(),n);
+        if(page_result==NAMES_BUSY)return;
+        if(page_result!=NAMES_OK)return;
         NamesMessage reply=m;std::memcpy(reply.base,peer->base,80);reply.start=0;
         reply.opcode=names_phase(&names)==NAMES_PREPARED?NAMES_PREPARED_ACK:NAMES_REQUEST;
         reply.progress=uint32_t(name_le(names.ctl+52,4));std::memcpy(reply.progress_hash,names.ctl+56,32);

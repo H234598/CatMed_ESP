@@ -1080,6 +1080,7 @@ extern "C" KatmedMeshResult katmed_mesh_submit_shared(const AppEvent *event,
 extern "C" void katmed_mesh_poll(const ClockSample *now){
     NamesStatusPublication publish_name_status;
     if(!now||!current_group())return;
+    if(names_bound)names_poll_budget(&names,32);
     const uint8_t profile_count=ctx.services.store->record.wifi_profile_count;
     const bool explicit_reconnect=
         ctx.wifi_reconnect_requested.exchange(false,std::memory_order_acq_rel);

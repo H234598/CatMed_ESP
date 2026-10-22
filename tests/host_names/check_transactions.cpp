@@ -2,6 +2,7 @@
 #include <cassert>
 #include <cstdio>
 #include <cstring>
+#include <limits>
 #include <zlib.h>
 extern "C" unsigned char *SHA256(const unsigned char *,size_t,unsigned char *);
 static const uint8_t group[16]={1},registry[16]={2};
@@ -75,6 +76,71 @@ int main(){
     }
     puts("write-free retarget, shared append-bank protection and both intent CommitUnknown outcomes passed");
     {NamesStore s{};NamesMemory b;seed(s,b,11,{11,22});auto sd=descriptor({11,33},88,1);NamesMerge job{};assert(names_merge_begin(&s,&job,33,sd.data())==NAMES_OK);auto ctl=b.keys[0],file=b.files[0];uint64_t collision[]={11,33};assert(names_merge_page(&s,&job,0,collision,2,nullptr,0)==NAMES_CONFLICT);assert(b.keys[0]==ctl&&b.files[0]==file);names_merge_cancel(&job);}
+    {
+     NamesStore s{};NamesMemory b;seed(s,b,11,{11});
+     const auto old=b.keys[0];const auto view=b.keys[1];
+     const std::vector<uint64_t> duplicate={11,22,22};
+     auto target=descriptor(duplicate,77,2);
+     assert(names_receive_begin(&s,registry,target.data(),false,77,2,nullptr,0,0,0)==NAMES_OK);
+     assert(names_receive_page(&s,0,duplicate.data(),duplicate.size())==NAMES_CONFLICT);
+     assert(b.keys[1]==view&&names_cursor(&s)==2);
+     NamesStore reopened{};assert(names_open(&reopened,b.backend(),11,group)==NAMES_OK);
+     assert(names_cursor(&reopened)==2&&reopened.visible_index==1);
+     assert(b.keys[0]!=old&&names_phase(&reopened)==NAMES_RX_REPLACE);
+     puts("valid-hash duplicate T rejected before PREPARED; P and View survive reopening");
+    }
+    {
+     NamesStore s{};NamesMemory b;seed(s,b,11,{11});
+     std::vector<uint64_t> boundary(1000);
+     for(size_t i=0;i<boundary.size();++i)boundary[i]=i+11;
+     boundary.back()=boundary[15]; // crosses the 16-entry selection boundary
+     const auto target=descriptor(boundary,77,4);
+     assert(names_receive_begin(&s,registry,target.data(),false,77,2,nullptr,0,0,0)==NAMES_OK);
+     for(size_t at=0;at<boundary.size();){size_t n=boundary.size()-at;if(n>89)n=89;
+         const auto r=names_receive_page(&s,uint32_t(at),boundary.data()+at,n);
+         assert(r==(at+n==boundary.size()?NAMES_CONFLICT:NAMES_OK));at+=n;}
+     NamesStore reopened{};assert(names_open(&reopened,b.backend(),11,group)==NAMES_OK);
+     assert(reopened.visible_index==1&&names_cursor(&reopened)==2);
+     puts("1000-slot duplicate across selection boundary rejected with valid full digest");
+    }
+    {
+     NamesStore s{};NamesMemory b;seed(s,b,11,{11});
+     const auto ctl=b.keys[0],file=b.files[0];
+     const auto source=descriptor({11,22},88,std::numeric_limits<uint64_t>::max()-1);
+     NamesMerge job{};
+     assert(names_merge_begin(&s,&job,22,source.data())==NAMES_INDEX_EXHAUSTED);
+     assert(b.keys[0]==ctl&&b.files[0]==file&&names_phase(&s)==NAMES_IDLE);
+     assert(names_reopen(&s)==NAMES_OK&&s.visible_index==1);
+     names_merge_cancel(&job);
+     puts("UINT64_MAX-1 merge offer exhausts serial before durable intent or file mutation");
+    }
+    {
+     NamesStore s{};NamesMemory b;seed(s,b,11,{11});
+     const auto original_view=b.keys[1];
+     const std::vector<uint64_t> duplicate={11,22,22};
+     const auto source=descriptor(duplicate,88,3);
+     NamesMerge job{};assert(names_merge_begin(&s,&job,22,source.data())==NAMES_OK);
+     assert(names_merge_page(&s,&job,0,duplicate.data(),duplicate.size(),nullptr,0)==NAMES_OK);
+     assert(names_merge_page(&s,&job,0,duplicate.data(),duplicate.size(),nullptr,0)==NAMES_CONFLICT);
+     names_merge_cancel(&job);
+     NamesStore reopened{};assert(names_open(&reopened,b.backend(),11,group)==NAMES_OK);
+     assert(names_cursor(&reopened)==2&&reopened.visible_index==1&&b.keys[1]==original_view);
+     puts("valid-hash duplicate merge source rejected before PREPARED; P and View survive");
+    }
+    {
+     NamesStore s{};NamesMemory b;seed(s,b,11,{11});
+     assert(names_reserve(&s,22,nullptr,0)==NAMES_OK);
+     const auto target=descriptor({11,22,33},77,std::numeric_limits<uint64_t>::max());
+     NamesRetarget verify{};const uint64_t ids[]={11,22,33};
+     assert(names_retarget_begin(&s,&verify,target.data())==NAMES_OK);
+     assert(names_retarget_page(&s,&verify,0,ids,3)==NAMES_OK&&verify.complete);
+     const auto ctl=b.keys[0],file=b.files[0],view=b.keys[1];const auto commits=b.commits;
+     assert(names_retarget_accept(&s,&verify,77,3,nullptr,0)==NAMES_INDEX_EXHAUSTED);
+     assert(b.commits==commits&&b.keys[0]==ctl&&b.files[0]==file&&b.keys[1]==view);
+     assert(names_reopen(&s)==NAMES_OK&&s.visible_index==1);
+     names_retarget_cancel(&verify);
+     puts("retarget maximum serial rejected before intent or file mutation");
+    }
     {NamesStore s{};NamesMemory b;std::vector<uint64_t> ids(65535);for(size_t i=0;i<ids.size();++i)ids[i]=i+1;seed(s,b,65535,ids);assert(names_cursor(&s)==65536);auto ctl=b.keys[0];assert(names_reserve(&s,999999,nullptr,0)==NAMES_INDEX_EXHAUSTED);assert(b.keys[0]==ctl);char value[32];names_visible(&s,value,nullptr,nullptr);assert(!strcmp(value,"KatmedESP-65535"));puts("bounded seeded format/range probe: 65535 name, cursor65536 explicit exhaustion; NOT a natural join run");}    {NamesMemory orphan;orphan.exists[0]=true;orphan.files[0]={1};NamesStore s{};assert(names_open(&s,orphan.backend(),11,group)==NAMES_CORRUPT&&orphan.commits==0);}
     {NamesMemory b;NamesStore s{};seed(s,b,11,{11,22});auto ctl=b.keys[0];b.files[0][0]^=1;unsigned commits=b.commits;assert(names_open(&s,b.backend(),11,group)==NAMES_CORRUPT);assert(b.commits==commits&&b.keys[0]==ctl);}
     {NamesMemory b;NamesStore s{};seed(s,b,11,{11,22});auto target=descriptor({11,22,33},77,2);assert(names_receive_begin(&s,registry,target.data(),false,77,2,nullptr,0,33,3)==NAMES_OK);uint64_t first=11;assert(names_receive_page(&s,0,&first,1)==NAMES_OK);b.files[1][64]^=1;assert(names_open(&s,b.backend(),11,group)==NAMES_CORRUPT);char name[32];bool assigned=false,uncertain=false;names_visible(&s,name,&assigned,&uncertain);assert(assigned&&uncertain&&!strcmp(name,"KatmedESP-001"));}

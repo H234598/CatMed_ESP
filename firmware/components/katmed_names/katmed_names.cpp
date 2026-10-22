@@ -76,10 +76,12 @@ namespace {
         for(size_t i=0;i<n;++i){if(!ids[i]||ids[i]==controller)return false;for(size_t j=0;j<i;++j)if(ids[i]==ids[j])return false;}
         return true;
     }
-    void observe_serial(NamesStore *s,const uint8_t *d){
+    NamesResult observe_serial(NamesStore *s,const uint8_t *d){
         uint64_t highest=get(d+8,8);if(get(d+24,8)>highest)highest=get(d+24,8);
-        const uint64_t next=highest==UINT64_MAX?highest:highest+1;
+        if(highest==UINT64_MAX)return NAMES_INDEX_EXHAUSTED;
+        const uint64_t next=highest+1;
         if(next>get(s->ctl+40,8))put(s->ctl+40,next,8);
+        return NAMES_OK;
     }
     NamesResult result(StoreResult r){switch(r){case STORE_OK:return NAMES_OK;
             case STORE_FULL:return NAMES_FULL;
@@ -88,7 +90,7 @@ namespace {
             case STORE_NOT_FOUND:return NAMES_NEED_SYNC;
             default:return NAMES_IO;
     }}
-    NamesResult fail(NamesStore *s,NamesResult r){if(r!=NAMES_OK){s->poisoned=true;
+    NamesResult fail(NamesStore *s,NamesResult r){if(r!=NAMES_OK&&r!=NAMES_BUSY){s->poisoned=true;
             s->error=r;
         }return r;
     }
@@ -158,6 +160,67 @@ namespace {
         if(r!=NAMES_OK)return r;
         return std::memcmp(hash,d+32,32)==0?NAMES_OK:NAMES_CORRUPT;
     }
+    void heap_down(uint64_t *h,unsigned n,unsigned at){
+        for(;;){unsigned child=at*2+1;if(child>=n)return;
+            if(child+1<n&&h[child+1]>h[child])++child;
+            if(h[at]>=h[child])return;
+            const uint64_t v=h[at];h[at]=h[child];h[child]=v;at=child;
+        }
+    }
+    void heap_add(NamesStore *s,uint64_t id){
+        const unsigned n=s->unique_count;
+        if(n<16){unsigned at=n;s->unique_count=n+1;
+            while(at){unsigned parent=(at-1)/2;if(s->unique_heap[parent]>=id)break;
+                s->unique_heap[at]=s->unique_heap[parent];at=parent;
+            }s->unique_heap[at]=id;
+        }else if(id<s->unique_heap[0]){
+            s->unique_heap[0]=id;heap_down(s->unique_heap,16,0);
+        }
+    }
+    NamesResult unique(NamesStore *s){
+        const uint8_t *d=desc(s,true);
+        const uint32_t slots=uint32_t(get(d+64,4));
+        const uint8_t b=uint8_t(bank(s,true));
+        if(!s->unique_active||s->unique_bank!=b||s->unique_slots!=slots||
+           std::memcmp(s->unique_target,d,80)){
+            std::memcpy(s->unique_target,d,80);s->unique_bank=b;
+            s->unique_slots=slots;s->unique_after=0;s->unique_offset=0;
+            s->unique_count=s->unique_equal=0;
+            s->unique_active=true;s->unique_done=false;
+        }
+        if(s->unique_done)return NAMES_OK;
+        uint8_t bytes[512];
+        for(;;){
+            while(s->unique_offset<slots){
+                if(s->unique_limited){if(!s->unique_budget)return NAMES_BUSY;--s->unique_budget;}
+                const uint32_t left=slots-s->unique_offset;
+                const uint32_t n=left>64?64:left;
+                const StoreResult sr=s->backend.read_file(s->backend.context,b,
+                    64+8*s->unique_offset,bytes,8*n);
+                if(sr!=STORE_OK)return result(sr);
+                for(uint32_t i=0;i<n;++i){
+                    const uint64_t id=get(bytes+8*i,8);
+                    if(id==s->unique_after&&id){
+                        if(++s->unique_equal>1)return NAMES_CONFLICT;
+                    }else if(id>s->unique_after)heap_add(s,id);
+                }
+                s->unique_offset+=n;
+            }
+            const unsigned count=s->unique_count;
+            // Heap sort the selected smallest identities. Equal neighbours
+            // prove a duplicate even when all file hashes and counts match.
+            for(unsigned n=count;n>1;--n){
+                const uint64_t v=s->unique_heap[0];
+                s->unique_heap[0]=s->unique_heap[n-1];
+                s->unique_heap[n-1]=v;heap_down(s->unique_heap,n-1,0);
+            }
+            for(unsigned i=1;i<count;++i)
+                if(s->unique_heap[i]==s->unique_heap[i-1])return NAMES_CONFLICT;
+            if(count<16){s->unique_done=true;return NAMES_OK;}
+            s->unique_after=s->unique_heap[count-1];
+            s->unique_count=s->unique_equal=0;s->unique_offset=0;
+        }
+    }
     NamesResult preserve(NamesStore *s){
         const uint32_t newslots=uint32_t(get(desc(s,true)+64,4));
         if(s->ctl[51]&PV){
@@ -197,6 +260,8 @@ namespace {
         return save(s);
     }
     NamesResult prepared(NamesStore *s){NamesResult r=validate(s,true);
+        if(r!=NAMES_OK)return fail(s,r);
+        r=unique(s);
         if(r!=NAMES_OK)return fail(s,r);
         r=preserve(s);
         if(r!=NAMES_OK)return fail(s,r);
@@ -311,6 +376,9 @@ extern "C" NamesResult names_initialize(NamesStore *s,const uint8_t registry[16]
     s->fresh=false;
     return names_resume(s);
 }
+extern "C" void names_poll_budget(NamesStore *s,uint16_t reads){
+    if(s){s->unique_limited=true;s->unique_budget=reads;}
+}
 extern "C" NamesResult names_lookup(NamesStore *s,uint64_t device,uint16_t *confirmed,uint16_t *reserved){
     if(confirmed)*confirmed=0;
     if(reserved)*reserved=0;
@@ -356,7 +424,7 @@ extern "C" NamesResult names_reserve(NamesStore *s,uint64_t device,const uint64_
     uint32_t cursor=names_cursor(s);
     if(cursor>65535)return NAMES_INDEX_EXHAUSTED;
     uint64_t serial=get(s->ctl+40,8);
-    if(serial==UINT64_MAX)return NAMES_INDEX_EXHAUSTED;
+    if(serial==UINT64_MAX||get(s->ctl+88,8)==UINT64_MAX)return NAMES_INDEX_EXHAUSTED;
     std::memcpy(desc(s,true),desc(s,false),80);
     uint8_t *d=desc(s,true);
     put(d,s->local_device,8);
@@ -413,6 +481,8 @@ extern "C" NamesResult names_publish(NamesStore *s){
     if(s->ctl[48]==NAMES_FINALIZING)return NAMES_OK;
     if(s->ctl[48]!=NAMES_PREPARED)return NAMES_STALE;
     NamesResult r=validate(s,true);
+    if(r!=NAMES_OK)return fail(s,r);
+    r=unique(s);
     if(r!=NAMES_OK)return fail(s,r);
     r=preserve(s);
     if(r!=NAMES_OK)return fail(s,r);
@@ -495,7 +565,7 @@ extern "C" NamesResult names_receive_begin(NamesStore *s,const uint8_t registry[
     }
     if(s->ctl[48]!=NAMES_IDLE)return NAMES_BUSY;
     if(s->fresh)std::memcpy(s->ctl+24,registry,16);
-    observe_serial(s,target);
+    if(observe_serial(s,target)!=NAMES_OK)return NAMES_INDEX_EXHAUSTED;
     const bool share=append&&(s->ctl[51]&PV)&&!std::memcmp(target+16,desc(s,false)+16,16)&&get(target+64,4)>=get(desc(s,false)+64,4);
     if(append&&!share)return NAMES_STALE;
     const unsigned candidate=share?bank(s,false):((s->ctl[51]&PV)?1-bank(s,false):0);
@@ -613,7 +683,7 @@ extern "C" NamesResult names_retarget_accept(NamesStore *s,NamesRetarget *v,uint
     if(guard(s)!=NAMES_OK)return guard(s);
     if(!v||!v->complete||!controller||!epoch||n>8||(!peers&&n))return NAMES_STALE;
     const unsigned candidate=(s->ctl[51]&PV)?1-bank(s,false):bank(s,true);
-    observe_serial(s,v->target);
+    if(observe_serial(s,v->target)!=NAMES_OK)return NAMES_INDEX_EXHAUSTED;
     std::memcpy(desc(s,true),v->target,80);std::memcpy(s->ctl+352,v->target,80);
     put(s->ctl+432,controller,8);put(s->ctl+336,controller,8);put(s->ctl+88,epoch,8);
     s->ctl[48]=NAMES_RX_REPLACE;s->ctl[49]=3;s->ctl[50]=uint8_t(n);
@@ -656,8 +726,9 @@ extern "C" NamesResult names_merge_begin(NamesStore *s,NamesMerge *m,uint64_t so
     names_merge_cancel(m);m->source_device=source_device;std::memcpy(m->source,source,80);
     uint8_t *t=m->target;uint64_t serial=get(s->ctl+40,8);
     uint64_t observed=get(source+8,8);if(get(source+24,8)>observed)observed=get(source+24,8);
-    if(observed==UINT64_MAX)return NAMES_INDEX_EXHAUSTED;
+    if(observed>=UINT64_MAX-1)return NAMES_INDEX_EXHAUSTED;
     if(serial<=observed)serial=observed+1;
+    if(serial==UINT64_MAX||get(s->ctl+88,8)==UINT64_MAX)return NAMES_INDEX_EXHAUSTED;
     put(t,s->local_device,8);put(t+8,serial,8);put(t+16,s->local_device,8);put(t+24,serial,8);
     const uint32_t a=uint32_t(get(source+64,4)),b=uint32_t(get(desc(s,false)+64,4));
     put(t+64,a>b?a:b,4);put(t+68,(a>b?a:b)+1,4);put(t+76,1,2);
