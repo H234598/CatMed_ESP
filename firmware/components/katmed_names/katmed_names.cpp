@@ -428,7 +428,12 @@ static NamesResult open_impl(NamesStore *s,NamesBackend backend,uint64_t device,
     return finish_open(s);
 }
 extern "C" NamesResult names_open(NamesStore *s,NamesBackend backend,uint64_t device,const uint8_t group[16]){
+#ifdef KATMED_MESH_HOST
+    // Fixture construction may run synchronously outside the adapter poll.
     return open_impl(s,backend,device,group,false,0);
+#else
+    return open_impl(s,backend,device,group,true,32);
+#endif
 }
 extern "C" NamesResult names_open_bounded(NamesStore *s,NamesBackend backend,uint64_t device,const uint8_t group[16],uint16_t reads){
     return open_impl(s,backend,device,group,true,reads);

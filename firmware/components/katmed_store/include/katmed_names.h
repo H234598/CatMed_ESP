@@ -70,7 +70,8 @@ typedef struct {
 /* One poll grants at most this many file reads to resumable scans. */
 void names_poll_budget(NamesStore *,uint16_t reads);
 void names_cancel_scan(NamesStore *);
-/* Synchronous compatibility entry for isolated host fixture construction. */
+/* Firmware default: 32 reads, then NAMES_BUSY. Only host fixture builds
+ * retain synchronous construction outside the production adapter poll. */
 NamesResult names_open(NamesStore *,NamesBackend,uint64_t,const uint8_t group[16]);
 /* Firmware entry: NAMES_BUSY continues through names_reopen on later polls. */
 NamesResult names_open_bounded(NamesStore *,NamesBackend,uint64_t,const uint8_t group[16],uint16_t reads);
