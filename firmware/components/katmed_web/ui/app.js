@@ -311,7 +311,7 @@
       preview.src = "/api/images?id=" + encodeURIComponent(image.id);
       const description = document.createElement("span");
       description.className = "help";
-      description.textContent = ((image.id >>> 31) ? tr("Katalogkopie · ") : tr("Eigenes Bild · ")) +
+      description.textContent = ((image.id >>> 31) ? tr("Mitgeliefertes Bild · ") : tr("Eigenes Bild · ")) +
         tr("JPEG ") + image.width + " × " + image.height +
         " · " + image.bytes + tr(" Byte");
       details.append(preview, description);
@@ -320,6 +320,7 @@
       remove.className = "danger";
       remove.textContent = tr("Entfernen");
       remove.dataset.imageId = String(image.id);
+      remove.disabled = (image.id >>> 31) !== 0;
       item.append(details, remove);
       list.append(item);
     }
@@ -361,7 +362,7 @@
         const button = document.createElement("button");
         button.type = "button";
         button.className = "secondary";
-        button.textContent = tr("Kopie übernehmen · ") + variant.width + " × " +
+        button.textContent = tr("Bild prüfen · ") + variant.width + " × " +
           variant.height;
         button.dataset.catalogId = String(image.id);
         button.dataset.catalogProfile = String(variant.profile);
@@ -857,7 +858,7 @@
         "&profile=" + encodeURIComponent(button.dataset.catalogProfile);
       await api("/api/images/import" + query, "POST");
       await loadImages();
-      notice(tr("Katalogbild atomar in den beschreibbaren Speicher übernommen."));
+      notice(tr("Mitgeliefertes Bild geprüft."));
     } catch (error) { await handleFailure(error); }
     finally { button.disabled = false; }
   });

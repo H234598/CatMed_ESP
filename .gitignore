@@ -1,6 +1,6 @@
 # Local output and dependency downloads
 /build*/
-firmware/build*/
+firmware/build*
 firmware/managed_components/
 firmware/sdkconfig*
 !firmware/sdkconfig.defaults*
@@ -14,10 +14,9 @@ __pycache__/
 .env
 .env.*
 
-# Firmware and diagnostic output are local; image packs are intentional assets.
+# Firmware, filesystem and diagnostic output stay local.
 *.elf
 *.map
 *.log
 *.bin
-!assets/generated/*.bin
 /core

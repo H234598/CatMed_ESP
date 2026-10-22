@@ -50,7 +50,7 @@ typedef struct {
 } KatmedImageTimingSample;
 
 /* Must be called before UI uses the image catalogue. It verifies the entire
- * read-only image pack using a 512-byte buffer; no image is copied into RAM. */
+ * standard files in the shared LittleFS using a 512-byte buffer; no complete image is copied into RAM. */
 KatmedImageStatus katmed_images_mount_partition(void);
 void katmed_images_unmount(void);
 KatmedImageStatus katmed_images_select(uint32_t logical_index, Orientation orientation,

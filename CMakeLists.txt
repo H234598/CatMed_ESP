@@ -37,7 +37,7 @@ target_compile_options(check_boot_restart_runtime PRIVATE -Wall -Wextra -Wpedant
 add_test(NAME boot_restart_runtime_contract COMMAND check_boot_restart_runtime)
 
 # Exercise the same bounded reader and LVGL/TJpgD adapter used by both firmware
-# targets against the checked-in image packs. The generated index is target-local.
+# targets against the individual checked-in JPEG files. The generated index is target-local.
 set(KATMED_IMAGE_COMPONENT "${CMAKE_CURRENT_SOURCE_DIR}/firmware/components/katmed_images")
 set(KATMED_IMAGE_ASSETS "${CMAKE_CURRENT_SOURCE_DIR}/assets/generated")
 set(KATMED_CATALOG_PYTHON "/usr/bin/python3")
@@ -72,7 +72,7 @@ add_subdirectory(firmware/managed_components/lvgl__lvgl "${CMAKE_CURRENT_BINARY_
 add_custom_target(verify_image_assets
     COMMAND "${KATMED_CATALOG_PYTHON}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/prepare_images.py" --verify-only
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
-    COMMENT "Checking current source selection, crops, JPEGs and packs"
+    COMMENT "Checking current source selection, crops, JPEG files"
     VERBATIM)
 file(GLOB_RECURSE KATMED_JPEGS CONFIGURE_DEPENDS "${KATMED_IMAGE_ASSETS}/*.jpg")
 foreach(board IN ITEMS c3 c6)
@@ -84,11 +84,16 @@ foreach(board IN ITEMS c3 c6)
         DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/tools/generate_firmware_catalog.py"
                 "${CMAKE_CURRENT_SOURCE_DIR}/tools/prepare_images.py"
                 "${CMAKE_CURRENT_SOURCE_DIR}/assets/crop_focus.json"
-                "${KATMED_IMAGE_ASSETS}/manifest.json"
-                "${KATMED_IMAGE_ASSETS}/c3_images.bin"
-                "${KATMED_IMAGE_ASSETS}/c6_images.bin" ${KATMED_JPEGS}
+                "${KATMED_IMAGE_ASSETS}/manifest.json" ${KATMED_JPEGS}
         COMMENT "Generating validated ${board} image index"
         VERBATIM)
+    add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/${board}_image_stream_fixture.bin"
+        COMMAND "${KATMED_CATALOG_PYTHON}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/image_stream_fixture.py"
+                "${board}" "${CMAKE_CURRENT_BINARY_DIR}/${board}_image_stream_fixture.bin"
+        DEPENDS "${catalog}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/image_stream_fixture.py" ${KATMED_JPEGS}
+        VERBATIM)
+    add_custom_target(image_stream_fixture_${board}
+        DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/${board}_image_stream_fixture.bin")
     add_executable(check_image_${board}
         tests/check_image_reader.cpp
         "${KATMED_IMAGE_COMPONENT}/katmed_images_reader.c"
@@ -106,9 +111,9 @@ foreach(board IN ITEMS c3 c6)
     target_link_libraries(check_image_${board} PRIVATE katmed_core lvgl::lvgl tfpsacrypto)
     target_link_options(check_image_${board} PRIVATE -Wl,--wrap=lv_strdup)
     target_compile_options(check_image_${board} PRIVATE -Wall -Wextra -Wpedantic -Werror)
-    add_dependencies(check_image_${board} verify_image_assets)
+    add_dependencies(check_image_${board} verify_image_assets image_stream_fixture_${board})
     add_test(NAME image_${board}_contract COMMAND check_image_${board}
-        "${KATMED_IMAGE_ASSETS}/${board}_images.bin")
+        "${CMAKE_CURRENT_BINARY_DIR}/${board}_image_stream_fixture.bin")
 endforeach()
 
 option(KATMED_SANITIZERS "Check host memory and undefined behaviour" OFF)
@@ -118,3 +123,10 @@ if(KATMED_SANITIZERS)
         target_link_options(${t} PRIVATE -fsanitize=address,undefined)
     endforeach()
 endif()
+
+add_test(NAME shared_image_store_contract
+    COMMAND /usr/bin/python3 "${CMAKE_CURRENT_SOURCE_DIR}/tests/host_image_store/check_real_catalog_import.py")
+add_test(NAME firmware_catalog_contract
+    COMMAND /usr/bin/python3 "${CMAKE_CURRENT_SOURCE_DIR}/tests/check_firmware_catalog.py")
+add_test(NAME firmware_layout_contract
+    COMMAND /usr/bin/python3 "${CMAKE_CURRENT_SOURCE_DIR}/tests/check_firmware_layout.py")

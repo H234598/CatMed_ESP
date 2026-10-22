@@ -55,7 +55,7 @@ contracts and both firmware builds in the official ESP-IDF container using only
 synthetic temporary WLAN values. It uploads no firmware, credentials or device
 backups. Local host UI tests use `firmware/components/katmed_ui/host` with
 `KATMED_UI_HOST_MEM34=ON` to exercise the 34 KiB LVGL pool. Root CMake/CTest also
-checks the reducer and the checked-in image packs.
+checks the reducer and the checked-in individual JPEG files.
 
 ## Flashing
 
@@ -64,10 +64,18 @@ network provisioning runs in CI. Device backups, private firmware, local network
 configuration and project working reports are excluded from this repository.
 
 ## Pics
-Public host CI checks the reducer, prepared JPEG/pack checksums and crop geometry,
+Public host CI checks the reducer, prepared JPEG checksums and crop geometry,
 the three UI formats with the 34 KiB pool, main contacts, authenticated Mesh,
 transient Morse, admission persistence and Store contracts. Original image files
 are external: generation requires `tools/prepare_images.py --source /your/archive`;
 `--verify-only` validates checked-in prepared assets without that archive.
 Historical local diagnosis fixtures that execute private working documents or
 require private machine paths are excluded from this public source snapshot.
+
+The standard cats and uploads share one `encrypted` LittleFS partition. Its
+`factory-images/cat-XX-P.jpg` namespace contains all 72 cats (one C3 profile,
+two C6 orientation profiles); upload IDs address only `user-images`. Standard
+references do not copy JPEGs. Factory reset removes uploads/user state without
+formatting the filesystem or deleting the standard files. `readonly` stock
+blobs and separate stock partitions are no longer built or shipped. Standard
+profiles keep flash encryption opt-in; the partition flag does not enable it.

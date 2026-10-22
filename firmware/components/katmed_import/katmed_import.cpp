@@ -16,8 +16,9 @@ namespace {
 constexpr size_t kMaxCapsule = 0x50000;
 constexpr size_t kMaxFiles = 128;
 constexpr size_t kMaxFile = 128 * 1024;
-/* The source contract permits 248 KiB; the expanded 576 KiB security target
- * still reserves space for LittleFS metadata and copy-on-write operations. */
+/* The source contract retains its historical 248 KiB content limit. The
+ * former 576 KiB target motivated metadata/COW reserves; current security
+ * targets are 0x1ca000 (C3) and 0x5ca000 (C6), with the same import limit. */
 constexpr size_t kMaxFileContent = 0x40000 - 8192;
 constexpr char kImportNs[] = "katmed_imp";
 constexpr char kStage[] = "stage";

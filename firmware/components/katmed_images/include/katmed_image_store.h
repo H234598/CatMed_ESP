@@ -61,9 +61,8 @@ KatmedImageStatus katmed_image_store_upload_commit(KatmedImageUpload upload,
                                                      KatmedUserImageInfo *out);
 KatmedImageStatus katmed_image_store_upload_abort(KatmedImageUpload upload);
 
-/* Copies one target-supported image from the already verified immutable
- * firmware catalogue into the writable user-image filesystem. Repeating the
- * same import refreshes that generated cache entry atomically. */
+/* Returns a stable read-only reference to a standard file in the shared
+ * filesystem. Never copies or overwrites a standard file. */
 KatmedImageStatus katmed_image_store_import_catalog(uint32_t index,
                                                       uint32_t profile,
                                                       KatmedUserImageInfo *out);
@@ -86,7 +85,7 @@ KatmedImageStatus katmed_image_store_list(uint32_t index, KatmedUserImageInfo *o
 KatmedImageStatus katmed_image_store_remove(uint32_t id);
 KatmedImageStatus katmed_image_store_stats(KatmedImageStoreStats *out);
 /* Removes only generated uploaded-image and abandoned-upload files. Never
- * formats or touches the immutable factory image partition. Idempotent. */
+ * formats or touches factory-images in the same filesystem. Idempotent. */
 KatmedImageStatus katmed_image_store_clear_user_data(void);
 
 #ifdef __cplusplus

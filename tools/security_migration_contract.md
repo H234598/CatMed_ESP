@@ -161,9 +161,17 @@ Der Abort eines vorjournalisierten Orphans verlangt zusätzlich eine vollständi
 
 **Noch offen:** Transport und geschützter authentisierter Empfänger für das Capsule, Quieszenz für einen möglichen Export nach Dienststart und auf der späteren Zielseite sowie ein Nachweis, dass der spätere ACME-Client die bytegleich übernommenen inneren Zustände akzeptiert. Der bestehende Factory-Reset erreicht ACME-Dateien ausschließlich über seine physische Freigabe und journalisierte Dateistufe; der Import löst keinen Reset aus. Die Bilddateien sind an Dateinamen, IDs, Längen und CRC gebunden; die im Store gespeicherte Katalogkennung beschreibt dagegen den unveränderlichen Firmwarekatalog und wird durch diesen Dateislice nicht neu gebunden. Auf einem echten Gerät fehlen eine Füllstands-/Stromausfallprobe und ein Nachweis gegen konkurrierende Schreiber. Ohne diese Anschlüsse und gerätegebundene Recoveryprobe ist der Adapter keine Migrations- oder Sicherheitsfreigabe.
 
-Das neutrale Quelllayout behält `user_images` bei `0x280000` mit 256 KiB. Nur das noch unaktivierte Security-Ziellayout für C3 und C6 verschiebt den Beginn auf `0x230000` und vergrößert diese verschlüsselte Partition auf 576 KiB; die Factory-App wird dabei von `0x260000` auf `0x210000` Byte verkleinert. Der unveränderliche Stockkatalog beginnt weiterhin bei `0x2c0000`. Die Security-NVS-Partition bleibt bei `0x11000`, wächst aber von `0x6000` auf `0x7000`; `phy_init` rückt aus `0x17000` in die freie Lücke bei `0x1a000`. Schlüsselbereich und Guard bleiben bei `0x18000` und `0x19000`; der Security-Partitionstisch endet bei `0x11000`. Factory-App, LittleFS und Stockbereich behalten ihre bisherigen Grenzen dieses Teilslices. Die Sicherheitsinitialisierung und der Layoutcheck verlangen die neuen Grenzen exakt. Ein bloßer Austausch der Partitionstabelle auf einem belegten Altgerät wäre **keine Migration**: Die alte LittleFS-Metadatenwurzel liegt an einer anderen Adresse. Ohne einen zuvor extern gesicherten und geprüften vollständigen Quellbestand bleibt dieser Schritt gesperrt. Der Import formatiert niemals bei einem Mountfehler und überschreibt kein vorhandenes Zielbild. Der Security-Boot hält den normalen Start nun auch dann an, wenn das umgelegte Nutzerbild-Dateisystem nicht gemountet werden kann; der neutrale Altquellpfad bleibt unverändert.
+Die aktuellen Standardlayouts verwenden ein gemeinsames encrypted LittleFS ab
+`0x280000` bis zum jeweiligen Flashende (C3 4 MiB, C6 8 MiB). Die Securitylayouts
+verwenden denselben gemeinsamen Dateibestand ab `0x236000`; C3 umfasst
+`0x1ca000`, C6 `0x5ca000` Byte. Eine separate Stockpartition existiert nicht mehr.
+Standarddateien liegen geschützt in `factory-images`, Uploads in `user-images`.
+Der Import und Factory Reset formatieren das Dateisystem niemals; Standarddateien
+werden nicht als Benutzerdaten exportiert oder überschrieben. Der vorhandene
+begrenzte semantische Migrationsvertrag wird dadurch nicht erweitert.
 
-Die größere Partition ist durch echte gepinnte LittleFS-Blockengineproben motiviert: Ein synthetischer, JPEG-decodierbarer KMI1-Bestand mit 127 Bildern und exakt 248 KiB Inhalt passte wegen der 4-KiB-Blockbelegung weder in 256 noch in 512 KiB, ließ sich aber auf 576 KiB vollständig einspielen, nach Remount anhand jeder Dateilänge und CRC prüfen und nach unterbrochenem Publish wiederaufnehmen. Zusätzlich wurde ein physisch in 256 KiB passender Altbestand aus vier Bildern mit zusammen 220 KiB auf der echten Blockengine angelegt, remountet und auf das größere Ziel migriert. Diese Proben belegen konkrete volle Fälle, nicht die Kapazität jedes möglichen Dateilängenmusters oder das Verhalten eines echten Geräts. Der IDF-Adapter verlangt das exakt 576 KiB große gemountete Ziel und prüft dessen tatsächlichen LittleFS-Füllstand plus 32 KiB Grundreserve und 256 Byte je Datei vor dem ersten Zielwrite; nach jedem Tempfile verlangt er mindestens 8 KiB freie Laufreserve. Schreib-, Sync- und Rücklesefehler führen nie zu einem als fertig gemeldeten Teilbestand. Die Security-NVS-Partition wächst auf sieben 4-KiB-Seiten beziehungsweise 28 KiB. Ihre 882 physischen Entries ergeben nach der vom IDF reservierten 126-Entry-Seite höchstens 756 nutzbare Entries. Eine gültige Kombination aus 123 Bildern und allen fünf maximalen NVS-Werten benötigt nach der konservativen Kernformel 617 Entries plus 24 eigene Reserve, also 641; der 97-Bilder-Randfall benötigt 631 und scheitert auf dem alten Sechs-Seiten-Ziel mit höchstens 630 nutzbaren Entries. Der produktive Callback liefert nun `available_entries` statt `free_entries`. Die später tatsächlich freien Entries werden unmittelbar vor Stage, Journal und Live-Werten vorgeprüft; Schreib- und Rücklesefehler bleiben maßgeblich. Der kleinere App-Slot und die Laufzeit-Heapgrenze brauchen vor Transport, Update und Gerätefreigabe neue Nachweise.
+
+Historischer Versuchsstand vor der Zusammenlegung des Bilderdateisystems: Die damalige Erweiterung auf 576 KiB war durch echte gepinnte LittleFS-Blockengineproben motiviert: Ein synthetischer, JPEG-decodierbarer KMI1-Bestand mit 127 Bildern und exakt 248 KiB Inhalt passte wegen der 4-KiB-Blockbelegung weder in 256 noch in 512 KiB, ließ sich aber auf 576 KiB vollständig einspielen, nach Remount anhand jeder Dateilänge und CRC prüfen und nach unterbrochenem Publish wiederaufnehmen. Zusätzlich wurde ein physisch in 256 KiB passender Altbestand aus vier Bildern mit zusammen 220 KiB auf der echten Blockengine angelegt, remountet und auf das größere Ziel migriert. Diese Proben belegen konkrete volle Fälle, nicht die Kapazität jedes möglichen Dateilängenmusters oder das Verhalten eines echten Geräts. Der aktuelle IDF-Adapter verlangt das targetabhängig exakt `0x1ca000` Byte (C3) beziehungsweise `0x5ca000` Byte (C6) große gemountete Security-Ziel und prüft dessen tatsächlichen LittleFS-Füllstand plus 32 KiB Grundreserve und 256 Byte je Datei vor dem ersten Zielwrite; nach jedem Tempfile verlangt er mindestens 8 KiB freie Laufreserve. Schreib-, Sync- und Rücklesefehler führen nie zu einem als fertig gemeldeten Teilbestand. Die Security-NVS-Partition wächst auf sieben 4-KiB-Seiten beziehungsweise 28 KiB. Ihre 882 physischen Entries ergeben nach der vom IDF reservierten 126-Entry-Seite höchstens 756 nutzbare Entries. Eine gültige Kombination aus 123 Bildern und allen fünf maximalen NVS-Werten benötigt nach der konservativen Kernformel 617 Entries plus 24 eigene Reserve, also 641; der 97-Bilder-Randfall benötigt 631 und scheitert auf dem alten Sechs-Seiten-Ziel mit höchstens 630 nutzbaren Entries. Der produktive Callback liefert nun `available_entries` statt `free_entries`. Die später tatsächlich freien Entries werden unmittelbar vor Stage, Journal und Live-Werten vorgeprüft; Schreib- und Rücklesefehler bleiben maßgeblich. Der kleinere App-Slot und die Laufzeit-Heapgrenze brauchen vor Transport, Update und Gerätefreigabe neue Nachweise.
 
 `katmed_import_abort_idf()` stellt den begrenzten Abbruch für eine Stufe ohne Journal und ohne produktive Zielkeys bereit. Ein ausstehendes Journal lässt sich bewusst nicht abbrechen; es muss aus der geprüften Stufe wiederaufgenommen werden. Für den Abbruch existiert noch keine Nutzeraktion oder Transportsteuerung.
 
@@ -180,14 +188,12 @@ alten Migrationsumfang erneut zu bestellen. Alte Gerätedatenübernahme ist nich
 beauftragt. Die normalen neuen Namensdaten bleiben dauerhaft zu erhalten.
 
 Beide Security-Tabellen lassen Factory bei `0x20000` beginnen und vergrößern
-sie um 24 KiB auf `0x216000` Byte. Das verschlüsselte `user_images` beginnt
-nun bei `0x236000` und behält `0x90000` Byte. Der nur lesbare Bildpack beginnt
-bei `0x2c6000`; seine Partition endet unverändert bei 4 MiB beziehungsweise
-8 MiB und umfasst `0x13a000` beziehungsweise `0x53a000` Byte. Der neutrale
-Partitionsentwurf und die unveränderten Packdateien samt Erzeugungsbudget
-bleiben erhalten. Der Layoutcheck vergleicht deshalb das Manifest mit dem
-ursprünglichen Erzeugungsbudget und zusätzlich die tatsächliche Packlänge mit
-der engeren Security-Partition. Er akzeptiert keine beliebige andere Grenze.
+sie um 24 KiB auf `0x216000` Byte. Das gemeinsame Security-Dateisystem beginnt bei `0x236000` und reicht bis zum
+Flashende. Bootloader-, Tabellen-, NVS- und Appadressen bleiben unverändert.
+Der alte zusätzliche Bildpack entfällt; relativer Dateizugriff und Seed ersetzen
+seinen Paketladepfad. Vorhandene historische Captures bleiben ihrer damaligen
+Geometrie zugeordnet und sind kein aktueller Installationssatz.
+
 
 Alle geänderten Datengrenzen sind 4096-Byte-ausgerichtet; die unveränderte
 Appadresse ist 65536-Byte-ausgerichtet. NVS, Schlüssel, Guard, PHY,
@@ -195,22 +201,21 @@ Partitionstisch und Bootloaderadressen bleiben gleich. Der Runtimecheck muss
 denselben neuen FS-Beginn verlangen. Verschlüsselung verwendet die tatsächliche
 Partitionadresse; bereits verschlüsselte alte FS-Bytes dürfen nicht an eine
 andere Adresse kopiert werden. Der labelbasierte Bildreader verwendet die
-neue Tabellenadresse und die unveränderten packinternen relativen Offsets.
+neue Tabellenadresse und die gemeinsame Dateisystemgröße.
 
 Das ist kein in-place Firmwareupdate für belegte alte Geräte. Eine alte
 Partitionstabelle mit neuer App wird durch den Runtimecheck abgewiesen. Ein
 neuer Tisch mit alten FS-Daten führt zum Mountfehler; automatische Formatierung
-bleibt ausgeschaltet. Ein alter Bildpack an der alten Adresse ist ebenfalls
-kein gültiger neuer Pack. Eine spätere ausdrücklich autorisierte Neuinstallation
-oder Recovery muss zusammengehörige App, Tabelle, den Pack an der neuen Adresse
-und ein passendes leeres FS-Image verwenden und den bestehenden
+bleibt ausgeschaltet. Ein alter Bildpack ist kein gültiges neues Dateisystem. Eine spätere ausdrücklich
+autorisierte Neuinstallation oder Recovery muss zusammengehörige App, Tabelle
+und ein passend aufgebautes gemeinsames FS-Seedimage verwenden und den bestehenden
 Verschlüsselungs-/Schlüsselvertrag beachten. Hier wird weder ein Flashbefehl
 noch ein neuer Import-, Migration-, OTA- oder Recoverydienst eingeführt.
 
 `littlefs_create_partition_image(user_images, ...)` liest Größe und Adresse
 aus dem Partitionstisch und registriert einen separaten verschlüsselungsbewussten
 Flash-Target. Ohne `FLASH_IN_PROJECT` gehört dieses Image weiterhin nicht zum
-allgemeinen Flashlauf. Auch der Stockpack wird nicht still zum Flashsatz ergänzt.
+allgemeinen Flashlauf. Das gemeinsame Bilderdateisystem ist der einzige Bildbestand des neuen Satzes.
 Vorhandene historische Provisionierungs-Captures mit `0x2c0000` gehören zu ihrem
 alten Layout und sind keine ausführbaren Recoveryanweisungen für diesen Vorschlag.
 Der Security-Buildwrapper erlaubt weiterhin nur Bauen. Gerätebereitschaft fehlt;

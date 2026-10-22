@@ -23,6 +23,7 @@
 #define STORE_PARTITION KATMED_USER_IMAGE_PARTITION_LABEL
 #define STORE_MOUNT_POINT "/katmed"
 #define STORE_DIRECTORY STORE_MOUNT_POINT "/user-images"
+#define FACTORY_DIRECTORY STORE_MOUNT_POINT "/factory-images"
 #define STORE_MAX_UPLOADS 2u
 #define STORE_MAX_READERS KATMED_IMAGE_MAX_OPEN_FILES
 #define STORE_FREE_RESERVE_BYTES (8u * 1024u)
@@ -79,8 +80,8 @@ bool katmed_image_store_quiescent(void)
 static bool catalog_image_path(uint32_t index, uint32_t profile,
                                char *path, size_t capacity)
 {
-    if (index >= KATMED_IMAGE_COUNT || profile > 1u) return false;
-    int n = snprintf(path, capacity, STORE_DIRECTORY "/cat-%02" PRIx32 "-%u.jpg",
+    if (katmed_images_variant(index, profile) == NULL) return false;
+    int n = snprintf(path, capacity, FACTORY_DIRECTORY "/cat-%02" PRIx32 "-%u.jpg",
                      index, (unsigned)profile);
     return n > 0 && (size_t)n < capacity;
 }
@@ -89,18 +90,8 @@ static bool image_path(uint32_t id, char *path, size_t capacity)
 {
     if (id == 0u) return false;
     if ((id & CATALOG_CACHE_ID_FLAG) != 0u) {
-        uint32_t encoded = id & ~CATALOG_CACHE_ID_FLAG;
-        if ((encoded >> 1u) < KATMED_IMAGE_COUNT) {
-            char cached[56];
-            struct stat info;
-            if (!catalog_image_path(encoded >> 1u, encoded & 1u,
-                                    cached, sizeof(cached))) return false;
-            if (stat(cached, &info) == 0) {
-                int n = snprintf(path, capacity, "%s", cached);
-                return n > 0 && (size_t)n < capacity;
-            }
-            if (errno != ENOENT) return false;
-        }
+        const uint32_t encoded = id & ~CATALOG_CACHE_ID_FLAG;
+        return catalog_image_path(encoded >> 1u, encoded & 1u, path, capacity);
     }
     int n = snprintf(path, capacity, STORE_DIRECTORY "/img-%08" PRIx32 ".jpg", id);
     return n > 0 && (size_t)n < capacity;
@@ -115,22 +106,6 @@ static bool temporary_path(uint32_t token, char *path, size_t capacity)
 static bool parse_image_name(const char *name, uint32_t *id)
 {
     if (name == NULL || id == NULL) return false;
-    if (strlen(name) == 12u && memcmp(name, "cat-", 4u) == 0 &&
-        name[6] == '-' && (name[7] == '0' || name[7] == '1') &&
-        memcmp(name + 8u, ".jpg", 4u) == 0) {
-        uint32_t index = 0u;
-        for (size_t i = 4u; i < 6u; ++i) {
-            unsigned char c = (unsigned char)name[i];
-            uint32_t digit;
-            if (c >= '0' && c <= '9') digit = (uint32_t)(c - '0');
-            else if (c >= 'a' && c <= 'f') digit = (uint32_t)(c - 'a' + 10);
-            else return false;
-            index = (index << 4u) | digit;
-        }
-        if (index >= KATMED_IMAGE_COUNT) return false;
-        *id = CATALOG_CACHE_ID_FLAG | (index << 1u) | (uint32_t)(name[7] - '0');
-        return true;
-    }
     if (strlen(name) != 16u || memcmp(name, "img-", 4u) != 0 ||
         memcmp(name + 12u, ".jpg", 4u) != 0) return false;
     uint32_t value = 0;
@@ -143,7 +118,7 @@ static bool parse_image_name(const char *name, uint32_t *id)
         else return false;
         value = (value << 4u) | digit;
     }
-    if (value == 0u) return false;
+    if (value == 0u || (value & CATALOG_CACHE_ID_FLAG) != 0u) return false;
     *id = value;
     return true;
 }
@@ -463,130 +438,17 @@ KatmedImageStatus katmed_image_store_upload_abort(KatmedImageUpload upload)
     return failed ? KATMED_IMAGE_IO_ERROR : KATMED_IMAGE_OK;
 }
 
-static bool catalog_cache_matches_locked(uint32_t id, uint32_t index,
-                                         uint32_t profile,
-                                         const KatmedImageVariant *variant)
-{
-    char path[56];
-    if (!image_path(id, path, sizeof(path))) return false;
-    FILE *cached = fopen(path, "rb");
-    if (cached == NULL) return false;
-    uint8_t expected[KATMED_IMAGE_READ_CHUNK];
-    uint8_t actual_bytes[KATMED_IMAGE_READ_CHUNK];
-    bool matches = true;
-    for (uint32_t position = 0; position < variant->length;) {
-        uint32_t remaining = variant->length - position;
-        size_t wanted = remaining < sizeof(expected) ? remaining : sizeof(expected);
-        size_t actual = 0;
-        if (katmed_images_read_variant(index, profile, position, expected,
-                                       wanted, &actual) != KATMED_IMAGE_OK ||
-            actual != wanted || fread(actual_bytes, 1u, wanted, cached) != wanted ||
-            memcmp(expected, actual_bytes, wanted) != 0) {
-            matches = false;
-            break;
-        }
-        position += (uint32_t)wanted;
-    }
-    if (matches && fgetc(cached) != EOF) matches = false;
-    if (fclose(cached) != 0) matches = false;
-    return matches;
-}
-
 KatmedImageStatus katmed_image_store_import_catalog(uint32_t index,
                                                       uint32_t profile,
                                                       KatmedUserImageInfo *out)
 {
-    if (out == NULL) return KATMED_IMAGE_BAD_ID;
-    const KatmedImageVariant *variant = katmed_images_variant(index, profile);
-    if (variant == NULL || variant->length < 16u ||
-        variant->length > KATMED_IMAGE_UPLOAD_MAX_BYTES)
-        return KATMED_IMAGE_BAD_RANGE;
+    if (out == NULL || katmed_images_variant(index, profile) == NULL)
+        return KATMED_IMAGE_BAD_ID;
+    /* Standard files already live in the same filesystem. Import is a stable
+     * read-only reference, never a second cache copy or a namespace write. */
     KatmedImageStatus status = katmed_images_validate_variant(index, profile);
     if (status != KATMED_IMAGE_OK) return status;
-    if (!enter_store()) return KATMED_IMAGE_UNAVAILABLE;
-
-    const uint32_t id = CATALOG_CACHE_ID_FLAG | (index << 1u) | profile;
-    for (size_t i = 0; i < STORE_MAX_READERS; ++i) {
-        if (readers[i].stream != NULL && readers[i].id == id) {
-            leave_store();
-            return KATMED_IMAGE_BUSY;
-        }
-    }
-    KatmedUserImageInfo existing = {0};
-    if (file_info_locked(id, &existing) == KATMED_IMAGE_OK &&
-        existing.bytes == variant->length && existing.width == variant->width &&
-        existing.height == variant->height &&
-        catalog_cache_matches_locked(id, index, profile, variant)) {
-        *out = existing;
-        leave_store();
-        return KATMED_IMAGE_OK;
-    }
-
-    size_t total = 0, used = 0;
-    if (esp_littlefs_info(STORE_PARTITION, &total, &used) != ESP_OK || used > total ||
-        total - used < (size_t)variant->length + STORE_FREE_RESERVE_BYTES) {
-        leave_store();
-        return KATMED_IMAGE_NO_SPACE;
-    }
-    const uint32_t token = new_token_locked();
-    char temporary[56], destination[56], legacy_upload_path[56];
-    if (!temporary_path(token, temporary, sizeof(temporary)) ||
-        !catalog_image_path(index, profile, destination, sizeof(destination))) {
-        leave_store();
-        return KATMED_IMAGE_BAD_ID;
-    }
-    int legacy_length = snprintf(legacy_upload_path, sizeof(legacy_upload_path),
-                                STORE_DIRECTORY "/img-%08" PRIx32 ".jpg", id);
-    struct stat legacy_info;
-    if (legacy_length <= 0 || (size_t)legacy_length >= sizeof(legacy_upload_path)) {
-        leave_store();
-        return KATMED_IMAGE_BAD_ID;
-    }
-    if (stat(legacy_upload_path, &legacy_info) == 0) {
-        leave_store();
-        return KATMED_IMAGE_BUSY;
-    }
-    if (errno != ENOENT) {
-        leave_store();
-        return KATMED_IMAGE_IO_ERROR;
-    }
-    FILE *stream = fopen(temporary, "wb");
-    if (stream == NULL) {
-        status = errno == ENOSPC ? KATMED_IMAGE_NO_SPACE : KATMED_IMAGE_IO_ERROR;
-        leave_store();
-        return status;
-    }
-    uint8_t buffer[KATMED_IMAGE_READ_CHUNK];
-    for (uint32_t position = 0; position < variant->length;) {
-        const uint32_t remaining = variant->length - position;
-        const size_t wanted = remaining < sizeof(buffer) ? remaining : sizeof(buffer);
-        size_t actual = 0;
-        status = katmed_images_read_variant(index, profile, position,
-                                             buffer, wanted, &actual);
-        if (status != KATMED_IMAGE_OK || actual != wanted ||
-            fwrite(buffer, 1u, wanted, stream) != wanted) {
-            if (status == KATMED_IMAGE_OK)
-                status = errno == ENOSPC ? KATMED_IMAGE_NO_SPACE : KATMED_IMAGE_IO_ERROR;
-            break;
-        }
-        position += (uint32_t)wanted;
-    }
-    if (status == KATMED_IMAGE_OK &&
-        (fflush(stream) != 0 || fsync(fileno(stream)) != 0))
-        status = errno == ENOSPC ? KATMED_IMAGE_NO_SPACE : KATMED_IMAGE_IO_ERROR;
-    if (fclose(stream) != 0 && status == KATMED_IMAGE_OK)
-        status = KATMED_IMAGE_IO_ERROR;
-    if (status == KATMED_IMAGE_OK && rename(temporary, destination) != 0)
-        status = errno == ENOSPC ? KATMED_IMAGE_NO_SPACE : KATMED_IMAGE_IO_ERROR;
-    if (status != KATMED_IMAGE_OK) {
-        (void)unlink(temporary);
-        leave_store();
-        return status;
-    }
-    *out = (KatmedUserImageInfo){.id=id, .bytes=variant->length,
-                                 .width=variant->width, .height=variant->height};
-    leave_store();
-    return KATMED_IMAGE_OK;
+    return katmed_image_store_get(CATALOG_CACHE_ID_FLAG | (index << 1u) | profile, out);
 }
 
 KatmedImageStatus katmed_image_store_get(uint32_t id, KatmedUserImageInfo *out)
@@ -622,7 +484,8 @@ KatmedImageStatus katmed_image_store_list(uint32_t index, KatmedUserImageInfo *o
 
 KatmedImageStatus katmed_image_store_remove(uint32_t id)
 {
-    if (id == 0u || !enter_store()) return KATMED_IMAGE_BAD_ID;
+    if (id == 0u || (id & CATALOG_CACHE_ID_FLAG) != 0u || !enter_store())
+        return KATMED_IMAGE_BAD_ID;
     for (size_t i = 0; i < STORE_MAX_READERS; ++i) {
         if (readers[i].stream != NULL && readers[i].id == id) {
             leave_store();

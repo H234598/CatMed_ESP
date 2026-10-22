@@ -50,8 +50,6 @@ foreach(target c3 c6)
                 "${KATMED_ROOT}/tools/prepare_images.py"
                 "${KATMED_ROOT}/assets/crop_focus.json"
                 "${KATMED_ROOT}/assets/generated/manifest.json"
-                "${KATMED_ROOT}/assets/generated/c3_images.bin"
-                "${KATMED_ROOT}/assets/generated/c6_images.bin"
         VERBATIM)
     add_executable(check_image_reader_${target}
         "${KATMED_ROOT}/tests/check_image_reader.cpp"

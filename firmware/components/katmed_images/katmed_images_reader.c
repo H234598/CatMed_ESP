@@ -82,16 +82,21 @@ KatmedImageStatus katmed_images_builtin_variant_info(uint32_t index,
     return KATMED_IMAGE_OK;
 }
 
-void katmed_images_unmount(void)
+static void clear_catalog_state(void)
 {
-#ifdef ESP_PLATFORM
-    katmed_image_store_unmount();
-#endif
     memset(&mounted_storage, 0, sizeof(mounted_storage));
     mounted = false;
     last_error = KATMED_IMAGE_UNAVAILABLE;
     pack_hash_timing = (KatmedImageTimingSample){0};
     variant_hash_timing = (KatmedImageTimingSample){0};
+}
+
+void katmed_images_unmount(void)
+{
+#ifdef ESP_PLATFORM
+    katmed_image_store_unmount();
+#endif
+    clear_catalog_state();
 }
 
 static bool within(uint32_t offset, uint32_t length, uint32_t limit)
@@ -169,7 +174,7 @@ KatmedImageStatus katmed_images_validate_catalog(const KatmedGeneratedCatalog *c
 
 KatmedImageStatus katmed_images_mount_storage(KatmedStorage storage)
 {
-    katmed_images_unmount();
+    clear_catalog_state();
     if(storage.read == NULL || storage.partition_size == 0) {
         last_error = KATMED_IMAGE_UNAVAILABLE;
         return last_error;

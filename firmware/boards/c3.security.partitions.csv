@@ -4,5 +4,4 @@ nvs_keys, data, nvs_keys, 0x18000, 0x1000, encrypted
 nvs_guard, data, 0x40, 0x19000, 0x1000,
 phy_init, data, phy, 0x1A000, 0x1000,
 factory, app, factory, 0x20000, 0x216000,
-user_images, data, littlefs, 0x236000, 0x90000, encrypted
-images, data, 0x40, 0x2C6000, 0x13A000, readonly
+user_images, data, littlefs, 0x236000, 0x1ca000, encrypted

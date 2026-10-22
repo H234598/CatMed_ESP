@@ -34,13 +34,13 @@ class FirmwareLayoutTests(unittest.TestCase):
         binary_path.write_bytes(entries)
 
     def setUp(self):
+        (REPO / "build-host").mkdir(exist_ok=True)
         self.temp = tempfile.TemporaryDirectory(dir=REPO / "build-host")
         self.root = Path(self.temp.name)
         shutil.copytree(REPO / "firmware/boards", self.root / "firmware/boards")
         generated = self.root / "assets/generated"
-        generated.mkdir(parents=True)
-        for name in ("manifest.json", "c3_images.bin", "c6_images.bin"):
-            shutil.copyfile(REPO / "assets/generated" / name, generated / name)
+        generated.parent.mkdir(parents=True)
+        shutil.copytree(REPO / "assets/generated", generated)
         self.build = self.root / "build"
         (self.build / "partition_table").mkdir(parents=True)
         (self.build / "config").mkdir()
@@ -61,13 +61,14 @@ class FirmwareLayoutTests(unittest.TestCase):
         (self.build / "bootloader").mkdir()
         (self.build / "bootloader/bootloader.bin").write_bytes(b"test bootloader")
         (self.build / "katmed_foundation.bin").write_bytes(b"test app")
+        (self.build / "user_images.bin").write_bytes(b"\xff" * 0x180000)
 
     def tearDown(self):
         self.temp.cleanup()
 
     def test_real_c3_partition_and_existing_pack(self):
         result = layout.check_layout(self.root, "c3", self.build)
-        self.assertEqual(result["image_free"], 77864)
+        self.assertEqual(result["image_free"], 0x180000 - 1232856)
         self.assertEqual(result["runtime_heap"], "not_measured")
 
     def security_fixture(self):
@@ -84,6 +85,7 @@ class FirmwareLayoutTests(unittest.TestCase):
         self.write_partition_fixture(
             self.root / "firmware/boards/c3.security.partitions.csv",
             self.build / "partition_table/partition-table.bin")
+        (self.build / "user_images.bin").write_bytes(b"\xff" * 0x1ca000)
 
     def test_security_profile_checks_real_boundaries(self):
         self.security_fixture()
@@ -92,14 +94,14 @@ class FirmwareLayoutTests(unittest.TestCase):
         self.assertEqual(result["app_budget"], 0x216000)
         self.assertEqual(result["nvs_available_entries"], 756)
         self.assertGreater(result["app_free"], 0)
-        self.assertEqual(result["image_free"], 53288)
+        self.assertEqual(result["image_free"], 0x1ca000 - 1232856)
 
     def test_security_profile_rejects_old_image_boundary(self):
         self.security_fixture()
         partition = self.root / "firmware/boards/c3.security.partitions.csv"
         partition.write_text(partition.read_text().replace(
-            "user_images, data, littlefs, 0x236000, 0x90000, encrypted",
-            "user_images, data, littlefs, 0x280000, 0x40000, encrypted"))
+            "user_images, data, littlefs, 0x236000, 0x1ca000, encrypted",
+            "user_images, data, littlefs, 0x280000, 0x180000, encrypted"))
         self.write_partition_fixture(partition,
                                      self.build / "partition_table/partition-table.bin")
         with self.assertRaisesRegex(ValueError, "Security partition user_images differs"):
@@ -113,12 +115,12 @@ class FirmwareLayoutTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Security partition factory differs"):
             layout.check_layout(self.root, "c3", self.build, True)
 
-    def test_security_profile_rejects_wrong_pack_extent(self):
+    def test_security_profile_rejects_short_filesystem_extent(self):
         self.security_fixture()
         partition = self.root / "firmware/boards/c3.security.partitions.csv"
-        partition.write_text(partition.read_text().replace("0x13A000", "0x139000"))
+        partition.write_text(partition.read_text().replace("0x1ca000", "0x1c9000"))
         self.write_partition_fixture(partition, self.build / "partition_table/partition-table.bin")
-        with self.assertRaisesRegex(ValueError, "Image partition differs"):
+        with self.assertRaisesRegex(ValueError, "Security partition user_images differs"):
             layout.check_layout(self.root, "c3", self.build, True)
 
     def test_security_profile_rejects_missing_release_mode(self):
@@ -148,11 +150,11 @@ class FirmwareLayoutTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Security partition phy_init differs"):
             layout.check_layout(self.root, "c3", self.build, True)
 
-    def test_modified_pack_rejected(self):
-        p = self.root / "assets/generated/c3_images.bin"
+    def test_modified_standard_file_rejected(self):
+        p = next((self.root / "assets/generated/c3_240x240").glob("*.jpg"))
         with p.open("r+b") as f:
             f.write(b"bad")
-        with self.assertRaisesRegex(ValueError, "differs"):
+        with self.assertRaisesRegex(ValueError, "SHA-256/length mismatch"):
             layout.check_layout(self.root, "c3", self.build)
 
     def test_app_overflow_rejected(self):
@@ -169,7 +171,7 @@ class FirmwareLayoutTests(unittest.TestCase):
 
     def test_overlap_rejected(self):
         p = self.root / "firmware/boards/c3.partitions.csv"
-        p.write_text(p.read_text().replace("0x2C0000", "0x2B0000"))
+        p.write_text(p.read_text().replace("0x280000", "0x270000"))
         with self.assertRaisesRegex(ValueError, "Overlapping"):
             layout.check_layout(self.root, "c3", self.build)
 

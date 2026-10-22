@@ -153,21 +153,21 @@ static void *fs_open(lv_fs_drv_t *driver, const char *path, lv_fs_mode_t mode)
         return NULL;
     }
 #ifdef ESP_PLATFORM
-    if (user_image) {
-        KatmedUserImageInfo info;
-        KatmedImageReader reader;
-        if (katmed_image_store_open_read(user_id, &reader, &info) != KATMED_IMAGE_OK) return NULL;
-        *file = (ImageFile){.position=0u, .length=info.bytes, .reader=reader,
-                            .sticky=KATMED_IMAGE_OK, .user_image=true, .used=true};
-    } else
+    if (!user_image && katmed_images_validate_variant(index, profile) != KATMED_IMAGE_OK)
+        return NULL;
+    if (!user_image) user_id = UINT32_C(0x80000000) | (index << 1u) | profile;
+    KatmedUserImageInfo info;
+    KatmedImageReader reader;
+    if (katmed_image_store_open_read(user_id, &reader, &info) != KATMED_IMAGE_OK) return NULL;
+    *file = (ImageFile){.position=0u, .length=info.bytes, .reader=reader,
+                        .sticky=KATMED_IMAGE_OK, .user_image=true, .used=true};
+#else
+    if(katmed_images_validate_variant(index, profile) != KATMED_IMAGE_OK) return NULL;
+    const KatmedImageVariant *variant = katmed_images_variant(index, profile);
+    *file = (ImageFile){.index = (uint8_t)index, .profile = (uint8_t)profile,
+                        .position = 0u, .length=variant->length,
+                        .sticky = KATMED_IMAGE_OK, .used = true};
 #endif
-    {
-        if(katmed_images_validate_variant(index, profile) != KATMED_IMAGE_OK) return NULL;
-        const KatmedImageVariant *variant = katmed_images_variant(index, profile);
-        *file = (ImageFile){.index = (uint8_t)index, .profile = (uint8_t)profile,
-                            .position = 0u, .length=variant->length,
-                            .sticky = KATMED_IMAGE_OK, .used = true};
-    }
     ++open_files;
     return file;
 }

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check the built app and the existing image pack against the real table.
+"""Check the built app and the shared image filesystem against the real table.
 
 This is an offline build gate. It makes no assertion about runtime free heap.
 """
@@ -8,7 +8,9 @@ import csv
 import hashlib
 import json
 import struct
+import sys
 from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 
 def check_layout(repo: Path, board: str, build: Path, security_profile: bool = False) -> dict:
@@ -99,7 +101,7 @@ def check_layout(repo: Path, board: str, build: Path, security_profile: bool = F
             "nvs_keys": (0x18000, 0x1000, "data", "nvs_keys", "encrypted"),
             "nvs_guard": (0x19000, 0x1000, "data", "0x40", ""),
             "phy_init": (0x1a000, 0x1000, "data", "phy", ""),
-            "user_images": (0x236000, 0x90000, "data", "littlefs", "encrypted"),
+            "user_images": (0x236000, flash_bytes - 0x236000, "data", "littlefs", "encrypted"),
         }
         for name, expected in critical.items():
             if partitions.get(name) != expected:
@@ -123,28 +125,26 @@ def check_layout(repo: Path, board: str, build: Path, security_profile: bool = F
     app_budget = partitions["factory"][1]
     if not 0 < app_bytes <= app_budget:
         raise ValueError(f"App size {app_bytes} exceeds budget {app_budget}")
-    image_partition = partitions["images"]
-    if image_partition[4] != "readonly":
-        raise ValueError("Image partition must be read-only")
-    generated = repo / "assets" / "generated"
-    manifest = json.loads((generated / "manifest.json").read_text())
-    pack_name = f"{board}_images.bin"
-    expected = manifest["packs"][pack_name]
-    data = (generated / pack_name).read_bytes()
-    if len(data) != expected["bytes"] or hashlib.sha256(data).hexdigest() != expected["sha256"]:
-        raise ValueError("Image pack differs from verified manifest")
-    pack_budget = {"c3": 0x140000, "c6": 0x540000}[board]
-    expected_image_size = pack_budget - (0x6000 if security_profile else 0)
-    expected_image_offset = 0x2c6000 if security_profile else 0x2c0000
-    if image_partition[:2] != (expected_image_offset, expected_image_size):
-        raise ValueError("Image partition differs from profile contract")
-    if len(data) > image_partition[1] or expected["budget"] != pack_budget:
-        raise ValueError("Image pack and partition budgets disagree")
+    if "images" in partitions:
+        raise ValueError("Obsolete separate image partition")
+    image_partition = partitions["user_images"]
+    expected_image_offset = 0x236000 if security_profile else 0x280000
+    if image_partition != (expected_image_offset, flash_bytes - expected_image_offset,
+                            "data", "littlefs", "encrypted"):
+        raise ValueError("Shared image filesystem differs from profile contract")
+    from generate_firmware_catalog import parse_and_verify
+    parsed = parse_and_verify(repo / "assets/generated/manifest.json", board)
+    image_bytes = parsed[2]
+    if image_bytes > image_partition[1]:
+        raise ValueError("Standard image files exceed filesystem budget")
+    seed = build / "user_images.bin"
+    if not seed.is_file() or seed.stat().st_size != image_partition[1]:
+        raise ValueError("Built image filesystem size differs from partition")
     return {"board": board, "security_profile": security_profile,
             "bootloader_bytes": bootloader_bytes,
             "app_bytes": app_bytes, "app_budget": app_budget,
-            "app_free": app_budget - app_bytes, "image_bytes": len(data),
-            "image_budget": image_partition[1], "image_free": image_partition[1] - len(data),
+            "app_free": app_budget - app_bytes, "image_bytes": image_bytes,
+            "image_budget": image_partition[1], "image_free": image_partition[1] - image_bytes,
             "nvs_available_entries": available_entries if security_profile else None,
             "runtime_heap": "not_measured"}
 

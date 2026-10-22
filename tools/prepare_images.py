@@ -2,7 +2,7 @@
 """Prepare the complete cat-image archive for the two Katmed displays.
 
 ImageMagick performs deterministic scaling and JPEG encoding. The originals are
-read-only inputs. Python only manages the catalogue, checksums and flash packs.
+read-only inputs. Python only manages the catalogue, checksums and individual filesystem seed files.
 """
 
 import argparse
@@ -25,12 +25,7 @@ PROFILES = {
     "c6_172x320": {"width": 172, "height": 320, "quality": 90},
     "c6_320x172": {"width": 320, "height": 172, "quality": 90},
 }
-PACKS = {
-    "c3_images.bin": {"profiles": ["c3_240x240"], "budget": 0x140000},
-    "c6_images.bin": {
-        "profiles": ["c6_172x320", "c6_320x172"], "budget": 0x540000
-    },
-}
+
 
 
 def sha256(path):
@@ -134,34 +129,17 @@ def build(source, output, crop_config):
                 "focus": focus[entry["relative_path"]],
                 "variants": variants,
             })
-        packs = {}
-        for pack_name, spec in PACKS.items():
-            path = stage / pack_name
-            with path.open("wb") as stream:
-                for profile in spec["profiles"]:
-                    for entry in images:
-                        variant = entry["variants"][profile]
-                        variant["pack"] = pack_name
-                        variant["offset"] = stream.tell()
-                        stream.write((stage / variant["file"]).read_bytes())
-                        stream.write(b"\xff" * (-stream.tell() % 4))
-            if path.stat().st_size > spec["budget"]:
-                raise ValueError(f"Asset partition budget exceeded: {pack_name}")
-            packs[pack_name] = {
-                **spec, "bytes": path.stat().st_size, "sha256": sha256(path),
-                "remaining_bytes": spec["budget"] - path.stat().st_size,
-            }
         logical_catalogue = [(x["source"], x["source_sha256"]) for x in images]
         catalogue_hash = hashlib.sha256(json.dumps(logical_catalogue, ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
         manifest = {
-            "schema_version": 2, "source_root": str(source), "image_count": len(images),
+            "schema_version": 3, "source_root": str(source), "image_count": len(images),
             "catalogue_sha256": catalogue_hash,
             "crop_config_sha256": focus_hash,
             "encoder": subprocess.check_output(["magick", "-version"], text=True).splitlines()[0],
             "resize": "Lanczos cover, per-image focal point, bounded crop; proportional with pixel rounding",
             "jpeg": "baseline, sRGB, 4:2:0, no metadata",
             "sort": "NFC/casefold basename, then relative path; original path breaks ties",
-            "profiles": PROFILES, "packs": packs, "images": images,
+            "profiles": PROFILES, "images": images,
         }
         (stage / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
         verify(source, stage, crop_config)
@@ -203,18 +181,15 @@ def verify(source, output, crop_config):
                 spec = PROFILES[profile]
                 if decoded.format != "JPEG" or decoded.size != (spec["width"], spec["height"]) or decoded.info.get("progressive"):
                     raise ValueError(f"Incorrect JPEG format or dimensions: {path}")
-            with (output / variant["pack"]).open("rb") as pack:
-                pack.seek(variant["offset"])
-                if pack.read(variant["bytes"]) != path.read_bytes():
-                    raise ValueError(f"Pack contents mismatch: {path}")
             totals[profile] += variant["bytes"]
     if expected != set(output.rglob("*.jpg")) or len(expected) != len(entries) * len(PROFILES):
         raise ValueError("Incomplete or unexpected output images")
-    for name, pack in manifest["packs"].items():
-        path = output / name
-        if sha256(path) != pack["sha256"] or path.stat().st_size != pack["bytes"] or pack["bytes"] > pack["budget"]:
-            raise ValueError(f"Pack checksum or size mismatch: {name}")
-    print(json.dumps({"verified_source_images": len(entries) if source is not None else None, "verified_prepared_images": len(entries), "verified_jpegs": len(expected), "jpeg_bytes_by_profile": totals, "packs": manifest["packs"]}, ensure_ascii=False, indent=2))
+    if manifest.get("schema_version") != 3 or "packs" in manifest or list(output.glob("*_images.bin")):
+        raise ValueError("Obsolete separate image package")
+    print(json.dumps({"verified_source_images": len(entries) if source is not None else None,
+                      "verified_prepared_images": len(entries), "verified_jpegs": len(expected),
+                      "jpeg_bytes_by_profile": totals}, ensure_ascii=False, indent=2))
+
 
 
 def main():

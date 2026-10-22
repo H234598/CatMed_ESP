@@ -25,6 +25,10 @@ if [[ "$mode" == dependencies || "$mode" == firmware ]]; then
         -D "SDKCONFIG_DEFAULTS=sdkconfig.defaults;boards/$board.defaults" "$action")
     if [[ "$mode" == firmware ]]; then
         python tools/check_firmware_layout.py "$board"
+        size=$(python -c "import csv; print(next(int(r[4].strip(),0) for r in csv.reader(open('firmware/boards/$board.partitions.csv')) if r and r[0]=='user_images'))")
+        "firmware/build-$board/littlefs_py_venv/bin/python" tools/check_image_seed.py \
+            --target "$board" --manifest assets/generated/manifest.json \
+            --image "firmware/build-$board/user_images.bin" --size "$size"
     fi
 elif [[ "$mode" == host ]]; then
     : "${IDF_PATH:?Use the ESP-IDF 6.1 runner environment}"

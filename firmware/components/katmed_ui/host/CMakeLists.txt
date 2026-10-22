@@ -140,7 +140,7 @@ target_include_directories(tfpsacrypto PUBLIC "${KATMED_MBEDTLS_SOURCE}/../port/
 add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/refinement_catalog.c"
     COMMAND /usr/bin/python3 "${ROOT}/tools/generate_firmware_catalog.py"
         --target c3 --output "${CMAKE_CURRENT_BINARY_DIR}/refinement_catalog.c"
-    DEPENDS "${ROOT}/assets/generated/manifest.json" "${ROOT}/assets/generated/c3_images.bin")
+    DEPENDS "${ROOT}/assets/generated/manifest.json")
 add_executable(check_ui_refinement
     "${ROOT}/tests/check_ui_refinement.c"
     "${ROOT}/tests/check_ui_refinement_main.c"
@@ -184,13 +184,13 @@ target_link_options(check_ui_refinement PRIVATE -Wl,--gc-sections)
 target_link_libraries(check_ui_refinement PRIVATE lvgl m z tfpsacrypto)
 foreach(mode IN ITEMS random save nav scroll scroll-status indices clock-menu tick)
     add_test(NAME ui_refinement_${mode} COMMAND check_ui_refinement ${mode}
-        "${ROOT}/assets/generated/c3_images.bin")
+        "${CMAKE_CURRENT_BINARY_DIR}/c3_image_stream_fixture.bin")
 endforeach()
 foreach(format IN ITEMS "240;240" "172;320" "320;172")
     list(GET format 0 width)
     list(GET format 1 height)
     add_test(NAME ui_refinement_clock_${width}x${height} COMMAND check_ui_refinement clock
-        "${ROOT}/assets/generated/c3_images.bin" ${width} ${height})
+        "${CMAKE_CURRENT_BINARY_DIR}/c3_image_stream_fixture.bin" ${width} ${height})
 endforeach()
 
 # Real coordinator binding for the production slideshow producer; SDK stubs only.
@@ -236,6 +236,15 @@ foreach(format IN ITEMS "240;240" "172;320" "320;172")
     list(GET format 1 height)
     foreach(mode IN ITEMS layout editing flow decimal)
         add_test(NAME hhmm_${mode}_${width}x${height} COMMAND check_ui_hhmm ${mode}
-            "${ROOT}/assets/generated/c3_images.bin" ${width} ${height})
+            "${CMAKE_CURRENT_BINARY_DIR}/c3_image_stream_fixture.bin" ${width} ${height})
     endforeach()
 endforeach()
+
+# Host-only virtual stream used by the existing decoder/fault regressions.
+add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/c3_image_stream_fixture.bin"
+    COMMAND /usr/bin/python3 "${ROOT}/tests/image_stream_fixture.py" c3
+            "${CMAKE_CURRENT_BINARY_DIR}/c3_image_stream_fixture.bin"
+    DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/refinement_catalog.c"
+            "${ROOT}/tests/image_stream_fixture.py" VERBATIM)
+add_custom_target(image_stream_fixture_c3 ALL
+    DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/c3_image_stream_fixture.bin")

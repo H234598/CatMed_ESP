@@ -394,7 +394,8 @@ static bool scan_files(const KatmedSourceExportSink *sink, size_t *content,
         if (strcmp(entry->d_name, ".") == 0 ||
             strcmp(entry->d_name, "..") == 0) { errno = 0; continue; }
         if (strcmp(entry->d_name, "user-images") != 0 &&
-            strcmp(entry->d_name, "acme") != 0) { ok = false; break; }
+            strcmp(entry->d_name, "acme") != 0 &&
+            strcmp(entry->d_name, "factory-images") != 0) { ok = false; break; }
         errno = 0;
     }
     if (errno != 0) ok = false;

@@ -9,6 +9,10 @@ ninja_bin="${tool_dir}/bootstrap/bin/ninja"
 image_build="${repo_dir}/build-ui-images"
 out_dir="${repo_dir}/build-image-metrics"
 
+mkdir -p "${image_build}"
+python3 "${repo_dir}/tests/image_stream_fixture.py" c3 "${image_build}/c3_image_stream_fixture.bin"
+python3 "${repo_dir}/tests/image_stream_fixture.py" c6 "${image_build}/c6_image_stream_fixture.bin"
+
 "${cmake_bin}" -S "${repo_dir}/firmware/components/katmed_images/host" \
     -B "${image_build}" -G Ninja -DCMAKE_MAKE_PROGRAM="${ninja_bin}" \
     -DCMAKE_C_COMPILER=/usr/bin/gcc -DCMAKE_CXX_COMPILER=/usr/bin/g++
@@ -71,12 +75,12 @@ g++ "${out_dir}/check_image_metrics_selected.o" "${out_dir}/catalog_c3.o" \
     -o "${out_dir}/check_image_metrics_c3_selected"
 
 timeout 30s "${out_dir}/check_image_metrics_c3" 240 240 \
-    "${repo_dir}/assets/generated/c3_images.bin"
+    "${image_build}/c3_image_stream_fixture.bin"
 timeout 30s "${out_dir}/check_image_metrics_c3_120" 240 240 \
-    "${repo_dir}/assets/generated/c3_images.bin"
+    "${image_build}/c3_image_stream_fixture.bin"
 timeout 30s "${out_dir}/check_image_metrics_c3_selected" 240 240 \
-    "${repo_dir}/assets/generated/c3_images.bin" 800
+    "${image_build}/c3_image_stream_fixture.bin" 800
 timeout 30s "${out_dir}/check_image_metrics_c6" 172 320 \
-    "${repo_dir}/assets/generated/c6_images.bin"
+    "${image_build}/c6_image_stream_fixture.bin"
 timeout 30s "${out_dir}/check_image_metrics_c6" 320 172 \
-    "${repo_dir}/assets/generated/c6_images.bin"
+    "${image_build}/c6_image_stream_fixture.bin"

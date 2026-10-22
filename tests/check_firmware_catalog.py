@@ -52,17 +52,17 @@ def main():
         run(manifest, "c3", Path(temp) / "missing.c", False)
         one_jpeg.write_bytes(original_jpeg)
 
-        pack = stage / "c6_images.bin"
+        pack = next(stage.glob("c6_172x320/*.jpg"))
         original_pack = pack.read_bytes()
         pack.write_bytes(bytes([original_pack[0] ^ 1]) + original_pack[1:])
-        run(manifest, "c3", Path(temp) / "bad-other-target-pack.c", False)
+        run(manifest, "c3", Path(temp) / "bad-other-target-file.c", False)
         pack.write_bytes(original_pack)
 
         original_manifest = manifest.read_text()
         data = json.loads(original_manifest)
-        data["images"][0]["variants"]["c3_240x240"]["offset"] = 0xffffffff
+        data["images"][0]["variants"]["c3_240x240"]["bytes"] = 0xffffffff
         manifest.write_text(json.dumps(data))
-        run(manifest, "c3", Path(temp) / "bad-offset.c", False)
+        run(manifest, "c3", Path(temp) / "bad-length.c", False)
         manifest.write_text(original_manifest)
 
         data = json.loads(original_manifest)

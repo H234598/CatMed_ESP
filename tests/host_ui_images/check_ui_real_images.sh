@@ -11,6 +11,10 @@ ui_build="${repo_dir}/build-ui-host-32"
 image_build="${repo_dir}/build-ui-images"
 out_dir="${ui_build}/real-images"
 
+mkdir -p "${image_build}"
+python3 "${repo_dir}/tests/image_stream_fixture.py" c3 "${image_build}/c3_image_stream_fixture.bin"
+python3 "${repo_dir}/tests/image_stream_fixture.py" c6 "${image_build}/c6_image_stream_fixture.bin"
+
 "${cmake_bin}" -S "${repo_dir}/firmware/components/katmed_ui/host" \
     -B "${ui_build}" -G Ninja -DCMAKE_MAKE_PROGRAM="${ninja_bin}" \
     -DCMAKE_C_COMPILER=/usr/bin/gcc -DCMAKE_CXX_COMPILER=/usr/bin/g++ \
@@ -84,28 +88,28 @@ g++ "${out_dir}/check_ui_real_images_80.o" "${out_dir}/ui.o" \
     -o "${out_dir}/check_ui_real_images_c3_80"
 
 timeout 20s "${out_dir}/check_ui_real_images_c3" 240 240 heap \
-    "${repo_dir}/assets/generated/c3_images.bin"
+    "${image_build}/c3_image_stream_fixture.bin"
 timeout 20s "${out_dir}/check_ui_real_images_c3" 240 240 settings_latency \
-    "${repo_dir}/assets/generated/c3_images.bin"
+    "${image_build}/c3_image_stream_fixture.bin"
 timeout 20s "${out_dir}/check_ui_real_images_c3_120" 240 240 settings_latency \
-    "${repo_dir}/assets/generated/c3_images.bin"
+    "${image_build}/c3_image_stream_fixture.bin"
 timeout 20s "${out_dir}/check_ui_real_images_c3_80" 240 240 settings_latency \
-    "${repo_dir}/assets/generated/c3_images.bin"
+    "${image_build}/c3_image_stream_fixture.bin"
 timeout 20s "${out_dir}/check_ui_real_images_c3_80" 240 240 indev_release \
-    "${repo_dir}/assets/generated/c3_images.bin"
+    "${image_build}/c3_image_stream_fixture.bin"
 timeout 20s "${out_dir}/check_ui_real_images_c3_120" 240 240 indev_release \
-    "${repo_dir}/assets/generated/c3_images.bin"
+    "${image_build}/c3_image_stream_fixture.bin"
 timeout 20s "${out_dir}/check_ui_real_images_c3" 240 240 alarm_geometry \
-    "${repo_dir}/assets/generated/c3_images.bin"
+    "${image_build}/c3_image_stream_fixture.bin"
 timeout 20s "${out_dir}/check_ui_real_images_c3_120" 240 240 alarm_geometry \
-    "${repo_dir}/assets/generated/c3_images.bin"
+    "${image_build}/c3_image_stream_fixture.bin"
 timeout 20s "${out_dir}/check_ui_real_images_c3_80" 240 240 alarm_geometry \
-    "${repo_dir}/assets/generated/c3_images.bin"
+    "${image_build}/c3_image_stream_fixture.bin"
 timeout 20s "${out_dir}/check_ui_real_images_c3" 240 240 analog_overlay \
-    "${repo_dir}/assets/generated/c3_images.bin"
+    "${image_build}/c3_image_stream_fixture.bin"
 timeout 20s "${out_dir}/check_ui_real_images_c3_80" 240 240 analog_overlay \
-    "${repo_dir}/assets/generated/c3_images.bin"
+    "${image_build}/c3_image_stream_fixture.bin"
 timeout 20s "${out_dir}/check_ui_real_images_c6" 172 320 heap \
-    "${repo_dir}/assets/generated/c6_images.bin"
+    "${image_build}/c6_image_stream_fixture.bin"
 timeout 20s "${out_dir}/check_ui_real_images_c6" 320 172 heap \
-    "${repo_dir}/assets/generated/c6_images.bin"
+    "${image_build}/c6_image_stream_fixture.bin"

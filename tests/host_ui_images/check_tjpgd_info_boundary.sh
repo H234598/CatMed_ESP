@@ -9,6 +9,10 @@ bash "${repo_dir}/tests/host_ui_images/check_ui_real_images.sh"
 ui_build="${repo_dir}/build-ui-host-32"
 image_build="${repo_dir}/build-ui-images"
 out_dir="${ui_build}/real-images"
+
+mkdir -p "${image_build}"
+python3 "${repo_dir}/tests/image_stream_fixture.py" c3 "${image_build}/c3_image_stream_fixture.bin"
+python3 "${repo_dir}/tests/image_stream_fixture.py" c6 "${image_build}/c6_image_stream_fixture.bin"
 flags=(-std=c11 -Wall -Wextra -Werror
     "-DLV_CONF_PATH=\"${repo_dir}/firmware/components/katmed_ui/host/lv_conf_34k.h\""
     -DLV_KCONFIG_IGNORE -DLV_LVGL_H_INCLUDE_SIMPLE
@@ -33,8 +37,8 @@ for target in c3 c6; do
 done
 
 timeout 20s "${out_dir}/check_tjpgd_info_boundary_c3" 240 240 0 \
-    "${repo_dir}/assets/generated/c3_images.bin"
+    "${image_build}/c3_image_stream_fixture.bin"
 timeout 20s "${out_dir}/check_tjpgd_info_boundary_c6" 172 320 0 \
-    "${repo_dir}/assets/generated/c6_images.bin"
+    "${image_build}/c6_image_stream_fixture.bin"
 timeout 20s "${out_dir}/check_tjpgd_info_boundary_c6" 320 172 1 \
-    "${repo_dir}/assets/generated/c6_images.bin"
+    "${image_build}/c6_image_stream_fixture.bin"

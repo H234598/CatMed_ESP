@@ -17,7 +17,7 @@
 #define DIRECTORY MOUNT "/user-images"
 #define ACME_DIRECTORY MOUNT "/acme"
 #define PARTITION KATMED_USER_IMAGE_PARTITION_LABEL
-#define FS_BYTES (576u * 1024u)
+#define FS_BYTES KATMED_USER_IMAGE_PARTITION_BYTES
 /* LittleFS allocates whole 4 KiB blocks and copy-on-write metadata. A full
  * 127-file source inventory needs a larger target than its byte sum suggests;
  * actual write, sync and readback remain authoritative. */
@@ -145,7 +145,8 @@ bool katmed_import_files_empty(void *context, size_t content_bytes, size_t count
     while ((entry = readdir(root)) != NULL) {
         if (strcmp(entry->d_name, ".") && strcmp(entry->d_name, "..") &&
             strcmp(entry->d_name, "user-images") &&
-            strcmp(entry->d_name, "acme")) { ok = false; break; }
+            strcmp(entry->d_name, "acme") &&
+            strcmp(entry->d_name, "factory-images")) { ok = false; break; }
         errno = 0;
     }
     if (errno != 0) ok = false;

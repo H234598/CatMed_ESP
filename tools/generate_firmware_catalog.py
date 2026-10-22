@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate the complete image packs and emit a target-specific, compact C index."""
+"""Validate the individual image files and emit a target-specific, compact C index."""
 
 import argparse
 import hashlib
@@ -7,7 +7,6 @@ import json
 from pathlib import Path
 import unicodedata
 
-from prepare_images import verify as verify_prepared_images
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -15,8 +14,6 @@ PROFILES = {
     "c3": (("c3_240x240", 240, 240),),
     "c6": (("c6_172x320", 172, 320), ("c6_320x172", 320, 172)),
 }
-PACK = {"c3": "c3_images.bin", "c6": "c6_images.bin"}
-BUDGET = {"c3": 0x140000, "c6": 0x540000}
 
 
 def digest(data):
@@ -36,7 +33,7 @@ def image_sort_key(source):
 def parse_and_verify(manifest_path, target):
     base = manifest_path.parent
     manifest = json.loads(manifest_path.read_text())
-    require(manifest.get("schema_version") == 2, "Unsupported manifest schema")
+    require(manifest.get("schema_version") == 3, "Unsupported manifest schema")
     images = manifest.get("images")
     require(isinstance(images, list) and len(images) == 72 and manifest.get("image_count") == 72,
             "The current catalogue must contain exactly 72 images")
@@ -54,16 +51,9 @@ def parse_and_verify(manifest_path, target):
         int(entry["id"], 16)
 
     profile_specs = PROFILES[target]
-    pack_name = PACK[target]
-    pack_meta = manifest["packs"][pack_name]
-    require(pack_meta["profiles"] == [p[0] for p in profile_specs], "Pack profile list mismatch")
-    require(pack_meta["budget"] == BUDGET[target], "Pack budget mismatch")
-    pack_path = base / pack_name
-    require(pack_path.is_file(), f"Missing image pack: {pack_path}")
-    pack_bytes = pack_path.read_bytes()
-    require(len(pack_bytes) == pack_meta["bytes"] and len(pack_bytes) <= BUDGET[target],
-            "Image pack size or budget mismatch")
-    require(digest(pack_bytes) == pack_meta["sha256"], "Image pack SHA-256 mismatch")
+    # Offsets describe a virtual, padded validation stream only. No packed
+    # image bytes are stored in firmware or in a second flash partition.
+    stream_hash = hashlib.sha256()
     variants = [[None, None] for _ in images]
     cursor = 0
     for profile_index, (profile, width, height) in enumerate(profile_specs):
@@ -73,22 +63,17 @@ def parse_and_verify(manifest_path, target):
             variant = entry["variants"][profile]
             path = base / variant["file"]
             require(path.is_file(), f"Missing image: {path}")
-            require(variant["pack"] == pack_name and variant["offset"] == cursor and cursor % 4 == 0,
-                    f"Image offset/order mismatch: {path}")
             data = path.read_bytes()
             length = variant["bytes"]
             require(length == len(data) and length > 0 and digest(data) == variant["sha256"],
                     f"Image SHA-256/length mismatch: {path}")
-            require(cursor + length <= len(pack_bytes) and pack_bytes[cursor:cursor + length] == data,
-                    f"Image differs from packed bytes: {path}")
             require(data[:2] == b"\xff\xd8" and data[-2:] == b"\xff\xd9", f"JPEG boundary mismatch: {path}")
             next_cursor = (cursor + length + 3) & ~3
-            require(pack_bytes[cursor + length:next_cursor] == b"\xff" * (next_cursor - cursor - length),
-                    f"Pack padding mismatch: {path}")
+            stream_hash.update(data)
+            stream_hash.update(b"\xff" * (next_cursor - cursor - length))
             variants[index][profile_index] = (cursor, length, width, height, variant["sha256"])
             cursor = next_cursor
-    require(cursor == len(pack_bytes), "Trailing or omitted image bytes in pack")
-    return catalogue_sha, pack_meta["sha256"], len(pack_bytes), images, variants
+    return catalogue_sha, stream_hash.hexdigest(), cursor, images, variants
 
 
 def byte_array(hex_string):
@@ -121,6 +106,7 @@ def emit(path, target, parsed):
 
 
 def main():
+    from prepare_images import verify as verify_prepared_images
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--target", choices=PROFILES, required=True)
     parser.add_argument("--manifest", type=Path, default=ROOT / "assets/generated/manifest.json")
@@ -130,7 +116,7 @@ def main():
     manifest = json.loads(manifest_path.read_text())
     verify_prepared_images(Path(manifest["source_root"]) if manifest["source_root"] else None, manifest_path.parent,
                            ROOT / "assets/crop_focus.json")
-    # Every target generation validates both packs. A stale variant cannot be
+    # Every target generation validates all target files. A stale variant cannot be
     # hidden simply because this particular board selects the other profile.
     for target in PROFILES:
         parsed_target = parse_and_verify(manifest_path, target)
@@ -138,7 +124,7 @@ def main():
             parsed = parsed_target
     emit(args.output, args.target, parsed)
     print(f"Validated {len(parsed[3])} images, {len(PROFILES[args.target])} profiles, "
-          f"{parsed[2]} pack bytes; catalogue SHA-256 {parsed[0]}")
+          f"{parsed[2]} logical file bytes")
 
 
 if __name__ == "__main__":

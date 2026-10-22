@@ -3,6 +3,7 @@
 #include "katmed_images_internal.h"
 #include "esp_err.h"
 #include "esp_littlefs.h"
+#include "esp_partition.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include <assert.h>
@@ -14,7 +15,16 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+const KatmedGeneratedCatalog katmed_generated_catalog = {.profile_count=1};
 static unsigned char *jpeg[2];
+static KatmedStorage captured_storage;
+KatmedImageStatus katmed_images_mount_storage(KatmedStorage storage)
+{ captured_storage=storage; return KATMED_IMAGE_OK; }
+const esp_partition_t *esp_partition_find_first(int type,int subtype,const char *label)
+{
+    static const esp_partition_t p={.size=0x1ca000};
+    assert(type==1 && subtype==0x83 && !strcmp(label,"user_images"));return &p;
+}
 static size_t jpeg_size[2];
 static size_t total_bytes = 1024u * 1024u;
 static size_t used_bytes;
@@ -29,7 +39,8 @@ const KatmedImageVariant *katmed_images_variant(uint32_t index, uint32_t profile
 {
     static KatmedImageVariant variants[2];
     if (index >= 2u || profile != 0u) return NULL;
-    variants[index] = (KatmedImageVariant){.length=(uint32_t)jpeg_size[index], .width=240u, .height=240u};
+    variants[index] = (KatmedImageVariant){.offset=index==0?0u:((uint32_t)jpeg_size[0]+3u)&~3u,
+        .length=(uint32_t)jpeg_size[index], .width=240u, .height=240u};
     return &variants[index];
 }
 
@@ -58,7 +69,7 @@ KatmedImageStatus katmed_images_read_variant(uint32_t index, uint32_t profile,
 
 esp_err_t esp_vfs_littlefs_register(const esp_vfs_littlefs_conf_t *config)
 {
-    (void)config;
+    assert(!config->format_if_mount_failed);
     return ESP_OK;
 }
 esp_err_t esp_vfs_littlefs_unregister(const char *label) { (void)label; return ESP_OK; }
@@ -113,69 +124,87 @@ static unsigned count_managed(void)
     return count;
 }
 
+bool katmed_source_writer_enter(void) { return true; }
+void katmed_source_writer_leave(void) {}
+
+static void seed_file(const char *path, unsigned slot)
+{
+    FILE *f=fopen(path,"wb"); assert(f);
+    assert(fwrite(jpeg[slot],1,jpeg_size[slot],f)==jpeg_size[slot]);
+    assert(fclose(f)==0);
+}
+
 int main(int argc, char **argv)
 {
-    assert(argc == 3);
-    load_jpeg(argv[1], 0u); load_jpeg(argv[2], 1u);
-    assert(mkdir("/tmp/ke", 0700) == 0);
-    assert(katmed_image_store_mount() == KATMED_IMAGE_OK);
-
-    KatmedUserImageInfo imported = {0}, repeated = {0};
-    assert(katmed_image_store_import_catalog(0u, 0u, &imported) == KATMED_IMAGE_OK);
-    assert(imported.id == UINT32_C(0x80000000));
-    char cache_path[64];
-    assert(snprintf(cache_path, sizeof(cache_path), "/tmp/ke/user-images/cat-00-0.jpg") > 0);
-    assert_same_file(cache_path, jpeg[0], jpeg_size[0]);
-    assert(katmed_image_store_import_catalog(0u, 0u, &repeated) == KATMED_IMAGE_OK);
-    assert(repeated.id == imported.id && repeated.bytes == imported.bytes);
-    assert(count_managed() == 1u);
-
-    KatmedImageUpload upload = {0};
-    KatmedUserImageInfo uploaded = {0};
-    assert(katmed_image_store_upload_begin((uint32_t)jpeg_size[1], &upload) == KATMED_IMAGE_OK);
-    assert(katmed_image_store_upload_write(upload, jpeg[1], jpeg_size[1]) == KATMED_IMAGE_OK);
-    assert(katmed_image_store_upload_commit(upload, &uploaded) == KATMED_IMAGE_OK);
-    char upload_path[64];
-    assert(snprintf(upload_path, sizeof(upload_path), "/tmp/ke/user-images/img-%08x.jpg", uploaded.id) > 0);
-    assert_same_file(upload_path, jpeg[1], jpeg_size[1]);
-    assert(count_managed() == 2u);
-
-    test_set_space(total_bytes, total_bytes);
-    assert(katmed_image_store_import_catalog(1u, 0u, &repeated) == KATMED_IMAGE_NO_SPACE);
-    assert(count_managed() == 2u && !exists("/tmp/ke/user-images/cat-01-0.jpg"));
-    test_set_space(1024u * 1024u, 0u);
-
-    fail_validation = 1;
-    assert(katmed_image_store_import_catalog(1u, 0u, &repeated) == KATMED_IMAGE_BAD_CATALOG);
-    fail_validation = 0;
-    assert(count_managed() == 2u);
-
-    bytes_read = 0u; fail_read_after = 700u;
-    assert(katmed_image_store_import_catalog(1u, 0u, &repeated) == KATMED_IMAGE_IO_ERROR);
-    fail_read_after = (size_t)-1;
-    assert(count_managed() == 2u && !exists("/tmp/ke/user-images/cat-01-0.jpg"));
-
-    FILE *orphan = fopen("/tmp/ke/user-images/.upload-87654321.tmp", "wb"); assert(orphan);
-    assert(fwrite("temp", 1u, 4u, orphan) == 4u); assert(fclose(orphan) == 0);
-    FILE *unrelated = fopen("/tmp/ke/user-images/keep.txt", "wb"); assert(unrelated);
-    assert(fwrite("keep", 1u, 4u, unrelated) == 4u); assert(fclose(unrelated) == 0);
-    FILE *immutable = fopen("/tmp/ke/immutable-pack.jpg", "wb"); assert(immutable);
-    assert(fwrite(jpeg[0], 1u, jpeg_size[0], immutable) == jpeg_size[0]);
-    assert(fclose(immutable) == 0);
-    assert(katmed_image_store_clear_user_data() == KATMED_IMAGE_IO_ERROR);
+    assert(argc==3); load_jpeg(argv[1],0); load_jpeg(argv[2],1);
+    assert(mkdir("/tmp/ke",0700)==0);
+    assert(mkdir("/tmp/ke/factory-images",0700)==0);
+    seed_file("/tmp/ke/factory-images/cat-00-0.jpg",0);
+    seed_file("/tmp/ke/factory-images/cat-01-0.jpg",1);
+    assert(katmed_image_store_mount()==KATMED_IMAGE_OK);
+    assert(katmed_images_mount_partition()==KATMED_IMAGE_OK);
+    unsigned char crossing[16];size_t actual=0;
+    const uint32_t padded=((uint32_t)jpeg_size[0]+3u)&~3u;
+    const uint32_t start=(uint32_t)jpeg_size[0]-4u;
+    assert(captured_storage.read(NULL,start,crossing,sizeof(crossing),&actual));
+    assert(actual==sizeof(crossing));
+    for (size_t n=0;n<sizeof(crossing);++n) {
+        uint32_t position=start+(uint32_t)n;
+        unsigned char expected=position<jpeg_size[0]?jpeg[0][position]:position<padded?0xff:jpeg[1][position-padded];
+        assert(crossing[n]==expected);
+    }
+    assert(captured_storage.read(NULL,17u,crossing,sizeof(crossing),&actual));
+    assert(!memcmp(crossing,jpeg[0]+17,sizeof(crossing)));
+    KatmedUserImageInfo standard={0}, again={0}, uploaded={0};
+    assert(katmed_image_store_import_catalog(0,0,&standard)==KATMED_IMAGE_OK);
+    assert(standard.id==UINT32_C(0x80000000));
+    assert(katmed_image_store_import_catalog(0,0,&again)==KATMED_IMAGE_OK);
+    assert(again.id==standard.id && again.bytes==jpeg_size[0] && count_managed()==0);
+    assert(katmed_image_store_import_catalog(0,1,&again)==KATMED_IMAGE_BAD_ID);
+    assert(katmed_image_store_remove(standard.id)==KATMED_IMAGE_BAD_ID);
+    assert(katmed_image_store_remove(UINT32_C(0xffffffff))==KATMED_IMAGE_BAD_ID);
+    assert(katmed_image_store_get(UINT32_C(0x800000ff),&again)==KATMED_IMAGE_BAD_ID);
+    KatmedImageReader reader={0};
+    assert(katmed_image_store_open_read(standard.id,&reader,&again)==KATMED_IMAGE_OK);
+    unsigned char bytes[32]; size_t got=0;
+    assert(katmed_image_store_read(reader,bytes,sizeof(bytes),&got)==KATMED_IMAGE_OK);
+    assert(got==sizeof(bytes) && !memcmp(bytes,jpeg[0],sizeof(bytes)));
+    assert(katmed_image_store_close_read(reader)==KATMED_IMAGE_OK);
+    test_set_space(total_bytes,total_bytes);
+    /* Referring to a standard file consumes no extra filesystem space. */
+    assert(katmed_image_store_import_catalog(1,0,&again)==KATMED_IMAGE_OK);
+    KatmedImageUpload upload={0};
+    assert(katmed_image_store_upload_begin(jpeg_size[1],&upload)==KATMED_IMAGE_NO_SPACE);
+    test_set_space(2u*1024u*1024u,0);
+    assert(katmed_image_store_upload_begin(jpeg_size[1],&upload)==KATMED_IMAGE_OK);
+    assert(katmed_image_store_upload_write(upload,jpeg[1],jpeg_size[1])==KATMED_IMAGE_OK);
+    assert(katmed_image_store_upload_commit(upload,&uploaded)==KATMED_IMAGE_OK);
+    assert(!(uploaded.id&UINT32_C(0x80000000)) && count_managed()==1);
+    assert(katmed_image_store_list(0,&again)==KATMED_IMAGE_OK && again.id==uploaded.id);
+    assert(katmed_image_store_list(1,&again)==KATMED_IMAGE_NOT_FOUND);
+    assert(katmed_image_store_open_read(uploaded.id,&reader,&again)==KATMED_IMAGE_OK);
+    assert(katmed_image_store_remove(uploaded.id)==KATMED_IMAGE_BUSY);
+    assert(katmed_image_store_close_read(reader)==KATMED_IMAGE_OK);
+    fail_validation=1;
+    assert(katmed_image_store_import_catalog(1,0,&again)==KATMED_IMAGE_BAD_CATALOG);
+    fail_validation=0;
+    FILE *f=fopen("/tmp/ke/user-images/keep.txt","wb");assert(f);fclose(f);
+    assert(katmed_image_store_clear_user_data()==KATMED_IMAGE_IO_ERROR);
     assert(exists("/tmp/ke/user-images/keep.txt"));
-    assert_same_file("/tmp/ke/immutable-pack.jpg", jpeg[0], jpeg_size[0]);
-    assert(unlink("/tmp/ke/user-images/keep.txt") == 0);
-    assert(katmed_image_store_clear_user_data() == KATMED_IMAGE_OK);
-    assert(!exists(cache_path) && !exists(upload_path));
-    assert(!exists("/tmp/ke/user-images/.upload-87654321.tmp"));
-    assert_same_file("/tmp/ke/immutable-pack.jpg", jpeg[0], jpeg_size[0]);
-
+    assert(unlink("/tmp/ke/user-images/keep.txt")==0);
+    f=fopen("/tmp/ke/user-images/.upload-87654321.tmp","wb");assert(f);fclose(f);
+    assert(katmed_image_store_clear_user_data()==KATMED_IMAGE_OK);
+    assert(count_managed()==0 && !exists("/tmp/ke/user-images/.upload-87654321.tmp"));
+    assert_same_file("/tmp/ke/factory-images/cat-00-0.jpg",jpeg[0],jpeg_size[0]);
+    assert_same_file("/tmp/ke/factory-images/cat-01-0.jpg",jpeg[1],jpeg_size[1]);
+    assert(katmed_image_store_clear_user_data()==KATMED_IMAGE_OK);
+    assert(katmed_image_store_get(standard.id,&again)==KATMED_IMAGE_OK);
     katmed_image_store_unmount();
-    free(jpeg[0]); free(jpeg[1]);
-    assert(unlink("/tmp/ke/immutable-pack.jpg") == 0);
-    assert(rmdir("/tmp/ke/user-images") == 0);
-    assert(rmdir("/tmp/ke") == 0);
-    puts("real catalog import, retention, failure cleanup and reset passed");
+    assert(unlink("/tmp/ke/factory-images/cat-00-0.jpg")==0);
+    assert(unlink("/tmp/ke/factory-images/cat-01-0.jpg")==0);
+    assert(rmdir("/tmp/ke/factory-images")==0);
+    assert(rmdir("/tmp/ke/user-images")==0);assert(rmdir("/tmp/ke")==0);
+    free(jpeg[0]);free(jpeg[1]);
+    puts("shared standard/upload reads, protected IDs, no-copy references and reset retention passed");
     return 0;
 }

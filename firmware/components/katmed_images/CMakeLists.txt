@@ -19,8 +19,6 @@ if(NOT CMAKE_SCRIPT_MODE_FILE)
                 "${CMAKE_CURRENT_LIST_DIR}/../../../tools/prepare_images.py"
                 "${CMAKE_CURRENT_LIST_DIR}/../../../assets/crop_focus.json"
                 "${KATMED_ASSET_ROOT}/manifest.json"
-                "${KATMED_ASSET_ROOT}/c3_images.bin"
-                "${KATMED_ASSET_ROOT}/c6_images.bin"
                 ${KATMED_CATALOG_JPEGS}
         VERBATIM
         COMMENT "Validating all Katmed JPEGs and generating ${KATMED_CATALOG_TARGET} firmware index")

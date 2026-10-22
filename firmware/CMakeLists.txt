@@ -21,8 +21,20 @@ set(DEPENDENCIES_LOCK "${CMAKE_CURRENT_SOURCE_DIR}/dependencies.${IDF_TARGET}.lo
 idf_build_set_property(DEPENDENCIES_LOCK "${DEPENDENCIES_LOCK}")
 project(katmed_foundation)
 set(KATMED_USERFS_SEED_DIR "${CMAKE_BINARY_DIR}/katmed_userfs_seed")
+set(KATMED_SEED_TARGET "c3")
+if(IDF_TARGET STREQUAL "esp32c6")
+    set(KATMED_SEED_TARGET "c6")
+endif()
+# Regenerate before every LittleFS build, including incremental asset edits.
+add_custom_target(katmed_image_seed
+    COMMAND /usr/bin/python3 "${CMAKE_CURRENT_SOURCE_DIR}/../tools/prepare_image_seed.py"
+            --target "${KATMED_SEED_TARGET}"
+            --manifest "${CMAKE_CURRENT_SOURCE_DIR}/../assets/generated/manifest.json"
+            --output "${KATMED_USERFS_SEED_DIR}"
+    VERBATIM)
 file(MAKE_DIRECTORY "${KATMED_USERFS_SEED_DIR}")
-littlefs_create_partition_image(user_images "${KATMED_USERFS_SEED_DIR}")
+littlefs_create_partition_image(user_images "${KATMED_USERFS_SEED_DIR}"
+    FLASH_IN_PROJECT DEPENDS katmed_image_seed)
 execute_process(
     COMMAND "${PYTHON}" "${CMAKE_CURRENT_SOURCE_DIR}/../tools/prepare_acme_component.py"
             --component "${CMAKE_CURRENT_SOURCE_DIR}/managed_components/dannybackx__acmeclient"
