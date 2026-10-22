@@ -21,7 +21,12 @@ int main()
     assert(app_init(&state,&recovered.shared,&now,recovered.boot_identity,72,catalog)==APP_OK);
     KatmedMeshServices services{&store,&state,nullptr,shared_result,utc_received};
     assert(katmed_mesh_start(&provision,&services)==MESH_ACCEPTED);
+    host_station_present=true;
     level=ROOT;katmed_mesh_poll(&now);
+    char published_name[32]{};bool assigned=false,uncertain=true;
+    katmed_mesh_device_name(published_name,sizeof(published_name),&assigned,&uncertain);
+    assert(assigned&&!uncertain&&!std::strcmp(published_name,"KatmedESP-001")&&
+           !std::strcmp(host_hostname,published_name));
     const unsigned before_dismiss=memory.commits;
     AppEffects dismiss_effects{};
     assert(state.start_reason==START_BOOT&&state.alarm_active);

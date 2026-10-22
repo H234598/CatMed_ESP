@@ -197,6 +197,8 @@ endforeach()
 add_executable(check_ui_refinement_mesh
     "${ROOT}/tests/check_ui_refinement_tick.c"
     "${ROOT}/tests/check_ui_refinement_mesh.cpp"
+    "${ROOT}/firmware/components/katmed_names/katmed_names.cpp"
+    "${ROOT}/firmware/components/katmed_names/katmed_names_wire.cpp"
     "${ROOT}/firmware/components/katmed_mesh/katmed_mesh_wire.cpp"
     "${ROOT}/firmware/components/katmed_mesh/katmed_mesh_payload.cpp"
     "${ROOT}/firmware/components/katmed_mesh/katmed_mesh_status.cpp"
@@ -207,7 +209,8 @@ add_executable(check_ui_refinement_mesh
     "${ROOT}/firmware/components/katmed_time/katmed_time.c")
 get_target_property(refinement_includes check_ui_refinement INCLUDE_DIRECTORIES)
 target_include_directories(check_ui_refinement_mesh PRIVATE
-    "$<$<COMPILE_LANGUAGE:CXX>:${ROOT}/tests/host_mesh/stubs>" ${refinement_includes})
+    "$<$<COMPILE_LANGUAGE:CXX>:${ROOT}/tests/host_mesh/stubs>"
+    "${ROOT}/firmware/components/katmed_names/include" ${refinement_includes})
 target_compile_definitions(check_ui_refinement_mesh PRIVATE KATMED_MESH_HOST LV_LVGL_H_INCLUDE_SIMPLE)
 target_compile_options(check_ui_refinement_mesh PRIVATE -Wall -Wextra -Werror
     -Wno-unused-function -Wno-unused-variable -ffunction-sections -fdata-sections)
