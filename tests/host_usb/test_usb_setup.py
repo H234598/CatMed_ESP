@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 from pathlib import Path
 import sys
 import tempfile
@@ -116,7 +117,62 @@ def args(command: str, **overrides: object) -> argparse.Namespace:
     return argparse.Namespace(**values)
 
 
+def firmware_metric_line() -> bytes:
+    """Zero-valued fixture from the actual firmware's numeric log formatter."""
+    source = (Path(__file__).resolve().parents[2] /
+              "firmware/main/runtime_metrics.c").read_text()
+    formatter = source.split('ESP_LOGI("katmed_metrics",', 1)[1].split(
+        "input->uptime_ms", 1)[0]
+    text = "".join(re.findall(r'"([^"\n]*)"', formatter))
+    return ("I (0) katmed_metrics: " + re.sub(r"%[udi]?", "0", text) + "\n").encode("ascii")
+
+
 class UsbSetupTests(unittest.TestCase):
+    def test_firmware_diagnostic_before_status_and_commit_reply(self) -> None:
+        metric = firmware_metric_line()
+        self.assertIsNotNone(setup._metric_line(metric.rstrip(b"\n")))
+        self.assertGreater(len(metric), setup.MAX_RESPONSE_BYTES)
+        self.assertLessEqual(len(metric), setup.MAX_DIAG_CHARS + 2)
+        fake = FakeSerial([metric, STATUS])
+        self.assertEqual(DEVICE, setup.read_status(fake)["device"])
+        self.assertEqual([b"KM1 STATUS\n"], fake.writes)
+        self.assertEqual("KM1 OK PROVISION", setup.exchange(
+            FakeSerial([metric, b"KM1 OK PROVISION\n"]),
+            b"KM1 PROVISION\n", "KM1 OK PROVISION"))
+
+    def test_mixed_stream_keeps_protocol_diagnostic_and_line_bounds(self) -> None:
+        metric = firmware_metric_line()
+        for replies in ([b"x" * setup.MAX_DIAG_CHARS + b"\r\n", STATUS],
+                        [metric] * 15 + [STATUS]):
+            self.assertEqual(DEVICE, setup.read_status(FakeSerial(replies))["device"])
+        for replies in ([metric, b"KM1 OK STATUS " + b"x" * 300 + b"\n"],
+                        [b"x" * (setup.MAX_DIAG_CHARS + 1) + b"\n", STATUS],
+                        [metric] * 16 + [STATUS],
+                        [metric, STATUS[:-1]],
+                        [metric, STATUS.replace(b"durable=0", b"durable=2")],
+                        [metric, STATUS.replace(b"clock=0", b"clock=3")]):
+            with self.subTest(), self.assertRaises(setup.SetupError):
+                setup.read_status(FakeSerial(replies))
+
+    def test_mixed_stream_commit_witness_keeps_nonce_and_identity_guards(self) -> None:
+        nonce = "0" * 32
+        reply = (f"KM1 OK PROVEBOOT n={nonce} dev={DEVICE} cat={CATALOG} "
+                 "fw=1234567 b=abcdef e=1 x=1 u=1\n").encode("ascii")
+        for response in (reply, reply.replace(nonce.encode(), b"1" * 32),
+                         reply.replace(DEVICE.encode(), b"0" * 12)):
+            fake = FakeSerial([firmware_metric_line(), response])
+            parsed = setup._bound_exchange(fake, b"KM1 PROVEBOOT synthetic\n")
+            if response == reply:
+                self.assertEqual({"epoch": 1, "domain": 1, "uptime_ms": 1},
+                    setup._bound_fields(parsed, "PROVEBOOT", nonce,
+                        expect_device=DEVICE, expect_firmware="1234567",
+                        expect_build="abcdef", expect_catalog=CATALOG))
+            else:
+                with self.assertRaises(setup.SetupError):
+                    setup._bound_fields(parsed, "PROVEBOOT", nonce,
+                        expect_device=DEVICE, expect_firmware="1234567",
+                        expect_build="abcdef", expect_catalog=CATALOG)
+
     def test_shared_opener_configures_idle_lines_before_exactly_one_open(self) -> None:
         from types import SimpleNamespace
         port_name = "/dev/serial/by-id/synthetic-device"
@@ -282,13 +338,16 @@ class UsbSetupTests(unittest.TestCase):
         self.assertNotIn("SYNTHETIC_TEST_SECRET", result)
         self.assertIn(f"device={DEVICE}", result)
 
-    def test_excessive_boot_output_fails_before_any_request(self) -> None:
+    def test_excessive_boot_output_is_capped_and_purged_before_request(self) -> None:
         fake = BootSerial(b"X" * (setup.MAX_STARTUP_BYTES + 1), [STATUS])
-        clock = FakeClock(step=0.001)
-        with self.assertRaisesRegex(setup.SetupError, "Startausgabe"):
+        clock = FakeClock()
+        with patch.object(setup.time, "sleep"):
             setup.run_command(args("status"), lambda _: fake,
                               lambda port: setup._drain_startup(port, clock))
-        self.assertEqual([], fake.writes)
+        self.assertTrue(fake.drained)
+        self.assertEqual(setup.MAX_STARTUP_BYTES // setup.STARTUP_CHUNK_BYTES,
+                         len(fake.read_sizes))
+        self.assertEqual([b"KM1 STATUS\n"], fake.writes)
         self.assertTrue(fake.closed)
 
     def test_identity_gate_remains_after_boot_drain(self) -> None:

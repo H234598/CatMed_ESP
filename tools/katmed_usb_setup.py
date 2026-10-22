@@ -204,20 +204,23 @@ def build_provision_request(config_bytes: bytes) -> bytes:
 
 
 def _read_protocol_line(port: SerialPort) -> str:
-    # Bounded boot output may precede the answer. Never print raw device lines:
-    # a faulty target could accidentally echo a provisioning request.
+    # Use the existing diagnostic framing bound for the shared console stream;
+    # only KM1 replies have the smaller protocol bound. Keep the 16-line budget.
+    # Never print raw lines: a faulty target could echo a provisioning request.
     for _ in range(16):
-        raw = port.read_until(b"\n", MAX_RESPONSE_BYTES + 1)
-        if not raw or len(raw) > MAX_RESPONSE_BYTES or not raw.endswith(b"\n"):
+        raw = port.read_until(b"\n", MAX_DIAG_CHARS + 2)
+        if not raw or len(raw) > MAX_DIAG_CHARS + 2 or not raw.endswith(b"\n"):
             raise SetupError("USB-Antwort fehlt, ist zu lang oder unvollständig")
+        payload = raw[:-1]
+        if payload.endswith(b"\r"):
+            payload = payload[:-1]
+        if b"\r" in payload or len(payload) > MAX_DIAG_CHARS:
+            raise SetupError("USB-Zeile enthält ein ungültiges Ende oder ist zu lang")
         if not (raw.startswith(b"KM1 OK ") or raw.startswith(b"KM1 ERR ")):
             continue
+        if len(raw) > MAX_RESPONSE_BYTES:
+            raise SetupError("KM1-Antwort überschreitet 256 Bytes")
         try:
-            payload = raw[:-1]
-            if payload.endswith(b"\r"):
-                payload = payload[:-1]
-            if b"\r" in payload:
-                raise SetupError("USB-Antwort enthält ein ungültiges CR")
             return payload.decode("ascii")
         except UnicodeError:
             raise SetupError("USB-Antwort ist kein ASCII") from None
