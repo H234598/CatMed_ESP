@@ -18,6 +18,8 @@
 const KatmedGeneratedCatalog katmed_generated_catalog = {.profile_count=1};
 static unsigned char *jpeg[2];
 static KatmedStorage captured_storage;
+static unsigned asset_changes;
+void katmed_images_assets_changed(void) { ++asset_changes; }
 KatmedImageStatus katmed_images_mount_storage(KatmedStorage storage)
 { captured_storage=storage; return KATMED_IMAGE_OK; }
 const esp_partition_t *esp_partition_find_first(int type,int subtype,const char *label)
@@ -204,7 +206,9 @@ int main(int argc, char **argv)
     assert(katmed_image_store_import_catalog(1,0,&again)==KATMED_IMAGE_BAD_CATALOG);
     fail_validation=0;
     FILE *f=fopen("/tmp/ke/user-images/keep.txt","wb");assert(f);fclose(f);
+    f=fopen("/tmp/ke/.render-cache.bin","wb");assert(f);fclose(f);
     assert(katmed_image_store_clear_user_data()==KATMED_IMAGE_IO_ERROR);
+    assert(asset_changes==1 && !exists("/tmp/ke/.render-cache.bin"));
     assert(exists("/tmp/ke/user-images/keep.txt"));
     assert(unlink("/tmp/ke/user-images/keep.txt")==0);
     f=fopen("/tmp/ke/user-images/.upload-87654321.tmp","wb");assert(f);fclose(f);
@@ -213,6 +217,7 @@ int main(int argc, char **argv)
     assert_same_file("/tmp/ke/factory-images/cat-00-0.jpg",jpeg[0],jpeg_size[0]);
     assert_same_file("/tmp/ke/factory-images/cat-01-0.jpg",jpeg[1],jpeg_size[1]);
     assert(katmed_image_store_clear_user_data()==KATMED_IMAGE_OK);
+    assert(asset_changes==3);
     assert(katmed_image_store_get(standard.id,&again)==KATMED_IMAGE_OK);
     katmed_image_store_unmount();
     assert(unlink("/tmp/ke/factory-images/cat-00-0.jpg")==0);
