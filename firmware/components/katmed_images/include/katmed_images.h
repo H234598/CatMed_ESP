@@ -24,6 +24,24 @@ typedef enum {
     KATMED_IMAGE_BAD_STATE
 } KatmedImageStatus;
 
+/* Fixed diagnostic categories only; never a file name, byte value or errno text. */
+typedef enum {
+    KATMED_IMAGE_IO_NONE = 0,
+    KATMED_IMAGE_IO_HASH_START,
+    KATMED_IMAGE_IO_HASH_UPDATE,
+    KATMED_IMAGE_IO_HASH_FINISH,
+    KATMED_IMAGE_IO_CALLBACK,
+    KATMED_IMAGE_IO_SHORT_READ,
+    KATMED_IMAGE_IO_READ_UNAVAILABLE,
+    KATMED_IMAGE_IO_VALIDATION_LOCK,
+    KATMED_IMAGE_IO_VARIANT_LOOKUP,
+    KATMED_IMAGE_IO_FILE_OPEN,
+    KATMED_IMAGE_IO_FILE_LENGTH,
+    KATMED_IMAGE_IO_FILE_SEEK,
+    KATMED_IMAGE_IO_FILE_READ
+} KatmedImageIoStage;
+
+
 typedef struct {
     KatmedImageStatus status;
     bool show_neutral_fallback;
@@ -47,6 +65,9 @@ typedef struct {
     uint64_t elapsed_us;
     KatmedImageStatus status;
     bool measured;
+    uint32_t sequence; /* Variant validation invocation, wrapping; not device identity. */
+    KatmedImageIoStage io_stage;
+    KatmedImageStatus io_status;
 } KatmedImageTimingSample;
 
 /* Must be called before UI uses the image catalogue. It verifies the entire

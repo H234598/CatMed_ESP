@@ -22,4 +22,9 @@ static inline bool esp_netif_is_netif_up(esp_netif_t *netif)
 {(void)netif; return false;}
 static inline int esp_netif_get_ip_info(esp_netif_t *netif, esp_netif_ip_info_t *ip)
 {(void)netif; (void)ip; return -1;}
+
+static inline esp_netif_t *esp_netif_create_default_wifi_ap(void){return (esp_netif_t *)1;}
+
+static inline int esp_netif_init(void){return 0;}
+
 #endif

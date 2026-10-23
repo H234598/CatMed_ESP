@@ -3,6 +3,8 @@
 #include "katmed_core.h"
 #include "src/image/lv_image_decoder_private.h"
 #include <array>
+#include <atomic>
+#include <thread>
 #include <cassert>
 #include <cstdio>
 #include <cstring>
@@ -50,9 +52,70 @@ bool read_pack(void *context, uint32_t offset, uint8_t *dst, size_t wanted, size
     return true;
 }
 
+bool detailed_read_pack(void *context, uint32_t offset, uint8_t *dst,
+                        size_t wanted, size_t *actual, KatmedImageIoFailure *failure)
+{
+    auto &s = *static_cast<Storage *>(context);
+    if(s.fail) {
+        *actual=0;*failure={KATMED_IMAGE_IO_FILE_OPEN,KATMED_IMAGE_NOT_FOUND};
+        return false;
+    }
+    return read_pack(context,offset,dst,wanted,actual);
+}
+
+thread_local bool concurrent_open_failure=false;
+bool concurrent_read_pack(void *context, uint32_t offset, uint8_t *dst,
+                          size_t wanted, size_t *actual, KatmedImageIoFailure *failure)
+{
+    if(concurrent_open_failure) {
+        *actual=0;*failure={KATMED_IMAGE_IO_FILE_OPEN,KATMED_IMAGE_NOT_FOUND};
+        return false;
+    }
+    return read_pack(context,offset,dst,wanted,actual);
+}
+
 void expect(bool condition, const char *why)
 {
     if(!condition) throw std::runtime_error(why);
+}
+
+void concurrent_timing_samples(KatmedStorage storage)
+{
+    storage.read_detailed=concurrent_read_pack;
+    expect(katmed_images_mount_storage(storage)==KATMED_IMAGE_OK,"concurrency fixture mount failed");
+    expect(katmed_images_validate_variant(0,0)==KATMED_IMAGE_OK,"concurrency baseline failed");
+    std::atomic<unsigned> ready{0},done{0},unexpected{0};
+    std::atomic<bool> start{false};
+    auto publish=[&](bool fail_open) {
+        concurrent_open_failure=fail_open;
+        ready.fetch_add(1);
+        while(!start.load()) std::this_thread::yield();
+        for(unsigned i=0;i<40000;++i) {
+            const auto status=katmed_images_validate_variant(fail_open ? 0u : UINT32_MAX,0);
+            if(status!=(fail_open ? KATMED_IMAGE_IO_ERROR : KATMED_IMAGE_BAD_ID))
+                unexpected.fetch_add(1);
+        }
+        done.fetch_add(1);
+    };
+    std::thread first(publish,true),second(publish,false);
+    while(ready.load()!=2) std::this_thread::yield();
+    start.store(true);
+    unsigned reads=0,torn=0;
+    do {
+        const auto sample=katmed_images_variant_hash_timing();
+        const bool opening=sample.status==KATMED_IMAGE_IO_ERROR &&
+            sample.io_stage==KATMED_IMAGE_IO_FILE_OPEN && sample.io_status==KATMED_IMAGE_NOT_FOUND;
+        const bool invalid=sample.status==KATMED_IMAGE_BAD_ID &&
+            sample.io_stage==KATMED_IMAGE_IO_NONE && sample.io_status==KATMED_IMAGE_OK;
+        const bool initial=sample.status==KATMED_IMAGE_OK &&
+            sample.io_stage==KATMED_IMAGE_IO_NONE && sample.io_status==KATMED_IMAGE_OK;
+        if(!sample.measured || !sample.sequence || !(opening || invalid || initial)) ++torn;
+        ++reads;
+    } while(done.load()!=2);
+    first.join();second.join();
+    expect(reads>0 && unexpected.load()==0,"concurrent validator fixture did not run");
+    expect(torn==0,"concurrent timing getter observed a torn status/stage/valid tuple");
+    expect(katmed_images_validate_variant(0,0)==KATMED_IMAGE_OK,"concurrency fixture failed to recover");
 }
 
 void hash_vectors()
@@ -148,7 +211,7 @@ int main(int argc, char **argv)
         long size = std::ftell(backend.file);
         expect(size > 0 && size <= UINT32_MAX, "pack size invalid");
         backend.bytes = static_cast<uint32_t>(size);
-        KatmedStorage storage{&backend, backend.bytes, read_pack};
+        KatmedStorage storage{&backend, backend.bytes, read_pack, nullptr};
 
         expect(katmed_images_mount_storage(storage) == KATMED_IMAGE_OK, "valid pack rejected");
         expect(backend.largest_read == KATMED_IMAGE_READ_CHUNK, "pack hash exceeded its 512-byte buffer");
@@ -337,11 +400,35 @@ int main(int argc, char **argv)
                state.deadline.regular_monotonic_ms == before.deadline.regular_monotonic_ms &&
                state.deadline.effective_monotonic_ms == before.deadline.effective_monotonic_ms,
                "image error changed core alarm/deadline");
+        auto failure_sample=katmed_images_variant_hash_timing();
+        expect(failure_sample.measured && failure_sample.io_stage==KATMED_IMAGE_IO_CALLBACK &&
+               failure_sample.io_status==KATMED_IMAGE_IO_ERROR && failure_sample.sequence!=0,
+               "boolean read failure lost its operation-local stage");
+        const uint32_t failed_sequence=failure_sample.sequence;
         backend.fail = false;
         backend.short_read = true;
         expect(katmed_images_select(0, ORIENTATION_0, &missing) == KATMED_IMAGE_IO_ERROR,
                "short partition read went unnoticed");
+        failure_sample=katmed_images_variant_hash_timing();
+        expect(failure_sample.sequence!=failed_sequence &&
+               failure_sample.io_stage==KATMED_IMAGE_IO_SHORT_READ,
+               "short read retained the previous validation detail");
         backend.short_read = false;
+        storage.read_detailed=detailed_read_pack;
+        expect(katmed_images_mount_storage(storage)==KATMED_IMAGE_OK,"detail provider remount failed");
+        backend.fail=true;
+        expect(katmed_images_select(0,ORIENTATION_0,&missing)==KATMED_IMAGE_IO_ERROR,
+               "typed provider failure was accepted");
+        failure_sample=katmed_images_variant_hash_timing();
+        expect(failure_sample.io_stage==KATMED_IMAGE_IO_FILE_OPEN &&
+               failure_sample.io_status==KATMED_IMAGE_NOT_FOUND,
+               "typed open failure was flattened into unrelated IO_ERROR");
+        backend.fail=false;
+        expect(katmed_images_select(0,ORIENTATION_0,&missing)==KATMED_IMAGE_OK,
+               "detail provider did not recover");
+        failure_sample=katmed_images_variant_hash_timing();
+        expect(failure_sample.io_stage==KATMED_IMAGE_IO_NONE && failure_sample.io_status==KATMED_IMAGE_OK,
+               "successful validation retained stale failure detail");
         backend.corrupt = true;
         expect(katmed_images_select(0, ORIENTATION_0, &missing) == KATMED_IMAGE_BAD_HASH,
                "corrupted image bytes went unnoticed");
@@ -349,6 +436,7 @@ int main(int argc, char **argv)
         expect(katmed_images_open_file_count() == 0, "LVGL file handles were not released");
         expect(katmed_images_present(image, fallback, 0, ORIENTATION_0) == KATMED_IMAGE_OK,
                "image path did not recover after failed reads");
+        concurrent_timing_samples(storage);
         lv_obj_delete(fallback);
         backend.fail = true;
         lv_obj_invalidate(image);
@@ -365,7 +453,7 @@ int main(int argc, char **argv)
         expect(katmed_images_mount_storage(storage) == KATMED_IMAGE_IO_ERROR,
                "short boot read was accepted");
         backend.short_read = false;
-        KatmedStorage undersized{&backend, backend.bytes - 1, read_pack};
+        KatmedStorage undersized{&backend, backend.bytes - 1, read_pack, nullptr};
         expect(katmed_images_mount_storage(undersized) == KATMED_IMAGE_BAD_CATALOG,
                "undersized image partition passed index validation");
         std::fclose(backend.file);

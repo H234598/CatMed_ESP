@@ -45,8 +45,12 @@ void katmed_runtime_metrics_collect(uint64_t now_ms, KatmedRuntimeMetricInput *o
         out->variant_hash_us = variant.elapsed_us;
         out->variant_hash_valid = variant.measured;
         out->variant_hash_status = variant.status;
+        out->variant_sequence = variant.sequence;
+        out->variant_io_stage = variant.io_stage;
+        out->variant_io_status = variant.io_status;
         out->jpeg_decode_us = jpeg.elapsed_us;
-        out->jpeg_decode_valid = jpeg.measured;
+        /* A retained JPEG success cannot attest a later failed validation. */
+        out->jpeg_decode_valid = jpeg.measured && variant.measured && variant.status==KATMED_IMAGE_OK;
         out->jpeg_decode_status = jpeg.status;
 #ifdef ESP_PLATFORM
         out->image_failed_presentations = katmed_images_failed_presentations();

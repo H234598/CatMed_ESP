@@ -32,6 +32,7 @@ typedef struct {
     void (*shared_result)(void *context, EventId id, KatmedMeshSharedOutcome outcome);
     void (*utc_received)(void *context, uint64_t observed_mono_ms,
                          int64_t utc_ms, ClockQuality source_quality);
+    bool (*time_shareable)(void *context); /* False for a merely manual local anchor. */
 } KatmedMeshServices;
 
 KatmedMeshResult katmed_mesh_start(const StoreProvision *provision,

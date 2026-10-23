@@ -288,7 +288,7 @@ target_link_libraries(check_unconfigured_settings PRIVATE lvgl m z)
 foreach(format IN ITEMS "240;240" "172;320" "320;172")
     list(GET format 0 width)
     list(GET format 1 height)
-    foreach(mode IN ITEMS order save)
+    foreach(mode IN ITEMS order save manual-clock)
         add_test(NAME unconfigured_${mode}_${width}x${height}
             COMMAND check_unconfigured_settings ${width} ${height} ${mode})
     endforeach()

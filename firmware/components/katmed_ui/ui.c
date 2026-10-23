@@ -23,7 +23,7 @@
 #include <time.h>
 #endif
 
-typedef enum { EDIT_NONE, EDIT_MEDICATION, EDIT_IMAGE, EDIT_NEXT_TIME } EditKind;
+typedef enum { EDIT_NONE, EDIT_MEDICATION, EDIT_IMAGE, EDIT_NEXT_TIME, EDIT_SYSTEM_TIME } EditKind;
 #define ALARM_STRIPS 6u
 typedef enum {
     SETTINGS_ROOT, SETTINGS_TIMES, SETTINGS_LANGUAGES,
@@ -62,6 +62,7 @@ typedef struct {
     int16_t last_x, last_y;
     uint64_t down_ms;
     lv_obj_t *screen, *background, *fallback;
+    lv_obj_t *emergency_button;
     lv_obj_t *clock_view, *alarm_bar, *alarm_strips[ALARM_STRIPS], *alarm_text;
     lv_obj_t *settings, *status, *keypad, *feedback, *morse_layer, *reset_dialog;
     lv_obj_t *pairing_label, *settings_options;
@@ -81,6 +82,7 @@ typedef struct {
     uint8_t reset_stage; /* 0 idle, 1 physical button tile, 2 warning. */
     char reset_token[33];
     size_t reset_token_length;
+    bool manual_clock_prompted;
     bool shared_pending;
     int8_t shared_result_status; /* 0 unknown, 1 accepted, -1 rejected. */
     ManualTimePreview preview;
@@ -448,11 +450,23 @@ static bool parse_hhmm(const char *text, unsigned *hour, unsigned *minute)
     return *hour < 24 && *minute < 60;
 }
 
+static bool system_datetime(char out[17]) {
+    if(strlen(ui.entry)!=12) return false;
+    for(size_t i=0;i<12;++i)if(ui.entry[i]<'0'||ui.entry[i]>'9')return false;
+    snprintf(out,17,"%.4s-%.2s-%.2sT%.2s:%.2s",ui.entry,ui.entry+4,ui.entry+6,ui.entry+8,ui.entry+10);
+    return true;
+}
+
 static void update_preview(void)
 {
     if (!ui.preview_label) return;
     ui.preview_valid = false;
     char text[96];
+    if(ui.edit==EDIT_SYSTEM_TIME) {
+        char civil[17];int64_t utc;
+        ui.preview_valid=system_datetime(civil) && app_parse_local_datetime(civil,&utc)==APP_OK;
+        lv_label_set_text(ui.preview_label,ui.preview_valid?civil:T("Datum und Uhrzeit"));return;
+    }
     if (ui.edit == EDIT_NEXT_TIME) {
         unsigned hour, minute;
         if (!parse_hhmm(ui.entry, &hour, &minute)) {
@@ -519,6 +533,11 @@ static void key_press(lv_event_t *event)
     const char *key = lv_buttonmatrix_get_button_text(keys, selected);
     if (!key) return;
     size_t length = strlen(ui.entry);
+    if(ui.edit==EDIT_SYSTEM_TIME) {
+        if(strcmp(key,"<")==0){if(length)ui.entry[length-1]=0;}
+        else if(length<12 && key[0]>='0' && key[0]<='9' && !key[1]){ui.entry[length]=key[0];ui.entry[length+1]=0;}
+        refresh_entry();return;
+    }
     if (ui.edit == EDIT_NEXT_TIME) {
         char digits[5] = {0};
         size_t count = 0;
@@ -563,6 +582,11 @@ static void save_edit(lv_event_t *event)
         return;
     }
     UiRequest request = {0};
+    if(ui.edit==EDIT_SYSTEM_TIME) {
+        request.kind=UI_REQUEST_SET_SYSTEM_TIME;
+        if(!system_datetime(request.value.local_datetime))return;
+        request_action(&request);return;
+    }
     if (ui.edit == EDIT_NEXT_TIME) {
         unsigned hour, minute;
         if (!parse_hhmm(ui.entry, &hour, &minute)) return;
@@ -623,7 +647,7 @@ static void open_edit(EditKind edit)
                                      "7", "8", "9", "<", "\n",
                                      "0", "0", "0", "<", ""};
     lv_obj_t *keys = lv_buttonmatrix_create(ui.keypad);
-    lv_buttonmatrix_set_map(keys, edit == EDIT_NEXT_TIME ? time_map : key_map);
+    lv_buttonmatrix_set_map(keys, (edit == EDIT_NEXT_TIME || edit==EDIT_SYSTEM_TIME) ? time_map : key_map);
     lv_obj_set_size(keys, keys_w, 4 * (key_h + 2));
     lv_obj_set_pos(keys, x0, y0);
     lv_obj_set_style_pad_all(keys, 0, LV_PART_MAIN);
@@ -637,7 +661,7 @@ static void open_edit(EditKind edit)
     int info_x = landscape ? keys_w + 14 : round ? 50 : 20;
     int info_w = landscape ? ui.width - info_x - 8 :
                  round ? 140 : ui.width - 40;
-    lv_obj_t *heading = label(ui.keypad, round ?
+    lv_obj_t *heading = label(ui.keypad, edit==EDIT_SYSTEM_TIME ? "YYYYMMDDHHMM Berlin" : round ?
           (edit == EDIT_NEXT_TIME ? "HH:MM" : edit == EDIT_MEDICATION ? T("Medikamente") : T("Bilder")) :
           edit == EDIT_NEXT_TIME ? T("Nächste Zeit HH:MM") :
           edit == EDIT_MEDICATION ? T("Medikamente: Stunden") : T("Bilder: Stunden"),
@@ -655,6 +679,16 @@ static void open_edit(EditKind edit)
     ui.preview_label = label(ui.keypad, "", info_w);
     lv_obj_set_style_text_font(ui.preview_label, &katmed_font_10, 0);
     lv_obj_set_pos(ui.preview_label, info_x, landscape ? 62 : round ? 56 : 47);
+    if(edit==EDIT_SYSTEM_TIME) {
+        lv_obj_set_style_text_font(heading,&katmed_font_12,0);
+        lv_obj_set_width(heading,info_w);
+        if(round) {
+            lv_obj_set_pos(heading,info_x,30);
+            lv_obj_set_width(ui.entry_label,info_w);
+            lv_obj_set_pos(ui.entry_label,info_x,48);
+            lv_obj_set_pos(ui.preview_label,info_x,70);
+        }
+    }
     int action_y = landscape ? ui.height - 40 : round ? 188 : ui.height - 35;
     int action_w = landscape || round ? (info_w - 4) / 2 : (ui.width - 44) / 2;
     lv_obj_t *save = button(ui.keypad, T("Speichern"), action_w, 30, save_edit, NULL);
@@ -872,6 +906,9 @@ static void status_button(lv_event_t *event)
     restore_scroll(ui.status, ui.status_scroll_slot);
 }
 
+static void open_setup(lv_event_t *event) {
+    (void)event;UiRequest request={.kind=UI_REQUEST_OPEN_SETUP};request_action(&request);
+}
 static void build_settings(void)
 {
     retire_clock_for_menu();
@@ -960,6 +997,15 @@ static void build_settings(void)
     lv_obj_t *import = button(ui.settings, T("Lade Bilder von URL/Github\nSpäter verfügbar"),
                               row_w, 48, NULL, NULL);
     lv_obj_add_state(import, LV_STATE_DISABLED);
+    label(ui.settings,T("Einrichtung"),row_w);
+    button(ui.settings,T("Datum und Uhrzeit"),row_w,40,edit_button,(void *)(intptr_t)EDIT_SYSTEM_TIME);
+    button(ui.settings,T("Einrichtung öffnen"),row_w,40,open_setup,NULL);
+    UiNetworkStatus setup={0};
+    if(ui.services.network_status)ui.services.network_status(ui.services.context,&setup);
+    if(setup.setup_open) {
+        lv_obj_t *access=label(ui.settings,"",row_w);
+        lv_label_set_text_fmt(access,"%s\n%s",setup.setup_ssid,setup.setup_password);
+    }
     label(ui.settings, T("Reset"), row_w);
     button(ui.settings, T("Werkseinstellungen zurücksetzen"), row_w, 42,
            reset_open, NULL);
@@ -1501,6 +1547,7 @@ static void interaction_cancel(uint64_t now)
 
 static void delete_page(void)
 {
+    ui.emergency_button=NULL;
     if (ui.page) lv_obj_delete(ui.page);
     ui.page = ui.interaction_title = ui.send_button = NULL;
 }
@@ -1591,6 +1638,7 @@ static void build_page(void)
         if (w > 180) w = 180;
         int h = ui.height < 200 ? 58 : 78;
         lv_obj_t *alarm = button(ui.page, "Alarm", w, h, NULL, NULL);
+        ui.emergency_button=alarm;
         lv_obj_set_pos(alarm, (ui.width-w)/2, (ui.height-h)/2-12);
         lv_obj_set_style_bg_color(alarm, lv_color_hex(0xd01818), 0);
         lv_obj_set_style_radius(alarm, 30, 0);
@@ -1947,6 +1995,13 @@ void ui_touch_sample(bool touched, int16_t x, int16_t y,
         int dx = (int)ui.last_x - ui.start_x;
         int dy = (int)ui.last_y - ui.start_y;
         if (duration < 30 || duration > 1000) return;
+        if(ui.view==UI_VIEW_PLACEHOLDER && ui.emergency_button && duration<=600 && abs(dx)<20 && abs(dy)<20) {
+            lv_area_t area;lv_obj_get_coords(ui.emergency_button,&area);
+            if(ui.start_x>=area.x1 && ui.start_x<=area.x2 && ui.start_y>=area.y1 && ui.start_y<=area.y2 &&
+                ui.last_x>=area.x1 && ui.last_x<=area.x2 && ui.last_y>=area.y1 && ui.last_y<=area.y2) {
+                UiRequest emergency={.kind=UI_REQUEST_EMERGENCY};request_action(&emergency);return;
+            }
+        }
         if (ui.view == ALARM) {
             if (!ui.confirmed_round && !ui.reject_confirm_motion &&
                 duration <= 600 && abs(dx) < 20 && abs(dy) < 20) {
@@ -2188,6 +2243,11 @@ void ui_render(const AppState *state, const LocalSettings *local,
                               local->orientation);
         ui.image_id = state->image_id;
         ui.image_orientation = local->orientation;
+    }
+    UiNetworkStatus policy={0};
+    if(ui.services.network_status)ui.services.network_status(ui.services.context,&policy);
+    if(policy.manual_clock_required && !ui.manual_clock_prompted && !state->alarm_active && !ui.keypad) {
+        ui.manual_clock_prompted=true;ui.view=SETTINGS;ui.grid=(UiGrid){1,2};open_edit(EDIT_SYSTEM_TIME);
     }
     if (ui.clock_view) {
         /* Analog seconds need a real UTC second update; digital labels remain minute based. */

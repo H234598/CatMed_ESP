@@ -1,0 +1,31 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Katmed ESP verbinden",
+        "description": "Benötigt den unterstützten rein lesenden HA-Endpunkt und ein vertrauenswürdiges Gerätezertifikat. Es werden keine Geräteeinstellungen geändert.",
+        "data": {
+          "host": "IPv4-Adresse des Geräts",
+          "password": "Vorhandenes Webpasswort",
+          "ca_file": "Pfad zur vertrauenswürdigen CA-PEM-Datei (optional)",
+          "tls_server_name": "TLS-Prüfname aus dem Gerätezertifikat (optional)"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Webanmeldung erneuern",
+        "data": {
+          "password": "Vorhandenes Webpasswort"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Keine sichere Verbindung oder kein unterstützter Statusvertrag.",
+      "invalid_auth": "Die vorhandene Webanmeldung ist erforderlich."
+    },
+    "abort": {
+      "already_configured": "Dieses Gerät ist bereits eingerichtet.",
+      "reauth_successful": "Webanmeldung erneuert.",
+      "unique_id_mismatch": "Anderes Gerät erkannt."
+    }
+  }
+}

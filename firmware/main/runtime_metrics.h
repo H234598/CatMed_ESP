@@ -33,6 +33,9 @@ typedef struct {
     int32_t jpeg_decode_status;
     uint32_t image_failed_presentations;
     bool image_failure_valid;
+    uint32_t variant_sequence;
+    uint32_t variant_io_stage;
+    uint32_t variant_io_status;
 } KatmedRuntimeMetricInput;
 
 /* The two additional lines describe one serialized post-reducer sample.

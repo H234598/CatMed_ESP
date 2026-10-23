@@ -15,7 +15,7 @@ namespace {
 constexpr uint8_t kMagic[4] = {'K', 'M', 'S', 'T'};
 /* v11 appends one local language byte after the unchanged v10 payload.
  * Versions 8 and 9 were never an on-device release. */
-constexpr uint16_t kCurrentVersion = 11;
+constexpr uint16_t kCurrentVersion = 12;
 constexpr size_t kHeaderSize = 12;
 
 uint32_t checksum(const uint8_t *data, size_t length) {
@@ -340,14 +340,25 @@ bool valid_utf8_text(const uint8_t *bytes, size_t length) {
     return true;
 }
 bool valid_provision(const StoreProvision &p) {
+    if (p.network_mode>STORE_NETWORK_OFFLINE) return false;
     if (!p.configured) {
-        if (p.ssid_length != 0 || p.password_length != 0 || p.time_source_length != 0) return false;
+        if (p.network_mode!=STORE_NETWORK_ONLINE || p.ssid_length != 0 || p.password_length != 0 || p.time_source_length != 0) return false;
         for (uint8_t b : p.group) if (b != 0) return false;
         for (uint8_t b : p.secret) if (b != 0) return false;
         for (uint8_t b : p.ssid) if (b != 0) return false;
         for (uint8_t b : p.password) if (b != 0) return false;
         for (uint8_t b : p.time_source) if (b != 0) return false;
         return true;
+    }
+    if (p.network_mode!=STORE_NETWORK_ONLINE) {
+        if (p.ssid_length || p.password_length || p.time_source_length) return false;
+        for (uint8_t b:p.ssid) if (b) return false;
+        for (uint8_t b:p.password) if (b) return false;
+        for (uint8_t b:p.time_source) if (b) return false;
+        bool group=false, secret=false;
+        for (uint8_t b:p.group) group |= b!=0;
+        for (uint8_t b:p.secret) secret |= b!=0;
+        return p.network_mode==STORE_NETWORK_OFFLINE || (group && secret);
     }
     if (p.ssid_length == 0 || p.ssid_length > sizeof(p.ssid) || p.password_length < 8 ||
         p.password_length > sizeof(p.password) || p.time_source_length == 0 ||
@@ -381,7 +392,7 @@ bool valid_record(const StoreRecord &v) {
     bool bound=false;
     for (uint8_t byte : v.bound_group) bound |= byte!=0;
     if ((v.group_origin==STORE_GROUP_ORIGIN_FRESH_UNBOUND &&
-         (bound || v.provision.configured)) ||
+         (bound || (v.provision.configured && v.provision.network_mode!=STORE_NETWORK_OFFLINE))) ||
         (v.group_origin==STORE_GROUP_ORIGIN_FIRST_BOUND && !bound)) return false;
     if (v.provision.configured &&
         std::memcmp(v.provision.group,v.bound_group,sizeof(v.bound_group))!=0)
@@ -477,6 +488,7 @@ StoreResult encode_record(const StoreRecord &v, uint8_t *bytes, size_t *length, 
         }
     }
     if (version>=11) w.u8(v.language);
+    if (version>=12) {w.u8(v.provision.network_mode);w.boolean(v.setup_requested);}
     if (!w.good || w.position > UINT16_MAX) return STORE_FULL;
     const uint16_t n=static_cast<uint16_t>(w.position);
     bytes[6]=static_cast<uint8_t>(n); bytes[7]=static_cast<uint8_t>(n>>8);
@@ -569,6 +581,7 @@ StoreResult decode_record(const uint8_t *bytes, size_t length, StoreRecord *out)
         p.secured=p.password_length!=0; v.wifi_profile_count=1; v.next_wifi_profile_id=2;
     }
     if (version>=11) v.language=r.u8();
+    if (version>=12) {v.provision.network_mode=r.u8();v.setup_requested=r.boolean();}
     if (v.language>=KATMED_LANGUAGE_COUNT) return corrupt();
     if (!r.good || r.position!=length || !valid_record(v)) return corrupt();
     return STORE_OK;
@@ -1281,35 +1294,8 @@ StoreResult store_usb_handle_line_with_wifi_defaults(
             std::memset(&p,0,sizeof(p));
             make_reply(reply,reply_capacity,"KM1 ERR CONFIG\n"); return STORE_INVALID;
         }
-        const bool different_group=std::memcmp(store->record.bound_group,p.group,
-                                               sizeof(p.group))!=0;
-        const bool first_binding=store->record.group_origin==STORE_GROUP_ORIGIN_FRESH_UNBOUND;
-        if (different_group && !first_binding &&
-            (has_group_state(store->record) ||
-             (store->record.group_origin==STORE_GROUP_ORIGIN_FIRST_BOUND &&
-              !store->record.provision.configured))) {
-            std::memset(&p,0,sizeof(p));
-            make_reply(reply,reply_capacity,"KM1 ERR CONFIG\n");
-            return store->last_error=STORE_STALE;
-        }
-        store->staged=store->record;
-        store->staged.provision=p;
-        /* The legacy setup protocol remains supported. Mirror its SSID into
-         * priority 1 once, so the multi-profile runtime has a durable source. */
-        if (store->staged.wifi_profile_count==0) {
-            StoreWifiProfile &profile=store->staged.wifi_profiles[0];
-            profile.id=1; profile.priority=1;
-            profile.ssid_length=p.ssid_length;
-            std::memcpy(profile.ssid,p.ssid,sizeof(profile.ssid));
-            profile.password_length=p.password_length; profile.secured=true;
-            std::memcpy(profile.password,p.password,sizeof(profile.password));
-            store->staged.wifi_profile_count=1;
-            store->staged.next_wifi_profile_id=2;
-        }
-        std::memcpy(store->staged.bound_group,p.group,sizeof(p.group));
-        if (first_binding) store->staged.group_origin=STORE_GROUP_ORIGIN_FIRST_BOUND;
+        const StoreResult committed=store_save_setup(store,&p);
         std::memset(&p,0,sizeof(p));
-        const StoreResult committed=write_record(store,store->staged);
         if (committed==STORE_OK) make_reply(reply,reply_capacity,"KM1 OK PROVISION\n");
         else make_reply(reply,reply_capacity,"KM1 ERR COMMIT\n");
         return committed;
@@ -1323,6 +1309,48 @@ StoreResult store_usb_handle_line(Store *store, const char *line, size_t length,
                                   char *reply, size_t reply_capacity) {
     return store_usb_handle_line_with_wifi_defaults(store,line,length,status,
         nullptr,0,nullptr,0,reply,reply_capacity);
+}
+
+StoreResult store_request_setup(Store *store) {
+    if (!ready(store)) return STORE_UNAVAILABLE;
+    store->staged=store->record; store->staged.setup_requested=true;
+    return write_record(store,store->staged);
+}
+
+StoreResult store_save_setup(Store *store, const StoreProvision *wanted) {
+    if (!ready(store) || wanted==nullptr) return STORE_UNAVAILABLE;
+    StoreProvision p=*wanted;
+    if (!p.configured) return STORE_INVALID;
+    if (p.network_mode==STORE_NETWORK_OFFLINE) {
+        std::memcpy(p.group,store->record.bound_group,sizeof(p.group));
+        std::memcpy(p.secret,store->record.provision.secret,sizeof(p.secret));
+    }
+    if (!valid_provision(p)) return STORE_INVALID;
+    const bool binding=p.network_mode!=STORE_NETWORK_OFFLINE;
+    const bool first=store->record.group_origin==STORE_GROUP_ORIGIN_FRESH_UNBOUND;
+    const bool different=std::memcmp(store->record.bound_group,p.group,sizeof(p.group))!=0;
+    if (binding && different && !first &&
+        (has_group_state(store->record) || (store->record.group_origin==STORE_GROUP_ORIGIN_FIRST_BOUND &&
+        !store->record.provision.configured))) return store->last_error=STORE_STALE;
+    store->staged=store->record;
+    store->staged.provision=p;
+    store->staged.setup_requested=false;
+    if (store->staged.next_sequence==UINT64_MAX) return STORE_FULL;
+    ++store->staged.next_sequence; /* Same-record CAS invalidation for an explicit setup save. */
+    if (p.network_mode==STORE_NETWORK_ONLINE && store->staged.wifi_profile_count==0) {
+        StoreWifiProfile &profile=store->staged.wifi_profiles[0];
+        profile.id=1; profile.priority=1; profile.ssid_length=p.ssid_length;
+        std::memcpy(profile.ssid,p.ssid,sizeof(profile.ssid));
+        profile.password_length=p.password_length; profile.secured=true;
+        std::memcpy(profile.password,p.password,sizeof(profile.password));
+        store->staged.wifi_profile_count=1; store->staged.next_wifi_profile_id=2;
+    }
+    if (binding) {
+        std::memcpy(store->staged.bound_group,p.group,sizeof(p.group));
+        if (first) store->staged.group_origin=STORE_GROUP_ORIGIN_FIRST_BOUND;
+    }
+    std::memset(&p,0,sizeof(p));
+    return write_record(store,store->staged);
 }
 
 size_t store_wifi_profile_limit(void) { return KATMED_STORE_WIFI_PROFILE_MAX; }

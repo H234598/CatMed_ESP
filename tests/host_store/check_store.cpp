@@ -46,13 +46,18 @@ void remove_v9_names(Fake &f) {
     repair_crc(f);
 }
 void remove_v10_wifi_profiles(Fake &f);
+void remove_v12_mode(Fake &f) {
+    if(f.bytes[4]==12) {f.length-=2;f.bytes[4]=11;repair_crc(f);}
+}
 void remove_v11_language(Fake &f) {
+    remove_v12_mode(f);
     assert(f.bytes[4]==11 && f.length>12);
     --f.length; f.bytes[4]=10; repair_crc(f);
 }
 void downgrade_names_to_v8(Fake &f) {
     constexpr size_t v9_suffix=1+17+2+1+KATMED_MESH_NAME_MAX_ENTRIES*10+4;
     constexpr size_t v8_suffix=1+17+2+1+9*10+2;
+    remove_v12_mode(f);
     if (f.bytes[4]==11) remove_v11_language(f);
     if (f.bytes[4]==10) remove_v10_wifi_profiles(f);
     assert(f.bytes[4]==9 && f.length>v9_suffix);
@@ -65,6 +70,7 @@ void downgrade_names_to_v8(Fake &f) {
     repair_crc(f);
 }
 void remove_v10_wifi_profiles(Fake &f) {
+    remove_v12_mode(f);
     if (f.bytes[4]==11) remove_v11_language(f);
     assert(f.bytes[4]==10 && f.length>=17);
     size_t suffix=0; unsigned matches=0;
@@ -78,6 +84,7 @@ void remove_v10_wifi_profiles(Fake &f) {
     f.length-=suffix; f.bytes[4]=9; repair_crc(f);
 }
 void remove_v7_manual(Fake &f) {
+    remove_v12_mode(f);
     if (f.bytes[4]==11) remove_v11_language(f);
     if (f.bytes[4]==10) remove_v10_wifi_profiles(f);
     if (f.bytes[4]==9) remove_v9_names(f);
@@ -168,7 +175,7 @@ void test_v8_mesh_name_migration_past_999() {
     assert(std::strcmp(store_mesh_name(&migrated),"KatmedESP-999")==0);
     assert(store_mesh_name_next_index(&migrated)==1000);
     assert(store_mesh_name_assign(&migrated,UINT64_C(0xAC276E46BC2D),1000)==STORE_OK);
-    assert(fixture.bytes[4]==11 && store_mesh_name_next_index(&migrated)==1001);
+    assert(fixture.bytes[4]==12 && store_mesh_name_next_index(&migrated)==1001);
 }
 void test_corrupt_legacy_future() {
     Fake original{}; Store *s=fresh_store(); StoreRecovery r=open(original,s);
@@ -586,7 +593,7 @@ void test_language_reboot_and_factory_default() {
     assert(initial.language==KATMED_LANG_EN && first.record.language==KATMED_LANG_EN);
     for (uint8_t language=1; language<KATMED_LANGUAGE_COUNT; ++language) {
         assert(store_set_language(&first,language)==STORE_OK);
-        assert(disk.length>12 && disk.bytes[4]==11 && first.record.language==language);
+        assert(disk.length>12 && disk.bytes[4]==12 && first.record.language==language);
         assert(store_set_language(&first,language)==STORE_DUPLICATE);
         Store reboot{};
         StoreRecovery restored{};
@@ -605,9 +612,42 @@ void test_language_reboot_and_factory_default() {
     assert(store_open(&reset,backend(wiped),kDevice,catalog,75,&fresh)==STORE_OK);
     assert(fresh.language==KATMED_LANG_EN && reset.record.language==KATMED_LANG_EN);
 }
+void test_explicit_network_modes() {
+    Fake disk{}; Store store{}; StoreRecovery recovery{};
+    assert(store_open(&store,backend(disk),kDevice,catalog,75,&recovery)==STORE_OK);
+    const unsigned before=disk.writes;
+    StoreProvision setup{}; setup.configured=true; setup.network_mode=STORE_NETWORK_OFFLINE;
+    assert(store.record.provision.configured==false && disk.writes==before);
+    store.record.shared.image_seconds=8u*3600u;
+    assert(store_save_setup(&store,&setup)==STORE_OK);
+    assert(store.record.shared.image_seconds==8u*3600u);
+    Store again{};
+    assert(store_open(&again,backend(disk),kDevice,catalog,75,&recovery)==STORE_OK);
+    assert(again.record.provision.configured && again.record.provision.network_mode==STORE_NETWORK_OFFLINE);
+    setup.network_mode=STORE_NETWORK_MESH_ONLY; setup.group[0]=1; setup.secret[0]=2;
+    assert(store_save_setup(&again,&setup)==STORE_OK); // still genuinely first binding
+    const unsigned saved=disk.writes;
+    setup.group[0]=3;
+    assert(store_save_setup(&again,&setup)==STORE_STALE);
+    assert(disk.writes==saved && again.record.provision.group[0]==1);
+    setup=again.record.provision; setup.network_mode=STORE_NETWORK_OFFLINE;
+    assert(store_save_setup(&again,&setup)==STORE_OK);
+    assert(again.record.bound_group[0]==1 && again.record.provision.network_mode==STORE_NETWORK_OFFLINE);
+    setup.network_mode=STORE_NETWORK_ONLINE; // absent WLAN is not an online setup
+    assert(store_save_setup(&again,&setup)==STORE_INVALID);
+    assert(store_request_setup(&again)==STORE_OK && again.record.setup_requested);
+    setup=again.record.provision;
+    assert(store_save_setup(&again,&setup)==STORE_OK && !again.record.setup_requested);
+    setup=again.record.provision; disk.fault=BEFORE;
+    setup.network_mode=STORE_NETWORK_MESH_ONLY;
+    assert(store_save_setup(&again,&setup)==STORE_IO);
+    assert(again.record.provision.network_mode==STORE_NETWORK_OFFLINE && again.uncertain);
+}
+
 }
 int main() {
     for (unsigned i=0;i<sizeof(catalog);++i) catalog[i]=static_cast<uint8_t>(i+1);
+    test_explicit_network_modes();
     test_missing_and_local();
     test_language_reboot_and_factory_default();
     test_v8_mesh_name_migration_past_999();

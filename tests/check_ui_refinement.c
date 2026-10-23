@@ -103,7 +103,7 @@ int UI_REFINEMENT_ENTRYPOINT(int argc,char **argv)
     lv_display_set_buffers(display,buffer,NULL,(uint32_t)host.width*16*2,LV_DISPLAY_RENDER_MODE_PARTIAL);
     lv_display_set_flush_cb(display,flush);lv_display_set_user_data(display,&host);
     katmed_images_register_lvgl_fs();FILE *pack=fopen(argv[2],"rb");assert(pack);
-    KatmedStorage storage={pack,katmed_generated_catalog.pack_bytes,pack_read};
+    KatmedStorage storage={pack,katmed_generated_catalog.pack_bytes,pack_read,NULL};
     assert(katmed_images_mount_storage(storage)==KATMED_IMAGE_OK);
     refinement_init(katmed_images_catalog_sha256(),katmed_images_count());
     UiServices services=refinement_services();ui_set_services(&services);
@@ -138,7 +138,12 @@ int UI_REFINEMENT_ENTRYPOINT(int argc,char **argv)
         }
         lv_mem_monitor(&after);
         printf("original_catalog_count=%u random_callbacks=150 real_decodes=50 free_before=%zu free_after=%zu reads=%llu\n",katmed_images_count(),before.free_size,after.free_size,(unsigned long long)reads);
-        assert(after.free_size>=before.free_size);
+        printf("heap_counts before_free=%zu after_free=%zu before_used=%zu after_used=%zu\n",before.free_cnt,after.free_cnt,before.used_cnt,after.used_cnt);fflush(stdout);
+        /* LVGL builtin TLSF: each free-block header consumes sizeof(size_t).
+         * Equal live allocation count plus equal free payload+headers proves
+         * no retained allocation, even when a new layout splits a free block. */
+        assert(after.used_cnt<=before.used_cnt);
+        assert(after.free_size+after.free_cnt*sizeof(size_t)>=before.free_size+before.free_cnt*sizeof(size_t));
     }
     if (!strcmp(argv[1],"save")) {
         click_label(screen,"Zeiten");

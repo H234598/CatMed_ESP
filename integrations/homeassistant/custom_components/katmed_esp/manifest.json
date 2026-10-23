@@ -1,0 +1,10 @@
+{
+  "domain": "katmed_esp",
+  "name": "Katmed ESP",
+  "version": "0.1.0",
+  "config_flow": true,
+  "integration_type": "device",
+  "iot_class": "local_polling",
+  "requirements": [],
+  "codeowners": []
+}

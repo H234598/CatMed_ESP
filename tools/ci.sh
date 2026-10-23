@@ -73,6 +73,9 @@ elif [[ "$mode" == host ]]; then
     python3 -m unittest discover -s tests/host_web_ui -p 'test_security_js_gzip.py'
     python3 -m unittest discover -s tests/host_web_ui -p 'test_security_js_handler.py'
     python3 -m unittest discover -s tests/host_web_ui -p 'test_network_startup.py'
+    # Lightweight adapter contracts only; the real HA Core fixture remains separate.
+    python3 -m unittest discover -s tests/ha_integration -p 'test_adapter.py'
+    bash tests/host_runtime_metrics/check_runtime_metrics.sh
     bash tests/host_store/check_main_submit.sh
     bash tests/host_mesh/check_engine.sh
     bash tests/host_mesh/check_status.sh

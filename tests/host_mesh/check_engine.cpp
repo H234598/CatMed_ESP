@@ -20,6 +20,9 @@ uint8_t level=0;
 raw_msg_process_cb_t receiver=nullptr;
 unsigned dropped=0,boot_random=0,failed_sends=0;
 bool fail_send=false;
+unsigned router_configs=0, mesh_starts=0;
+bool share_time=true;
+bool time_shareable(void *) {return share_time;}
 uint8_t current_local_nonce[16]{};
 unsigned shared_results=0;bool shared_accepted=false;EventId shared_result_id{};
 KatmedMeshSharedOutcome shared_outcome=MESH_SHARED_TIMEOUT;
@@ -141,13 +144,13 @@ extern "C" void katmed_dhcp_diag_bind_sta(){}
 void esp_fill_random(void *out,size_t n){auto *p=static_cast<uint8_t *>(out);for(size_t i=0;i<n;++i)p[i]=uint8_t(1+boot_random+i);++boot_random;}
 const esp_app_desc_t *esp_app_get_description(){static esp_app_desc_t app{{'d','9','4','1','f','a','e',0}};return &app;}
 void esp_mesh_lite_init(esp_mesh_lite_config_t *){}
-void esp_mesh_lite_start(){}
+void esp_mesh_lite_start(){++mesh_starts;}
 esp_err_t esp_mesh_lite_connect(){return ESP_OK;}
 uint8_t esp_mesh_lite_get_level(){return level;}
 esp_err_t esp_mesh_lite_disconnect(){level=0;return ESP_OK;}
 esp_err_t esp_mesh_lite_set_argot(uint32_t){return ESP_OK;}
-esp_err_t esp_mesh_lite_set_softap_info(const char *,const char *){return ESP_OK;}
-esp_err_t esp_mesh_lite_set_router_config(mesh_lite_sta_config_t *){return ESP_OK;}
+esp_err_t esp_mesh_lite_set_softap_info(const char *ssid,const char *){assert(std::strlen(ssid)==23 && !std::strcmp(ssid,"Katmed_ESP_optout_nomap"));return ESP_OK;}
+esp_err_t esp_mesh_lite_set_router_config(mesh_lite_sta_config_t *){++router_configs;return ESP_OK;}
 esp_err_t esp_mesh_lite_raw_msg_action_list_register(const esp_mesh_lite_raw_msg_action_t *actions){receiver=actions[0].raw_process;return ESP_OK;}
 esp_err_t esp_mesh_lite_send_msg(int,esp_mesh_lite_msg_config_t *request){
     if(fail_send){++failed_sends;return ESP_FAIL;}
@@ -201,8 +204,20 @@ int main(int argc,char **argv){
         mesh_history_add(&seed,11);mesh_history_add(&seed,88);
         uint8_t bytes[MESH_HISTORY_BLOB];assert(mesh_history_encode(&seed,bytes));history_memory.blob.assign(bytes,bytes+sizeof(bytes));
     }
-    KatmedMeshServices services{&store,&state,nullptr,shared_result,utc_received};
+    const bool mesh_only=argc==2 && !std::strcmp(argv[1],"mesh_only");
+    const bool offline=argc==2 && !std::strcmp(argv[1],"offline");
+    if(mesh_only || offline) {
+        assert(store_save_setup(&store,&provision)==STORE_OK);
+        provision.network_mode=mesh_only ? STORE_NETWORK_MESH_ONLY : STORE_NETWORK_OFFLINE;
+        std::memset(provision.ssid,0,sizeof(provision.ssid));provision.ssid_length=0;
+        std::memset(provision.password,0,sizeof(provision.password));provision.password_length=0;
+        std::memset(provision.time_source,0,sizeof(provision.time_source));provision.time_source_length=0;
+        assert(store_save_setup(&store,&provision)==STORE_OK && store.record.wifi_profile_count==1);
+    }
+    KatmedMeshServices services{&store,&state,nullptr,shared_result,utc_received,time_shareable};
+    if(offline) {assert(katmed_mesh_start(&provision,&services)==MESH_UNAVAILABLE && !mesh_starts && !router_configs);return 0;}
     assert(katmed_mesh_start(&provision,&services)==MESH_ACCEPTED);
+    if(mesh_only) {assert(mesh_starts==1 && router_configs==0);return 0;}
     if(argc==2&&!std::strcmp(argv[1],"names_hostname_retry_netif")){
         NamesMemory bytes;
         assert(katmed_mesh_names_backend(bytes.backend(),11,provision.group)==NAMES_OK);
@@ -702,6 +717,15 @@ int main(int argc,char **argv){
         hello.payload,sizeof(hello.payload),&hello.payload_length));
     inject(hello);katmed_mesh_poll(&now);
     assert(katmed_mesh_connected());
+    if(argc==2 && !std::strcmp(argv[1],"manual_source")) {
+        const unsigned before=count_kind(MESH_TIME_SYNC);
+        share_time=false;now.quality=CLOCK_HOLDOVER;
+        katmed_mesh_notify_local_commit();katmed_mesh_poll(&now);
+        assert(count_kind(MESH_TIME_SYNC)==before);
+        share_time=true;katmed_mesh_notify_local_commit();katmed_mesh_poll(&now);
+        assert(count_kind(MESH_TIME_SYNC)>before);
+        return 0;
+    }
     if(argc==2&&std::strcmp(argv[1],"hello_replay")==0){
         auto recorded=hello;
         recorded.session_counter=9;

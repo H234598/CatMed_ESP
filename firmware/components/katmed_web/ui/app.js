@@ -199,6 +199,16 @@
     resetPreview();
   }
 
+  let setupRevision = null;
+  async function loadRuntimeEinrichtung() {
+    const value = await api("/api/runtime-setup");
+    if (!value || typeof value.configured !== "boolean" || ![0,1,2].includes(value.mode) || typeof value.revision !== "string") throw new Error("Invalid setup state");
+    setupRevision = value.revision;
+    $("network-mode").value = String(value.mode);
+    $("group-action").value = value.configured ? "0" : "1";
+    $("runtime-setup-state").textContent = value.configured ? tr("Eingerichtet; Änderungen erfordern ausdrückliches Speichern.") : tr("Ersteinrichtung; Betriebsart wählen.");
+  }
+
   async function loadConfig() {
     renderConfig(await api("/api/config"));
   }
@@ -399,7 +409,7 @@
     }
     show("private-view");
     $("save-status").textContent = tr("Aktuelle Werte werden geladen.");
-    await Promise.all([loadConfig(), loadCertificate(), loadWifi(), loadImages(), loadCatalog()]);
+    await Promise.all([loadConfig(), loadRuntimeEinrichtung(), loadCertificate(), loadWifi(), loadImages(), loadCatalog()]);
     $("save-status").textContent = tr("Aktuelle Werte geladen.");
   }
 
@@ -655,6 +665,32 @@
     advancedTouchStart = null;
     if (dx > 64 && Math.abs(dx) > Math.abs(dy) * 1.4) closeAdvanced();
   }, {passive: true});
+
+  $("runtime-setup-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (!setupRevision) return;
+    const mode = Number($("network-mode").value);
+    const group_action = Number($("group-action").value);
+    if (![0,1,2].includes(mode) || ![0,1,2].includes(group_action)) return;
+    const body = {mode, group_action, revision: setupRevision,
+      group: $("setup-group").value, secret: $("setup-secret").value,
+      ssid: mode === 0 ? $("runtime-ssid").value : "",
+      password: mode === 0 ? $("runtime-password").value : "",
+      time_source: mode === 0 ? $("runtime-time-source").value : "",
+      local_datetime: $("runtime-datetime").value};
+    if (mode !== 0 && !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(body.local_datetime)) {
+      notice(tr("Vollständiges Berliner Datum und Uhrzeit eingeben; mehrdeutige oder fehlende Sommerzeitminuten sind ungültig.")); return;
+    }
+    try {
+      await api("/api/runtime-setup", "PUT", body);
+      $("setup-secret").value = ""; $("runtime-password").value = "";
+      setupRevision = null;
+      $("runtime-setup-state").textContent = tr("Gespeichert. Das Gerät startet neu; die Einrichtungsverbindung endet.");
+    } catch (_) {
+      $("setup-secret").value = ""; $("runtime-password").value = "";
+      notice(tr("Einrichtung nicht bestätigt. Vor erneutem Speichern aktuellen Zustand laden; kein Rücksetzen annehmen."));
+    } finally { body.secret = ""; body.password = ""; }
+  });
 
   $("wifi-open").addEventListener("change", () => {
     const password = $("wifi-password");

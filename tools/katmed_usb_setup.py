@@ -47,6 +47,8 @@ METRIC_KEYS = (
     "internal_largest_block", "main_stack_hwm_bytes", "lvgl_stack_hwm_bytes",
     "lvgl_stack_valid",
 )
+LEGACY_METRIC_KEYS = METRIC_KEYS
+METRIC_KEYS += ("variant_seq", "variant_io_stage", "variant_io_status")
 SIGNED_METRICS = frozenset({"pack_status", "variant_status", "jpeg_status"})
 STATE_KEYS = (
     "schema", "sample_seq", "uptime_ms", "boot_domain", "round_d", "round_e",
@@ -364,10 +366,11 @@ def _metric_line(raw: bytes) -> tuple[str, int] | None:
     if match is None:
         return None
     tokens = match.group(1).split(b" ")
-    if len(tokens) != len(METRIC_KEYS):
+    keys = METRIC_KEYS if len(tokens) == len(METRIC_KEYS) else LEGACY_METRIC_KEYS
+    if len(tokens) != len(keys):
         return None
     values: list[str] = []
-    for key, token in zip(METRIC_KEYS, tokens):
+    for key, token in zip(keys, tokens):
         expected = key.encode("ascii") + b"="
         if not token.startswith(expected):
             return None
@@ -375,6 +378,10 @@ def _metric_line(raw: bytes) -> tuple[str, int] | None:
         pattern = rb"-?[0-9]{1,20}" if key in SIGNED_METRICS else rb"[0-9]{1,20}"
         if re.fullmatch(pattern, number) is None:
             return None
+        if key in ("variant_seq", "variant_io_stage", "variant_io_status"):
+            limit = {"variant_seq": 0xffffffff, "variant_io_stage": 12, "variant_io_status": 10}[key]
+            if int(number) > limit:
+                return None
         values.append(f"{key}={number.decode('ascii')}")
     uptime = int(values[0].removeprefix("uptime_ms="))
     if uptime > 0xffffffffffffffff:
@@ -413,7 +420,7 @@ def _evidence_line(raw: bytes) -> tuple[str, dict[str, int]] | None:
             fields["boot_domain"] == 0):
         return None
     if kind == "state" and (fields["reason"] > 4 or fields["now_q"] > 2 or
-                             fields["utc_source"] > 2 or
+                             fields["utc_source"] > 3 or
                              (fields["due_local"] and fields["clock_d"] != fields["boot_domain"])):
         return None
     if kind == "net" and (fields["sta_dhcp"] > 2 or

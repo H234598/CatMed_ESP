@@ -28,6 +28,8 @@ AppResult app_calculate_deadline(const ClockSample *start, uint32_t seconds,
 AppResult app_preview_local_time(const ClockSample *now, unsigned hour,
                                  unsigned minute, ManualTimePreview *preview);
 AppResult app_berlin_local_time(int64_t utc_ms, LocalDateTime *local);
+/* Strict Berlin civil minute; rejects nonexistent and ambiguous DST minutes. */
+AppResult app_parse_local_datetime(const char *text, int64_t *utc_ms);
 AppResult app_parse_hours(const char *text, uint32_t *seconds);
 
 /* Presentation only: a complete cycle fills and then empties top-to-bottom.

@@ -12,7 +12,8 @@ extern "C" {
 typedef enum {
     KATMED_CONFIG_GET,
     KATMED_CONFIG_PREVIEW_TIME,
-    KATMED_CONFIG_SAVE
+    KATMED_CONFIG_SAVE,
+    KATMED_CONFIG_SETUP_GET, KATMED_CONFIG_SETUP_SAVE, KATMED_CONFIG_HA_GET
 } KatmedConfigOperation;
 
 typedef enum {
@@ -55,6 +56,13 @@ typedef struct {
     char value[KATMED_CONFIG_VALUE_MAX];
     char revision[KATMED_CONFIG_REVISION_MAX];
     char preview_token[KATMED_CONFIG_PREVIEW_TOKEN_MAX];
+    struct {
+        uint8_t mode; /* StoreNetworkMode */
+        uint8_t group_action; /* 0 keep, 1 new, 2 explicitly join */
+        uint8_t group[16], secret[32];
+        char ssid[33], password[64], time_source[64];
+        char local_datetime[17]; /* Berlin YYYY-MM-DDTHH:MM; unique civil minute. */
+    } setup;
 } KatmedConfigRequest;
 
 typedef struct {
@@ -82,6 +90,14 @@ typedef struct {
     KatmedConfigStatus status;
     KatmedConfigSnapshot snapshot;
     KatmedConfigPreview preview;
+    struct { bool configured; uint8_t mode; bool clock_required; bool setup_open; } setup;
+    struct {
+        char device_id[13], boot_id[21];
+        bool alarm_active, boot_notice, last_dose_known;
+        uint8_t alarm_severity; /* 0 none,1 blue,2 yellow,3 red */
+        int64_t next_due_ms, last_dose_ms; /* zero means unavailable */
+        uint32_t emergency_button_sequence;
+    } ha;
 } KatmedConfigResponse;
 
 typedef void (*KatmedConfigExecute)(void *context, const KatmedConfigRequest *request,

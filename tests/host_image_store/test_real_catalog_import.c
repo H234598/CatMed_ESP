@@ -29,6 +29,7 @@ static size_t jpeg_size[2];
 static size_t total_bytes = 1024u * 1024u;
 static size_t used_bytes;
 static int fail_validation;
+static bool fail_mutex;
 static size_t fail_read_after = (size_t)-1;
 static size_t bytes_read;
 static unsigned random_id = 0x12345678u;
@@ -80,7 +81,7 @@ esp_err_t esp_littlefs_info(const char *label, size_t *total, size_t *used)
 uint32_t esp_random(void) { return ++random_id; }
 const char *esp_err_to_name(esp_err_t error) { (void)error; return "test"; }
 SemaphoreHandle_t xSemaphoreCreateMutex(void) { return (void *)1; }
-int xSemaphoreTake(SemaphoreHandle_t mutex, int ticks) { (void)mutex; (void)ticks; return pdTRUE; }
+int xSemaphoreTake(SemaphoreHandle_t mutex, int ticks) { (void)mutex; (void)ticks; return fail_mutex ? 0 : pdTRUE; }
 int xSemaphoreGive(SemaphoreHandle_t mutex) { (void)mutex; return pdTRUE; }
 
 static void load_jpeg(const char *path, unsigned slot)
@@ -155,6 +156,20 @@ int main(int argc, char **argv)
     }
     assert(captured_storage.read(NULL,17u,crossing,sizeof(crossing),&actual));
     assert(!memcmp(crossing,jpeg[0]+17,sizeof(crossing)));
+    assert(captured_storage.read_detailed!=NULL);
+    KatmedImageIoFailure detail={0};fail_mutex=true;
+    assert(!captured_storage.read_detailed(NULL,0,crossing,sizeof(crossing),&actual,&detail));
+    assert(actual==0 && detail.stage==KATMED_IMAGE_IO_VALIDATION_LOCK && detail.status==KATMED_IMAGE_UNAVAILABLE);
+    fail_mutex=false;
+    /* Close the cached first file, then inject a missing standard file in this test-only mount. */
+    assert(captured_storage.read(NULL,padded,crossing,sizeof(crossing),&actual));
+    assert(rename("/tmp/ke/factory-images/cat-00-0.jpg","/tmp/ke/factory-images/held.jpg")==0);
+    assert(!captured_storage.read_detailed(NULL,0,crossing,sizeof(crossing),&actual,&detail));
+    assert(detail.stage==KATMED_IMAGE_IO_FILE_OPEN && detail.status==KATMED_IMAGE_NOT_FOUND);
+    assert(rename("/tmp/ke/factory-images/held.jpg","/tmp/ke/factory-images/cat-00-0.jpg")==0);
+    assert(captured_storage.read_detailed(NULL,0,crossing,sizeof(crossing),&actual,&detail));
+    assert(actual==sizeof(crossing) && detail.stage==KATMED_IMAGE_IO_NONE && detail.status==KATMED_IMAGE_OK);
+
     KatmedUserImageInfo standard={0}, again={0}, uploaded={0};
     assert(katmed_image_store_import_catalog(0,0,&standard)==KATMED_IMAGE_OK);
     assert(standard.id==UINT32_C(0x80000000));

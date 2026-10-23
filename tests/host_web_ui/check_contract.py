@@ -62,8 +62,10 @@ def expect(status, result):
 
 def run(info):
     files = {name: (ASSETS / name).read_bytes() for name in ("index.html", "style.css", "app.js", "i18n.js")}
-    # Catalog bytes are linked into flash; target app layout is checked separately.
-    assert sum(map(len, files.values())) < 160 * 1024
+    # Twelve-language network/setup wizard adds 22 translated entries and its form.
+    # Bound their measured ~175 KiB uncompressed footprint; target slot and C6
+    # compressed asset limits remain independently checked by firmware builds.
+    assert sum(map(len, files.values())) < 180 * 1024
     links = Links()
     links.feed(files["index.html"].decode())
     assert links.resources == ["/style.css", "/i18n.js", "/app.js"]

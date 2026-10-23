@@ -28,6 +28,9 @@ if [[ $# -gt 0 ]]; then
     exit 0
 fi
 "$out"
+"$out" mesh_only
+"$out" offline
+"$out" manual_source
 "$out" solo_settings
 "$out" fanout
 "$out" time

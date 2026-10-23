@@ -56,7 +56,7 @@ def collect():
     ui = ["".join(preview_fragments) if s == preview_fragments[0] else s
           for s in ui if s not in preview_fragments[1:]]
     ui = [s for s in ui if s not in {
-        "CEST", "CET", "KatmedESP", "HH:MM", "0°", "90°", "180°", "270°",
+        "%.4s-%.2s-%.2sT%.2s:%.2s", "YYYYMMDDHHMM Berlin", "CEST", "CET", "KatmedESP", "HH:MM", "0°", "90°", "180°", "270°",
         "%s", "%lu", "OK", "Telacore", "Alarm", "IP: %s", "AP-IP: %s",
         "Gateway: %s", "DNS-IP: %s", "%c%c:%s",
         "English", "Deutsch", "Français", "Nederlands", "Español", "Esperanto",

@@ -19,7 +19,7 @@ int main()
     std::memcpy(store.record.bound_group,provision.group,16);
     store.record.group_origin=STORE_GROUP_ORIGIN_FIRST_BOUND;
     assert(app_init(&state,&recovered.shared,&now,recovered.boot_identity,72,catalog)==APP_OK);
-    KatmedMeshServices services{&store,&state,nullptr,shared_result,utc_received};
+    KatmedMeshServices services{&store,&state,nullptr,shared_result,utc_received,nullptr};
     assert(katmed_mesh_start(&provision,&services)==MESH_ACCEPTED);
     host_station_present=true;
     level=ROOT;katmed_mesh_poll(&now);

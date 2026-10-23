@@ -4,6 +4,14 @@
 #undef SETTINGS_VALUES_ENTRYPOINT
 #include "src/misc/lv_text_ap.h"
 
+void katmed_mesh_device_name(char *out,size_t capacity,bool *assigned,bool *uncertain) {
+    if(capacity) {snprintf(out,capacity,"KatmedESP");}
+    *assigned=false;*uncertain=false;
+}
+bool katmed_mesh_radio_channel(uint8_t *out){*out=0;return false;}
+void katmed_mesh_counts(KatmedMeshCounts *out){memset(out,0,sizeof(*out));}
+uint32_t katmed_time_idf_sync_server_ipv4(void){return 0;}
+
 static void dismiss_start(void)
 {
     unsigned before=writes, notifications=fake_mesh_notifications;
@@ -43,12 +51,29 @@ int main(int argc,char **argv)
     assert(!clock_sample(runtime.boot_domain).utc_valid);
     dismiss_start();
     lv_init();lv_display_t *display=lv_display_create(width,height);assert(display);
-    UiServices services={.context=&runtime,.submit=submit_ui,.read_model=read_ui_model};
+    UiServices services={.context=&runtime,.submit=submit_ui,.read_model=read_ui_model,.network_status=network_status};
     ui_set_services(&services);katmed_i18n_select(KATMED_LANG_EN);
     render();
+    if(!strcmp(argv[3],"manual-clock")) {
+        katmed_time_init(&runtime.time,runtime.boot_domain);
+        StoreProvision offline={.configured=true,.network_mode=STORE_NETWORK_OFFLINE};
+        assert(store_save_setup(&runtime.store,&offline)==STORE_OK);
+        const bool had_dose=runtime.store.record.last_confirmation.valid;
+        render(); // actual production network_status -> automatic missing-clock prompt
+        expect_text("YYYYMMDDHHMM Berlin");
+        const unsigned before=writes;
+        keys("202603290230");click("Save");
+        assert(!clock_sample(runtime.boot_domain).utc_valid && writes==before && !fake_wall_sets);
+        keys("<<<<<<<<<<<<202610231425");expect_text("2026-10-23T14:25");click("Save");
+        ClockSample manual=clock_sample(runtime.boot_domain);
+        assert(manual.utc_valid && manual.quality==CLOCK_HOLDOVER && runtime.utc_source==3 && fake_wall_sets==1);
+        assert(runtime.store.record.last_confirmation.valid==had_dose && !runtime.state.has_last_confirmation && !runtime.store.record.setup_requested && !runtime.setup_ap);
+        assert(!time_shareable(&runtime));
+        return 0;
+    }
     if(!strcmp(argv[3],"order")) {
         const char *root_labels[]={"Intervalls","Times","Languages","Rotation",
-                                  "Slideshow / playback order","Reset","Factory reset"};
+                                  "Slideshow / playback order","Setup","Date and time","Open setup","Reset","Factory reset"};
         int previous=INT32_MIN;
         for(unsigned i=0;i<sizeof(root_labels)/sizeof(root_labels[0]);++i) {
             lv_obj_t *label=find_text(lv_screen_active(),root_labels[i]);
@@ -70,7 +95,7 @@ int main(int argc,char **argv)
             lv_obj_t *heading=lv_obj_get_child(categories,i);
             if(!lv_obj_check_type(heading,&lv_label_class) ||
                strcmp(lv_label_get_text(heading),"Intervalls"))continue;
-            for(;section<7;++section,i+=2) {
+            for(;section<6;++section,i+=2) {
                 heading=lv_obj_get_child(categories,i);
                 assert(lv_obj_check_type(heading,&lv_label_class));
                 assert(!strcmp(lv_label_get_text(heading),headings[section]));
@@ -79,6 +104,13 @@ int main(int argc,char **argv)
                 assert(find_text(control,controls[section]));
                 assert(lv_obj_has_state(control,LV_STATE_DISABLED)==(section==5));
             }
+            assert(find_text(lv_obj_get_child(categories,i),"Setup"));
+            assert(find_text(lv_obj_get_child(categories,i+1),"Date and time"));
+            assert(find_text(lv_obj_get_child(categories,i+2),"Open setup"));
+            i+=3;
+            assert(find_text(lv_obj_get_child(categories,i),"Reset"));
+            assert(find_text(lv_obj_get_child(categories,i+1),"Factory reset"));
+            i+=2;section=7;
             assert(i==lv_obj_get_child_count(categories));
             break;
         }

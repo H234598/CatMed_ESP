@@ -31,7 +31,7 @@ int main(int argc, char **argv)
     lv_display_set_user_data(display, &host);
     katmed_images_register_lvgl_fs();
     FILE *pack=fopen(argv[3],"rb");assert(pack);
-    KatmedStorage storage={pack,katmed_generated_catalog.pack_bytes,alarm_pack_read};
+    KatmedStorage storage={pack,katmed_generated_catalog.pack_bytes,alarm_pack_read,NULL};
     assert(katmed_images_mount_storage(storage)==KATMED_IMAGE_OK);
     UiServices services = {.context = &host, .submit = submit, .connected = connected};
     ui_set_services(&services);

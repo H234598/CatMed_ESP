@@ -24,7 +24,7 @@ typedef enum {
     UI_REQUEST_SET_ROTATION_MODE,
     UI_REQUEST_SET_ORIENTATION,
     UI_REQUEST_SET_CLOCK_STYLE,
-    UI_REQUEST_SET_LANGUAGE
+    UI_REQUEST_SET_LANGUAGE, UI_REQUEST_SET_SYSTEM_TIME, UI_REQUEST_OPEN_SETUP, UI_REQUEST_EMERGENCY
 } UiRequestKind;
 typedef struct {
     UiRequestKind kind;
@@ -39,6 +39,7 @@ typedef struct {
         Orientation orientation;
         ClockStyle clock_style;
         uint8_t language;
+        char local_datetime[17];
     } value;
 } UiRequest;
 typedef enum {
@@ -58,6 +59,9 @@ typedef struct {
 /* Fresh interface data only; strings are empty when an address is unavailable. */
 typedef struct {
     bool configured;
+    bool setup_open;
+    bool manual_clock_required;
+    char setup_ssid[33], setup_password[17]; /* Display only, never HTTP or logs. */
     bool connected;
     char device_name[KATMED_UI_DEVICE_NAME_MAX];
     bool device_name_assigned;

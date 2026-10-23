@@ -1,10 +1,32 @@
+#ifndef _DEFAULT_SOURCE
+#define _DEFAULT_SOURCE 1
+#endif
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
 
+#include <sys/time.h>
+static unsigned fake_wall_sets;
+static int fake_settimeofday(const struct timeval *value, const struct timezone *zone) {
+    (void)value;(void)zone;++fake_wall_sets;return 0;
+}
+#define settimeofday fake_settimeofday
+#define KATMED_TEST_WIFI_CONFIG 1
 #define KATMED_FULL_STACK 1
 #define KATMED_WITH_CORE 1
 #include "../../firmware/main/main.c"
+
+static unsigned setup_config_calls;
+int katmed_test_wifi_config(int iface, wifi_config_t *config)
+{
+    assert(iface==WIFI_IF_AP);
+    assert(config->ap.ssid_len==strlen("Katmed_ESP_SETUP"));
+    assert(memcmp(config->ap.ssid,"Katmed_ESP_SETUP",config->ap.ssid_len)==0);
+    assert(config->ap.authmode==WIFI_AUTH_WPA2_PSK);
+    assert(config->ap.max_connection==1 && config->ap.channel==1);
+    assert(strlen((const char *)config->ap.password)==16);
+    ++setup_config_calls;return ESP_OK;
+}
 
 static uint8_t committed[KATMED_STORE_BLOB_MAX];
 static size_t committed_length;
@@ -112,8 +134,252 @@ static UiSubmitResult submit_due_confirm(void)
     return submit_ui(&runtime,&confirm);
 }
 
-int main(void)
+static void test_runtime_setup_and_emergency(void) {
+    committed_length=0;fake_microseconds=1000000;fake_wall_sets=0;
+    initialize_runtime();katmed_time_init(&runtime.time,runtime.boot_domain);
+    UiRequest dismiss={.kind=UI_REQUEST_DISMISS_BOOT};
+    assert(submit_ui(&runtime,&dismiss)==UI_SUBMIT_DISMISSED);
+    KatmedConfigRequest request={.operation=KATMED_CONFIG_SETUP_GET};KatmedConfigResponse response={0};
+    unsigned before=writes;config_execute(&runtime,&request,&response);
+    assert(response.status==KATMED_CONFIG_OK && !response.setup.configured && writes==before);
+    request.operation=KATMED_CONFIG_SETUP_SAVE;
+    snprintf(request.revision,sizeof(request.revision),"%s",response.snapshot.revision);
+    request.setup.mode=STORE_NETWORK_OFFLINE;
+    snprintf(request.setup.local_datetime,sizeof(request.setup.local_datetime),"2026-03-29T02:30");
+    config_execute(&runtime,&request,&response);
+    assert(response.status==KATMED_CONFIG_INVALID && writes==before && !runtime.store.record.provision.configured);
+    snprintf(request.setup.local_datetime,sizeof(request.setup.local_datetime),"2026-10-23T14:25");
+    config_execute(&runtime,&request,&response);
+    assert(response.status==KATMED_CONFIG_OK && runtime.store.record.provision.network_mode==STORE_NETWORK_OFFLINE && runtime.reboot_required);
+    assert(runtime.utc_source==3 && clock_sample(runtime.boot_domain).quality==CLOCK_HOLDOVER && !time_shareable(&runtime));
+    assert(!runtime.store.record.last_confirmation.valid && !runtime.store.record.has_history && runtime.store.record.pending_count==0);
+    // Simulate completion of the separately scheduled restart, never a real host reset.
+    runtime.reboot_required=false;config_execute(&runtime,&request,&response);
+    assert(response.status==KATMED_CONFIG_STALE);
+    AppState state=runtime.state;StoreRecord record=runtime.store.record;before=writes;
+    UiRequest emergency={.kind=UI_REQUEST_EMERGENCY};
+    assert(submit_ui(&runtime,&emergency)==UI_SUBMIT_COMMITTED && runtime.emergency_button_sequence==1);
+    assert(!memcmp(&state,&runtime.state,sizeof(state)) && !memcmp(&record,&runtime.store.record,sizeof(record)) && writes==before);
+    request=(KatmedConfigRequest){.operation=KATMED_CONFIG_HA_GET};config_execute(&runtime,&request,&response);
+    assert(response.status==KATMED_CONFIG_OK && response.ha.emergency_button_sequence==1 && !response.ha.last_dose_known && !response.ha.alarm_active);
+    puts("runtime setup/manual clock/CAS and independent emergency snapshot passed");
+    committed_length=0;runtime=(Runtime){0};
+}
+
+static void initialize_offline_runtime(void)
 {
+    committed_length=0;fail_commit=false;fake_microseconds=1000000;
+    fake_mesh_coordinator=false;fake_mesh_connected=false;
+    initialize_runtime();katmed_time_init(&runtime.time,runtime.boot_domain);
+    const UiRequest dismiss={.kind=UI_REQUEST_DISMISS_BOOT};
+    assert(submit_ui(&runtime,&dismiss)==UI_SUBMIT_DISMISSED);
+    UiRequest images={.kind=UI_REQUEST_SET_IMAGE_SECONDS};images.value.seconds=28800;
+    assert(submit_ui(&runtime,&images)==UI_SUBMIT_COMMITTED);
+    StoreProvision offline={0};offline.configured=true;offline.network_mode=STORE_NETWORK_OFFLINE;
+    assert(store_save_setup(&runtime.store,&offline)==STORE_OK);
+    assert(accept_manual_clock(&runtime,"2026-10-23T14:25"));
+    assert(runtime.utc_source==3 && !runtime.mesh_started &&
+           clock_sample(runtime.boot_domain).quality==CLOCK_HOLDOVER);
+}
+
+static void test_offline_random_commits_without_mesh(void)
+{
+    initialize_offline_runtime();
+    UiRequest rotation={.kind=UI_REQUEST_SET_ROTATION_MODE};rotation.value.rotation=ROTATION_RANDOM;
+    assert(submit_ui(&runtime,&rotation)==UI_SUBMIT_COMMITTED);
+    const unsigned before=writes,calls=fake_shared_calls;
+    const uint32_t image=runtime.state.image_id;
+    const StoreRecord original=runtime.store.record;
+    fake_microseconds+=INT64_C(28800000000); /* Actual eight-hour image deadline. */
+    ClockSample now=clock_sample(runtime.boot_domain);
+    tick_runtime(&runtime,&now);
+    assert(!runtime.state.image_due_pending && runtime.state.image_id!=image);
+    assert(writes>before && fake_shared_calls==calls &&
+           runtime.state.image_remaining_ms==UINT64_C(28800000));
+    assert(runtime.store.record.shared.image_seconds==28800 &&
+           !memcmp(&runtime.store.record.provision,&original.provision,sizeof(original.provision)) &&
+           !memcmp(&runtime.store.record.last_confirmation,&original.last_confirmation,
+                   sizeof(original.last_confirmation)) &&
+           runtime.store.record.has_history && !runtime.store.record.history.has_last_confirmation &&
+           runtime.store.record.pending_count==0 &&
+           runtime.state.settings.medication_seconds==original.shared.medication_seconds);
+    const uint32_t selected=runtime.state.image_id;
+    initialize_runtime();
+    assert(runtime.store.record.history.image_id==selected &&
+           runtime.state.settings.image_seconds==28800 &&
+           runtime.store.record.provision.network_mode==STORE_NETWORK_OFFLINE);
+    puts("S-M1 offline RANDOM: elapsed interval selects and durably reopens without Mesh/dose");
+    committed_length=0;runtime=(Runtime){0};
+}
+
+static void test_offline_manual_deadline_preserves_guards(void)
+{
+    initialize_offline_runtime();
+    ClockSample now=clock_sample(runtime.boot_domain);ManualTimePreview preview;
+    assert(app_preview_local_time(&now,14,30,&preview)==APP_OK);
+    UiRequest next={.kind=UI_REQUEST_SET_NEXT_LOCAL_TIME};
+    next.value.local_time.hour=14;next.value.local_time.minute=30;next.value.local_time.preview=preview;
+    const unsigned before=writes,calls=fake_shared_calls;
+    assert(submit_ui(&runtime,&next)==UI_SUBMIT_COMMITTED);
+    assert(runtime.state.start_reason==START_MANUAL &&
+           runtime.state.deadline.regular_utc.ms==preview.regular_utc.ms &&
+           runtime.store.record.manual_intent.pending && runtime.store.record.has_history &&
+           runtime.store.record.history.start_reason==START_MANUAL &&
+           runtime.store.record.history.deadline.regular_utc.ms==preview.regular_utc.ms &&
+           writes>before && fake_shared_calls==calls);
+    assert(!runtime.store.record.last_confirmation.valid && runtime.store.record.pending_count==0 &&
+           runtime.store.record.shared.image_seconds==28800);
+    const AppState committed_state=runtime.state;
+    const StoreManualIntent committed_intent=runtime.store.record.manual_intent;
+    next.value.local_time.preview.regular_utc.ms++;
+    assert(submit_ui(&runtime,&next)!=UI_SUBMIT_COMMITTED);
+    assert(!memcmp(&runtime.state,&committed_state,sizeof(committed_state)) &&
+           !memcmp(&runtime.store.record.manual_intent,&committed_intent,sizeof(committed_intent)));
+    /* Existing durable ID reservation precedes Core rejection; it is not a saved deadline. */
+    const unsigned committed_writes=writes;
+    next.value.local_time.preview=preview;
+    runtime.shared_pending=true;
+    assert(submit_ui(&runtime,&next)==UI_SUBMIT_UNAVAILABLE && writes==committed_writes);
+    runtime.shared_pending=false;runtime.reboot_required=true;
+    assert(submit_ui(&runtime,&next)==UI_SUBMIT_UNAVAILABLE && writes==committed_writes);
+    runtime.reboot_required=false;runtime.store_ready=false;
+    assert(submit_ui(&runtime,&next)==UI_SUBMIT_UNAVAILABLE && writes==committed_writes);
+    runtime.store_ready=true;runtime.state.alarm_active=true;
+    assert(submit_ui(&runtime,&next)!=UI_SUBMIT_COMMITTED && runtime.state.alarm_active &&
+           runtime.store.record.history.deadline.regular_utc.ms==preview.regular_utc.ms);
+    runtime.state.alarm_active=false;
+    katmed_time_init(&runtime.time,runtime.boot_domain); /* Loss of UTC is not an authority bypass. */
+    assert(submit_ui(&runtime,&next)!=UI_SUBMIT_COMMITTED &&
+           runtime.store.record.history.deadline.regular_utc.ms==preview.regular_utc.ms &&
+           !runtime.store.record.last_confirmation.valid);
+    initialize_runtime();
+    assert(runtime.store.record.manual_intent.pending &&
+           runtime.store.record.history.deadline.regular_utc.ms==preview.regular_utc.ms &&
+           runtime.state.settings.image_seconds==28800 &&
+           !runtime.store.record.last_confirmation.valid &&
+           runtime.store.record.provision.network_mode==STORE_NETWORK_OFFLINE);
+    puts("S-M2 offline manual deadline: durable, no Mesh/dose; preview/UTC/alarm/store/reboot/pending guards");
+    committed_length=0;runtime=(Runtime){0};
+}
+
+static void schedule_manual_due_test(void)
+{
+    ClockSample now=clock_sample(runtime.boot_domain);ManualTimePreview preview;
+    assert(app_preview_local_time(&now,14,30,&preview)==APP_OK);
+    UiRequest next={.kind=UI_REQUEST_SET_NEXT_LOCAL_TIME};
+    next.value.local_time.hour=14;next.value.local_time.minute=30;next.value.local_time.preview=preview;
+    assert(submit_ui(&runtime,&next)==UI_SUBMIT_COMMITTED);
+}
+
+static void start_offline_due_test(void)
+{
+    initialize_offline_runtime();schedule_manual_due_test();
+}
+
+static void advance_to_real_due(void)
+{
+    assert(!runtime.state.alarm_active && runtime.state.start_reason!=START_BOOT);
+    assert(runtime.state.deadline.effective_monotonic_ms>(uint64_t)(fake_microseconds/1000));
+    fake_microseconds=(int64_t)runtime.state.deadline.effective_monotonic_ms*1000;
+    const ClockSample now=clock_sample(runtime.boot_domain);
+    assert(now.utc_valid);tick_runtime(&runtime,&now);
+    assert(runtime.state.alarm_active && runtime.state.start_reason!=START_BOOT);
+}
+
+static void test_offline_confirmations_do_not_fill_mesh_queue(void)
+{
+    start_offline_due_test();
+    const UiRequest confirm={.kind=UI_REQUEST_CONFIRM};
+    const unsigned notifications=fake_mesh_notifications;
+    bool all_local=true;
+    for(unsigned i=0;i<10;++i) {
+        advance_to_real_due();
+        const UiSubmitResult result=submit_ui(&runtime,&confirm);
+        assert((result==UI_SUBMIT_COMMITTED || result==UI_SUBMIT_PENDING) && !runtime.state.alarm_active);
+        all_local=all_local && result==UI_SUBMIT_COMMITTED &&
+                  !runtime.state.confirmation_pending_sync && runtime.store.record.pending_count==0;
+        assert(runtime.state.has_last_confirmation &&
+               runtime.store.record.last_confirmation.valid &&
+               runtime.store.record.last_confirmation.id.sequence==runtime.state.last_confirmation_id.sequence &&
+               runtime.store.record.history.last_confirmation_id.sequence==runtime.state.last_confirmation_id.sequence &&
+               runtime.store.record.shared.image_seconds==28800);
+        const uint64_t dose_sequence=runtime.state.last_confirmation_id.sequence;
+        const UiSubmitResult duplicate=submit_ui(&runtime,&confirm);
+        assert(duplicate!=UI_SUBMIT_COMMITTED && duplicate!=UI_SUBMIT_PENDING &&
+               !runtime.state.alarm_active && runtime.state.last_confirmation_id.sequence==dose_sequence);
+    }
+    assert(all_local && runtime.store.record.pending_count==0 && fake_mesh_notifications==notifications);
+    const StoreConfirmationHistory last=runtime.store.record.last_confirmation;
+    initialize_runtime();
+    const unsigned before_boot=writes;
+    assert(runtime.state.start_reason==START_BOOT);
+    assert(submit_ui(&runtime,&confirm)==UI_SUBMIT_STALE && writes==before_boot &&
+           runtime.store.record.pending_count==0);
+    assert(runtime.store.record.last_confirmation.valid==last.valid &&
+           same_id(runtime.store.record.last_confirmation.id,last.id) &&
+           runtime.store.record.last_confirmation.occurred_at.utc_ms==last.occurred_at.utc_ms);
+
+    /* Real disconnected Mesh follower confirmations retain their existing outbox. */
+    initialize_offline_runtime();
+    StoreProvision mesh={0};mesh.configured=true;mesh.network_mode=STORE_NETWORK_MESH_ONLY;
+    memset(mesh.group,1,sizeof(mesh.group));memset(mesh.secret,2,sizeof(mesh.secret));
+    assert(store_save_setup(&runtime.store,&mesh)==STORE_OK);
+    StoreProvision local={0};local.configured=true;local.network_mode=STORE_NETWORK_OFFLINE;
+    assert(store_save_setup(&runtime.store,&local)==STORE_OK);
+    schedule_manual_due_test(); /* Bind first; never carry an unbound intent into a different group. */
+    assert(store_save_setup(&runtime.store,&mesh)==STORE_OK);
+    runtime.mesh_started=true;fake_mesh_connected=false;fake_mesh_coordinator=false;
+    for(unsigned i=0;i<KATMED_STORE_PENDING_MAX;++i) {
+        advance_to_real_due();
+        assert(submit_ui(&runtime,&confirm)==UI_SUBMIT_PENDING &&
+               runtime.store.record.pending_count==i+1 && runtime.state.confirmation_pending_sync);
+    }
+    advance_to_real_due();
+    assert(submit_ui(&runtime,&confirm)==UI_SUBMIT_UNAVAILABLE && runtime.state.alarm_active);
+    const StoreRecord prior=runtime.store.record;
+    StoreProvision offline={0};offline.configured=true;offline.network_mode=STORE_NETWORK_OFFLINE;
+    assert(store_save_setup(&runtime.store,&offline)==STORE_OK);runtime.mesh_started=false;
+    runtime.shared_pending=true;unsigned before=writes;
+    assert(submit_ui(&runtime,&confirm)==UI_SUBMIT_UNAVAILABLE && writes==before && runtime.state.alarm_active);
+    runtime.shared_pending=false;runtime.reboot_required=true;
+    assert(submit_ui(&runtime,&confirm)==UI_SUBMIT_UNAVAILABLE && writes==before);
+    runtime.reboot_required=false;runtime.store_ready=false;
+    assert(submit_ui(&runtime,&confirm)==UI_SUBMIT_UNAVAILABLE && writes==before);
+    runtime.store_ready=true;
+    const uint64_t coordinator=runtime.state.revision.coordinator;
+    runtime.state.revision.coordinator=coordinator+1;
+    assert(submit_ui(&runtime,&confirm)==UI_SUBMIT_UNAVAILABLE && writes==before);
+    runtime.state.revision.coordinator=coordinator;runtime.mesh_started=true;
+    assert(submit_ui(&runtime,&confirm)==UI_SUBMIT_UNAVAILABLE && writes==before);
+    runtime.mesh_started=false;
+    assert(submit_ui(&runtime,&confirm)==UI_SUBMIT_COMMITTED && !runtime.state.alarm_active &&
+           runtime.store.record.pending_count==KATMED_STORE_PENDING_MAX &&
+           !memcmp(runtime.store.record.pending,prior.pending,sizeof(prior.pending)) &&
+           !memcmp(runtime.store.record.bound_group,prior.bound_group,sizeof(prior.bound_group)));
+    puts("S-M3: ten real Offline due confirmations, Boot/duplicate guards, follower queue and prior pending preserved");
+    committed_length=0;runtime=(Runtime){0};
+    fake_mesh_notifications=0;fake_shared_calls=0;
+    fake_mesh_connected=false;fake_mesh_coordinator=false;
+}
+
+int main(int argc, char **argv)
+{
+    if (argc==2 && strcmp(argv[1],"offline_confirm")==0) {
+        test_offline_confirmations_do_not_fill_mesh_queue();return 0;
+    }
+    if (argc==2 && strcmp(argv[1],"offline_random")==0) {
+        test_offline_random_commits_without_mesh();return 0;
+    }
+    if (argc==2 && strcmp(argv[1],"offline_deadline")==0) {
+        test_offline_manual_deadline_preserves_guards();return 0;
+    }
+    assert(argc==1);
+    test_offline_confirmations_do_not_fill_mesh_queue();
+    test_offline_random_commits_without_mesh();
+    test_offline_manual_deadline_preserves_guards();
+    Runtime setup={0};
+    assert(start_setup_ap(&setup) && setup.setup_ap && setup_config_calls==1);
+    test_runtime_setup_and_emergency();
     fake_microseconds=1000000;
     initialize_runtime();
     assert(runtime.state.alarm_active && !runtime.state.has_last_confirmation);

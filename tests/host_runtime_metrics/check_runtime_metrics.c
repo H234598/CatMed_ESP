@@ -74,6 +74,9 @@ static void check_log(void)
         .pack_hash_status = -1,
         .variant_hash_status = -2,
         .jpeg_decode_status = -3,
+        .variant_sequence = 7,
+        .variant_io_stage = 9,
+        .variant_io_status = 7,
     };
     katmed_runtime_metrics_log(NULL);
     assert(log_count == 0);
@@ -89,6 +92,7 @@ static void check_log(void)
     assert(strstr(log_line, "pack_status=-1 variant_status=-2 jpeg_status=-3"));
     assert(strstr(log_line, "internal_min_free=66 internal_largest_block=77"));
     assert(strstr(log_line, "main_stack_hwm_bytes=88 lvgl_stack_hwm_bytes=99 lvgl_stack_valid=0"));
+    assert(strstr(log_line,"variant_seq=7 variant_io_stage=9 variant_io_status=7"));
     assert(strlen(log_line) < 768);
     /* The diagnostics contain fixed numeric fields, without the USB status protocol. */
     assert(strstr(log_line, "KM1") == NULL);
@@ -116,6 +120,9 @@ static void check_log(void)
         .pack_hash_status = INT32_MIN,
         .variant_hash_status = INT32_MIN,
         .jpeg_decode_status = INT32_MIN,
+        .variant_sequence = UINT32_MAX,
+        .variant_io_stage = 12,
+        .variant_io_status = 10,
     };
     katmed_runtime_metrics_log(&worst);
     assert(log_count == 2 && strlen(log_line) < 768);

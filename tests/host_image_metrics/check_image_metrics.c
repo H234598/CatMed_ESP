@@ -66,7 +66,7 @@ int main(int argc, char **argv)
     long size = ftell(pack.file);
     assert(size > 0 && size <= UINT32_MAX);
     pack.bytes = (uint32_t)size;
-    KatmedStorage storage = {&pack, pack.bytes, read_pack};
+    KatmedStorage storage = {&pack, pack.bytes, read_pack, NULL};
     assert(katmed_images_mount_storage(storage) == KATMED_IMAGE_OK);
     KatmedImageTimingSample sample = katmed_images_pack_hash_timing();
     assert(sample.measured && sample.status == KATMED_IMAGE_OK && sample.elapsed_us > 0);

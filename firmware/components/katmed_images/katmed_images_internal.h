@@ -40,9 +40,17 @@ extern const KatmedGeneratedCatalog katmed_generated_catalog;
 typedef bool (*KatmedStorageRead)(void *context, uint32_t offset, uint8_t *dst,
                                   size_t wanted, size_t *actual);
 typedef struct {
+    KatmedImageIoStage stage;
+    KatmedImageStatus status;
+} KatmedImageIoFailure;
+/* Optional detail from the same read call; no global last-error race. */
+typedef bool (*KatmedStorageReadDetailed)(void *context, uint32_t offset, uint8_t *dst,
+    size_t wanted, size_t *actual, KatmedImageIoFailure *failure);
+typedef struct {
     void *context;
     uint32_t partition_size;
     KatmedStorageRead read;
+    KatmedStorageReadDetailed read_detailed;
 } KatmedStorage;
 
 KatmedImageStatus katmed_images_mount_storage(KatmedStorage storage);

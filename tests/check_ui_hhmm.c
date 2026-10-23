@@ -149,7 +149,7 @@ int main(int argc,char **argv)
     lv_display_set_buffers(display,buffer,NULL,(uint32_t)host.width*16*2,LV_DISPLAY_RENDER_MODE_PARTIAL);
     lv_display_set_flush_cb(display,flush);lv_display_set_user_data(display,&host);
     katmed_images_register_lvgl_fs();FILE *pack=fopen(argv[2],"rb");assert(pack);
-    KatmedStorage storage={pack,katmed_generated_catalog.pack_bytes,pack_read};
+    KatmedStorage storage={pack,katmed_generated_catalog.pack_bytes,pack_read,NULL};
     assert(katmed_images_mount_storage(storage)==KATMED_IMAGE_OK);
     refinement_init(katmed_images_catalog_sha256(),katmed_images_count());
     UiServices services=refinement_services();ui_set_services(&services);

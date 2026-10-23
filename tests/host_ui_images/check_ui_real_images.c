@@ -55,7 +55,7 @@ static bool white_near_segment(const uint16_t *frame,const uint16_t *background,
 int main(int argc,char**argv){assert(argc==5);int width=atoi(argv[1]),height=atoi(argv[2]);const char *mode=argv[3];
  Host host={.width=width,.height=height,.result=UI_SUBMIT_COMMITTED};host.frame=calloc((size_t)width*height,2);uint16_t *buffer=calloc((size_t)width*DRAW_LINES,2);assert(host.frame&&buffer);lv_init();monitor("after_lv_init");
  lv_display_t*d=lv_display_create(width,height);lv_display_set_color_format(d,LV_COLOR_FORMAT_RGB565);lv_display_set_buffers(d,buffer,NULL,(uint32_t)width*DRAW_LINES*2,LV_DISPLAY_RENDER_MODE_PARTIAL);lv_display_set_flush_cb(d,flush);lv_display_set_user_data(d,&host);monitor("before_ui_render");
- katmed_images_register_lvgl_fs();FILE *pack=fopen(argv[4],"rb");assert(pack);KatmedStorage storage={pack,katmed_generated_catalog.pack_bytes,read_image_pack};assert(katmed_images_mount_storage(storage)==KATMED_IMAGE_OK);
+ katmed_images_register_lvgl_fs();FILE *pack=fopen(argv[4],"rb");assert(pack);KatmedStorage storage={pack,katmed_generated_catalog.pack_bytes,read_image_pack,NULL};assert(katmed_images_mount_storage(storage)==KATMED_IMAGE_OK);
  UiServices services={.context=&host,.submit=submit,.connected=connected};ui_set_services(&services);AppState state={0};state.round.origin=(EventId){1,1,1};state.round.ordinal=1;LocalSettings local={.clock_style=DIGITAL_LARGE,.orientation=width>height?ORIENTATION_90:ORIENTATION_0};ClockSample clock={.monotonic_ms=1000,.domain=1,.utc_ms=1791973800000LL,.utc_valid=true,.quality=CLOCK_SYNCHRONIZED};
  ui_render(&state,&local,BACKGROUND,&clock);draw();monitor("first_render_background");lv_obj_t*s=lv_screen_active();
  if(!strcmp(mode,"heap")){

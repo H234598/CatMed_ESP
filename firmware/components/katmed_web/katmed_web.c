@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <strings.h>
 #include <time.h>
 #include <arpa/inet.h>
@@ -1047,6 +1048,81 @@ static esp_err_t config_get(httpd_req_t *req)
     return json_reply(req, "200 OK", config_object(&response.snapshot));
 }
 
+static esp_err_t runtime_setup_get(httpd_req_t *req) {
+    char token[KATMED_WEB_TOKEN_HEX+1];if(!require_session(req,false,token))return ESP_OK;
+    KatmedConfigRequest request={.operation=KATMED_CONFIG_SETUP_GET};KatmedConfigResponse response={0};
+    KatmedConfigStatus status=katmed_config_exchange(&request,&response,BRIDGE_TIMEOUT_MS);
+    if(status!=KATMED_CONFIG_OK)return bridge_error(req,status);
+    cJSON *obj=cJSON_CreateObject();
+    cJSON_AddBoolToObject(obj,"configured",response.setup.configured);
+    cJSON_AddNumberToObject(obj,"mode",response.setup.mode);
+    cJSON_AddBoolToObject(obj,"clock_required",response.setup.clock_required);
+    cJSON_AddBoolToObject(obj,"setup_open",response.setup.setup_open);
+    cJSON_AddStringToObject(obj,"revision",response.snapshot.revision);
+    return json_reply(req,"200 OK",obj);
+}
+
+static bool setup_hex(const char *text,uint8_t *out,size_t bytes) {
+    if(!text || strlen(text)!=2*bytes)return false;
+    for(size_t i=0;i<bytes;++i) {
+        unsigned value=0;
+        for(size_t j=0;j<2;++j) {char c=text[2*i+j];unsigned digit;
+            if(c>='0'&&c<='9')digit=c-'0';else if(c>='a'&&c<='f')digit=c-'a'+10;else if(c>='A'&&c<='F')digit=c-'A'+10;else return false;
+            value=value*16+digit;}
+        out[i]=(uint8_t)value;
+    }return true;
+}
+
+static esp_err_t runtime_setup_put(httpd_req_t *req) {
+    char token[KATMED_WEB_TOKEN_HEX+1];if(!require_session(req,true,token))return ESP_OK;
+    cJSON *obj=read_json(req);
+    const char *const keys[]={"mode","group_action","group","secret","ssid","password","time_source","local_datetime","revision"};
+    if(!keys_only(obj,keys,9)){if(obj){wipe_json(obj);cJSON_Delete(obj);}return error_reply(req,"422 Unprocessable Entity","invalid");}
+    KatmedConfigRequest request={.operation=KATMED_CONFIG_SETUP_SAVE};
+    const cJSON *mode=cJSON_GetObjectItemCaseSensitive(obj,"mode"),*action=cJSON_GetObjectItemCaseSensitive(obj,"group_action");
+    const char *revision=json_string(obj,"revision",KATMED_CONFIG_REVISION_MAX-1);
+    bool valid=cJSON_IsNumber(mode) && mode->valuedouble>=0 && mode->valuedouble<=2 && mode->valuedouble==mode->valueint &&
+        cJSON_IsNumber(action) && action->valuedouble>=0 && action->valuedouble<=2 && action->valuedouble==action->valueint && revision;
+    if(valid){request.setup.mode=mode->valueint;request.setup.group_action=action->valueint;snprintf(request.revision,sizeof(request.revision),"%s",revision);}
+    struct {const char *key;char *out;size_t capacity;} strings[]={
+        {"ssid",request.setup.ssid,sizeof(request.setup.ssid)}, {"password",request.setup.password,sizeof(request.setup.password)},
+        {"time_source",request.setup.time_source,sizeof(request.setup.time_source)}, {"local_datetime",request.setup.local_datetime,sizeof(request.setup.local_datetime)}};
+    for(size_t i=0;i<sizeof(strings)/sizeof(strings[0]);++i){
+        const char *value=json_string(obj,strings[i].key,strings[i].capacity-1);
+        if(!value)valid=false;else memcpy(strings[i].out,value,strlen(value)+1);
+    }
+    if(valid && request.setup.mode!=2 && request.setup.group_action==2)
+        valid=setup_hex(json_string(obj,"group",32),request.setup.group,16) && setup_hex(json_string(obj,"secret",64),request.setup.secret,32);
+    wipe_json(obj);cJSON_Delete(obj);
+    KatmedConfigResponse response={0};
+    KatmedConfigStatus status=valid ? katmed_config_exchange(&request,&response,BRIDGE_TIMEOUT_MS):KATMED_CONFIG_INVALID;
+    wipe(&request,sizeof(request));
+    if(status!=KATMED_CONFIG_OK)return bridge_error(req,status);
+    cJSON *reply=cJSON_CreateObject();cJSON_AddBoolToObject(reply,"saved",true);cJSON_AddBoolToObject(reply,"connection_will_close",true);
+    return json_reply(req,"200 OK",reply);
+}
+
+static void utc_json(cJSON *object,const char *key,int64_t milliseconds) {
+    char text[24];struct tm utc;time_t seconds=milliseconds/1000;
+    if(milliseconds>0 && gmtime_r(&seconds,&utc) && strftime(text,sizeof(text),"%Y-%m-%dT%H:%M:%SZ",&utc))cJSON_AddStringToObject(object,key,text);
+    else cJSON_AddNullToObject(object,key);
+}
+static esp_err_t ha_status_get(httpd_req_t *req) {
+    char token[KATMED_WEB_TOKEN_HEX+1];if(!require_session(req,false,token))return ESP_OK;
+    KatmedConfigRequest request={.operation=KATMED_CONFIG_HA_GET};KatmedConfigResponse response={0};
+    KatmedConfigStatus status=katmed_config_exchange(&request,&response,BRIDGE_TIMEOUT_MS);
+    if(status!=KATMED_CONFIG_OK)return bridge_error(req,status);
+    static const char *severity[]={"none","blue","yellow","red"};
+    if(response.ha.alarm_severity>3)return error_reply(req,"503 Service Unavailable","invalid_snapshot");
+    cJSON *obj=cJSON_CreateObject();cJSON_AddNumberToObject(obj,"schema_version",1);
+    cJSON_AddStringToObject(obj,"device_id",response.ha.device_id);cJSON_AddStringToObject(obj,"boot_id",response.ha.boot_id);
+    cJSON_AddBoolToObject(obj,"alarm_active",response.ha.alarm_active);cJSON_AddBoolToObject(obj,"boot_notice",response.ha.boot_notice);
+    cJSON_AddStringToObject(obj,"alarm_severity",severity[response.ha.alarm_severity]);
+    utc_json(obj,"next_due",response.ha.next_due_ms);utc_json(obj,"last_dose",response.ha.last_dose_ms);
+    cJSON_AddBoolToObject(obj,"last_dose_known",response.ha.last_dose_known);cJSON_AddNumberToObject(obj,"emergency_button_sequence",response.ha.emergency_button_sequence);
+    return json_reply(req,"200 OK",obj);
+}
+
 static KatmedConfigField config_field(const char *name, bool *found)
 {
     static const struct { const char *name; KatmedConfigField field; } fields[] = {
@@ -1199,6 +1275,9 @@ static bool register_routes(httpd_handle_t server)
         {"/api/setup", HTTP_POST, setup_post},
         {"/api/login", HTTP_POST, login_post},
         {"/api/logout", HTTP_POST, logout_post},
+        {"/api/runtime-setup", HTTP_GET, runtime_setup_get},
+        {"/api/runtime-setup", HTTP_PUT, runtime_setup_put},
+        {"/api/ha/status", HTTP_GET, ha_status_get},
         {"/api/config", HTTP_GET, config_get},
         {"/api/config", HTTP_PUT, config_put},
         {"/api/config/preview-time", HTTP_POST, preview_post},
@@ -1294,8 +1373,15 @@ static bool start_listeners(void)
     return true;
 }
 
+static bool management_enabled=true;
+void katmed_web_set_enabled(bool enabled) {
+    management_enabled=enabled;
+    if (!enabled) katmed_web_stop();
+}
+
 bool katmed_web_start(const KatmedWebServices *services)
 {
+    if (!management_enabled) return false;
     if (services) web.services = *services;
     if (web.started || web.nvs_open) return web.started;
     if (!resources_allow(false)) {
@@ -1330,6 +1416,7 @@ bool katmed_web_start(const KatmedWebServices *services)
 
 void katmed_web_poll(uint64_t now_ms)
 {
+    if (!management_enabled) return;
     if (!web.started && now_ms >= web.retry_due_ms) {
         bool ready = web.nvs_open ? start_listeners() : katmed_web_start(&web.services);
         if (!ready) web.retry_due_ms = now_ms + 30000;

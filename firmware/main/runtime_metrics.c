@@ -28,7 +28,8 @@ void katmed_runtime_metrics_log(const KatmedRuntimeMetricInput *input)
         " pack_status=%" PRId32 " variant_status=%" PRId32 " jpeg_status=%" PRId32
         " internal_min_free=%" PRIu32 " internal_largest_block=%" PRIu32
         " main_stack_hwm_bytes=%" PRIu32 " lvgl_stack_hwm_bytes=%" PRIu32
-        " lvgl_stack_valid=%u",
+        " lvgl_stack_valid=%u"
+        " variant_seq=%" PRIu32 " variant_io_stage=%" PRIu32 " variant_io_status=%" PRIu32,
         input->uptime_ms, input->pack_hash_us, input->pack_hash_valid,
         input->variant_hash_us, input->variant_hash_valid,
         input->jpeg_decode_us, input->jpeg_decode_valid,
@@ -39,7 +40,7 @@ void katmed_runtime_metrics_log(const KatmedRuntimeMetricInput *input)
         input->jpeg_decode_status,
         input->internal_min_free_bytes, input->internal_largest_block_bytes,
         input->main_stack_hwm_bytes, input->lvgl_stack_hwm_bytes,
-        input->lvgl_stack_valid);
+        input->lvgl_stack_valid,input->variant_sequence,input->variant_io_stage,input->variant_io_status);
 }
 
 void katmed_runtime_evidence_log(const KatmedRuntimeEvidenceState *s,

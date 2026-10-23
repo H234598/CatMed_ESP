@@ -2,6 +2,9 @@
 #include <inttypes.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/time.h>
+#include "esp_event.h"
+#include "esp_attr.h"
 #include "esp_log.h"
 #include "esp_system.h"
 #include "runtime_metrics.h"
@@ -16,6 +19,7 @@
 #include "esp_mesh_lite.h"
 #include "esp_netif.h"
 #include "esp_wifi.h"
+#include "esp_wifi_default.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
@@ -76,7 +80,10 @@ typedef struct {
     bool shared_pending;
     int8_t shared_feedback; /* 0 none, 1 accepted, -1 rejected, -2 timeout. */
     bool store_ready;
-    uint8_t utc_source; /* 0 unknown, 1 local SNTP, 2 authenticated Mesh. */
+    uint8_t utc_source; /* 0 unknown,1 SNTP,2 Mesh,3 manual unsynchronised. */
+    bool setup_ap;
+    char setup_ssid[33], setup_password[17];
+    uint32_t emergency_button_sequence;
     uint64_t evidence_sequence;
     char witness_nonce[33]; /* One request, one boot, never persisted. */
     bool witness_armed;
@@ -102,6 +109,9 @@ typedef struct {
 } Runtime;
 
 static Runtime runtime;
+static RTC_DATA_ATTR uint32_t manual_clock_marker;
+#define MANUAL_CLOCK_MARKER UINT32_C(0x4b4d4331)
+
 static StaticSemaphore_t reset_mutex_storage;
 static SemaphoreHandle_t reset_mutex;
 static KatmedResetJournalBackend reset_backend(void)
@@ -491,16 +501,19 @@ static void tick_runtime(Runtime *rt, const ClockSample *now)
     const AppResult status = app_tick(&candidate, now, &effects);
     if ((status != APP_OK && status != APP_NO_CHANGE) || effects.persistence_required) return;
     if (status == APP_OK) rt->state = candidate;
-    /* RANDOM is selected only by the currently bound coordinator. The reducer
-     * leaves its due flag set until this durable, revisioned event commits. */
+    /* RANDOM is selected by the bound coordinator, or the explicit Offline
+     * local authority. Both use the same durable, revisioned Store event. */
+    const bool offline_local = rt->store.record.provision.configured &&
+        rt->store.record.provision.network_mode == STORE_NETWORK_OFFLINE &&
+        !rt->mesh_started && rt->state.revision.coordinator == rt->boot.device;
     if (!rt->state.image_due_pending || rt->state.alarm_active ||
         rt->state.settings.rotation != ROTATION_RANDOM ||
         rt->state.catalog_mismatch || rt->state.image_count == 0 ||
         rt->state.revision.number == UINT64_MAX || !rt->store_ready ||
-        rt->reboot_required || rt->shared_pending || !rt->mesh_started ||
+        rt->reboot_required || rt->shared_pending ||
         !rt->store.record.provision.configured ||
         store_get_status(&rt->store, NULL, NULL, NULL) != STORE_OK ||
-        !katmed_mesh_is_coordinator()) return;
+        (!offline_local && (!rt->mesh_started || !katmed_mesh_is_coordinator()))) return;
     uint32_t image = 0;
     if (rt->state.image_count > 1) {
         image = esp_random() % (rt->state.image_count - 1);
@@ -521,7 +534,7 @@ static void tick_runtime(Runtime *rt, const ClockSample *now)
     AppEffects committed_effects;
     AppResult core_result;
     if (store_apply_event(&rt->store, &rt->state, &event, now, false,
-                         &committed_effects, &core_result) == STORE_OK)
+                         &committed_effects, &core_result) == STORE_OK && rt->mesh_started)
         katmed_mesh_notify_local_commit();
 }
 
@@ -548,6 +561,10 @@ static bool apply_time_sample(Runtime *rt, const ClockSample *sample)
                              &effects, &core_result) == STORE_OK;
 }
 
+static bool time_shareable(void *context) {
+    const Runtime *rt=context;return rt && (rt->utc_source==1 || rt->utc_source==2);
+}
+
 static void mesh_utc_received(void *context, uint64_t observed_mono_ms,
                               int64_t utc_ms, ClockQuality quality)
 {
@@ -558,7 +575,7 @@ static void mesh_utc_received(void *context, uint64_t observed_mono_ms,
         return;
     const ClockSample sample = katmed_time_sample(&rt->time, observed_mono_ms);
     if (!apply_time_sample(rt, &sample)) rt->time = previous;
-    else rt->utc_source=2;
+    else {rt->utc_source=2;manual_clock_marker=0;}
 }
 
 static void mesh_shared_result(void *context, EventId id, KatmedMeshSharedOutcome outcome)
@@ -582,12 +599,18 @@ static void mesh_shared_result(void *context, EventId id, KatmedMeshSharedOutcom
     }
 }
 
+static bool accept_manual_clock(Runtime *rt, const char *text);
+
 static UiSubmitResult submit_ui_with_id(void *context, const UiRequest *request,
                                        const EventId *retry_id)
 {
     Runtime *rt = (Runtime *)context;
     if (rt == NULL || request == NULL || rt->reboot_required)
         return UI_SUBMIT_UNAVAILABLE;
+    if(request->kind==UI_REQUEST_EMERGENCY) {
+        if(rt->emergency_button_sequence<UINT32_MAX)++rt->emergency_button_sequence;
+        return UI_SUBMIT_COMMITTED;
+    }
     if (request->kind == UI_REQUEST_DISMISS_BOOT) {
         const ClockSample now = clock_sample(rt->boot_domain);
         return app_dismiss_boot_alarm(&rt->state, &now, NULL) == APP_OK
@@ -631,10 +654,23 @@ static UiSubmitResult submit_ui_with_id(void *context, const UiRequest *request,
         }
         return UI_SUBMIT_COMMITTED;
     }
+    if (request->kind==UI_REQUEST_SET_SYSTEM_TIME)
+        return accept_manual_clock(rt,request->value.local_datetime) ? UI_SUBMIT_COMMITTED : UI_SUBMIT_REJECTED;
+    if (request->kind==UI_REQUEST_OPEN_SETUP) {
+        if (store_request_setup(&rt->store)!=STORE_OK) return UI_SUBMIT_UNAVAILABLE;
+        rt->reboot_required=true;rt->reboot_due_ms=monotonic_ms()+1000u;
+        return UI_SUBMIT_COMMITTED;
+    }
     if (request->kind == UI_REQUEST_CONFIRM) {
         if (rt->state.start_reason == START_BOOT) return UI_SUBMIT_STALE;
-        const bool coordinator = rt->mesh_started && katmed_mesh_connected() &&
-                                 katmed_mesh_is_coordinator();
+        const bool offline = rt->store.record.provision.configured &&
+            rt->store.record.provision.network_mode == STORE_NETWORK_OFFLINE;
+        if (offline && (rt->mesh_started || rt->shared_pending ||
+                        rt->state.revision.coordinator != rt->boot.device))
+            return UI_SUBMIT_UNAVAILABLE;
+        /* Intentional Offline has durable local authority, not a Mesh outbox. */
+        const bool coordinator = offline || (rt->mesh_started && katmed_mesh_connected() &&
+                                            katmed_mesh_is_coordinator());
         uint8_t pending = 0;
         if (store_get_status(&rt->store, NULL, &pending, NULL) != STORE_OK ||
             (!coordinator && pending >= KATMED_STORE_PENDING_MAX))
@@ -672,14 +708,13 @@ static UiSubmitResult submit_ui_with_id(void *context, const UiRequest *request,
         request->kind == UI_REQUEST_SET_MEDICATION_SECONDS ||
         request->kind == UI_REQUEST_SET_IMAGE_SECONDS ||
         request->kind == UI_REQUEST_SET_ROTATION_MODE;
-    bool standalone = local_interval_or_rotation &&
-        !rt->mesh_started && !rt->store.record.provision.configured &&
-        rt->store.record.group_origin == STORE_GROUP_ORIGIN_FRESH_UNBOUND &&
-        rt->state.revision.coordinator == rt->boot.device;
-    for (size_t i = 0; i < sizeof(rt->store.record.bound_group); ++i)
-        if (rt->store.record.bound_group[i]) standalone = false;
-    /* Bound coordinators keep their existing authenticated settings path;
-     * followers still require their coordinator session. */
+    const bool offline=rt->store.record.provision.configured && rt->store.record.provision.network_mode==STORE_NETWORK_OFFLINE;
+    bool standalone=(local_interval_or_rotation ||
+        (offline && request->kind==UI_REQUEST_SET_NEXT_LOCAL_TIME)) && !rt->mesh_started &&
+        (offline || (!rt->store.record.provision.configured && rt->store.record.group_origin==STORE_GROUP_ORIGIN_FRESH_UNBOUND)) &&
+        rt->state.revision.coordinator==rt->boot.device;
+    if (!offline) for(size_t i=0;i<sizeof(rt->store.record.bound_group);++i)
+        if(rt->store.record.bound_group[i]) standalone=false;
     if (rt->shared_pending || (!standalone && (!rt->mesh_started ||
         (!katmed_mesh_is_coordinator() && !katmed_mesh_connected()))))
         return UI_SUBMIT_UNAVAILABLE;
@@ -758,6 +793,10 @@ static void config_revision(const Runtime *rt, char out[KATMED_CONFIG_REVISION_M
 {
     uint64_t hash = UINT64_C(14695981039346656037);
     hash = config_mix(hash, rt->boot.epoch);
+    hash = config_mix(hash, rt->store.record.next_sequence);
+    hash = config_mix(hash, rt->store.record.provision.configured);
+    hash = config_mix(hash, rt->store.record.provision.network_mode);
+    hash = config_mix(hash, rt->store.record.setup_requested);
     hash = config_mix(hash, rt->state.revision.number);
     hash = config_mix(hash, rt->state.revision.coordinator);
     hash = config_mix(hash, rt->state.countdown_origin.epoch);
@@ -843,6 +882,42 @@ static void config_preview_token(const char *revision,
     (void)snprintf(out,KATMED_CONFIG_PREVIEW_TOKEN_MAX,"%016" PRIx64,hash);
 }
 
+static bool accept_manual_clock(Runtime *rt, const char *text) {
+    int64_t utc;
+    if (!rt || !text || app_parse_local_datetime(text,&utc)!=APP_OK) return false;
+    KatmedTime previous=rt->time;
+    if (!katmed_time_accept_utc(&rt->time,monotonic_ms(),utc,CLOCK_HOLDOVER)) return false;
+    ClockSample sample=katmed_time_sample(&rt->time,monotonic_ms());
+    struct timeval old_wall;
+    if(gettimeofday(&old_wall,NULL)!=0) {rt->time=previous;return false;}
+    struct timeval wall={.tv_sec=utc/1000,.tv_usec=(utc%1000)*1000};
+    if (settimeofday(&wall,NULL)!=0) {rt->time=previous;return false;}
+    if (!apply_time_sample(rt,&sample)) {
+        (void)settimeofday(&old_wall,NULL);rt->time=previous;return false;
+    }
+    manual_clock_marker=MANUAL_CLOCK_MARKER;rt->utc_source=3;
+    return true;
+}
+
+static bool start_setup_ap(Runtime *rt) {
+    if (esp_netif_init()!=ESP_OK) return false;
+    esp_err_t e=esp_event_loop_create_default();
+    if (e!=ESP_OK && e!=ESP_ERR_INVALID_STATE) return false;
+    if (!esp_netif_create_default_wifi_ap()) return false;
+    wifi_init_config_t init=WIFI_INIT_CONFIG_DEFAULT();
+    if (esp_wifi_init(&init)!=ESP_OK || esp_wifi_set_storage(WIFI_STORAGE_RAM)!=ESP_OK) return false;
+    uint8_t random[8];esp_fill_random(random,sizeof(random));
+    for(size_t i=0;i<sizeof(random);++i) snprintf(rt->setup_password+2*i,3,"%02x",random[i]);
+    memset(random,0,sizeof(random));
+    memcpy(rt->setup_ssid,"Katmed_ESP_SETUP",sizeof("Katmed_ESP_SETUP"));
+    wifi_config_t config={0};
+    memcpy(config.ap.ssid,rt->setup_ssid,strlen(rt->setup_ssid));config.ap.ssid_len=strlen(rt->setup_ssid);
+    memcpy(config.ap.password,rt->setup_password,16);config.ap.authmode=WIFI_AUTH_WPA2_PSK;
+    config.ap.max_connection=1;config.ap.channel=1;
+    bool ok=esp_wifi_set_mode(WIFI_MODE_AP)==ESP_OK && esp_wifi_set_config(WIFI_IF_AP,&config)==ESP_OK && esp_wifi_start()==ESP_OK;
+    memset(&config,0,sizeof(config));rt->setup_ap=ok;return ok;
+}
+
 static void config_execute(void *context, const KatmedConfigRequest *request,
                            KatmedConfigResponse *response)
 {
@@ -851,6 +926,57 @@ static void config_execute(void *context, const KatmedConfigRequest *request,
     response->status=KATMED_CONFIG_UNAVAILABLE;
     if (!rt || !request || !response || !rt->store_ready || rt->reboot_required ||
         store_get_status(&rt->store,NULL,NULL,NULL)!=STORE_OK) return;
+    if (request->operation==KATMED_CONFIG_HA_GET) {
+        const ClockSample clock=clock_sample(rt->boot_domain);
+        snprintf(response->ha.device_id,sizeof(response->ha.device_id),"%012" PRIx64,rt->boot.device);
+        snprintf(response->ha.boot_id,sizeof(response->ha.boot_id),"%" PRIu64,rt->boot_domain);
+        response->ha.boot_notice=rt->state.alarm_active && rt->state.start_reason==START_BOOT;
+        response->ha.alarm_active=rt->state.alarm_active && !response->ha.boot_notice;
+        response->ha.alarm_severity=response->ha.alarm_active ? 1 : 0; /* Same untimed blue fallback as UI. */
+        AlarmAnimation animation;
+        if(response->ha.alarm_active && app_alarm_animation(&rt->state,&clock,&animation)==APP_OK) response->ha.alarm_severity=(uint8_t)animation.color+1u;
+        response->ha.next_due_ms=clock.utc_valid && rt->state.deadline.effective_utc.valid ? rt->state.deadline.effective_utc.ms : 0;
+        const StoreConfirmationHistory *last=&rt->store.record.last_confirmation;
+        response->ha.last_dose_known=last->valid;
+        response->ha.last_dose_ms=last->valid && last->occurred_at.utc_valid ? last->occurred_at.utc_ms : 0;
+        response->ha.emergency_button_sequence=rt->emergency_button_sequence;
+        response->status=KATMED_CONFIG_OK;return;
+    }
+    if (request->operation==KATMED_CONFIG_SETUP_GET) {
+        config_snapshot(rt,&response->snapshot);
+        response->setup.configured=rt->store.record.provision.configured;
+        response->setup.mode=rt->store.record.provision.network_mode;
+        response->setup.setup_open=rt->setup_ap;
+        response->setup.clock_required=!clock_sample(rt->boot_domain).utc_valid;
+        response->status=KATMED_CONFIG_OK;return;
+    }
+    if (request->operation==KATMED_CONFIG_SETUP_SAVE) {
+        char revision[KATMED_CONFIG_REVISION_MAX];config_revision(rt,revision);
+        if (!memchr(request->revision,0,sizeof(request->revision)) || strcmp(revision,request->revision)) {response->status=KATMED_CONFIG_STALE;return;}
+        const uint8_t mode=request->setup.mode;
+        int64_t manual=0;
+        if (mode>STORE_NETWORK_OFFLINE || request->setup.group_action>2 || !memchr(request->setup.local_datetime,0,sizeof(request->setup.local_datetime)) ||
+            (mode!=STORE_NETWORK_ONLINE && app_parse_local_datetime(request->setup.local_datetime,&manual)!=APP_OK)) {response->status=KATMED_CONFIG_INVALID;return;}
+        StoreProvision p={0};p.configured=true;p.network_mode=mode;
+        if (mode!=STORE_NETWORK_OFFLINE) {
+            if (request->setup.group_action==0) {memcpy(p.group,rt->store.record.provision.group,16);memcpy(p.secret,rt->store.record.provision.secret,32);}
+            else if (request->setup.group_action==1) {esp_fill_random(p.group,16);esp_fill_random(p.secret,32);}
+            else if (request->setup.group_action==2) {memcpy(p.group,request->setup.group,16);memcpy(p.secret,request->setup.secret,32);}
+            else {response->status=KATMED_CONFIG_INVALID;return;}
+        }
+        if (mode==STORE_NETWORK_ONLINE) {
+            size_t ssid=strnlen(request->setup.ssid,sizeof(request->setup.ssid)),password=strnlen(request->setup.password,sizeof(request->setup.password)),source=strnlen(request->setup.time_source,sizeof(request->setup.time_source));
+            if(ssid>32 || password>63 || source>63) {memset(&p,0,sizeof(p));response->status=KATMED_CONFIG_INVALID;return;}
+            memcpy(p.ssid,request->setup.ssid,ssid);p.ssid_length=ssid;
+            memcpy(p.password,request->setup.password,password);p.password_length=password;
+            memcpy(p.time_source,request->setup.time_source,source);p.time_source_length=source;
+        }
+        StoreResult saved=store_save_setup(&rt->store,&p);memset(&p,0,sizeof(p));
+        if(saved!=STORE_OK) {response->status=saved==STORE_STALE?KATMED_CONFIG_STALE:saved==STORE_INVALID?KATMED_CONFIG_INVALID:KATMED_CONFIG_COMMIT_UNKNOWN;return;}
+        if(mode!=STORE_NETWORK_ONLINE && !accept_manual_clock(rt,request->setup.local_datetime)) {response->status=KATMED_CONFIG_COMMIT_UNKNOWN;return;}
+        rt->reboot_required=true;rt->reboot_due_ms=monotonic_ms()+1000u;
+        response->status=KATMED_CONFIG_OK;return;
+    }
     if (request->operation==KATMED_CONFIG_GET) {
         config_snapshot(rt,&response->snapshot);
         response->status=KATMED_CONFIG_OK;
@@ -1057,6 +1183,9 @@ static void network_status(void *context, UiNetworkStatus *out)
                             &out->device_name_uncertain);
     out->configured = rt && rt->store_ready &&
                       rt->store.record.provision.configured;
+    out->setup_open=rt && rt->setup_ap;
+    out->manual_clock_required=rt && rt->store_ready && rt->store.record.provision.configured && rt->store.record.provision.network_mode!=STORE_NETWORK_ONLINE && !clock_sample(rt->boot_domain).utc_valid;
+    if(out->setup_open) {memcpy(out->setup_ssid,rt->setup_ssid,sizeof(out->setup_ssid));memcpy(out->setup_password,rt->setup_password,sizeof(out->setup_password));}
     if (!out->configured || !rt->mesh_started) return;
     out->mesh_active = katmed_mesh_radio_channel(&out->mesh_channel);
     KatmedMeshCounts mesh_counts = {0};
@@ -1792,6 +1921,14 @@ void app_main(void)
         return;
     }
     runtime.state.divergent = store_durable_divergent(&runtime.store);
+    if(esp_reset_reason()==ESP_RST_POWERON) manual_clock_marker=0;
+    else if(manual_clock_marker==MANUAL_CLOCK_MARKER && runtime.store_ready && runtime.store.record.provision.network_mode!=STORE_NETWORK_ONLINE) {
+        struct timeval wall;
+        if(gettimeofday(&wall,NULL)==0 && katmed_time_accept_utc(&runtime.time,monotonic_ms(),(int64_t)wall.tv_sec*1000+wall.tv_usec/1000,CLOCK_HOLDOVER)) {
+            ClockSample manual=clock_sample(runtime.boot_domain);
+            if(apply_time_sample(&runtime,&manual)) runtime.utc_source=3;
+        }
+    }
     if (board_set_orientation(runtime.local.orientation) != BOARD_OK) {
         ESP_LOGE(tag, "initial orientation failed");
         names_idf_close(&runtime.names_nvs);
@@ -1852,7 +1989,9 @@ void app_main(void)
     if (!katmed_usb_console_start())
         ESP_LOGE(tag, "USB setup input unavailable");
 
-    if (runtime.store_ready && runtime.store.record.provision.configured) {
+    const bool setup_needed=runtime.store_ready && (!runtime.store.record.provision.configured || runtime.store.record.setup_requested);
+    if(setup_needed && !start_setup_ap(&runtime)) ESP_LOGE(tag,"setup access point unavailable");
+    if (runtime.store_ready && runtime.store.record.provision.configured && !setup_needed && runtime.store.record.provision.network_mode!=STORE_NETWORK_OFFLINE) {
         katmed_mesh_history_backend(store_idf_history_backend(&runtime.nvs));
         const KatmedMeshServices mesh_services = {
             .store = &runtime.store,
@@ -1860,6 +1999,7 @@ void app_main(void)
             .context = &runtime,
             .shared_result = mesh_shared_result,
             .utc_received = mesh_utc_received,
+            .time_shareable = time_shareable,
         };
         const KatmedMeshResult mesh_result = katmed_mesh_start(
             &runtime.store.record.provision, &mesh_services);
@@ -1867,6 +2007,8 @@ void app_main(void)
         if (!runtime.mesh_started) ESP_LOGE(tag, "group service unavailable: %d", mesh_result);
     }
 
+    const bool management=setup_needed || (runtime.store_ready && runtime.store.record.provision.configured && runtime.store.record.provision.network_mode==STORE_NETWORK_ONLINE);
+    katmed_web_set_enabled(management);
     if (!katmed_config_bridge_start())
         ESP_LOGE(tag,"web configuration bridge unavailable");
     else {
@@ -1891,7 +2033,7 @@ void app_main(void)
                 .cancel_on_display = web_reset_cancel,
             },
         };
-        if (!katmed_web_start(&web_services))
+        if (management && !katmed_web_start(&web_services))
             ESP_LOGE(tag, "HTTPS configuration listener unavailable");
     }
 
@@ -1946,7 +2088,7 @@ void app_main(void)
                 if (katmed_time_idf_poll(&runtime.time, &new_sync)) {
                     if (!apply_time_sample(&runtime, &new_sync))
                         runtime.time = previous;
-                    else runtime.utc_source=1;
+                    else {runtime.utc_source=1;manual_clock_marker=0;}
                 }
             }
         }

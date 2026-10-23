@@ -615,6 +615,19 @@ AppResult app_alarm_animation(const AppState *state, const ClockSample *now,
     return APP_OK;
 }
 
+AppResult app_parse_local_datetime(const char *text, int64_t *utc_ms) {
+    if (!text || !utc_ms || std::strlen(text)!=16 || text[4]!='-' || text[7]!='-' || text[10]!='T' || text[13]!=':') return APP_INVALID;
+    unsigned values[5]={0}; const unsigned starts[]={0,5,8,11,14}, lengths[]={4,2,2,2,2};
+    for (unsigned i=0;i<5;++i) for(unsigned j=0;j<lengths[i];++j) {
+        char c=text[starts[i]+j]; if(c<'0'||c>'9')return APP_INVALID;
+        values[i]=values[i]*10u+static_cast<unsigned>(c-'0');
+    }
+    if (!values[1] || values[1]>12 || !values[2] || values[2]>31 || values[3]>23 || values[4]>59) return APP_INVALID;
+    int64_t candidates[2]; unsigned count=0;
+    if (local_to_utc(static_cast<int>(values[0]),values[1],values[2],values[3],values[4],candidates,count)!=APP_OK || count!=1) return APP_INVALID;
+    *utc_ms=candidates[0]; return APP_OK;
+}
+
 AppResult app_berlin_local_time(int64_t utc_ms, LocalDateTime *local) {
     if (!local || !utc_in_range(utc_ms)) return APP_INVALID;
     const LocalDateTime utc = civil_from_ms(utc_ms);

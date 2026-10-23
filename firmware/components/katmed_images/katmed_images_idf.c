@@ -19,8 +19,14 @@ static void close_validation_reader(void)
     active_id = 0u;
 }
 
+static bool read_failure(KatmedImageIoFailure *failure, KatmedImageIoStage stage,
+                         KatmedImageStatus status)
+{
+    *failure=(KatmedImageIoFailure){stage,status};return false;
+}
+
 static bool file_read_locked(void *context, uint32_t offset, uint8_t *dst,
-                      size_t wanted, size_t *actual)
+                      size_t wanted, size_t *actual, KatmedImageIoFailure *failure)
 {
     (void)context;
     *actual = 0;
@@ -38,7 +44,8 @@ static bool file_read_locked(void *context, uint32_t offset, uint8_t *dst,
                 }
             }
         }
-        if (v == NULL) { close_validation_reader(); return false; }
+        if (v == NULL) { close_validation_reader();
+            return read_failure(failure,KATMED_IMAGE_IO_VARIANT_LOOKUP,KATMED_IMAGE_BAD_ID); }
         uint32_t position = offset - v->offset;
         size_t remaining = wanted - *actual;
         if (position >= v->length) {
@@ -52,19 +59,25 @@ static bool file_read_locked(void *context, uint32_t offset, uint8_t *dst,
         if (active_id != id) {
             close_validation_reader();
             KatmedUserImageInfo info;
-            if (katmed_image_store_open_read(id, &active_reader, &info) != KATMED_IMAGE_OK)
-                return false;
+            KatmedImageStatus status=katmed_image_store_open_read(id,&active_reader,&info);
+            if (status != KATMED_IMAGE_OK)
+                return read_failure(failure,KATMED_IMAGE_IO_FILE_OPEN,status);
             active_id = id;
-            if (info.bytes != v->length) { close_validation_reader(); return false; }
+            if (info.bytes != v->length) { close_validation_reader();
+                return read_failure(failure,KATMED_IMAGE_IO_FILE_LENGTH,KATMED_IMAGE_BAD_RANGE); }
         }
-        if (katmed_image_store_seek(active_reader, position, KATMED_IMAGE_STORE_SEEK_SET) != KATMED_IMAGE_OK) {
-            close_validation_reader(); return false;
+        KatmedImageStatus status=katmed_image_store_seek(active_reader,position,KATMED_IMAGE_STORE_SEEK_SET);
+        if (status != KATMED_IMAGE_OK) {
+            close_validation_reader();return read_failure(failure,KATMED_IMAGE_IO_FILE_SEEK,status);
         }
         size_t take = v->length - position;
         if (take > remaining) take = remaining;
         size_t got = 0;
-        if (katmed_image_store_read(active_reader, dst + *actual, take, &got) != KATMED_IMAGE_OK || got != take) {
-            close_validation_reader(); return false;
+        status=katmed_image_store_read(active_reader,dst + *actual,take,&got);
+        if (status != KATMED_IMAGE_OK || got != take) {
+            close_validation_reader();
+            return read_failure(failure,status==KATMED_IMAGE_OK ? KATMED_IMAGE_IO_SHORT_READ :
+                                KATMED_IMAGE_IO_FILE_READ,status==KATMED_IMAGE_OK ? KATMED_IMAGE_IO_ERROR : status);
         }
         offset += (uint32_t)take;
         *actual += take;
@@ -75,14 +88,22 @@ static bool file_read_locked(void *context, uint32_t offset, uint8_t *dst,
 
 /* HTTP catalogue references and the serialized LVGL thread can validate at
  * the same time. Keep the one bounded validation reader/cache atomic. */
+static bool file_read_detailed(void *context, uint32_t offset, uint8_t *dst,
+                      size_t wanted, size_t *actual, KatmedImageIoFailure *failure)
+{
+    *failure=(KatmedImageIoFailure){0};*actual=0;
+    if (validation_lock == NULL || xSemaphoreTake(validation_lock, portMAX_DELAY) != pdTRUE)
+        return read_failure(failure,KATMED_IMAGE_IO_VALIDATION_LOCK,KATMED_IMAGE_UNAVAILABLE);
+    bool ok = file_read_locked(context, offset, dst, wanted, actual, failure);
+    (void)xSemaphoreGive(validation_lock);
+    return ok;
+}
+
 static bool file_read(void *context, uint32_t offset, uint8_t *dst,
                       size_t wanted, size_t *actual)
 {
-    if (validation_lock == NULL || xSemaphoreTake(validation_lock, portMAX_DELAY) != pdTRUE)
-        return false;
-    bool ok = file_read_locked(context, offset, dst, wanted, actual);
-    (void)xSemaphoreGive(validation_lock);
-    return ok;
+    KatmedImageIoFailure failure={0};
+    return file_read_detailed(context,offset,dst,wanted,actual,&failure);
 }
 
 KatmedImageStatus katmed_images_mount_partition(void)
@@ -96,7 +117,7 @@ KatmedImageStatus katmed_images_mount_partition(void)
         ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_LITTLEFS,
         KATMED_USER_IMAGE_PARTITION_LABEL);
     if (partition == NULL) return KATMED_IMAGE_UNAVAILABLE;
-    KatmedStorage storage = {.context=NULL, .partition_size=partition->size, .read=file_read};
+    KatmedStorage storage = {.context=NULL, .partition_size=partition->size, .read=file_read, .read_detailed=file_read_detailed};
     status = katmed_images_mount_storage(storage);
     close_validation_reader();
     return status;

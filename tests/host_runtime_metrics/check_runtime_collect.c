@@ -54,17 +54,18 @@ void lvgl_port_unlock(void) { ++unlocks; }
 KatmedImageTimingSample katmed_images_pack_hash_timing(void)
 {
     ++image_calls;
-    return (KatmedImageTimingSample){123, KATMED_IMAGE_OK, true};
+    return (KatmedImageTimingSample){.elapsed_us=123,.status=KATMED_IMAGE_OK,.measured=true};
 }
 KatmedImageTimingSample katmed_images_variant_hash_timing(void)
 {
     ++image_calls;
-    return (KatmedImageTimingSample){456, KATMED_IMAGE_BAD_HASH, true};
+    return (KatmedImageTimingSample){.elapsed_us=456,.status=KATMED_IMAGE_IO_ERROR,.measured=true,
+        .sequence=7,.io_stage=KATMED_IMAGE_IO_FILE_OPEN,.io_status=KATMED_IMAGE_NOT_FOUND};
 }
 KatmedImageTimingSample katmed_images_jpeg_decode_timing(void)
 {
     ++image_calls;
-    return (KatmedImageTimingSample){789, KATMED_IMAGE_IO_ERROR, true};
+    return (KatmedImageTimingSample){.elapsed_us=789,.status=KATMED_IMAGE_OK,.measured=true};
 }
 UiBlinkRenderMetrics ui_blink_render_metrics(void)
 {
@@ -87,8 +88,10 @@ int main(void)
     assert(result.main_stack_hwm_bytes == 333 && result.lvgl_stack_hwm_bytes == 222);
     assert(result.lvgl_stack_valid && heap_calls == 2 && stack_calls == 2);
     assert(result.pack_hash_us == 123 && result.pack_hash_valid && result.pack_hash_status == KATMED_IMAGE_OK);
-    assert(result.variant_hash_us == 456 && result.variant_hash_valid && result.variant_hash_status == KATMED_IMAGE_BAD_HASH);
-    assert(result.jpeg_decode_us == 789 && result.jpeg_decode_valid && result.jpeg_decode_status == KATMED_IMAGE_IO_ERROR);
+    assert(result.variant_hash_us == 456 && result.variant_hash_valid && result.variant_hash_status == KATMED_IMAGE_IO_ERROR);
+    assert(result.jpeg_decode_us == 789 && !result.jpeg_decode_valid && result.jpeg_decode_status == KATMED_IMAGE_OK);
+    assert(result.variant_sequence==7 && result.variant_io_stage==KATMED_IMAGE_IO_FILE_OPEN &&
+           result.variant_io_status==KATMED_IMAGE_NOT_FOUND);
     assert(result.blink_cycle_valid && result.blink_cycle_us == 800 && result.blink_cycle_count == 4);
     assert(result.blink_changes == 5 && result.blink_flush_segments == 6 && result.blink_flush_pixels == 700);
     assert(locks == 1 && unlocks == 1 && image_calls == 3 && blink_calls == 1);

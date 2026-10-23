@@ -35,6 +35,7 @@ typedef struct {
 
 /* Called once after board, store and mesh initialization. Failure is closed:
  * no HTTP server remains listening if HTTPS or resource admission fails. */
+void katmed_web_set_enabled(bool enabled);
 bool katmed_web_start(const KatmedWebServices *services);
 /* Called from the main loop; never from the HTTP task. */
 void katmed_web_poll(uint64_t monotonic_ms);

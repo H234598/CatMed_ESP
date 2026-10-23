@@ -4,6 +4,8 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 
+static void clear_request(KatmedConfigRequest *r) { volatile unsigned char *p=(volatile unsigned char *)r; for(size_t i=0;i<sizeof(*r);++i)p[i]=0; }
+
 typedef enum { SLOT_IDLE, SLOT_QUEUED, SLOT_PROCESSING, SLOT_DONE } SlotState;
 
 static StaticSemaphore_t gate_storage, done_storage;
@@ -55,7 +57,7 @@ KatmedConfigStatus katmed_config_exchange(const KatmedConfigRequest *request,
      * request can have committed, so its outcome must remain uncertain. */
     const bool processing = slot_state == SLOT_PROCESSING;
     if (processing) abandoned = true;
-    else slot_state = SLOT_IDLE;
+    else {slot_state = SLOT_IDLE; clear_request(&slot_request);}
     portEXIT_CRITICAL(&slot_lock);
     if (!processing) xSemaphoreGive(gate);
     (void)signalled;
@@ -72,11 +74,13 @@ void katmed_config_poll(KatmedConfigExecute execute, void *context)
         return;
     }
     request = slot_request;
+    clear_request(&slot_request);
     slot_state = SLOT_PROCESSING;
     portEXIT_CRITICAL(&slot_lock);
 
     KatmedConfigResponse response = {.status = KATMED_CONFIG_UNAVAILABLE};
     execute(context, &request, &response);
+    clear_request(&request);
 
     portENTER_CRITICAL(&slot_lock);
     if (abandoned) {

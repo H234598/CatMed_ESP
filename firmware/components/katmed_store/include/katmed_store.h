@@ -73,6 +73,8 @@ typedef struct {
     uint8_t bound_group[16];
 } StoreManualIntent;
 
+typedef enum { STORE_NETWORK_ONLINE=0, STORE_NETWORK_MESH_ONLY=1, STORE_NETWORK_OFFLINE=2 } StoreNetworkMode;
+
 typedef struct {
     uint8_t group[16];
     uint8_t secret[32];
@@ -83,6 +85,7 @@ typedef struct {
     uint8_t time_source[63];
     uint8_t time_source_length;
     bool configured;
+    uint8_t network_mode; /* Explicit intent; zero preserves legacy online records. */
 } StoreProvision;
 
 typedef enum {
@@ -146,6 +149,7 @@ typedef struct {
     StoreWifiProfile wifi_profiles[KATMED_STORE_WIFI_PROFILE_MAX];
     uint8_t wifi_profile_count;
     uint32_t next_wifi_profile_id;
+    bool setup_requested; /* Explicit local reopening; never inferred from missing UTC/SSID. */
     uint8_t language; /* v11: local presentation preference, English on legacy records. */
 } StoreRecord;
 
@@ -256,6 +260,8 @@ StoreResult store_usb_handle_line_with_wifi_defaults(
     const uint8_t *default_ssid, size_t default_ssid_length,
     const uint8_t *default_password, size_t default_password_length,
     char *reply, size_t reply_capacity);
+StoreResult store_request_setup(Store *store);
+StoreResult store_save_setup(Store *store, const StoreProvision *wanted);
 StoreResult store_wifi_profiles_load(const Store *store, StoreWifiProfile *out,
                                      size_t capacity, size_t *count);
 StoreResult store_wifi_profiles_save_atomic(Store *store,

@@ -67,7 +67,17 @@ int main(int argc, char **argv)
     project(&state, &local, &clock, 1300);
     assert(find_label(lv_screen_active(), "Nur im Notfall. Drücken kostet!"));
     tap(host.width/2, host.height/2, 1400);
-    assert(host.submit_calls == 0);
+    assert(host.submit_calls==1 && host.last_request.kind==UI_REQUEST_EMERGENCY);
+    int emergency_calls=host.submit_calls;
+    // Duplicate release, long hold, movement and direct LVGL clicks are not new emergency taps.
+    ui_touch_sample(false,0,0,true,1510);
+    click_label(lv_screen_active(),"Alarm");
+    ui_touch_sample(true,host.width/2,host.height/2,true,1520);
+    ui_touch_sample(false,0,0,true,2220);
+    ui_touch_sample(true,host.width/2,host.height/2,true,2230);
+    ui_touch_sample(true,host.width/2+30,host.height/2,true,2280);
+    ui_touch_sample(false,0,0,true,2290);
+    assert(host.submit_calls==emergency_calls);
     ui_render(&state, &local, SETTINGS, &clock);
     vertical(80, 140, 1600); /* inner list scroll cannot change page */
     assert(ui_current_view() == SETTINGS);
@@ -184,10 +194,10 @@ int main(int argc, char **argv)
     project(&state, &local, &clock, 6000);
     assert(ui_current_view() == ALARM);
     assert(host.frame[host.width*5+host.width/2] != 0xffff);
-    assert(host.submit_calls == 0);
+    assert(host.submit_calls == emergency_calls);
     assert(inputs[input_count-1].kind == KATMED_INTERACTION_CANCEL);
     ui_touch_sample(false, 0, 0, true, 6050);
-    assert(host.submit_calls == 0); /* pre-alarm Down cannot confirm */
+    assert(host.submit_calls == emergency_calls); /* pre-alarm Down cannot confirm */
     state.alarm_active = false;
     project(&state, &local, &clock, 6100);
     assert(ui_current_view() == UI_VIEW_INTERACTION);
@@ -267,7 +277,7 @@ int main(int argc, char **argv)
     assert(ui_current_view() == ALARM);
     assert(host.frame[12*host.width+host.width/2] != blue);
     ui_touch_sample(false, 0, 0, true, 10960);
-    assert(host.submit_calls == 0);
+    assert(host.submit_calls == emergency_calls);
     state.alarm_active = false;
     project(&state, &local, &clock, 10980);
     assert(ui_current_view() == UI_VIEW_INTERACTION);

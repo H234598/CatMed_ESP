@@ -18,7 +18,7 @@ int main(){
     provision.configured=true;store.record.provision=provision;
     std::memcpy(store.record.bound_group,provision.group,16);
     assert(app_init(&state,&recovery.shared,&now,recovery.boot_identity,75,catalog)==APP_OK);
-    KatmedMeshServices services{&store,&state,nullptr,shared_result,utc_received};
+    KatmedMeshServices services{&store,&state,nullptr,shared_result,utc_received,nullptr};
     assert(katmed_mesh_start(&provision,&services)==MESH_ACCEPTED);
     level=ROOT;katmed_mesh_poll(&now);
     auto challenge=latest_kind(MESH_HELLO);

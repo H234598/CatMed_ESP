@@ -75,7 +75,7 @@ int main(int argc, char **argv)
     FILE *pack = fopen(argv[4], "rb");
     assert(pack != NULL);
     PackContext pack_context = {.file = pack};
-    KatmedStorage storage = {&pack_context, katmed_generated_catalog.pack_bytes, read_pack};
+    KatmedStorage storage = {&pack_context, katmed_generated_catalog.pack_bytes, read_pack, NULL};
     assert(katmed_images_mount_storage(storage) == KATMED_IMAGE_OK);
 
     KatmedImageSelection selection;

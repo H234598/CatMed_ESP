@@ -19,21 +19,23 @@ STATUS = (
 
 
 def metrics(*, crlf: bool = False, long: bool = False) -> bytes:
-    values = ["0"] * len(setup.METRIC_KEYS)
+    # Keep the historical near-limit frame; new detail fields have tighter numeric bounds.
+    keys = setup.LEGACY_METRIC_KEYS if long else setup.METRIC_KEYS
+    values = ["0"] * len(keys)
     if long:
         # The longest fixed-schema numeric diagnostic still below 768 chars.
         for i in range(len(values)):
             values[i] = "1" * 19
         while True:
             candidate = b"I (123) katmed_metrics: " + b" ".join(
-                f"{key}={value}".encode() for key, value in zip(setup.METRIC_KEYS, values))
+                f"{key}={value}".encode() for key, value in zip(keys, values))
             if len(candidate) >= setup.MAX_DIAG_CHARS:
                 break
             values[len(candidate) % len(values)] += "1"
         if len(candidate) > setup.MAX_DIAG_CHARS:
             values[len(candidate) % len(values)] = values[len(candidate) % len(values)][:-1]
     body = b"I (123) katmed_metrics: " + b" ".join(
-        f"{key}={value}".encode() for key, value in zip(setup.METRIC_KEYS, values))
+        f"{key}={value}".encode() for key, value in zip(keys, values))
     return body + (b"\r\n" if crlf else b"\n")
 
 

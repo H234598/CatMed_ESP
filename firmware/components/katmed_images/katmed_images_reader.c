@@ -9,10 +9,13 @@
 #endif
 #include <stdio.h>
 #include <string.h>
+#include <stdatomic.h>
 #ifdef ESP_PLATFORM
 #include "esp_timer.h"
+#include "freertos/FreeRTOS.h"
 #else
 #include <time.h>
+#include <pthread.h>
 #endif
 
 static KatmedStorage mounted_storage;
@@ -20,6 +23,35 @@ static bool mounted;
 static KatmedImageStatus last_error = KATMED_IMAGE_UNAVAILABLE;
 static KatmedImageTimingSample pack_hash_timing;
 static KatmedImageTimingSample variant_hash_timing;
+static atomic_uint_least32_t variant_sequence;
+
+/* Web validation is outside the LVGL lock. Protect only complete sample copies,
+ * never hashing, allocation, provider reads or the whole UI operation. */
+#ifdef ESP_PLATFORM
+static portMUX_TYPE timing_lock = portMUX_INITIALIZER_UNLOCKED;
+#define TIMING_LOCK() portENTER_CRITICAL(&timing_lock)
+#define TIMING_UNLOCK() portEXIT_CRITICAL(&timing_lock)
+#else
+static pthread_mutex_t timing_lock = PTHREAD_MUTEX_INITIALIZER;
+#define TIMING_LOCK() ((void)pthread_mutex_lock(&timing_lock))
+#define TIMING_UNLOCK() ((void)pthread_mutex_unlock(&timing_lock))
+#endif
+
+static KatmedImageTimingSample read_timing(const KatmedImageTimingSample *sample)
+{
+    TIMING_LOCK();
+    const KatmedImageTimingSample value=*sample;
+    TIMING_UNLOCK();
+    return value;
+}
+
+static void publish_timing(KatmedImageTimingSample *sample, KatmedImageTimingSample value)
+{
+    TIMING_LOCK();
+    *sample=value;
+    TIMING_UNLOCK();
+}
+
 
 static uint64_t monotonic_us(void)
 {
@@ -33,15 +65,18 @@ static uint64_t monotonic_us(void)
 #endif
 }
 
-static KatmedImageTimingSample complete_timing(uint64_t start, KatmedImageStatus status)
+static KatmedImageTimingSample complete_timing(uint64_t start, KatmedImageStatus status,
+    KatmedImageIoFailure failure, uint32_t sequence)
 {
     uint64_t end = monotonic_us();
     return (KatmedImageTimingSample){.elapsed_us = end >= start ? end - start : 0,
-                                     .status = status, .measured = true};
+                                     .status = status, .measured = true,
+                                     .sequence = sequence, .io_stage = failure.stage,
+                                     .io_status = failure.status};
 }
 
-KatmedImageTimingSample katmed_images_pack_hash_timing(void) { return pack_hash_timing; }
-KatmedImageTimingSample katmed_images_variant_hash_timing(void) { return variant_hash_timing; }
+KatmedImageTimingSample katmed_images_pack_hash_timing(void) { return read_timing(&pack_hash_timing); }
+KatmedImageTimingSample katmed_images_variant_hash_timing(void) { return read_timing(&variant_hash_timing); }
 
 void katmed_images_record_error(KatmedImageStatus status)
 {
@@ -87,8 +122,10 @@ static void clear_catalog_state(void)
     memset(&mounted_storage, 0, sizeof(mounted_storage));
     mounted = false;
     last_error = KATMED_IMAGE_UNAVAILABLE;
+    TIMING_LOCK();
     pack_hash_timing = (KatmedImageTimingSample){0};
     variant_hash_timing = (KatmedImageTimingSample){0};
+    TIMING_UNLOCK();
 }
 
 void katmed_images_unmount(void)
@@ -104,35 +141,56 @@ static bool within(uint32_t offset, uint32_t length, uint32_t limit)
     return offset <= limit && length <= limit - offset;
 }
 
-static KatmedImageStatus read_exact(uint32_t offset, uint8_t *dst, size_t length)
+static KatmedImageStatus io_failure(KatmedImageIoFailure *failure,
+    KatmedImageIoStage stage, KatmedImageStatus status)
+{
+    if(failure) *failure=(KatmedImageIoFailure){stage,status};
+    return KATMED_IMAGE_IO_ERROR;
+}
+
+static KatmedImageStatus read_exact(uint32_t offset, uint8_t *dst, size_t length,
+                                    KatmedImageIoFailure *failure)
 {
     if(length > UINT32_MAX || !within(offset, (uint32_t)length, mounted_storage.partition_size))
         return KATMED_IMAGE_BAD_RANGE;
     if(length == 0) return KATMED_IMAGE_OK;
-    if(dst == NULL || mounted_storage.read == NULL) return KATMED_IMAGE_IO_ERROR;
+    if(dst == NULL || (mounted_storage.read == NULL && mounted_storage.read_detailed == NULL))
+        return io_failure(failure,KATMED_IMAGE_IO_READ_UNAVAILABLE,KATMED_IMAGE_IO_ERROR);
     size_t actual = 0;
-    if(!mounted_storage.read(mounted_storage.context, offset, dst, length, &actual) || actual != length)
-        return KATMED_IMAGE_IO_ERROR;
+    KatmedImageIoFailure detail={0};
+    bool ok=mounted_storage.read_detailed ?
+        mounted_storage.read_detailed(mounted_storage.context,offset,dst,length,&actual,&detail) :
+        mounted_storage.read(mounted_storage.context,offset,dst,length,&actual);
+    if(!ok) return io_failure(failure,detail.stage ? detail.stage : KATMED_IMAGE_IO_CALLBACK,
+                             detail.stage ? detail.status : KATMED_IMAGE_IO_ERROR);
+    if(actual != length)
+        return io_failure(failure,KATMED_IMAGE_IO_SHORT_READ,KATMED_IMAGE_IO_ERROR);
     return KATMED_IMAGE_OK;
 }
 
-static KatmedImageStatus hash_range(uint32_t start, uint32_t length, uint8_t hash[32])
+static KatmedImageStatus hash_range(uint32_t start, uint32_t length, uint8_t hash[32],
+                                   KatmedImageIoFailure *failure)
 {
     if(!within(start, length, mounted_storage.partition_size)) return KATMED_IMAGE_BAD_RANGE;
     KatmedImageHash sha;
-    if(!katmed_images_hash_start(&sha)) return KATMED_IMAGE_IO_ERROR;
+    if(!katmed_images_hash_start(&sha))
+        return io_failure(failure,KATMED_IMAGE_IO_HASH_START,KATMED_IMAGE_IO_ERROR);
     uint8_t block[KATMED_IMAGE_READ_CHUNK];
     for(uint32_t position = 0; position < length;) {
         uint32_t remaining = length - position;
         size_t take = remaining < sizeof(block) ? remaining : sizeof(block);
-        KatmedImageStatus status = read_exact(start + position, block, take);
-        if(status != KATMED_IMAGE_OK || !katmed_images_hash_update(&sha, block, take)) {
+        KatmedImageStatus status = read_exact(start + position, block, take, failure);
+        if(status != KATMED_IMAGE_OK) {
+            katmed_images_hash_free(&sha);return status;
+        }
+        if(!katmed_images_hash_update(&sha, block, take)) {
             katmed_images_hash_free(&sha);
-            return status != KATMED_IMAGE_OK ? status : KATMED_IMAGE_IO_ERROR;
+            return io_failure(failure,KATMED_IMAGE_IO_HASH_UPDATE,KATMED_IMAGE_IO_ERROR);
         }
         position += (uint32_t)take;
     }
-    return katmed_images_hash_finish(&sha, hash) ? KATMED_IMAGE_OK : KATMED_IMAGE_IO_ERROR;
+    return katmed_images_hash_finish(&sha, hash) ? KATMED_IMAGE_OK :
+        io_failure(failure,KATMED_IMAGE_IO_HASH_FINISH,KATMED_IMAGE_IO_ERROR);
 }
 
 const KatmedImageVariant *katmed_images_variant(uint32_t index, uint32_t profile)
@@ -187,11 +245,12 @@ KatmedImageStatus katmed_images_mount_storage(KatmedStorage storage)
     }
     uint8_t hash[32];
     uint64_t start = monotonic_us();
-    KatmedImageStatus result = hash_range(0, katmed_generated_catalog.pack_bytes, hash);
+    KatmedImageIoFailure failure={0};
+    KatmedImageStatus result = hash_range(0, katmed_generated_catalog.pack_bytes, hash, &failure);
     if(result == KATMED_IMAGE_OK &&
        memcmp(hash, katmed_generated_catalog.pack_sha256, sizeof(hash)) != 0)
         result = KATMED_IMAGE_BAD_HASH;
-    pack_hash_timing = complete_timing(start, result);
+    publish_timing(&pack_hash_timing,complete_timing(start,result,failure,0));
     if(result != KATMED_IMAGE_OK) {
         last_error = result;
         memset(&mounted_storage, 0, sizeof(mounted_storage));
@@ -213,7 +272,7 @@ KatmedImageStatus katmed_images_read_variant(uint32_t index, uint32_t profile,
     if(wanted > UINT32_MAX || position > v->length ||
        wanted > v->length - position || !within(v->offset, v->length, mounted_storage.partition_size) ||
        position > UINT32_MAX - v->offset) return KATMED_IMAGE_BAD_RANGE;
-    KatmedImageStatus status = read_exact(v->offset + position, dst, wanted);
+    KatmedImageStatus status = read_exact(v->offset + position, dst, wanted, NULL);
     if(status == KATMED_IMAGE_OK && actual) *actual = wanted;
     if(status != KATMED_IMAGE_OK) katmed_images_record_error(status);
     return status;
@@ -221,15 +280,20 @@ KatmedImageStatus katmed_images_read_variant(uint32_t index, uint32_t profile,
 
 KatmedImageStatus katmed_images_validate_variant(uint32_t index, uint32_t profile)
 {
+    const uint32_t sequence=atomic_fetch_add_explicit(&variant_sequence,1,memory_order_relaxed)+1;
+    const uint64_t start=monotonic_us();
+    KatmedImageIoFailure failure={0}; /* Detail belongs only to this invocation. */
     const KatmedImageVariant *v = katmed_images_variant(index, profile);
-    if(!mounted) return KATMED_IMAGE_UNAVAILABLE;
-    if(v == NULL) return KATMED_IMAGE_BAD_ID;
+    if(!mounted || v == NULL) {
+        KatmedImageStatus status=!mounted ? KATMED_IMAGE_UNAVAILABLE : KATMED_IMAGE_BAD_ID;
+        publish_timing(&variant_hash_timing,complete_timing(start,status,failure,sequence));
+        return status;
+    }
     uint8_t hash[32];
-    uint64_t start = monotonic_us();
-    KatmedImageStatus status = hash_range(v->offset, v->length, hash);
+    KatmedImageStatus status = hash_range(v->offset, v->length, hash, &failure);
     if(status == KATMED_IMAGE_OK && memcmp(hash, v->sha256, sizeof(hash)) != 0)
         status = KATMED_IMAGE_BAD_HASH;
-    variant_hash_timing = complete_timing(start, status);
+    publish_timing(&variant_hash_timing,complete_timing(start,status,failure,sequence));
     if(status != KATMED_IMAGE_OK) {
         katmed_images_record_error(status);
         return status;

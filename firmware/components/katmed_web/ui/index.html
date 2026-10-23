@@ -53,6 +53,25 @@
 <button id="logout" class="secondary" type="button">Abmelden</button>
 </div>
 
+<section id="runtime-setup-panel" class="panel">
+<h2>Netzwerk einrichten</h2>
+<p id="runtime-setup-state" role="status"></p>
+<form id="runtime-setup-form" autocomplete="off">
+<label for="network-mode">Betriebsart</label>
+<select id="network-mode"><option value="0">WLAN und Mesh</option><option value="1">Nur Mesh</option><option value="2">Vollständig offline</option></select>
+<label for="group-action">Mesh-Gruppe</label>
+<select id="group-action"><option value="0">Bestehende Gruppe behalten</option><option value="1">Neue Gruppe erstellen</option><option value="2">Angegebener Gruppe beitreten</option></select>
+<label for="setup-group">Gruppen-ID (32 Hexzeichen, nur Beitritt)</label><input id="setup-group" maxlength="32">
+<label for="setup-secret">Gruppengeheimnis (64 Hexzeichen, nur Beitritt)</label><input id="setup-secret" type="password" maxlength="64">
+<label for="runtime-ssid">WLAN-SSID (nur online)</label><input id="runtime-ssid" maxlength="32">
+<label for="runtime-password">WLAN-Passwort (nur online)</label><input id="runtime-password" type="password" maxlength="63">
+<label for="runtime-time-source">SNTP-Hostname (nur online)</label><input id="runtime-time-source" maxlength="63">
+<label for="runtime-datetime">Manuelles Datum und Uhrzeit (Europe/Berlin, ohne WLAN erforderlich)</label><input id="runtime-datetime" type="datetime-local">
+<p>Diese Einrichtungsverbindung endet nach Speichern. Gespeicherte WLAN-Profile behalten ihre Prioritäten.</p>
+<button>Netzwerkeinrichtung speichern</button>
+</form>
+</section>
+
 <section id="main-settings" aria-label="Einstellungen">
 <section class="panel" aria-labelledby="advanced-category-title" data-main-panel>
 <h2 id="advanced-category-title">Advanced</h2>

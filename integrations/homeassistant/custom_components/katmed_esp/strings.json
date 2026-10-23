@@ -1,0 +1,31 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect Katmed ESP",
+        "description": "Requires the supported read-only HA endpoint and trusted device TLS certificate. No device settings are changed.",
+        "data": {
+          "host": "Device IPv4 address",
+          "password": "Existing web password",
+          "ca_file": "Trusted CA PEM path (optional)",
+          "tls_server_name": "TLS server name from device certificate (optional)"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Renew web login",
+        "data": {
+          "password": "Existing web password"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Cannot connect securely or the device does not support the snapshot contract.",
+      "invalid_auth": "The existing web login is required."
+    },
+    "abort": {
+      "already_configured": "This device is already configured.",
+      "reauth_successful": "Web login renewed.",
+      "unique_id_mismatch": "A different device was detected."
+    }
+  }
+}

@@ -27,6 +27,7 @@ def function(text, signature):
 PREFIX = r'''
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #define ESP_OK 0
@@ -50,9 +51,9 @@ typedef struct {
  size_t servercert_len,prvtkey_len,cacert_len;void *user_cb;bool client_cert_authmode_optional;
 } httpd_ssl_config_t;
 typedef struct {const char *uri;int method;void *handler,*user_ctx;} httpd_uri_t;
-typedef struct {int unused;} KatmedWebServices;
+typedef struct {void *context;bool (*prepare_listener_stop)(void *);} KatmedWebServices;
 static struct {
- KatmedWebServices services;bool started,nvs_open;int nvs,certificate_fd;
+ KatmedWebServices services;bool started,nvs_open,restart_pending;uint64_t retry_due_ms,restart_due_ms;int nvs,certificate_fd;
  struct {const void *cert,*key;size_t cert_len,key_len;} identity;
  struct {struct {size_t cert_len;const void *client_cert;} record;} auth;
  void *auth_mutex,*https,*redirect;
@@ -82,6 +83,11 @@ static bool register_routes(void *server){return server!=NULL;}
 static int httpd_register_uri_handler(void *server,const httpd_uri_t *uri){(void)uri;return server?ESP_OK:ESP_FAIL;}
 static void stop_listeners(void){web.https=NULL;web.redirect=NULL;web.started=false;}
 static void katmed_web_stop(void){stop_listeners();web.nvs_open=false;}
+#define pdTRUE 1
+#define portMAX_DELAY 1
+static int xSemaphoreTake(void *lock,int wait){(void)lock;(void)wait;return pdTRUE;}
+static void xSemaphoreGive(void *lock){(void)lock;}
+static void katmed_web_auth_tick(void *auth,uint64_t now){(void)auth;(void)now;}
 static void *tls_session_callback,*katmed_web_plain_uri_match,*redirect_get;
 '''
 SUFFIX = r'''
@@ -105,6 +111,13 @@ int main(int argc,char **argv){
   CHECK(!katmed_web_start(NULL));
   CHECK(!web.started && !web.https && !web.redirect && !web.nvs_open);
   CHECK(listener_attempts==0 && nvs_opens==0);
+ }else if(!strcmp(argv[1],"intentional_disabled")){
+  CHECK(katmed_web_start(NULL));int before=listener_attempts;
+  katmed_web_set_enabled(false);CHECK(!web.started);
+  katmed_web_poll(UINT64_C(900000));CHECK(listener_attempts==before);
+  CHECK(!katmed_web_start(NULL));CHECK(listener_attempts==before);
+  katmed_web_set_enabled(true);katmed_web_poll(UINT64_C(900001));
+  CHECK(web.started && listener_attempts>before);
  }else return 2;
  puts("production Web startup prerequisite PASS");return 0;
 }
@@ -117,8 +130,8 @@ class NetworkStartup(unittest.TestCase):
         cls.directory = tempfile.TemporaryDirectory()
         text = SOURCE.read_text()
         c = Path(cls.directory.name) / "startup.c"
-        c.write_text(PREFIX + "\n" + function(text, "static bool start_listeners(void)") +
-                     "\n" + function(text, "bool katmed_web_start(") + SUFFIX)
+        c.write_text(PREFIX + "\nstatic bool management_enabled=true;\n" + function(text, "static bool start_listeners(void)") +
+                     "\n" + function(text, "void katmed_web_set_enabled(") + "\n" + function(text, "bool katmed_web_start(") + "\n" + function(text, "void katmed_web_poll(") + SUFFIX)
         cls.exe = Path(cls.directory.name) / "startup"
         subprocess.run(["cc", "-std=c11", "-Wall", "-Wextra", "-Werror",
                         "-Wno-unused-function", str(c), "-o", str(cls.exe)], check=True)
@@ -136,6 +149,9 @@ class NetworkStartup(unittest.TestCase):
 
     def test_already_initialized_mesh_keeps_idempotent_listener_start(self):
         self.run_case("already_initialized_mesh")
+
+    def test_intentional_disabled_blocks_start_and_poll_retry(self):
+        self.run_case("intentional_disabled")
 
     def test_failed_platform_initialization_opens_no_listener_or_store(self):
         self.run_case("initialization_failure")

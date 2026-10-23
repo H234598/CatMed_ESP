@@ -128,6 +128,18 @@ def firmware_metric_line() -> bytes:
 
 
 class UsbSetupTests(unittest.TestCase):
+    def test_image_detail_and_legacy_metric_frames_remain_strict(self) -> None:
+        metric = firmware_metric_line().rstrip(b"\n")
+        self.assertIsNotNone(setup._metric_line(metric))
+        legacy = b" ".join(metric.split(b" ")[:-3])
+        self.assertIsNotNone(setup._metric_line(legacy))
+        for before, after in ((b"variant_seq=0", b"variant_seq=4294967296"),
+                              (b"variant_io_stage=0", b"variant_io_stage=13"),
+                              (b"variant_io_status=0", b"variant_io_status=11")):
+            with self.subTest(field=before):
+                self.assertIsNone(setup._metric_line(metric.replace(before, after)))
+        self.assertIsNone(setup._metric_line(metric + b" variant_io_stage=0"))
+
     def test_firmware_diagnostic_before_status_and_commit_reply(self) -> None:
         metric = firmware_metric_line()
         self.assertIsNotNone(setup._metric_line(metric.rstrip(b"\n")))

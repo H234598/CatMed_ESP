@@ -212,8 +212,26 @@ static void test_core_correction(void)
     assert(state.alarm_active && state.deadline.effective_monotonic_ms <= original_due);
 }
 
+static void test_manual_civil_clock(void) {
+    int64_t utc=0;LocalDateTime local;
+    assert(app_parse_local_datetime("2026-10-23T14:25",&utc)==APP_OK);
+    assert(app_berlin_local_time(utc,&local)==APP_OK && local.year==2026 && local.hour==14 && local.minute==25);
+    assert(app_parse_local_datetime("2026-02-30T14:25",&utc)==APP_INVALID);
+    assert(app_parse_local_datetime("2026-03-29T02:30",&utc)==APP_INVALID);
+    assert(app_parse_local_datetime("2026-10-25T02:30",&utc)==APP_INVALID);
+    assert(app_parse_local_datetime("2026-10-23T14:25oops",&utc)==APP_INVALID);
+    KatmedTime time;katmed_time_init(&time,7);
+    assert(katmed_time_accept_utc(&time,100,utc,CLOCK_HOLDOVER));
+    ClockSample manual=katmed_time_sample(&time,60100);
+    assert(manual.utc_valid && manual.quality==CLOCK_HOLDOVER && manual.utc_ms==utc+60000);
+    katmed_time_set_link(&time,true);
+    assert(katmed_time_sample(&time,60100).quality==CLOCK_HOLDOVER);
+    katmed_time_init(&time,8);assert(!katmed_time_sample(&time,60100).utc_valid);
+}
+
 int main(void)
 {
+    test_manual_civil_clock();
     test_clock();
     test_sntp_gate();
     test_core_correction();

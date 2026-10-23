@@ -388,7 +388,7 @@ void send_state(const ClockSample *now){
     (void)send(f);
 }
 void send_time(const ClockSample *now){
-    if(!root()||!session_live()||!now->utc_valid||
+    if((ctx.services.time_shareable && !ctx.services.time_shareable(ctx.services.context)) || !root()||!session_live()||!now->utc_valid||
        now->quality==CLOCK_UNAVAILABLE)return;
     EventId id{};if(!next_event_id(id))return;
     auto f=frame_for(MESH_TIME_SYNC,id);
@@ -929,7 +929,7 @@ void ensure_root_name(){
 extern "C" KatmedMeshResult katmed_mesh_start(const StoreProvision *provision,
                                                 const KatmedMeshServices *services){
     if(ctx.started||!provision||!services||!services->store||!services->state||
-       !provision->configured||store_get_status(services->store,nullptr,nullptr,nullptr)!=STORE_OK||
+       !provision->configured||provision->network_mode==STORE_NETWORK_OFFLINE||store_get_status(services->store,nullptr,nullptr,nullptr)!=STORE_OK||
        std::memcmp(provision->group,services->store->record.provision.group,16)!=0||
        std::memcmp(provision->secret,services->store->record.provision.secret,32)!=0)
         return MESH_UNAVAILABLE;
@@ -953,18 +953,19 @@ extern "C" KatmedMeshResult katmed_mesh_start(const StoreProvision *provision,
     config.vendor_id[0]=provision->group[1];config.vendor_id[1]=provision->group[2];
     config.max_node_number=8;config.join_mesh_ignore_router_status=true;
     config.join_mesh_without_configured_wifi=true;config.leaf_node=false;
-    ctx.ap_ssid[0]='K';ctx.ap_ssid[1]='M';
-    hex(ctx.ap_ssid+2,provision->group,15);
+    static constexpr char transport_ssid[]="Katmed_ESP_optout_nomap";
+    static_assert(sizeof(transport_ssid)-1u==23u && sizeof(transport_ssid)<=sizeof(ctx.ap_ssid));
+    std::memcpy(ctx.ap_ssid,transport_ssid,sizeof(transport_ssid));
     hex(ctx.ap_password,provision->secret,31);
     config.softap_ssid=ctx.ap_ssid;config.softap_password=ctx.ap_password;
     esp_mesh_lite_init(&config);
     (void)esp_mesh_lite_set_argot((uint32_t(provision->group[3])<<24)|
         (uint32_t(provision->group[4])<<16)|(uint32_t(provision->group[5])<<8)|
         provision->group[6]);
-    (void)esp_mesh_lite_set_softap_info(ctx.ap_ssid,ctx.ap_password);
-    if (services->store->record.wifi_profile_count) {
+    if(esp_mesh_lite_set_softap_info(ctx.ap_ssid,ctx.ap_password)!=ESP_OK)return MESH_UNAVAILABLE;
+    if (provision->network_mode==STORE_NETWORK_ONLINE && services->store->record.wifi_profile_count) {
         if(!set_router_profile(1))return MESH_UNAVAILABLE;
-    } else if(provision->ssid_length){
+    } else if(provision->network_mode==STORE_NETWORK_ONLINE && provision->ssid_length){
         mesh_lite_sta_config_t router{};
         std::memcpy(router.ssid,provision->ssid,provision->ssid_length);
         std::memcpy(router.password,provision->password,provision->password_length);
@@ -1101,7 +1102,7 @@ extern "C" void katmed_mesh_poll(const ClockSample *now){
     const uint8_t next_priority=katmed_wifi_profile_reselect(
         disconnected,explicit_reconnect,static_cast<uint8_t>(ctx.wifi_profile_index+1u),
         profile_count);
-    if (next_priority)
+    if (ctx.provision.network_mode==STORE_NETWORK_ONLINE && next_priority)
         (void)reconnect_router_profile(next_priority,explicit_reconnect);
     if(!ctx.status.clock_valid){ctx.status.clock_valid=true;ctx.status.started_ms=now->monotonic_ms;}
     ctx.status.now_ms=now->monotonic_ms;
