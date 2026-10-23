@@ -5,10 +5,67 @@
 #undef main
 #undef katmed_images_present
 #include "katmed_images_internal.h"
+#include "src/image/lv_image_decoder_private.h"
+static bool fail_decoder_read;
 static bool alarm_pack_read(void *ctx,uint32_t off,uint8_t *out,size_t want,size_t *got){
     FILE *f=ctx; *got=0;
+    if(fail_decoder_read) return false;
     if(fseek(f,off,SEEK_SET)) return false;
     *got=fread(out,1,want,f);return *got==want;
+}
+
+/* The real TJpgD callback must finish once the requested partial-refresh rows
+ * are decoded. Prefix MCUs remain necessary for the JPEG stream. */
+static void check_decoder_clip(int width, int height)
+{
+    KatmedImageSelection selection;
+    Orientation orientation = width > height ? ORIENTATION_90 : ORIENTATION_0;
+    assert(katmed_images_select(0, orientation, &selection) == KATMED_IMAGE_OK);
+    /* This target intentionally uses the C3 JPEG fixture for all UI layouts. */
+    width = selection.width;
+    height = selection.height;
+    const int bottoms[] = {15, height / 2 - 1, height - 1};
+    unsigned full_calls = 0, first_calls = 0;
+    for(unsigned test = 0; test < 3; ++test) {
+        lv_image_decoder_dsc_t decoder;
+        assert(lv_image_decoder_open(&decoder, selection.lvgl_path, NULL) == LV_RESULT_OK);
+        lv_area_t requested = {0, test == 0 ? 0 : bottoms[test] - 15,
+                               width - 1, bottoms[test]};
+        lv_area_t area = {LV_COORD_MIN, LV_COORD_MIN, LV_COORD_MIN, LV_COORD_MIN};
+        unsigned calls = 0; bool covered = false;
+        while(lv_image_decoder_get_area(&decoder, &requested, &area) == LV_RESULT_OK) {
+            /* No successfully returned tile may be wholly below the request. */
+            if(area.y1 > requested.y2) {
+                fprintf(stderr, "clip_tail request_bottom=%d returned_top=%ld\n",
+                        requested.y2, (long)area.y1);
+                assert(area.y1 <= requested.y2);
+            }
+            assert(++calls <= 1280u);
+            covered |= area.x2 == width - 1 && area.y2 >= requested.y2;
+        }
+        assert(covered && katmed_images_last_error() == KATMED_IMAGE_OK);
+        if(test == 0) first_calls = calls;
+        if(test == 2) full_calls = calls;
+        lv_image_decoder_close(&decoder);
+        assert(katmed_images_open_file_count() == 0);
+    }
+    assert(first_calls < full_calls);
+    /* A read error before completion is still an error, never normal EOF. */
+    lv_image_decoder_dsc_t decoder;
+    assert(lv_image_decoder_open(&decoder, selection.lvgl_path, NULL) == LV_RESULT_OK);
+    lv_area_t requested = {0, 0, width - 1, height - 1};
+    lv_area_t area = {LV_COORD_MIN, LV_COORD_MIN, LV_COORD_MIN, LV_COORD_MIN};
+    fail_decoder_read = true;
+    unsigned calls = 0;
+    while(lv_image_decoder_get_area(&decoder, &requested, &area) == LV_RESULT_OK)
+        assert(++calls <= 1280u);
+    assert(katmed_images_last_error() == KATMED_IMAGE_IO_ERROR);
+    fail_decoder_read = false;
+    lv_image_decoder_close(&decoder);
+    katmed_images_clear_error();
+    assert(katmed_images_open_file_count() == 0);
+    printf("decoder_clip first_calls=%u full_calls=%u read_failure_preserved=1\n",
+           first_calls, full_calls);
 }
 
 int main(int argc, char **argv)
@@ -33,6 +90,7 @@ int main(int argc, char **argv)
     FILE *pack=fopen(argv[3],"rb");assert(pack);
     KatmedStorage storage={pack,katmed_generated_catalog.pack_bytes,alarm_pack_read,NULL};
     assert(katmed_images_mount_storage(storage)==KATMED_IMAGE_OK);
+    check_decoder_clip(host.width, host.height);
     UiServices services = {.context = &host, .submit = submit, .connected = connected};
     ui_set_services(&services);
     ClockSample clock = {.monotonic_ms = 1000, .domain = 17,

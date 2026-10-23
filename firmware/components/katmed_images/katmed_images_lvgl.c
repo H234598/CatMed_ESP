@@ -89,6 +89,13 @@ static lv_result_t monitored_open(lv_image_decoder_t *decoder, lv_image_decoder_
 static lv_result_t monitored_area(lv_image_decoder_t *decoder, lv_image_decoder_dsc_t *dsc,
                                   const lv_area_t *full, lv_area_t *area)
 {
+    /* TJpgD must consume prefix MCUs, but LVGL does not need the JPEG tail
+     * below this partial-refresh clip. Keep the native decoder and complete
+     * file validation; finish only after a whole MCU row covers the request. */
+    if(katmed_source(dsc) && full->y2 >= 0 &&
+       full->y2 < (lv_coord_t)dsc->header.h &&
+       area->x2 == (lv_coord_t)dsc->header.w - 1 && area->y2 >= full->y2)
+        return LV_RESULT_INVALID; /* Normal end of the requested area. */
     bool already_complete = area->x2 == (lv_coord_t)dsc->header.w - 1 &&
                             area->y2 == (lv_coord_t)dsc->header.h - 1;
     lv_result_t result = tjpgd_get_area(decoder, dsc, full, area);
