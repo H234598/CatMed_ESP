@@ -679,12 +679,12 @@ StoreResult make_reply(char *out, size_t capacity, const char *text) {
 
 extern "C" {
 
-/* The external host bridge migrates older records to this canonical v11
- * encoding. A raw v10 capsule is deliberately not accepted by firmware. */
+/* The external host bridge migrates older records to the current canonical
+ * encoding. Raw legacy capsules remain rejected by firmware. */
 bool store_import_blob_group(const uint8_t *bytes, size_t length,
                              uint8_t group[16]) {
     if (!bytes || length < 20 || length > KATMED_STORE_BLOB_MAX ||
-        bytes[4] != 11 || bytes[5] != 0) return false;
+        bytes[4] != kCurrentVersion || bytes[5] != 0) return false;
     StoreRecord *record = new (std::nothrow) StoreRecord{};
     uint8_t *canonical = new (std::nothrow) uint8_t[KATMED_STORE_BLOB_MAX];
     if (!record || !canonical) {

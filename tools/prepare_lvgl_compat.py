@@ -13,6 +13,13 @@ from pathlib import Path
 
 PATCHES = (
     (
+        'src/misc/lv_text_ap.c',
+        '111d15c7c6ac956892980432b30a7c7aa46382d278855442cdc2a5064d82d689',
+        '774faa46c387479967ea54be21be445a58958353adf04016fe100dddc64fa849',
+        b'    ch_fin = (uint32_t *)lv_malloc(sizeof(uint32_t) * (txt_length + 1));\n\n    i = 0;',
+        b"    ch_fin = (uint32_t *)lv_malloc(sizeof(uint32_t) * (txt_length + 1));\n    if(ch_enc == NULL || ch_fin == NULL) {\n        lv_free(ch_enc);\n        lv_free(ch_fin);\n        /* Keep the original UTF-8 when temporary shaping storage is unavailable. */\n        /* Callers size the destination with lv_text_ap_strlen(). */\n        if(lv_strlen(txt) > lv_text_ap_strlen(txt)) txt_out[0] = '\\0';\n        else if(txt_out != txt) lv_strcpy(txt_out, txt);\n        return;\n    }\n\n    i = 0;",
+    ),
+    (
         "src/core/lv_obj_style.c",
         '295d7a500a7a592032e91df9bd3341573e87f674db91f635a38af7966c37a8e9',
         '0b149a5bdb4a83df72581f72ab812932ac7d5860211e89b7e62207efcdf73326',

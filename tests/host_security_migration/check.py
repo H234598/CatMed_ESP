@@ -41,6 +41,8 @@ class MigrationContract(unittest.TestCase):
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         cls.fixture = subprocess.run([str(cls.codec), "synthetic-fixture"], check=True,
                                      stdout=subprocess.PIPE).stdout
+        cls.v11_fixture = subprocess.run([str(cls.codec), "synthetic-v11-fixture"], check=True,
+                                         stdout=subprocess.PIPE).stdout
         cls.v10_fixture = subprocess.run([str(cls.codec), "synthetic-v10-fixture"], check=True,
                                          stdout=subprocess.PIPE).stdout
         cls.v9_fixture = subprocess.run([str(cls.codec), "synthetic-v9-fixture"], check=True,
@@ -104,11 +106,11 @@ class MigrationContract(unittest.TestCase):
                                "--output", str(output), *extra], stdout=subprocess.PIPE,
                               stderr=subprocess.PIPE, check=False)
 
-    def test_full_v11_roundtrip(self):
-        self.assertEqual(len(self.state), 4065)
+    def test_full_current_v12_roundtrip(self):
+        self.assertEqual(len(self.state), 4067)
         decoded = json.loads(subprocess.run([str(self.store_codec)], input=self.state,
                                             stdout=subprocess.PIPE, check=True).stdout)
-        self.assertEqual(decoded["schema"], 11)
+        self.assertEqual(decoded["schema"], 12)
         self.assertEqual(decoded["language"], 1)  # synthetic German selection
         self.assertEqual(decoded["wifi_profile_count"], 4)
         self.assertEqual(decoded["mesh_name_count"], 64)
@@ -150,7 +152,7 @@ class MigrationContract(unittest.TestCase):
         self.assertEqual(self.run_tool("import-stage", self.package, self.staged).returncode, 0)
         for key, value in values.items():
             self.assertEqual((self.staged / f"nvs/netif_ip_info/{key}").read_bytes(), value)
-        self.assertEqual(len(self.state), 4065)
+        self.assertEqual(len(self.state), 4067)
         self.assertEqual(len(self.history), 2152)
         self.assertEqual(struct.unpack_from("<H", (self.staged / "firmware-import-v1.bin").read_bytes(), 8)[0], 11)
 
@@ -170,7 +172,7 @@ class MigrationContract(unittest.TestCase):
                 self.assertNotEqual(self.run_tool("export", self.source, candidate).returncode, 0)
                 self.assertFalse(candidate.exists())
 
-    def test_legacy_v10_migrates_to_v11_english_without_losing_state(self):
+    def test_legacy_v10_migrates_to_v12_english_without_losing_state(self):
         length = struct.unpack_from("<I", self.v10_fixture)[0]
         old_state = self.v10_fixture[4:4 + length]
         self.assertEqual(length, 4064)
@@ -179,9 +181,10 @@ class MigrationContract(unittest.TestCase):
         self.assertEqual(self.run_tool("import-stage", self.package, self.staged).returncode, 0)
         self.assertEqual((self.package / "nvs/katmed/state").read_bytes(), old_state)
         migrated = (self.staged / "nvs/katmed/state").read_bytes()
-        self.assertEqual(migrated[4], 11)
-        self.assertEqual(len(migrated), 4065)
-        self.assertEqual(migrated[12:-1], old_state[12:])
+        self.assertEqual(migrated[4], 12)
+        self.assertEqual(len(migrated), 4067)
+        self.assertEqual(migrated[12:-3], old_state[12:])
+        self.assertEqual(migrated[-2:], b"\x00\x00")  # Online, no setup request
         parsed = json.loads(subprocess.run([str(self.store_codec)], input=migrated,
                                            stdout=subprocess.PIPE, check=True).stdout)
         self.assertEqual(parsed["language"], 0)  # English for pre-v11 source
@@ -192,6 +195,20 @@ class MigrationContract(unittest.TestCase):
         self.assertEqual(len(parsed["conflicts"]), 8)
         self.assertEqual((self.staged / "nvs/katmed/mesh_history").read_bytes(), self.history)
 
+    def test_legacy_v11_preserves_language_and_payload_in_current_stage(self):
+        length = struct.unpack_from("<I", self.v11_fixture)[0]
+        old_state = self.v11_fixture[4:4 + length]
+        self.assertEqual(length, 4065)
+        put(self.source / "nvs/katmed/state", old_state)
+        self.assertEqual(self.run_tool("export", self.source, self.package).returncode, 0)
+        self.assertEqual(self.run_tool("import-stage", self.package, self.staged).returncode, 0)
+        self.assertEqual((self.package / "nvs/katmed/state").read_bytes(), old_state)
+        current = (self.staged / "nvs/katmed/state").read_bytes()
+        self.assertEqual(current[4], 12)
+        self.assertEqual(current[12:-2], old_state[12:])
+        self.assertEqual(current[-3:], b"\x01\x00\x00")
+        self.assertEqual((self.staged / "nvs/katmed/mesh_history").read_bytes(), self.history)
+
     def test_corrupt_state_rejected_without_package(self):
         state = bytearray(self.state)
         state[-1] ^= 1
@@ -199,13 +216,24 @@ class MigrationContract(unittest.TestCase):
         self.assertNotEqual(self.run_tool("export", self.source, self.package).returncode, 0)
         self.assertFalse(self.package.exists())
 
-    def test_invalid_v11_language_rejected_with_valid_crc(self):
+    def test_invalid_v12_language_rejected_with_valid_crc(self):
         state = bytearray(self.state)
-        state[-1] = 12  # outside the twelve persisted locale choices
+        state[-3] = 12  # outside the twelve persisted locale choices
         struct.pack_into("<I", state, 8, zlib.crc32(state[12:]))
         put(self.source / "nvs/katmed/state", state)
         self.assertNotEqual(self.run_tool("export", self.source, self.package).returncode, 0)
         self.assertFalse(self.package.exists())
+
+    def test_current_network_fields_rejected_with_valid_crc(self):
+        for name, offset, invalid in (("mode", -2, 3), ("setup", -1, 2)):
+            with self.subTest(field=name):
+                state = bytearray(self.state)
+                state[offset] = invalid
+                struct.pack_into("<I", state, 8, zlib.crc32(state[12:]))
+                put(self.source / "nvs/katmed/state", state)
+                candidate = self.root / f"bad-current-{name}"
+                self.assertNotEqual(self.run_tool("export", self.source, candidate).returncode, 0)
+                self.assertFalse(candidate.exists())
 
     def test_legacy_v9_is_canonicalized_for_stage(self):
         length = struct.unpack_from("<I", self.v9_fixture)[0]
@@ -215,7 +243,7 @@ class MigrationContract(unittest.TestCase):
         self.assertEqual(self.run_tool("import-stage", self.package, self.staged).returncode, 0)
         self.assertEqual((self.package / "nvs/katmed/state").read_bytes(), previous_state)
         canonical = (self.staged / "nvs/katmed/state").read_bytes()
-        self.assertEqual(canonical[4], 11)
+        self.assertEqual(canonical[4], 12)
         decoded = json.loads(subprocess.run([str(self.store_codec)], input=canonical,
                                             stdout=subprocess.PIPE, check=True).stdout)
         self.assertEqual(decoded["mesh_name_count"], 64)
@@ -236,7 +264,7 @@ class MigrationContract(unittest.TestCase):
                 self.assertEqual(self.run_tool("import-stage", package, staged).returncode, 0)
                 self.assertEqual((package / "nvs/katmed/state").read_bytes(), previous_state)
                 canonical = (staged / "nvs/katmed/state").read_bytes()
-                self.assertEqual(canonical[4], 11)
+                self.assertEqual(canonical[4], 12)
                 decoded = json.loads(subprocess.run([str(self.store_codec)], input=canonical,
                                                     stdout=subprocess.PIPE, check=True).stdout)
                 self.assertEqual(decoded["language"], 0)

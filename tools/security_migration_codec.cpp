@@ -50,7 +50,7 @@ static int validate()
     std::array<uint8_t, KATMED_STORE_BLOB_MAX> canonical{};
     size_t canonical_size = 0;
     if (encode_record(record, canonical.data(), &canonical_size) != STORE_OK) return 2;
-    if (input[4 + 4] == 11 &&
+    if (input[4 + 4] == kCurrentVersion &&
         (canonical_size != state_size ||
          std::memcmp(canonical.data(), input.data() + 4, state_size) != 0)) return 1;
     StoreRecord check{};
@@ -74,7 +74,7 @@ static int fixture(unsigned version)
     r.device = 1; r.epoch = 1; r.next_sequence = 2; r.image_count = 75;
     r.shared = app_default_settings(); r.shared.revision.coordinator = 1;
     r.local = {ORIENTATION_0, DIGITAL_LARGE, 1};
-    r.language = version == 11 ? KATMED_LANG_DE : KATMED_LANG_EN;
+    r.language = version >= 11 ? KATMED_LANG_DE : KATMED_LANG_EN;
     r.group_origin = STORE_GROUP_ORIGIN_FRESH_UNBOUND;
     if (version <= 8) {
         r.group_origin = STORE_GROUP_ORIGIN_FIRST_BOUND;
@@ -154,7 +154,8 @@ int main(int argc, char **argv)
 {
     if (argc != 2) return 2;
     if (std::strcmp(argv[1], "validate") == 0) return validate();
-    if (std::strcmp(argv[1], "synthetic-fixture") == 0) return fixture(11);
+    if (std::strcmp(argv[1], "synthetic-fixture") == 0) return fixture(kCurrentVersion);
+    if (std::strcmp(argv[1], "synthetic-v11-fixture") == 0) return fixture(11);
     if (std::strcmp(argv[1], "synthetic-v10-fixture") == 0) return fixture(10);
     if (std::strcmp(argv[1], "synthetic-v9-fixture") == 0) return fixture(9);
     if (std::strcmp(argv[1], "synthetic-v8-fixture") == 0) return fixture(8);

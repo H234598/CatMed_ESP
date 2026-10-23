@@ -35,6 +35,12 @@ target_compile_definitions(check_ui_surface PRIVATE LV_LVGL_H_INCLUDE_SIMPLE)
 target_compile_options(check_ui_surface PRIVATE -Wall -Wextra -Werror)
 target_compile_features(check_ui_surface PRIVATE cxx_std_17)
 target_link_libraries(check_ui_surface PRIVATE lvgl m)
+# Account actual requested bytes in this existing host test only, not TLSF slack.
+target_compile_definitions(check_ui_surface PRIVATE KATMED_SURFACE_ALLOC_ACCOUNTING=1)
+target_link_options(check_ui_surface PRIVATE
+    "LINKER:--wrap=lv_malloc_core"
+    "LINKER:--wrap=lv_realloc_core"
+    "LINKER:--wrap=lv_free_core")
 
 add_executable(check_ui_morse
     "${ROOT}/tests/check_ui_morse.c"

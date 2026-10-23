@@ -8,6 +8,7 @@
 #include "c3_pins.h"
 #include "lvgl.h"
 #include "src/misc/lv_text_ap.h"
+#include "src/misc/lv_text_private.h"
 
 #include <assert.h>
 #include <math.h>
@@ -26,6 +27,69 @@ _Static_assert(KATMED_C3_TOUCH_SDA == 4 && KATMED_C3_TOUCH_SCL == 5 &&
                KATMED_C3_TOUCH_RESET == 1 && KATMED_C3_TOUCH_INTERRUPT == 0 &&
                KATMED_C3_TOUCH_I2C_ADDRESS_7BIT == 0x15,
                "C3 touch pins must match the GUITION evidence");
+
+#ifdef KATMED_SURFACE_ALLOC_ACCOUNTING
+/* Host-only request accounting. TLSF block capacity can gain alignment slack
+ * without retaining another allocation or another requested byte. */
+static struct { void *pointer; size_t bytes; } surface_allocations[4096];
+void *__real_lv_malloc_core(size_t bytes);
+void *__real_lv_realloc_core(void *pointer, size_t bytes);
+void __real_lv_free_core(void *pointer);
+static void surface_remember(void *pointer, size_t bytes)
+{
+    if (!pointer) return;
+    for (unsigned i = 0; i < 4096; ++i) {
+        if (!surface_allocations[i].pointer) {
+            surface_allocations[i].pointer = pointer;
+            surface_allocations[i].bytes = bytes;
+            return;
+        }
+    }
+    abort();
+}
+static void surface_forget(void *pointer)
+{
+    if (!pointer) return;
+    for (unsigned i = 0; i < 4096; ++i) {
+        if (surface_allocations[i].pointer == pointer) {
+            surface_allocations[i].pointer = NULL;
+            surface_allocations[i].bytes = 0;
+            return;
+        }
+    }
+    abort();
+}
+void *__wrap_lv_malloc_core(size_t bytes)
+{
+    void *pointer = __real_lv_malloc_core(bytes);
+    surface_remember(pointer, bytes);
+    return pointer;
+}
+void *__wrap_lv_realloc_core(void *pointer, size_t bytes)
+{
+    void *replacement = __real_lv_realloc_core(pointer, bytes);
+    if (replacement) {
+        surface_forget(pointer);
+        surface_remember(replacement, bytes);
+    }
+    return replacement;
+}
+void __wrap_lv_free_core(void *pointer)
+{
+    surface_forget(pointer);
+    __real_lv_free_core(pointer);
+}
+static void surface_live_requests(size_t *count, size_t *bytes)
+{
+    *count = *bytes = 0;
+    for (unsigned i = 0; i < 4096; ++i) {
+        if (surface_allocations[i].pointer) {
+            ++*count;
+            *bytes += surface_allocations[i].bytes;
+        }
+    }
+}
+#endif
 
 typedef struct {
     int width, height;
@@ -513,6 +577,67 @@ static int check_option_sync(int width, int height)
     return 0;
 }
 
+/* Exercise the real shaping API with insufficient temporary heap. The output
+ * buffer is caller-owned and sized for both original and shaped public text. */
+static void text_shaping_allocation_failure(void)
+{
+    /* Legacy shaping lookup truncates supplementary codepoints to16bits.
+     * Its nominal byte count can therefore be smaller than the raw UTF-8. */
+    const char supplementary[] =
+        "\xF0\x90\x98\xA7\xF0\x90\x98\xA7\xF0\x90\x98\xA7\xF0\x90\x98\xA7\xF0\x90\x98\xA7"
+        "\xF0\x90\x98\xA7\xF0\x90\x98\xA7\xF0\x90\x98\xA7\xF0\x90\x98\xA7\xF0\x90\x98\xA7"
+        "\xF0\x90\x98\xA7\xF0\x90\x98\xA7\xF0\x90\x98\xA7\xF0\x90\x98\xA7\xF0\x90\x98\xA7"
+        "\xF0\x90\x98\xA7\xF0\x90\x98\xA7\xF0\x90\x98\xA7\xF0\x90\x98\xA7\xF0\x90\x98\xA7"
+        "\xF0\x90\x98\xA7\xF0\x90\x98\xA7\xF0\x90\x98\xA7\xF0\x90\x98\xA7\xF0\x90\x98\xA7"
+        "\xF0\x90\x98\xA7\xF0\x90\x98\xA7\xF0\x90\x98\xA7\xF0\x90\x98\xA7\xF0\x90\x98\xA7"
+        "\xF0\x90\x98\xA7\xF0\x90\x98\xA7\xF0\x90\x98\xA7\xF0\x90\x98\xA7\xF0\x90\x98\xA7"
+        "\xF0\x90\x98\xA7\xF0\x90\x98\xA7\xF0\x90\x98\xA7\xF0\x90\x98\xA7\xF0\x90\x98\xA7";
+    const char *samples[] = {
+        "A long public warning must remain readable when shaping has no heap.",
+        "السلام عليكم السلام عليكم السلام عليكم", supplementary
+    };
+    for (unsigned i = 0; i < sizeof(samples) / sizeof(samples[0]); ++i) {
+        lv_mem_monitor_t before, limited, after;
+        lv_mem_monitor(&before);
+        void *pressure[2048];
+        unsigned allocated = 0;
+        while (allocated < sizeof(pressure) / sizeof(pressure[0])) {
+            void *block = lv_malloc(32);
+            if (!block) break;
+            pressure[allocated++] = block;
+        }
+        assert(allocated && allocated < sizeof(pressure) / sizeof(pressure[0]));
+        lv_mem_monitor(&limited);
+        assert(limited.free_biggest_size <
+               sizeof(uint32_t) * (lv_text_get_encoded_length(samples[i]) + 1));
+        char output[256];
+        assert(strlen(samples[i]) < sizeof(output));
+        assert(lv_text_ap_strlen(samples[i]) + 1 < sizeof(output));
+        const size_t capacity = lv_text_ap_strlen(samples[i]) + 1;
+        output[capacity] = (char)0x5a;
+        lv_text_ap_proc(samples[i], output);
+        assert((unsigned char)output[capacity] == 0x5a);
+        if (strlen(samples[i]) < capacity) {
+            assert(strcmp(output, samples[i]) == 0);
+            char inplace[256];
+            strcpy(inplace, samples[i]);
+            lv_text_ap_proc(inplace, inplace);
+            assert(strcmp(inplace, samples[i]) == 0);
+        } else {
+            assert(output[0] == '\0');
+        }
+        while (allocated) lv_free(pressure[--allocated]);
+        lv_mem_monitor(&after);
+        assert(after.used_cnt == before.used_cnt);
+        assert(after.free_size + after.free_cnt * sizeof(size_t) ==
+               before.free_size + before.free_cnt * sizeof(size_t));
+    }
+    char shaped[256];
+    lv_text_ap_proc(samples[1], shaped);
+    assert(strcmp(shaped, samples[1]) != 0 &&
+           "ordinary Arabic shaping must resume after temporary pressure");
+}
+
 int main(int argc, char **argv)
 {
     if (argc == 4 && strcmp(argv[1], "option-sync") == 0)
@@ -529,6 +654,7 @@ int main(int argc, char **argv)
     uint8_t *draw_buffer = malloc((size_t)host.width * 16 * 2);
     assert(host.frame && draw_buffer);
     lv_init();
+    text_shaping_allocation_failure();
     lv_display_t *display = lv_display_create(host.width, host.height);
     lv_display_set_color_format(display, LV_COLOR_FORMAT_RGB565);
     lv_display_set_buffers(display, draw_buffer, NULL, (uint32_t)host.width * 16 * 2,
@@ -1188,13 +1314,26 @@ int main(int argc, char **argv)
     swipe(35, 185, 2500);
     cycle_views(screen);
     lv_mem_monitor(&before_cycles);
+#ifdef KATMED_SURFACE_ALLOC_ACCOUNTING
+    size_t requested_count_before, requested_bytes_before;
+    surface_live_requests(&requested_count_before, &requested_bytes_before);
+    assert(requested_count_before == before_cycles.used_cnt);
+#endif
     for (int i = 0; i < 50; ++i) cycle_views(screen);
     lv_mem_monitor(&after_cycles);
     if (after_cycles.free_size < before_cycles.free_size)
         fprintf(stderr, "cycle memory before=%zu after=%zu delta=%zu\n",
                 before_cycles.free_size, after_cycles.free_size,
                 before_cycles.free_size - after_cycles.free_size);
+#ifdef KATMED_SURFACE_ALLOC_ACCOUNTING
+    size_t requested_count_after, requested_bytes_after;
+    surface_live_requests(&requested_count_after, &requested_bytes_after);
+    assert(requested_count_after == after_cycles.used_cnt);
+    assert(requested_count_after <= requested_count_before);
+    assert(requested_bytes_after <= requested_bytes_before);
+#else
     assert(after_cycles.free_size >= before_cycles.free_size);
+#endif
 
     /* A direct view switch must free the old menu before creating the clock. */
     ui_render(&state, &local, CLOCK, &clock);
@@ -1610,7 +1749,9 @@ int main(int argc, char **argv)
     }
     katmed_i18n_select(KATMED_LANG_FR);
     clock.monotonic_ms += 1000;
-    ui_render(&state, &local, SETTINGS, &clock);
+    /* This is an isolated typography fixture, not a second settings overlay.
+     * The actual physical-reset dialog/confirmation is exercised above. */
+    ui_render(&state, &local, CLOCK, &clock);
     lv_obj_t *long_dialog = lv_obj_create(screen);
     lv_obj_set_size(long_dialog, host.width - 16, host.height - 16);
     lv_obj_center(long_dialog);
