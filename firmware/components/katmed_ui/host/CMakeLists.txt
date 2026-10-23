@@ -272,6 +272,7 @@ target_sources(check_alarm_render PRIVATE
 get_target_property(ALARM_REAL_INCLUDES check_ui_refinement INCLUDE_DIRECTORIES)
 target_include_directories(check_alarm_render PRIVATE ${ALARM_REAL_INCLUDES})
 target_link_libraries(check_alarm_render PRIVATE lvgl m z tfpsacrypto)
+target_link_options(check_alarm_render PRIVATE -Wl,--wrap=fread -Wl,--wrap=fwrite -Wl,--wrap=katmed_images_hash_start -Wl,--wrap=lv_malloc_core)
 foreach(format IN ITEMS "240;240" "172;320" "320;172")
     list(GET format 0 width)
     list(GET format 1 height)

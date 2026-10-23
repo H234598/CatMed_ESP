@@ -14,12 +14,18 @@
 namespace {
 bool fail_next_image_path_copy = false;
 unsigned failed_image_path_copies = 0;
+bool fail_draw_read=false;
+static lv_fs_res_t (*original_fs_read)(lv_fs_drv_t *,void *,void *,uint32_t,uint32_t *);
+static lv_fs_res_t draw_read(lv_fs_drv_t *drv,void *f,void *buf,uint32_t want,uint32_t *got) {
+    if(fail_draw_read) { if(got) *got=0; katmed_images_record_error(KATMED_IMAGE_IO_ERROR); return LV_FS_RES_FS_ERR; }
+    return original_fs_read(drv,f,buf,want,got);
+}
 }
 
 extern "C" char *__real_lv_strdup(const char *value);
 extern "C" char *__wrap_lv_strdup(const char *value)
 {
-    if(fail_next_image_path_copy && value != nullptr && std::strcmp(value, "K:/01_0.jpg") == 0) {
+    if(fail_next_image_path_copy && value != nullptr && std::strncmp(value, "K:/active-", 10) == 0) {
         fail_next_image_path_copy = false;
         ++failed_image_path_copies;
         return nullptr;
@@ -354,7 +360,7 @@ int main(int argc, char **argv)
         lv_refr_now(display);
         expect(flushes != 0 && !lv_obj_is_hidden(image),
                "real successful LVGL refresh failed");
-        expect(std::strcmp(static_cast<const char *>(lv_image_get_src(image)), "K:/00_0.jpg") == 0,
+        expect(std::strncmp(static_cast<const char *>(lv_image_get_src(image)), "K:/active-", 10) == 0,
                "source-copy regression needs a previously selected image");
         // Fail only the source-string allocation while changing from image 0
         // to image 1. LVGL's existing old source must not count as success.
@@ -374,15 +380,18 @@ int main(int argc, char **argv)
                "source-string allocation failure leaked a handle or changed the active alarm");
         lv_refr_now(display);
         expect(katmed_images_present(image, fallback, 1, ORIENTATION_0) == KATMED_IMAGE_OK &&
-               std::strcmp(static_cast<const char *>(lv_image_get_src(image)), "K:/01_0.jpg") == 0 &&
+               std::strncmp(static_cast<const char *>(lv_image_get_src(image)), "K:/active-", 10) == 0 &&
                !lv_obj_is_hidden(image) && lv_obj_is_hidden(fallback),
                "image path did not recover to the requested image after an allocation failure");
         lv_refr_now(display);
         // Select and preflight successfully, then fail only the later real
         // draw. The fallback must be switched after LVGL ends rendering.
         backend.fail = true;
+        lv_fs_drv_t *driver=lv_fs_get_drv('K');
+        original_fs_read=driver->read_cb;driver->read_cb=draw_read;fail_draw_read=true;
         lv_obj_invalidate(image);
         lv_refr_now(display);
+        fail_draw_read=false;driver->read_cb=original_fs_read;
         expect(lv_obj_is_hidden(image) &&
                !lv_obj_is_hidden(fallback),
                "late draw-time I/O failure did not show neutral fallback");

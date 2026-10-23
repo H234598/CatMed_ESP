@@ -64,6 +64,9 @@ const KatmedImageVariant *katmed_images_variant(uint32_t index, uint32_t profile
 uint32_t katmed_images_profile_for_orientation(Orientation orientation);
 void katmed_images_record_error(KatmedImageStatus status);
 void katmed_images_clear_error(void);
+/* Changes on mount/remount/unmount, never a validation-success flag. */
+uint32_t katmed_images_asset_generation(void);
+void katmed_images_assets_changed(void);
 uint32_t katmed_images_open_file_count(void);
 
 #ifdef __cplusplus

@@ -24,6 +24,9 @@ static KatmedImageStatus last_error = KATMED_IMAGE_UNAVAILABLE;
 static KatmedImageTimingSample pack_hash_timing;
 static KatmedImageTimingSample variant_hash_timing;
 static atomic_uint_least32_t variant_sequence;
+static atomic_uint_least32_t asset_generation;
+uint32_t katmed_images_asset_generation(void) { return atomic_load(&asset_generation); }
+void katmed_images_assets_changed(void) { atomic_fetch_add(&asset_generation, 1u); }
 
 /* Web validation is outside the LVGL lock. Protect only complete sample copies,
  * never hashing, allocation, provider reads or the whole UI operation. */
@@ -119,6 +122,7 @@ KatmedImageStatus katmed_images_builtin_variant_info(uint32_t index,
 
 static void clear_catalog_state(void)
 {
+    katmed_images_assets_changed();
     memset(&mounted_storage, 0, sizeof(mounted_storage));
     mounted = false;
     last_error = KATMED_IMAGE_UNAVAILABLE;

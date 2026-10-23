@@ -249,6 +249,8 @@ KatmedImageStatus katmed_image_store_mount(void)
         katmed_source_writer_leave();
         return KATMED_IMAGE_IO_ERROR;
     }
+    /* Never trust a derived cache left by a power loss or previous boot. */
+    (void)unlink(STORE_MOUNT_POINT "/.render-cache.bin");
     mounted = true;
     katmed_source_writer_leave();
     return KATMED_IMAGE_OK;
@@ -530,6 +532,8 @@ KatmedImageStatus katmed_image_store_stats(KatmedImageStoreStats *out)
 KatmedImageStatus katmed_image_store_clear_user_data(void)
 {
     if (!enter_store()) return KATMED_IMAGE_UNAVAILABLE;
+    katmed_images_assets_changed();
+    (void)unlink(STORE_MOUNT_POINT "/.render-cache.bin");
     for (size_t i=0;i<STORE_MAX_UPLOADS;++i) {
         if (uploads[i].stream) fclose(uploads[i].stream);
         uploads[i]=(UploadSlot){0};
