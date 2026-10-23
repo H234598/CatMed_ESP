@@ -13,6 +13,13 @@ from pathlib import Path
 
 PATCHES = (
     (
+        "src/core/lv_obj_style.c",
+        '295d7a500a7a592032e91df9bd3341573e87f674db91f635a38af7966c37a8e9',
+        '0b149a5bdb4a83df72581f72ab812932ac7d5860211e89b7e62207efcdf73326',
+        b'    lv_obj_style_t * style_trans = get_trans_style(obj, part);\n    lv_style_set_prop',
+        b'    lv_obj_style_t * style_trans = get_trans_style(obj, part);\n    if(style_trans == NULL) return;\n    lv_style_set_prop',
+    ),
+    (
         "src/image/lv_tjpgd.c",
         "3b346915201651112782c966e8bf63aff847bb31b3d7f22e076b24005ee4a7a6",
         "4a23bd84c5ea8382bb5793166a320d2b67a99ab21ca72bac45a8b4067410b23f",

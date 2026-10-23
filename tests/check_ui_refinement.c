@@ -123,6 +123,11 @@ int UI_REFINEMENT_ENTRYPOINT(int argc,char **argv)
         click_label(screen,"Diashow / Abspielreienfolge");
         const uint32_t medication=refinement_state()->settings.medication_seconds;
         const int64_t deadline=refinement_state()->deadline.effective_utc.ms;
+        /* Realize the image provider once before comparing steady-state heap.
+         * Initial Settings has not submitted an image event; that first event
+         * retains one bounded allocation. Keep both live-count and payload
+         * checks strict across the following 150 callbacks / 50 decodes. */
+        assert(refinement_image(1)==APP_OK);refresh();draw();
         lv_mem_monitor_t before,after;lv_mem_monitor(&before);
         for(unsigned i=0;i<150;++i) {
             click_label(screen,i%3==0?"Zufall":i%3==1?"Aus":"Nach Namen");
