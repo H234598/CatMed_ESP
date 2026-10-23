@@ -8,6 +8,48 @@ KatmedImageStatus katmed_images_present(lv_obj_t *, lv_obj_t *, uint32_t, Orient
 #include "katmed_images_internal.h"
 #include "katmed_images_hash.h"
 #include "src/image/lv_image_decoder_private.h"
+
+/* Mirror actual cache writes/seeks into the same native LittleFS core as C3.
+ * RAM block device measures work, never host elapsed time or real flash. */
+#include "lfs.h"
+static uint8_t io_flash[512u * 4096u];
+static uint64_t io_read_bytes, io_prog_bytes, io_erases;
+static bool io_mirror;
+static uint8_t io_expected[172812];
+static size_t io_expected_size;
+static lfs_t io_fs;
+static lfs_file_t io_file;
+static int io_read(const struct lfs_config *c,lfs_block_t b,lfs_off_t o,void *p,lfs_size_t n) {
+    (void)c;assert(b<512 && o+n<=4096);memcpy(p,io_flash+b*4096+o,n);io_read_bytes+=n;return 0;
+}
+static int io_prog(const struct lfs_config *c,lfs_block_t b,lfs_off_t o,const void *p,lfs_size_t n) {
+    (void)c;assert(b<512 && o+n<=4096);const uint8_t *in=p;
+    for(unsigned i=0;i<n;++i) {assert((io_flash[b*4096+o+i]&in[i])==in[i]);io_flash[b*4096+o+i]&=in[i];}
+    io_prog_bytes+=n;return 0;
+}
+static int io_erase(const struct lfs_config *c,lfs_block_t b) {(void)c;assert(b<512);memset(io_flash+b*4096,255,4096);++io_erases;return 0;}
+static int io_sync(const struct lfs_config *c) {(void)c;return 0;}
+static const struct lfs_config io_cfg={.read=io_read,.prog=io_prog,.erase=io_erase,.sync=io_sync,
+ .read_size=128,.prog_size=128,.block_size=4096,.block_count=512,.block_cycles=512,.cache_size=512,.lookahead_size=128};
+static void io_begin(void) {
+ memset(io_flash,255,sizeof(io_flash));assert(lfs_format(&io_fs,&io_cfg)==0);assert(lfs_mount(&io_fs,&io_cfg)==0);
+ assert(lfs_file_open(&io_fs,&io_file,"cache",LFS_O_RDWR|LFS_O_CREAT|LFS_O_TRUNC)==0);
+ io_read_bytes=io_prog_bytes=io_erases=0;io_mirror=true;
+}
+static void io_end(unsigned width,unsigned height) {
+ io_mirror=false;
+ assert(lfs_file_seek(&io_fs,&io_file,0,LFS_SEEK_SET)==0);
+ uint8_t actual[512];
+ for(size_t pos=0;pos<io_expected_size;) {
+  size_t n=io_expected_size-pos<sizeof(actual)?io_expected_size-pos:sizeof(actual);
+  assert(lfs_file_read(&io_fs,&io_file,actual,n)==(lfs_ssize_t)n);
+  assert(memcmp(io_expected+pos,actual,n)==0);pos+=n;
+ }
+ assert(lfs_file_close(&io_fs,&io_file)==0);assert(lfs_unmount(&io_fs)==0);
+ printf("native_littlefs_cache_work read=%llu prog=%llu erase=%llu payload=%u\n",(unsigned long long)io_read_bytes,(unsigned long long)io_prog_bytes,(unsigned long long)io_erases,width*height*3);fflush(stdout);
+ assert(io_prog_bytes < (uint64_t)width*height*3*4);
+}
+
 static bool fail_decoder_read;
 static uint64_t pack_reads, cache_bytes, hash_starts;
 bool __real_katmed_images_hash_start(KatmedImageHash *);
@@ -16,6 +58,17 @@ bool __wrap_katmed_images_hash_start(KatmedImageHash *hash) {
 }
 static FILE *source_file;
 static bool fail_cache_write, corrupt_cache_read;
+static bool fail_band_alloc, band_alloc_failed;
+static bool constrained_cache_alloc;
+static unsigned band_alloc_until_fail;
+void *__real_malloc(size_t);
+void *__wrap_malloc(size_t bytes) {
+    if(constrained_cache_alloc && bytes>10240u) return NULL;
+    if(fail_band_alloc && bytes>=516u && bytes<=960u && band_alloc_until_fail && --band_alloc_until_fail==0) {
+        band_alloc_failed=true; return NULL;
+    }
+    return __real_malloc(bytes);
+}
 enum BinFault { BIN_FAULT_NONE, BIN_OPEN_CONTEXT, BIN_OPEN_FILE, BIN_AREA_CONTEXT, BIN_AREA_DATA };
 static enum BinFault bin_fault;
 static bool bin_allocation_scope, bin_fault_hit;
@@ -59,12 +112,25 @@ size_t __wrap_fread(void *out, size_t size, size_t count, FILE *file) {
 }
 size_t __wrap_fwrite(const void *in, size_t size, size_t count, FILE *file) {
     if(fail_cache_write) return 0;
+    if(io_mirror && size && count) {
+        long pos=ftell(file);assert(pos>=0);
+        assert((size_t)pos+size*count<=sizeof(io_expected));
+        memcpy(io_expected+pos,in,size*count);
+        if((size_t)pos+size*count>io_expected_size) io_expected_size=(size_t)pos+size*count;
+        assert(lfs_file_seek(&io_fs,&io_file,pos,LFS_SEEK_SET)==pos);
+        assert(lfs_file_write(&io_fs,&io_file,in,size*count)==(lfs_ssize_t)(size*count));
+    }
     return __real_fwrite(in,size,count,file);
 }
 static lv_image_decoder_get_area_cb_t upstream_jpeg;
 static uint64_t jpeg_areas;
+static unsigned clipped_tail_mcus;
 static lv_result_t count_jpeg(lv_image_decoder_t *dec,lv_image_decoder_dsc_t *dsc,const lv_area_t *full,lv_area_t *area) {
-    ++jpeg_areas;return upstream_jpeg(dec,dsc,full,area);
+    ++jpeg_areas;
+    lv_result_t result=upstream_jpeg(dec,dsc,full,area);
+    if(result==LV_RESULT_OK && dsc->header.h==172 && area->y2==171 &&
+       lv_area_get_height(area)%8!=0) ++clipped_tail_mcus;
+    return result;
 }
 static lv_obj_t *background(lv_display_t *display) {
     lv_obj_t *screen=lv_display_get_screen_active(display);
@@ -88,7 +154,7 @@ static void check_decoder_clip(int width, int height)
     KatmedImageSelection selection;
     Orientation orientation = width > height ? ORIENTATION_90 : ORIENTATION_0;
     assert(katmed_images_select(0, orientation, &selection) == KATMED_IMAGE_OK);
-    /* This target intentionally uses the C3 JPEG fixture for all UI layouts. */
+    /* Derive geometry from the actual native JPEG, never UI layout alone. */
     width = selection.width;
     height = selection.height;
     const int bottoms[] = {15, height / 2 - 1, height - 1};
@@ -173,7 +239,10 @@ int main(int argc, char **argv)
     assert(app_init(&state, &settings, &clock, (EventId){1,17,1}, 1, catalog) == APP_OK);
     LocalSettings local = {.clock_style = DIGITAL_LARGE, .orientation = ORIENTATION_0};
     AppState quiet = state; quiet.alarm_active = false;
-    ui_render(&quiet, &local, BACKGROUND, &clock); draw();
+    io_begin(); constrained_cache_alloc=true;
+    ui_render(&quiet, &local, BACKGROUND, &clock);
+    constrained_cache_alloc=false;
+    io_end(host.width,host.height); draw();
     memcpy(baseline, host.frame, count * sizeof(*baseline));
     const int top = host.height == 240 ? 30 : host.height == 320 ? 40 : 22;
     const int end = host.height == 240 ? 210 : host.height == 320 ? 280 : 151;
@@ -240,10 +309,28 @@ int main(int argc, char **argv)
     assert(fallback);
     /* Orientation changes rebuild the one scene; compare to original JPEG. */
     assert(katmed_images_present(bg,fallback,0,ORIENTATION_90)==KATMED_IMAGE_OK);draw();
+#ifdef KATMED_ALARM_C6_EDGE_TEST
+    assert(strncmp((const char *)lv_image_get_src(bg),"K:/active-",10)==0);
+    assert(clipped_tail_mcus>1);
+    printf("native172_clipped_tail_mcus=%u cache_retained=1\n",clipped_tail_mcus);
+#endif
     memcpy(incremental,host.frame,count*sizeof(*incremental));
     KatmedImageSelection turned;assert(katmed_images_select(0,ORIENTATION_90,&turned)==KATMED_IMAGE_OK);
+#ifdef KATMED_ALARM_C6_EDGE_TEST
+    assert(turned.width==320 && turned.height==172);
+#endif
     lv_image_set_src(bg,turned.lvgl_path);lv_obj_invalidate(lv_screen_active());draw();
     assert(memcmp(incremental,host.frame,count*sizeof(*incremental))==0);
+    /* Optional bounded MCU-band allocation must not block first presentation. */
+    for(unsigned fail_at=1;fail_at<=8;fail_at+=7) {
+    fail_band_alloc=true; band_alloc_failed=false; band_alloc_until_fail=fail_at;
+    assert(katmed_images_present(bg,fallback,0,ORIENTATION_0)==KATMED_IMAGE_OK);
+    fail_band_alloc=false;
+    assert(band_alloc_failed && !lv_obj_is_hidden(bg));
+    assert(strncmp((const char *)lv_image_get_src(bg),"K:/active-",10)!=0);
+    assert(katmed_images_open_file_count()==0);
+    puts("cache_band_allocation_failure_original_JPEG=1");
+    }
     /* Optional cache failure preserves the supported original JPEG path. */
     fail_cache_write=true;
     assert(katmed_images_present(bg,fallback,0,local.orientation)==KATMED_IMAGE_OK);

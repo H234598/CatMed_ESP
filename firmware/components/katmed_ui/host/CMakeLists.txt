@@ -272,7 +272,7 @@ target_sources(check_alarm_render PRIVATE
 get_target_property(ALARM_REAL_INCLUDES check_ui_refinement INCLUDE_DIRECTORIES)
 target_include_directories(check_alarm_render PRIVATE ${ALARM_REAL_INCLUDES})
 target_link_libraries(check_alarm_render PRIVATE lvgl m z tfpsacrypto)
-target_link_options(check_alarm_render PRIVATE -Wl,--wrap=fread -Wl,--wrap=fwrite -Wl,--wrap=katmed_images_hash_start -Wl,--wrap=lv_malloc_core)
+target_link_options(check_alarm_render PRIVATE -Wl,--wrap=malloc -Wl,--wrap=fread -Wl,--wrap=fwrite -Wl,--wrap=katmed_images_hash_start -Wl,--wrap=lv_malloc_core)
 foreach(format IN ITEMS "240;240" "172;320" "320;172")
     list(GET format 0 width)
     list(GET format 1 height)
@@ -308,3 +308,35 @@ foreach(format "240;240" "172;320" "320;172")
     add_test(NAME ui_option_sync_${width}x${height}
         COMMAND check_ui_surface option-sync ${width} ${height})
 endforeach()
+
+# Startup cache work uses the target's unmodified LittleFS core on a RAM device.
+set(ALARM_LFS "${ROOT}/firmware/managed_components/joltwallet__littlefs/src/littlefs")
+target_sources(check_alarm_render PRIVATE "${ALARM_LFS}/lfs.c" "${ALARM_LFS}/lfs_util.c")
+target_include_directories(check_alarm_render PRIVATE "${ALARM_LFS}")
+
+# The clipped final MCU row must use a real 320x172 JPEG, not a C3 JPEG
+# displayed in a landscape UI. Reuse the same production-path test and LVGL.
+add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/alarm_c6_catalog.c"
+    COMMAND /usr/bin/python3 "${ROOT}/tools/generate_firmware_catalog.py"
+        --target c6 --output "${CMAKE_CURRENT_BINARY_DIR}/alarm_c6_catalog.c"
+    DEPENDS "${ROOT}/tools/generate_firmware_catalog.py"
+            "${ROOT}/assets/generated/manifest.json" VERBATIM)
+add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/c6_alarm_stream_fixture.bin"
+    COMMAND /usr/bin/python3 "${ROOT}/tests/image_stream_fixture.py" c6
+        "${CMAKE_CURRENT_BINARY_DIR}/c6_alarm_stream_fixture.bin"
+    DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/alarm_c6_catalog.c"
+            "${ROOT}/tests/image_stream_fixture.py" VERBATIM)
+get_target_property(ALARM_C6_SOURCES check_alarm_render SOURCES)
+list(REMOVE_ITEM ALARM_C6_SOURCES "${CMAKE_CURRENT_BINARY_DIR}/refinement_catalog.c")
+add_executable(check_alarm_render_c6 ${ALARM_C6_SOURCES}
+    "${CMAKE_CURRENT_BINARY_DIR}/alarm_c6_catalog.c")
+foreach(property IN ITEMS INCLUDE_DIRECTORIES COMPILE_DEFINITIONS COMPILE_OPTIONS LINK_LIBRARIES LINK_OPTIONS)
+    get_target_property(value check_alarm_render ${property})
+    set_property(TARGET check_alarm_render_c6 PROPERTY ${property} "${value}")
+endforeach()
+target_compile_features(check_alarm_render_c6 PRIVATE cxx_std_17)
+target_compile_definitions(check_alarm_render_c6 PRIVATE KATMED_ALARM_C6_EDGE_TEST=1)
+add_custom_target(alarm_c6_fixture DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/c6_alarm_stream_fixture.bin")
+add_dependencies(check_alarm_render_c6 alarm_c6_fixture)
+add_test(NAME alarm_render_native_c6_320x172 COMMAND check_alarm_render_c6 320 172
+    "${CMAKE_CURRENT_BINARY_DIR}/c6_alarm_stream_fixture.bin")

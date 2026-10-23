@@ -139,18 +139,53 @@ static FILE *begin_render_cache(const KatmedImageSelection *selection)
     return file;
 }
 
+/* Native TJPGD visits MCU blocks left-to-right, then the next MCU row.
+ * Gather only that row before appending raster bytes. Random writes on
+ * LittleFS otherwise flush/copy the growing suffix at every MCU scanline. */
+typedef struct {
+    uint8_t *row[16];
+    uint32_t stride;
+    int32_t next_y, next_x, capacity_rows, rows;
+} CacheBand;
+
 static bool cache_decoded_area(FILE *file, const lv_image_decoder_dsc_t *decoder,
-                               const lv_area_t *area)
+                               const lv_area_t *area, CacheBand *band)
 {
     const lv_draw_buf_t *buffer = decoder->decoded;
+    int32_t width = lv_area_get_width(area), rows = lv_area_get_height(area);
     if(!buffer || buffer->header.cf != LV_COLOR_FORMAT_RGB888 ||
-       area->x1 < 0 || area->y1 < 0 || area->x2 >= decoder->header.w || area->y2 >= decoder->header.h)
+       area->x1 < 0 || area->y1 != band->next_y || area->x1 != band->next_x ||
+       area->x2 >= decoder->header.w || area->y2 >= decoder->header.h ||
+       rows <= 0 || rows > 16 || width <= 0 ||
+       buffer->header.stride < (uint32_t)width * 3u)
         return false;
-    size_t row_bytes = (size_t)lv_area_get_width(area) * 3u;
-    for(int32_t y=area->y1; y<=area->y2; ++y) {
-        long offset = sizeof(lv_image_header_t) + ((long)y * decoder->header.w + area->x1) * 3;
-        const uint8_t *row = buffer->data + (size_t)(y-area->y1) * buffer->header.stride;
-        if(fseek(file, offset, SEEK_SET) || fwrite(row, 1, row_bytes, file) != row_bytes) return false;
+    uint32_t stride = (uint32_t)decoder->header.w * 3u;
+    uint32_t needed = stride * (uint32_t)rows;
+    if(!band->stride) {
+        /* One MCU row only, split into <=960-byte allocations: do not
+         * require an 11.5/15KiB contiguous block on the fragmented target. */
+        if(needed > 15360u) return false;
+        band->stride = stride;
+        for(int32_t y=0; y<rows; ++y) {
+            band->row[y] = malloc(stride);
+            if(!band->row[y]) return false;
+        }
+        band->capacity_rows = rows;
+    }
+    if(stride != band->stride || rows > band->capacity_rows) return false;
+    /* The final native MCU band can be shorter than allocated capacity.
+     * Latch each band's height at its first tile; enforce only within it. */
+    if(band->next_x == 0) band->rows = rows;
+    else if(band->rows != rows) return false;
+    for(int32_t y=0; y<rows; ++y)
+        memcpy(band->row[y] + (size_t)area->x1 * 3u,
+               buffer->data + (size_t)y * buffer->header.stride, (size_t)width * 3u);
+    band->next_x = area->x2 + 1;
+    if(band->next_x == decoder->header.w) {
+        for(int32_t y=0; y<rows; ++y)
+            if(fwrite(band->row[y], 1, stride, file) != stride) return false;
+        band->next_x = 0;
+        band->next_y = area->y2 + 1;
     }
     return true;
 }
@@ -570,10 +605,12 @@ static KatmedImageStatus decode_check(const KatmedImageSelection *selection)
                       (lv_coord_t)selection->height - 1};
     lv_area_t area = {LV_COORD_MIN, LV_COORD_MIN, LV_COORD_MIN, LV_COORD_MIN};
     bool complete = false;
+    CacheBand band = {0};
     for(uint32_t i = 0; i < 1280u; ++i) {
         if(lv_image_decoder_get_area(&decoder, &full, &area) != LV_RESULT_OK) break;
-        if(cache && !cache_decoded_area(cache, &decoder, &area)) {
+        if(cache && !cache_decoded_area(cache, &decoder, &area, &band)) {
             fclose(cache); cache=NULL; clear_render_cache();
+            for(unsigned row=0; row<16; ++row) { free(band.row[row]); band.row[row]=NULL; }
         }
         if(area.x2 == (lv_coord_t)selection->width - 1 &&
            area.y2 == (lv_coord_t)selection->height - 1) {
@@ -582,6 +619,7 @@ static KatmedImageStatus decode_check(const KatmedImageSelection *selection)
         }
     }
     lv_image_decoder_close(&decoder);
+    for(unsigned row=0; row<16; ++row) free(band.row[row]);
     if(cache) (void)finish_render_cache(cache, complete);
 #ifdef ESP_PLATFORM
     if(writer) katmed_source_writer_leave();
