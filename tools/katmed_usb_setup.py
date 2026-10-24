@@ -300,10 +300,14 @@ def _drain_startup(port: SerialPort, clock: Callable[[], float] = time.monotonic
                             pending.append(byte)
                         else:
                             overlong = True
-    if phase_observer is not None and known_phase:
+    if (phase_observer is not None and known_phase and
+            (overlong or len(pending) > MAX_DIAG_CHARS + int(pending.endswith(b"\r")))):
         if rejection_observer is not None:
-            rejection_observer("drain_incomplete")
-        raise SetupError("Numerischer KM1-Phasenbeleg ist unvollständig")
+            rejection_observer("drain_line_overlong")
+        raise SetupError("Numerischer KM1-Phasenbeleg ist beschädigt")
+    # The fixed observation deadline can split a valid firmware line. Only LF
+    # publishes a phase above; discard this bounded suffix without inventing a
+    # witness or losing previously complete phases. Oversize input still fails.
     # No request has been sent yet. Discard a possible partial boot line so
     # it cannot merge with the first KM1 response.
     try:

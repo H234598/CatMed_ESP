@@ -373,5 +373,113 @@ class UsbSetupTests(unittest.TestCase):
         self.assertTrue(fake.closed)
 
 
+class StartupPhaseBoundaryTests(unittest.TestCase):
+    """Exercise byte framing using the compiled production C formatter."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        import subprocess
+        cls.directory = tempfile.TemporaryDirectory()
+        d = Path(cls.directory.name)
+        (d / "esp_log.h").write_text(
+            '#include <stdio.h>\n'
+            '#define ESP_LOGI(tag,fmt,...) printf("I (10) " tag ": " fmt "\\n", __VA_ARGS__)\n')
+        (d / "emit.c").write_text('''
+#include "runtime_metrics.h"
+int main(void) {
+ KatmedUsbPhase p={.phase_seq=1,.uptime_ms=10,.boot_domain=123,.read=1};
+ katmed_runtime_usb_phase_log(&p);
+ KatmedRuntimeMetricInput m={0};katmed_runtime_metrics_log(&m);
+ p.phase_seq=2;p.task=1;katmed_runtime_usb_phase_log(&p);
+ KatmedRuntimeEvidenceHealth h={0};KatmedRuntimeEvidenceState s={0};
+ katmed_runtime_evidence_log(&s,&h);
+ p.phase_seq=3;p.status=1;p.queue_ok=1;p.main_take=1;p.reply_ready=1;p.reply_call=1;
+ katmed_runtime_usb_phase_log(&p);return 0;
+}
+''')
+        root = Path(__file__).resolve().parents[2]
+        subprocess.run(["cc", "-std=c11", "-I" + str(d),
+                        "-I" + str(root / "firmware/main"),
+                        str(root / "firmware/main/runtime_metrics.c"),
+                        str(d / "emit.c"), "-o", str(d / "emit")],
+                       check=True, capture_output=True)
+        # Public fixed numbers only; generated log bytes remain in memory.
+        cls.stream = subprocess.check_output([str(d / "emit")])
+        assert len(cls.stream) == 1547
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.directory.cleanup()
+
+    class Port(BootSerial):
+        def __init__(self, stream: bytes, chunk: int):
+            super().__init__(stream, [STATUS])
+            self.chunk, self.now = chunk, 0.0
+
+        def read(self, size: int = 1) -> bytes:
+            data = super().read(min(size, self.chunk))
+            self.now += 0.001 if data else 6.0
+            return data
+
+    def drain(self, stream: bytes, chunk: int = 256):
+        port = self.Port(stream, chunk)
+        phases, rejects = [], []
+        setup._drain_startup(port, lambda: port.now, phases.append, rejects.append)
+        self.assertTrue(port.drained)
+        self.assertEqual([], port.writes)
+        self.assertEqual([], rejects)
+        return port, phases
+
+    def test_complete_native_mixed_stream_and_chunked_line_endings(self) -> None:
+        for ending in (b"\n", b"\r\n"):
+            for chunk in (1, 7, 31, 256):
+                with self.subTest(ending=ending, chunk=chunk):
+                    _, phases = self.drain(self.stream.replace(b"\n", ending), chunk)
+                    self.assertEqual([1, 2, 3], [p["phase_seq"] for p in phases])
+                    self.assertEqual(1, phases[-1]["reply_call"])
+
+    def test_deadline_tail_never_adds_a_phase_or_erases_previous_witness(self) -> None:
+        tag = b"I (10) katmed_usb_phase:"
+        second = self.stream.find(tag, len(tag))
+        third = self.stream.rfind(tag)
+        for cut, expected, ready in ((second + len(tag) + 9, [1], False),
+                                     (third + len(tag) + 9, [1, 2], True),
+                                     (len(self.stream) - 1, [1, 2], True)):
+            for chunk in (1, 7, 31, 256):
+                with self.subTest(cut=cut, chunk=chunk):
+                    _, phases = self.drain(self.stream[:cut], chunk)
+                    self.assertEqual(expected, [p["phase_seq"] for p in phases])
+                    self.assertEqual(ready, any(p["task"] == 1 and p["read"] == 1
+                                               for p in phases))
+        # A deadline between CR and LF is also an incomplete tail, not a phase.
+        _, phases = self.drain(self.stream[:-1] + b"\r", 1)
+        self.assertEqual([1, 2], [p["phase_seq"] for p in phases])
+
+    def test_complete_bad_phases_and_overlong_tail_still_fail_closed(self) -> None:
+        first = self.stream.split(b"\n", 1)[0]
+        cases = [first.replace(b"schema=1", b"schema=9") + b"\n",
+                 first.replace(b"task=0", b"task=3") + b"\r\n",
+                 first.replace(b"read=1", b"read=0").replace(b"status=0", b"status=1") + b"\n",
+                 first.replace(b"task=0", b"task=\r0") + b"\n",
+                 first + b"x" * setup.MAX_DIAG_CHARS,
+                 first + b"x" * setup.MAX_DIAG_CHARS + b"\n",
+                 b"x" * (setup.MAX_STARTUP_BYTES + 1)]
+        for raw in cases:
+            port = self.Port(raw, 256)
+            phases = []
+            with self.subTest(case=cases.index(raw)), self.assertRaises(setup.SetupError):
+                setup._drain_startup(port, lambda: port.now, phases.append)
+            self.assertEqual([], port.writes)
+            self.assertFalse(port.drained)
+
+    def test_read_and_purge_errors_are_not_tail_success(self) -> None:
+        for method in ("read", "reset_input_buffer"):
+            port = self.Port(self.stream[:-1], 256)
+            with patch.object(port, method, side_effect=RuntimeError("synthetic")), \
+                 self.assertRaises(setup.SetupError):
+                setup._drain_startup(port, lambda: port.now, lambda _: None)
+            self.assertEqual([], port.writes)
+
+
 if __name__ == "__main__":
     unittest.main()
