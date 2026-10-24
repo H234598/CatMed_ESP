@@ -97,6 +97,7 @@ static uint8_t backlight_percent=100;
 static bool backlight_enabled;
 #ifdef ESP_PLATFORM
 static bool pwm_ready;
+static bool pwm_fade_owned;
 #endif
 static Orientation current_orientation = ORIENTATION_0;
 static portMUX_TYPE touch_lock = portMUX_INITIALIZER_UNLOCKED;
@@ -605,6 +606,7 @@ void board_deinit(void)
     if (spi_ready) { (void)spi_bus_free(SPI2_HOST); spi_ready = false; }
 #ifdef ESP_PLATFORM
     if (pwm_ready) {(void)ledc_stop(LEDC_LOW_SPEED_MODE,LEDC_CHANNEL_0,0);pwm_ready=false;}
+    if (pwm_fade_owned) {ledc_fade_func_uninstall();pwm_fade_owned=false;}
 #endif
     if (backlight_ready) { (void)gpio_reset_pin(LCD_BACKLIGHT); backlight_ready = false; }
     portENTER_CRITICAL(&touch_lock);
@@ -633,6 +635,9 @@ BoardResult board_init(lv_display_t **display)
         .timer_sel=LEDC_TIMER_0,.duty=0,.hpoint=0};
     err=ledc_channel_config(&pwm_channel);if(err!=ESP_OK)goto fail;
     pwm_ready=true;
+    /* The thread-safe duty update API requires the native fade service. */
+    err=ledc_fade_func_install(0);if(err!=ESP_OK)goto fail;
+    pwm_fade_owned=true;
 #endif
     if (board_set_backlight(false) != BOARD_OK) goto fail;
     err = init_panel();
