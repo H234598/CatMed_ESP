@@ -127,7 +127,23 @@
     "Weiter": "Next",
     "Eingabe nach Drehung verworfen": "Entry discarded after rotation",
     "Zeit nicht synchronisiert": "Time not synchronized",
-    "Automatisch": "Automatic"
+    "Automatisch": "Automatic",
+    "Helligkeit: 1 bis 100 Prozent": "Brightness: 1 to 100 percent",
+    "Helligkeit": "Brightness",
+    "Nachtzeit HH:MM": "Night time HH:MM",
+    "Lokal gespeichert; Mesh-Bestätigungen prüfen": "Saved locally; check mesh acknowledgements",
+    "Nachtmodus ausschalten": "Disable night mode",
+    "Nachtmodus einschalten": "Enable night mode",
+    "Noch keine globale Nachtkopie": "No global night copy yet",
+    "Mesh-Ergebnis noch unbekannt": "Mesh result still unknown",
+    "Mesh: %u/%u bestätigt, %u abgelehnt, %u offen": "Mesh: %u/%u acknowledged, %u rejected, %u pending",
+    "Nachtmodus": "Night mode",
+    "Nachtbeginn HH:MM": "Night starts HH:MM",
+    "Nachtende HH:MM": "Night ends HH:MM",
+    "Setze Nachtmodus global auf allen Geräten im Mesh": "Set night mode globally on all devices in the mesh",
+    "Helligkeit ändern": "Change brightness",
+    "Nachtmodus einstellen": "Configure night mode",
+    "Änderung vorgemerkt": "Change queued"
   },
   "web_static": {
     "KatMed · Einstellungen": "KatMed · Settings",
@@ -229,7 +245,15 @@
     "Dieser Vorgang löscht WLAN-Profile, persönliche Laufzeittexte und Einstellungen, gespeicherte Mesh-Bindungen, Alarm- und Bestätigungszustände samt Historie, Webanmeldung und Sitzungen, private Zertifikats-/ACME-Zustände, eigene Uploads und veränderbare Caches.": "This process deletes Wi-Fi profiles, personal runtime texts and settings, saved mesh bindings, alarm and confirmation states including history, web login and sessions, private certificate/ACME states, custom uploads, and modifiable caches.",
     "Die Firmware und unveränderliche Standardbilder bleiben erhalten. In einem ausdrücklich gewählten privaten Build bleiben einkompilierte private Vorgaben Teil der Firmware; der Datenreset entfernt sie nicht.": "The firmware and unchangeable default images are retained. In an explicitly chosen private build, compiled-in private defaults remain part of the firmware; the data reset does not remove them.",
     "Nein, abbrechen": "No, cancel",
-    "Gerätestatus aktualisieren": "Update device status"
+    "Gerätestatus aktualisieren": "Update device status",
+    "Helligkeit und Nachtmodus": "Brightness and night mode",
+    "Helligkeit in Prozent": "Brightness in percent",
+    "Nachtmodus": "Night mode",
+    "Ein": "On",
+    "Nachtbeginn HH:MM": "Night starts HH:MM",
+    "Nachtende HH:MM": "Night ends HH:MM",
+    "Setze Nachtmodus global auf allen Geräten im Mesh": "Set night mode globally on all devices in the mesh",
+    "Noch keine globale Nachtkopie": "No global night copy yet"
   },
   "web_dynamic": {
     "Gerät: {0}": "Device: {0}",
@@ -321,6 +345,10 @@
     "Diese Konfiguration ist nur über HTTPS erreichbar.": "This configuration is only accessible via HTTPS.",
     "Lokaler Test": "Local test",
     "Sichere lokale Verbindung": "Secure local connection",
-    "Automatisch": "Automatic"
+    "Automatisch": "Automatic",
+    "Noch keine globale Nachtkopie": "No global night copy yet",
+    "Mesh-Ergebnis noch unbekannt": "Mesh result still unknown",
+    "Mesh: {0}/{1} bestätigt, {2} abgelehnt, {3} offen": "Mesh: {0}/{1} acknowledged, {2} rejected, {3} pending",
+    "Lokal gespeichert; Mesh-Bestätigungen prüfen": "Saved locally; check mesh acknowledgements"
   }
 }

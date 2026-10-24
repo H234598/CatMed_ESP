@@ -67,11 +67,12 @@
     applyLocale(response.language);
   }
   const views = ["setup-view", "login-view", "private-view"];
-  const fields = ["medication_hours", "image_hours", "next_due_hhmm", "clock_style", "orientation", "rotation"];
+  const fields = ["medication_hours", "image_hours", "next_due_hhmm", "clock_style", "orientation", "rotation", "brightness", "night_enabled", "night_start", "night_end"];
   const controls = {
     medication_hours: "medication-hours", image_hours: "image-hours",
     next_due_hhmm: "due-time", clock_style: "clock-style",
-    orientation: "orientation", rotation: "rotation"
+    orientation: "orientation", rotation: "rotation", brightness:"brightness",
+    night_enabled:"night-enabled", night_start:"night-start", night_end:"night-end"
   };
   let advancedTouchStart = null;
   let resetPoll = 0;
@@ -178,9 +179,24 @@
     for (const key of ["orientation_auto_supported", "orientation_automatic"])
       if (key in config && typeof config[key] !== "boolean") return false;
     if (config.orientation_automatic && !config.orientation_auto_supported) return false;
+    if(!/^(?:[1-9]|[1-9][0-9]|100)$/.test(config.brightness))return false;
+    if(!["on","off"].includes(config.night_enabled))return false;
+    for(const key of ["night_start","night_end"])
+      if(!/^(?:[01][0-9]|2[0-3]):[0-5][0-9]$/.test(config[key]))return false;
+    if(config.night_start===config.night_end)return false;
+    const copy=config.night_copy;
+    if(!copy || !["local_saved","active","finished","membership_known"].every(key=>typeof copy[key]==="boolean") ||
+       !["expected","acknowledged","rejected"].every(key=>Number.isInteger(copy[key]) && copy[key]>=0 && copy[key]<=8) ||
+       copy.acknowledged+copy.rejected>copy.expected)return false;
     return ["off", "name_order", "random"].includes(config.rotation);
   }
 
+  function renderNightCopy(copy) {
+    $("night-copy-status").textContent = !copy.local_saved ? tr("Noch keine globale Nachtkopie") :
+      !copy.membership_known ? tr("Mesh-Ergebnis noch unbekannt") :
+      trf("Mesh: {0}/{1} bestätigt, {2} abgelehnt, {3} offen",copy.acknowledged,copy.expected,
+          copy.rejected,copy.expected-copy.acknowledged-copy.rejected);
+  }
   function renderConfig(config) {
     if (!validConfig(config)) throw new Error("Invalid configuration response");
     state.config = config;
@@ -197,6 +213,8 @@
     if (autoOption) autoOption.textContent = tr("Automatisch");
     orientation.value = config.orientation_automatic ? "auto" : String(config.orientation);
     $(controls.rotation).value = config.rotation;
+    for(const field of ["brightness","night_enabled","night_start","night_end"])$(controls[field]).value=config[field];
+    renderNightCopy(config.night_copy);
     $("due-current").textContent = config.next_due_state === "none" ?
       tr("Derzeit kein Termin verfügbar.") : config.next_due_state === "paused_boot" ?
       trf("Boot-Alarm aktiv; gespeicherter Termin {0} pausiert.", config.next_due_hhmm) :
@@ -446,6 +464,22 @@
     }
     await handleFailure(error);
   }
+
+  $("copy-night").addEventListener("click", async (event) => {
+    const button=event.currentTarget;if(!state.config || button.disabled)return;
+    button.disabled=true;
+    try {
+      let config=await api("/api/config","PUT",{field:"copy_night",value:"copy",revision:state.config.revision});
+      if(!validConfig(config))throw new Error("Invalid configuration response");
+      renderConfig(config);notice(tr("Lokal gespeichert; Mesh-Bestätigungen prüfen"));
+      // GET-only bounded progress polling; never repeat the explicit copy action.
+      for(let count=0;config.night_copy.active && count<12;++count){
+        await new Promise(resolve=>setTimeout(resolve,1000));
+        config=await api("/api/config");if(!validConfig(config))throw new Error("Invalid configuration response");
+        renderConfig(config);
+      }
+    }catch(error){await handleFailure(error,true);}finally{button.disabled=false;}
+  });
 
   async function saveField(form) {
     if (!state.config) return;

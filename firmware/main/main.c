@@ -46,6 +46,7 @@
 #include "katmed_time_idf.h"
 #include "katmed_ui.h"
 #include "usb_console.h"
+#include "display_ui_mailbox.h"
 
 /* A transport integration can provide a bounded, private sink. A NULL sink
  * leaves the normal boot untouched; no snapshot is ever emitted implicitly. */
@@ -68,6 +69,9 @@ typedef struct {
     NamesIdf names_nvs;
     AppState state;
     LocalSettings local;
+    KatmedDisplayPolicy display_policy;
+    bool backlight_applied;
+    uint8_t brightness_applied;
     EventId boot;
     uint64_t boot_domain; /* Distinguishes independent monotonic clocks. */
     KatmedTime time;
@@ -632,6 +636,38 @@ static bool orientation_automatic(void *context)
     return orientation_auto_for(context);
 }
 
+static DisplayUiMailbox display_mailbox=DISPLAY_MB_INITIALIZER;
+/* UI callbacks only read a published snapshot; NightJob itself is app-loop owned. */
+static void display_settings(void *context,KatmedDisplaySettings *out)
+{
+    (void)context;display_mb_snapshot(&display_mailbox,out,NULL);
+}
+static void night_copy_status(void *context,KatmedNightCopyStatus *out)
+{
+    (void)context;display_mb_snapshot(&display_mailbox,NULL,out);
+}
+static void display_ui_publish(Runtime *rt)
+{
+    const KatmedDisplaySettings settings=rt->store_ready ? rt->store.record.display : katmed_display_defaults();
+    KatmedNightCopyStatus night={0};katmed_mesh_night_status(&night);
+    display_mb_publish(&display_mailbox,settings,night);
+}
+static void display_policy_step(Runtime *rt,const ClockSample *now)
+{
+    const KatmedDisplaySettings settings=rt->store_ready ? rt->store.record.display : katmed_display_defaults();
+    LocalDateTime local;
+    bool valid=now->utc_valid && app_berlin_local_time(now->utc_ms,&local)==APP_OK;
+    const uint16_t minute=valid ? (uint16_t)(local.hour*60+local.minute) : 0;
+    const bool awake=katmed_display_evaluate(&rt->display_policy,settings,valid,minute,
+                                            rt->state.alarm_active,now->monotonic_ms);
+    if(rt->brightness_applied!=settings.brightness && board_set_brightness(settings.brightness)==BOARD_OK)
+        rt->brightness_applied=settings.brightness;
+    if(rt->backlight_applied!=awake && lvgl_port_lock(10)){
+        ui_set_display_awake(awake);lvgl_port_unlock();
+        if(board_set_backlight(awake)==BOARD_OK)rt->backlight_applied=awake;
+    }
+}
+
 static UiSubmitResult submit_ui_with_id(void *context, const UiRequest *request,
                                        const EventId *retry_id)
 {
@@ -669,6 +705,25 @@ static UiSubmitResult submit_ui_with_id(void *context, const UiRequest *request,
         wanted.clock_style = request->value.clock_style;
         return store_set_local(&rt->store, &rt->local, &wanted) == STORE_OK
             ? UI_SUBMIT_COMMITTED : UI_SUBMIT_UNAVAILABLE;
+    }
+    if(request->kind>=UI_REQUEST_SET_BRIGHTNESS && request->kind<=UI_REQUEST_SET_NIGHT_END){
+        KatmedDisplaySettings settings=rt->store.record.display;
+        if(request->kind==UI_REQUEST_SET_BRIGHTNESS){
+            if(request->value.display_value<1 || request->value.display_value>100)return UI_SUBMIT_REJECTED;
+            settings.brightness=(uint8_t)request->value.display_value;
+        }else if(request->kind==UI_REQUEST_SET_NIGHT_ENABLED){
+            if(request->value.display_value>1)return UI_SUBMIT_REJECTED;
+            settings.night_enabled=request->value.display_value!=0;
+        }else if(request->kind==UI_REQUEST_SET_NIGHT_START)settings.night_start=request->value.display_value;
+        else settings.night_end=request->value.display_value;
+        const StoreResult result=store_set_display(&rt->store,&settings);
+        return result==STORE_INVALID ? UI_SUBMIT_REJECTED :
+            result==STORE_OK || result==STORE_DUPLICATE ? UI_SUBMIT_COMMITTED : UI_SUBMIT_UNAVAILABLE;
+    }
+    if(request->kind==UI_REQUEST_COPY_NIGHT){
+        if(!rt->mesh_started)return UI_SUBMIT_UNAVAILABLE;
+        const KatmedMeshResult result=katmed_mesh_copy_night(monotonic_ms());
+        return result==MESH_ACCEPTED || result==MESH_PENDING ? UI_SUBMIT_COMMITTED : UI_SUBMIT_UNAVAILABLE;
     }
     if (request->kind == UI_REQUEST_SET_ORIENTATION_AUTOMATIC) {
         if (!orientation_auto_supported()) return UI_SUBMIT_REJECTED;
@@ -815,6 +870,24 @@ static UiSubmitResult submit_ui(void *context, const UiRequest *request)
     return submit_ui_with_id(context,request,NULL);
 }
 
+/* Called from taskLVGL: new display intents perform no Store/Mesh work here. */
+static UiSubmitResult submit_ui_dispatch(void *context,const UiRequest *request)
+{
+    if(request && request->kind>=UI_REQUEST_SET_BRIGHTNESS && request->kind<=UI_REQUEST_COPY_NIGHT)
+        return display_mb_submit(&display_mailbox,request) ? UI_SUBMIT_QUEUED : UI_SUBMIT_UNAVAILABLE;
+    return submit_ui(context,request);
+}
+/* Sole consumer, on app_main before rendering; no UI lock held. */
+static void display_ui_poll(Runtime *rt)
+{
+    UiRequest request;uint32_t sequence;
+    if(display_mb_take(&display_mailbox,&request,&sequence)){
+        UiSubmitResult result=submit_ui(rt,&request);
+        display_ui_publish(rt);
+        (void)display_mb_complete(&display_mailbox,sequence,result);
+    }else display_ui_publish(rt);
+}
+
 static uint64_t config_mix(uint64_t hash, uint64_t value)
 {
     for (unsigned i = 0; i < 8; ++i) {
@@ -841,6 +914,9 @@ static void config_revision(const Runtime *rt, char out[KATMED_CONFIG_REVISION_M
     hash = config_mix(hash, (uint64_t)rt->state.start_reason);
     hash = config_mix(hash, (uint64_t)(rt->store_ready ? rt->store.record.local.orientation : rt->local.orientation));
     hash = config_mix(hash, orientation_auto_for(rt));
+    if(rt->store_ready){const KatmedDisplaySettings d=rt->store.record.display;
+        hash=config_mix(hash,d.brightness);hash=config_mix(hash,d.night_enabled);
+        hash=config_mix(hash,d.night_start);hash=config_mix(hash,d.night_end);}
     hash = config_mix(hash, (uint64_t)rt->local.clock_style);
     hash = config_mix(hash, (uint64_t)rt->store.record.manual_intent.pending);
     (void)snprintf(out, KATMED_CONFIG_REVISION_MAX, "%016" PRIx64, hash);
@@ -888,6 +964,8 @@ static void config_snapshot(const Runtime *rt, KatmedConfigSnapshot *out)
     out->orientation=rt->local.orientation;
     out->orientation_auto_supported=orientation_auto_supported();
     out->orientation_automatic=orientation_auto_for(rt);
+    out->display=rt->store_ready ? rt->store.record.display : katmed_display_defaults();
+    katmed_mesh_night_status(&out->night_copy);
     out->rotation=rt->state.settings.rotation;
     out->restore_status=rt->state.start_reason==START_MANUAL ?
         KATMED_RESTORE_NONE : rt->manual_restore_status;
@@ -1099,6 +1177,27 @@ static void config_execute(void *context, const KatmedConfigRequest *request,
             else if (strcmp(request->value,"analog")==0) ui_request.value.clock_style=ANALOG;
             else { response->status=KATMED_CONFIG_INVALID; return; }
             break;
+        case KATMED_CONFIG_BRIGHTNESS: {
+            unsigned value=0;size_t length=strlen(request->value);
+            if(length<1 || length>3){response->status=KATMED_CONFIG_INVALID;return;}
+            for(size_t i=0;i<length;++i){if(request->value[i]<'0' || request->value[i]>'9'){response->status=KATMED_CONFIG_INVALID;return;}value=value*10u+(unsigned)(request->value[i]-'0');}
+            ui_request.kind=UI_REQUEST_SET_BRIGHTNESS;ui_request.value.display_value=(uint16_t)value;break;
+        }
+        case KATMED_CONFIG_NIGHT_ENABLED:
+            ui_request.kind=UI_REQUEST_SET_NIGHT_ENABLED;
+            if(strcmp(request->value,"on")==0)ui_request.value.display_value=1;
+            else if(strcmp(request->value,"off")!=0){response->status=KATMED_CONFIG_INVALID;return;}
+            break;
+        case KATMED_CONFIG_NIGHT_START:
+        case KATMED_CONFIG_NIGHT_END: {
+            uint8_t hour,minute;
+            if(!config_hhmm(request->value,&hour,&minute)){response->status=KATMED_CONFIG_INVALID;return;}
+            ui_request.kind=request->field==KATMED_CONFIG_NIGHT_START ? UI_REQUEST_SET_NIGHT_START : UI_REQUEST_SET_NIGHT_END;
+            ui_request.value.display_value=(uint16_t)(hour*60u+minute);break;
+        }
+        case KATMED_CONFIG_COPY_NIGHT:
+            if(strcmp(request->value,"copy")!=0){response->status=KATMED_CONFIG_INVALID;return;}
+            ui_request.kind=UI_REQUEST_COPY_NIGHT;break;
         case KATMED_CONFIG_ORIENTATION:
             ui_request.kind=UI_REQUEST_SET_ORIENTATION;
             if (strcmp(request->value,"auto")==0 && orientation_auto_supported())
@@ -1767,6 +1866,16 @@ static bool same_alarm_round(AlarmRoundId a, AlarmRoundId b)
            a.ordinal == b.ordinal;
 }
 
+static void display_touch_sample(const AppState *state,const BoardTouch *touch,bool valid)
+{
+    const bool allow=katmed_display_touch(&runtime.display_policy,valid,touch->down,
+                                          state && state->alarm_active,touch->monotonic_ms);
+    if(allow || !valid || (valid && !touch->down && runtime.display_policy.awake &&
+                           !runtime.display_policy.consume_contact))
+        ui_touch_sample(touch->down,touch->x,touch->y,valid,touch->monotonic_ms);
+    else ui_touch_sample(false,0,0,false,touch->monotonic_ms);
+}
+
 static bool render_ui(const AppState *state, const LocalSettings *local,
                       const ClockSample *clock, const BoardTouch *touch,
                       bool touch_valid, bool render_due)
@@ -1791,6 +1900,10 @@ static bool render_ui(const AppState *state, const LocalSettings *local,
     if (runtime.mesh_started)
         katmed_mesh_interaction_status(&interaction_snapshot, clock->monotonic_ms);
 #endif
+    UiRequest completed_request;UiSubmitResult completed_result;
+    if(display_mb_result(&display_mailbox,&completed_request,&completed_result))
+        ui_deferred_result(&completed_request,completed_result);
+    ui_set_display_awake(!runtime.display_policy.initialized || runtime.display_policy.awake);
     if (contact_interrupted) {
         ui_touch_sample(false, 0, 0, false, clock->monotonic_ms);
         contact_interrupted = false;
@@ -1809,8 +1922,8 @@ static bool render_ui(const AppState *state, const LocalSettings *local,
         projected_state_available = true;
     }
     if (touch != NULL) {
-        ui_touch_sample(touch->down, touch->x, touch->y,
-                        touch_valid, touch->monotonic_ms);
+        display_touch_sample(state,touch,touch_valid);
+        ui_set_display_awake(!runtime.display_policy.initialized || runtime.display_policy.awake);
     }
 #if defined(ESP_PLATFORM) || defined(KATMED_HOST_TOUCH_SAMPLER)
     if (board_touch_sampler_running()) {
@@ -1824,10 +1937,11 @@ static bool render_ui(const AppState *state, const LocalSettings *local,
             else if (state->start_reason != START_BOOT)
                 round_floor = state->deadline.effective_monotonic_ms;
         }
-        while (board_touch_sampler_take(&queued, &result))
-            ui_touch_sample(queued.down, queued.x, queued.y,
-                            result == BOARD_OK && queued.monotonic_ms >= round_floor,
-                            queued.monotonic_ms);
+        while (board_touch_sampler_take(&queued, &result)) {
+            const bool valid=result==BOARD_OK && queued.monotonic_ms>=round_floor;
+            display_touch_sample(state,&queued,valid);
+        }
+        ui_set_display_awake(!runtime.display_policy.initialized || runtime.display_policy.awake);
     }
 #endif
     if (render_due && state != NULL && local != NULL)
@@ -1988,11 +2102,15 @@ void app_main(void)
         board_deinit();
         return;
     }
+    runtime.display_policy.awake=true;runtime.backlight_applied=true;
+    display_ui_publish(&runtime);
     const UiServices services = {
         .context = &runtime,
+        .display_settings=display_settings,
+        .night_copy_status=night_copy_status,
         .orientation_auto_available = orientation_auto_supported(),
         .orientation_automatic = orientation_automatic,
-        .submit = submit_ui,
+        .submit = submit_ui_dispatch,
         .read_model = read_ui_model,
         .interaction_input = interaction_submit,
         .interaction_status = interaction_status,
@@ -2112,6 +2230,7 @@ void app_main(void)
         now = clock_sample(runtime.boot_domain);
         if (runtime.mesh_started && !runtime.reboot_required)
             katmed_mesh_poll(&now);
+        display_ui_poll(&runtime);
         const bool root_ip = runtime.mesh_started && katmed_mesh_root_has_ip();
 #if KATMED_ACME_RESOURCE_PROBE
         if (root_ip && !acme_probe_launched)
@@ -2139,6 +2258,7 @@ void app_main(void)
         }
         now = clock_sample(runtime.boot_domain);
         tick_runtime(&runtime, &now);
+        display_policy_step(&runtime,&now);
         poll_auto_orientation(&runtime);
         process_usb(&runtime, &now);
         now = clock_sample(runtime.boot_domain);

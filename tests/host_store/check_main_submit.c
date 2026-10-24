@@ -32,6 +32,8 @@ static uint8_t committed[KATMED_STORE_BLOB_MAX];
 static size_t committed_length;
 static unsigned writes;
 static bool fail_commit;
+static bool probe_display_write;
+static unsigned display_write_probes;
 static int64_t fake_microseconds;
 static Orientation board_orientation;
 static Orientation sensed_orientation;
@@ -72,6 +74,14 @@ static StoreResult test_read(void *context, uint8_t *out, size_t *length)
 static StoreResult test_write(void *context, const uint8_t *data, size_t length)
 {
     (void)context;
+    if(probe_display_write){
+        KatmedDisplaySettings snapshot;KatmedNightCopyStatus night;
+        display_settings(&runtime,&snapshot);night_copy_status(&runtime,&night);
+        assert(snapshot.brightness==100 && !night.local_saved);
+        UiRequest other={.kind=UI_REQUEST_COPY_NIGHT};
+        assert(submit_ui_dispatch(&runtime,&other)==UI_SUBMIT_UNAVAILABLE);
+        ++display_write_probes;
+    }
     ++writes;
     if (fail_commit) return STORE_COMMIT_UNKNOWN;
     memcpy(committed, data, length);
@@ -81,6 +91,8 @@ static StoreResult test_write(void *context, const uint8_t *data, size_t length)
 int64_t esp_timer_get_time(void) { return fake_microseconds; }
 BoardResult board_set_orientation(Orientation o) { board_orientation=o; return BOARD_OK; }
 bool board_auto_orientation(Orientation *o) {*o=sensed_orientation;return sensed_valid;}
+KatmedMeshResult katmed_mesh_copy_night(uint64_t now) {(void)now;return MESH_UNAVAILABLE;}
+void katmed_mesh_night_status(KatmedNightCopyStatus *out) {*out=(KatmedNightCopyStatus){0};}
 bool katmed_mesh_connected(void) { return fake_mesh_connected; }
 bool katmed_mesh_is_coordinator(void) { return fake_mesh_coordinator; }
 void katmed_mesh_notify_local_commit(void) { ++fake_mesh_notifications; }
@@ -411,8 +423,58 @@ static void test_orientation_mode(void)
     printf("orientation main C%d: same-angle persistence, reboot, auto and Web capability PASS\n",c6 ? 6 : 3);
 }
 
+static void test_display_app_loop_bridge(void) {
+    initialize_runtime();display_ui_publish(&runtime);
+    unsigned before=writes;
+    UiRequest request={.kind=UI_REQUEST_SET_BRIGHTNESS};request.value.display_value=25;
+    assert(submit_ui_dispatch(&runtime,&request)==UI_SUBMIT_QUEUED && writes==before);
+    KatmedDisplaySettings snapshot;display_settings(&runtime,&snapshot);assert(snapshot.brightness==100);
+    probe_display_write=true;display_ui_poll(&runtime);probe_display_write=false;
+    assert(display_write_probes && runtime.store.record.display.brightness==25);
+    display_settings(&runtime,&snapshot);assert(snapshot.brightness==25);
+    UiRequest done;UiSubmitResult result;
+    assert(display_mb_result(&display_mailbox,&done,&result) && done.kind==request.kind && result==UI_SUBMIT_COMMITTED);
+    request.kind=UI_REQUEST_COPY_NIGHT;assert(submit_ui_dispatch(&runtime,&request)==UI_SUBMIT_QUEUED);
+    display_ui_poll(&runtime);
+    assert(display_mb_result(&display_mailbox,&done,&result) && done.kind==UI_REQUEST_COPY_NIGHT && result==UI_SUBMIT_UNAVAILABLE);
+    assert(!runtime.display_policy.wake_until_ms);
+    puts("N-M1 real Main bridge: callback no Store/Mesh; actual Store interleave getter nonblocking/coherent; exact result ownership PASS");
+}
+
+static void test_local_display_settings(void) {
+    initialize_runtime();
+    UiRequest dismiss={.kind=UI_REQUEST_DISMISS_BOOT};
+    assert(submit_ui(&runtime,&dismiss)==UI_SUBMIT_DISMISSED);
+    const unsigned no_navigation_writes=writes;
+    KatmedConfigSnapshot current={0};config_snapshot(&runtime,&current);
+    assert(writes==no_navigation_writes && current.display.brightness==100 && !current.display.night_enabled);
+    const bool last_dose=runtime.state.has_last_confirmation;
+    const uint32_t medication=runtime.state.settings.medication_seconds;
+    UiRequest bright={.kind=UI_REQUEST_SET_BRIGHTNESS};bright.value.display_value=25;
+    assert(submit_ui(&runtime,&bright)==UI_SUBMIT_COMMITTED);
+    UiRequest enable={.kind=UI_REQUEST_SET_NIGHT_ENABLED};enable.value.display_value=1;
+    assert(submit_ui(&runtime,&enable)==UI_SUBMIT_COMMITTED);
+    UiRequest start={.kind=UI_REQUEST_SET_NIGHT_START};start.value.display_value=420;
+    unsigned before=writes;
+    assert(submit_ui(&runtime,&start)==UI_SUBMIT_REJECTED && writes==before); // equal end rejected
+    config_snapshot(&runtime,&current);
+    KatmedConfigRequest request={.operation=KATMED_CONFIG_SAVE,.field=KATMED_CONFIG_NIGHT_START};
+    snprintf(request.revision,sizeof(request.revision),"%s",current.revision);
+    snprintf(request.value,sizeof(request.value),"21:30");
+    KatmedConfigResponse response={0};config_execute(&runtime,&request,&response);
+    assert(response.status==KATMED_CONFIG_OK && runtime.store.record.display.night_start==1290);
+    config_execute(&runtime,&request,&response);assert(response.status==KATMED_CONFIG_STALE);
+    assert(runtime.state.has_last_confirmation==last_dose && runtime.state.settings.medication_seconds==medication);
+    assert(!runtime.display_policy.wake_until_ms && !runtime.reboot_required);
+    before=writes;UiRequest copy={.kind=UI_REQUEST_COPY_NIGHT};
+    assert(submit_ui(&runtime,&copy)==UI_SUBMIT_UNAVAILABLE && writes==before);
+    puts("night Main/UI/Web: local offline save, CAS, no medication/wake mutation and unavailable Mesh gate PASS");
+}
+
 int main(int argc, char **argv)
 {
+    if(argc==2 && !strcmp(argv[1],"night_bridge")){test_display_app_loop_bridge();return 0;}
+    if(argc==2 && !strcmp(argv[1],"night")){test_local_display_settings();return 0;}
     if (argc==2 && strcmp(argv[1],"orientation")==0) {test_orientation_mode();return 0;}
     if (argc==2 && strcmp(argv[1],"offline_confirm")==0) {
         test_offline_confirmations_do_not_fill_mesh_queue();return 0;

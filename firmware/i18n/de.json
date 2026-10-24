@@ -127,7 +127,23 @@
     "Weiter",
     "Eingabe nach Drehung verworfen",
     "Zeit nicht synchronisiert",
-    "Automatisch"
+    "Automatisch",
+    "Helligkeit: 1 bis 100 Prozent",
+    "Helligkeit",
+    "Nachtzeit HH:MM",
+    "Lokal gespeichert; Mesh-Bestätigungen prüfen",
+    "Nachtmodus ausschalten",
+    "Nachtmodus einschalten",
+    "Noch keine globale Nachtkopie",
+    "Mesh-Ergebnis noch unbekannt",
+    "Mesh: %u/%u bestätigt, %u abgelehnt, %u offen",
+    "Nachtmodus",
+    "Nachtbeginn HH:MM",
+    "Nachtende HH:MM",
+    "Setze Nachtmodus global auf allen Geräten im Mesh",
+    "Helligkeit ändern",
+    "Nachtmodus einstellen",
+    "Änderung vorgemerkt"
   ],
   "web_static": [
     "KatMed · Einstellungen",
@@ -229,7 +245,15 @@
     "Dieser Vorgang löscht WLAN-Profile, persönliche Laufzeittexte und Einstellungen, gespeicherte Mesh-Bindungen, Alarm- und Bestätigungszustände samt Historie, Webanmeldung und Sitzungen, private Zertifikats-/ACME-Zustände, eigene Uploads und veränderbare Caches.",
     "Die Firmware und unveränderliche Standardbilder bleiben erhalten. In einem ausdrücklich gewählten privaten Build bleiben einkompilierte private Vorgaben Teil der Firmware; der Datenreset entfernt sie nicht.",
     "Nein, abbrechen",
-    "Gerätestatus aktualisieren"
+    "Gerätestatus aktualisieren",
+    "Helligkeit und Nachtmodus",
+    "Helligkeit in Prozent",
+    "Nachtmodus",
+    "Ein",
+    "Nachtbeginn HH:MM",
+    "Nachtende HH:MM",
+    "Setze Nachtmodus global auf allen Geräten im Mesh",
+    "Noch keine globale Nachtkopie"
   ],
   "web_dynamic": [
     "Gerät: {0}",
@@ -328,6 +352,10 @@
     "{0} von {1} WLAN-Profilen belegt. Priorität 1 ist die höchste.",
     "Priorität {0} · {1} · {2}",
     "Termin: {0}. Wirksam: {1}.",
-    "Automatisch"
+    "Automatisch",
+    "Noch keine globale Nachtkopie",
+    "Mesh-Ergebnis noch unbekannt",
+    "Mesh: {0}/{1} bestätigt, {2} abgelehnt, {3} offen",
+    "Lokal gespeichert; Mesh-Bestätigungen prüfen"
   ]
 }

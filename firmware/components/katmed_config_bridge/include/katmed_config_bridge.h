@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include "katmed_types.h"
+#include "katmed_display.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -22,7 +23,8 @@ typedef enum {
     KATMED_CONFIG_NEXT_DUE_HHMM,
     KATMED_CONFIG_CLOCK_STYLE,
     KATMED_CONFIG_ORIENTATION,
-    KATMED_CONFIG_ROTATION
+    KATMED_CONFIG_ROTATION, KATMED_CONFIG_BRIGHTNESS, KATMED_CONFIG_NIGHT_ENABLED,
+    KATMED_CONFIG_NIGHT_START, KATMED_CONFIG_NIGHT_END, KATMED_CONFIG_COPY_NIGHT
 } KatmedConfigField;
 
 typedef enum {
@@ -76,6 +78,8 @@ typedef struct {
     RotationMode rotation;
     char revision[KATMED_CONFIG_REVISION_MAX];
     bool orientation_auto_supported, orientation_automatic;
+    KatmedDisplaySettings display;
+    KatmedNightCopyStatus night_copy;
 } KatmedConfigSnapshot;
 
 typedef struct {

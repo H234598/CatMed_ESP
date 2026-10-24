@@ -1,4 +1,4 @@
-set(board_reqs katmed_core esp_lcd esp_lvgl_port lvgl esp_timer driver esp_driver_spi esp_driver_i2c esp_driver_gpio espressif__esp_lcd_touch)
+set(board_reqs katmed_core esp_lcd esp_lvgl_port lvgl esp_timer driver esp_driver_spi esp_driver_i2c esp_driver_gpio esp_driver_ledc espressif__esp_lcd_touch)
 if(IDF_TARGET STREQUAL "esp32c6")
     list(APPEND board_reqs esp_lcd_jd9853 esp_lcd_touch_axs5106)
 elseif(IDF_TARGET STREQUAL "esp32c3")

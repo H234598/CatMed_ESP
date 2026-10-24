@@ -127,7 +127,23 @@
     "Weiter": "Weiter",
     "Eingabe nach Drehung verworfen": "Eingab nachm Drehn verworfn",
     "Zeit nicht synchronisiert": "Zeit ned abglicha",
-    "Automatisch": "Automaddisch"
+    "Automatisch": "Automaddisch",
+    "Helligkeit: 1 bis 100 Prozent": "Helligkeit: 1 bis 100 Prozent",
+    "Helligkeit": "Helligkeit",
+    "Nachtzeit HH:MM": "Nachtzeit HH:MM",
+    "Lokal gespeichert; Mesh-Bestätigungen prüfen": "Lokal gespeichert; Mesh-Bestätigungen prüfen",
+    "Nachtmodus ausschalten": "Nachtmodus ausschalten",
+    "Nachtmodus einschalten": "Nachtmodus einschalten",
+    "Noch keine globale Nachtkopie": "Noch ka globale Nachtkopie",
+    "Mesh-Ergebnis noch unbekannt": "Mesh-Ergebnis noch unbekannt",
+    "Mesh: %u/%u bestätigt, %u abgelehnt, %u offen": "Mesh: %u/%u bestätigt, %u abgelehnt, %u offen",
+    "Nachtmodus": "Nachtmodus",
+    "Nachtbeginn HH:MM": "Nachtbeginn HH:MM",
+    "Nachtende HH:MM": "Nachtende HH:MM",
+    "Setze Nachtmodus global auf allen Geräten im Mesh": "Setz den Nachtmodus auf alle Geräte im Mesh",
+    "Helligkeit ändern": "Helligkeit ändern",
+    "Nachtmodus einstellen": "Nachtmodus einstellen",
+    "Änderung vorgemerkt": "Änderung vorgemerkt"
   },
   "web_static": {
     "KatMed · Einstellungen": "KatMed · Eistellunga",
@@ -229,7 +245,15 @@
     "Dieser Vorgang löscht WLAN-Profile, persönliche Laufzeittexte und Einstellungen, gespeicherte Mesh-Bindungen, Alarm- und Bestätigungszustände samt Historie, Webanmeldung und Sitzungen, private Zertifikats-/ACME-Zustände, eigene Uploads und veränderbare Caches.": "Des löscht WLAN-Profile, eigene Laufzeittexte und Eistellunga, gsicherte Mesh-Bindunga, Alarm- und Bestätigungszuständ mitsamt Verlauf, Webanmeldung und Sitzunga, private Zertifikats-/ACME-Zuständ, eigene Uploads und veränderbare Caches.",
     "Die Firmware und unveränderliche Standardbilder bleiben erhalten. In einem ausdrücklich gewählten privaten Build bleiben einkompilierte private Vorgaben Teil der Firmware; der Datenreset entfernt sie nicht.": "Firmware und unveränderliche Standardbilder bleibn erhaltn. In am ausdrücklich gwählten privaten Build bleibn eikompilierte private Vorgabn Teil der Firmware; der Datenreset löscht die ned.",
     "Nein, abbrechen": "Nee, abbrecha",
-    "Gerätestatus aktualisieren": "Gerätezustand aktualisiern"
+    "Gerätestatus aktualisieren": "Gerätezustand aktualisiern",
+    "Helligkeit und Nachtmodus": "Helligkeit und Nachtmodus",
+    "Helligkeit in Prozent": "Helligkeit in Prozent",
+    "Nachtmodus": "Nachtmodus",
+    "Ein": "Ein",
+    "Nachtbeginn HH:MM": "Nachtbeginn HH:MM",
+    "Nachtende HH:MM": "Nachtende HH:MM",
+    "Setze Nachtmodus global auf allen Geräten im Mesh": "Setz den Nachtmodus auf alle Geräte im Mesh",
+    "Noch keine globale Nachtkopie": "Noch ka globale Nachtkopie"
   },
   "web_dynamic": {
     "Gerät: {0}": "Gerät: {0}",
@@ -321,6 +345,10 @@
     "Diese Konfiguration ist nur über HTTPS erreichbar.": "Die Eistellungsseit is bloß über HTTPS erreichbar.",
     "Lokaler Test": "Lokaltest (Loopback)",
     "Sichere lokale Verbindung": "Sichere lokale Verbindung",
-    "Automatisch": "Automaddisch"
+    "Automatisch": "Automaddisch",
+    "Noch keine globale Nachtkopie": "Noch ka globale Nachtkopie",
+    "Mesh-Ergebnis noch unbekannt": "Mesh-Ergebnis noch unbekannt",
+    "Mesh: {0}/{1} bestätigt, {2} abgelehnt, {3} offen": "Mesh: {0}/{1} bestätigt, {2} abgelehnt, {3} offen",
+    "Lokal gespeichert; Mesh-Bestätigungen prüfen": "Lokal gespeichert; Mesh-Bestätigungen prüfen"
   }
 }

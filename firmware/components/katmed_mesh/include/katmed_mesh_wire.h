@@ -23,7 +23,8 @@ typedef enum {
     MESH_STATUS = 7,
     MESH_INTERACTION = 8,
     MESH_NAME_MAP = 9,
-    MESH_NAME_SYNC = 10
+    MESH_NAME_SYNC = 10,
+    MESH_NIGHT = 11
 } KatmedMeshKind;
 
 typedef struct {

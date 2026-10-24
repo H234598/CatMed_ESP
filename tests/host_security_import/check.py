@@ -180,7 +180,7 @@ with tempfile.TemporaryDirectory(prefix="katmed-import-test-") as temporary:
         stage_length = 16 + sum(nvs_lengths) + 13 * count
         required = (stage_length + 31) // 32 + 4 + sum(
             (n + 31) // 32 + 4 for n in nvs_lengths) + 24
-        assert required == {97: 631, 123: 641}[count]
+        assert required == {97: 632, 123: 642}[count]
         capsule = staged_capsule(root, f"combined-{count}", files, codec)
         assert struct.unpack_from("<H", capsule.read_bytes(), 8)[0] == count + 5
         return capsule
@@ -256,7 +256,7 @@ with tempfile.TemporaryDirectory(prefix="katmed-import-test-") as temporary:
             "nvs/katmed/state": state,
             "nvs/katmed/mesh_history": history_bytes,
         })
-        assert len(state) == 4068 and struct.unpack_from("<H", capsule, 8)[0] == 2
+        assert len(state) == 4096 and struct.unpack_from("<H", capsule, 8)[0] == 2
         assert struct.unpack_from("<I", capsule, 12)[0] == zlib.crc32(capsule[16:])
         path = root / f"invalid-history-{label}.bin"
         path.write_bytes(capsule)

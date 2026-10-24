@@ -127,7 +127,23 @@
     "Weiter": "下一步",
     "Eingabe nach Drehung verworfen": "轮转后条目被丢弃",
     "Zeit nicht synchronisiert": "时间不同步",
-    "Automatisch": "自动"
+    "Automatisch": "自动",
+    "Helligkeit: 1 bis 100 Prozent": "亮度：1 到 100 百分比",
+    "Helligkeit": "亮度",
+    "Nachtzeit HH:MM": "夜间时间 HH:MM",
+    "Lokal gespeichert; Mesh-Bestätigungen prüfen": "已保存在本机；请检查网状网络确认",
+    "Nachtmodus ausschalten": "禁用夜间模式",
+    "Nachtmodus einschalten": "启用夜间模式",
+    "Noch keine globale Nachtkopie": "尚未全局复制夜间模式",
+    "Mesh-Ergebnis noch unbekannt": "网状网络结果仍未知",
+    "Mesh: %u/%u bestätigt, %u abgelehnt, %u offen": "网状网络：%u/%u 已确认，%u 已拒绝，%u 待确认",
+    "Nachtmodus": "夜间模式",
+    "Nachtbeginn HH:MM": "夜间开始 HH:MM",
+    "Nachtende HH:MM": "夜间结束 HH:MM",
+    "Setze Nachtmodus global auf allen Geräten im Mesh": "将夜间模式应用到网状网络中的所有设备",
+    "Helligkeit ändern": "更改亮度",
+    "Nachtmodus einstellen": "设置夜间模式",
+    "Änderung vorgemerkt": "更改已排队"
   },
   "web_static": {
     "KatMed · Einstellungen": "KatMed · 设置",
@@ -229,7 +245,15 @@
     "Dieser Vorgang löscht WLAN-Profile, persönliche Laufzeittexte und Einstellungen, gespeicherte Mesh-Bindungen, Alarm- und Bestätigungszustände samt Historie, Webanmeldung und Sitzungen, private Zertifikats-/ACME-Zustände, eigene Uploads und veränderbare Caches.": "此过程将删除 Wi-Fi 配置文件、个人运行时文本和设置、保存的网格绑定、警报和确认状态（包括历史记录、Web 登录和会话、私有证书/ACME 状态、自定义上传和可修改缓存）。",
     "Die Firmware und unveränderliche Standardbilder bleiben erhalten. In einem ausdrücklich gewählten privaten Build bleiben einkompilierte private Vorgaben Teil der Firmware; der Datenreset entfernt sie nicht.": "保留固件和不可更改的默认映像。在明确选择的私有构建中，编译的私有默认值仍然是固件的一部分；数据重置不会删除它们。",
     "Nein, abbrechen": "不，取消",
-    "Gerätestatus aktualisieren": "更新设备状态"
+    "Gerätestatus aktualisieren": "更新设备状态",
+    "Helligkeit und Nachtmodus": "亮度和夜间模式",
+    "Helligkeit in Prozent": "亮度百分比",
+    "Nachtmodus": "夜间模式",
+    "Ein": "开",
+    "Nachtbeginn HH:MM": "夜间开始 HH:MM",
+    "Nachtende HH:MM": "夜间结束 HH:MM",
+    "Setze Nachtmodus global auf allen Geräten im Mesh": "将夜间模式应用到网状网络中的所有设备",
+    "Noch keine globale Nachtkopie": "尚未全局复制夜间模式"
   },
   "web_dynamic": {
     "Gerät: {0}": "设备：{0}",
@@ -321,6 +345,10 @@
     "Diese Konfiguration ist nur über HTTPS erreichbar.": "此配置只能通过 HTTPS 访问。",
     "Lokaler Test": "本地测试",
     "Sichere lokale Verbindung": "安全的本地连接",
-    "Automatisch": "自动"
+    "Automatisch": "自动",
+    "Noch keine globale Nachtkopie": "尚未全局复制夜间模式",
+    "Mesh-Ergebnis noch unbekannt": "网状网络结果仍未知",
+    "Mesh: {0}/{1} bestätigt, {2} abgelehnt, {3} offen": "网状网络：{0}/{1} 已确认，{2} 已拒绝，{3} 待确认",
+    "Lokal gespeichert; Mesh-Bestätigungen prüfen": "已保存在本机；请检查网状网络确认"
   }
 }

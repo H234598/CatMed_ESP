@@ -127,7 +127,23 @@
     "Weiter": "التالي",
     "Eingabe nach Drehung verworfen": "تم تجاهل الإدخال بعد التدوير",
     "Zeit nicht synchronisiert": "الوقت غير متزامن",
-    "Automatisch": "تلقائي"
+    "Automatisch": "تلقائي",
+    "Helligkeit: 1 bis 100 Prozent": "السطوع: من 1 إلى 100 بالمئة",
+    "Helligkeit": "السطوع",
+    "Nachtzeit HH:MM": "وقت الليل HH:MM",
+    "Lokal gespeichert; Mesh-Bestätigungen prüfen": "تم الحفظ محليا؛ تحقق من تأكيدات الشبكة",
+    "Nachtmodus ausschalten": "تعطيل الوضع الليلي",
+    "Nachtmodus einschalten": "تفعيل الوضع الليلي",
+    "Noch keine globale Nachtkopie": "لم يتم نسخ الوضع الليلي عالميا بعد",
+    "Mesh-Ergebnis noch unbekannt": "نتيجة الشبكة غير معروفة بعد",
+    "Mesh: %u/%u bestätigt, %u abgelehnt, %u offen": "الشبكة: %u/%u مؤكدة، %u مرفوضة، %u معلقة",
+    "Nachtmodus": "الوضع الليلي",
+    "Nachtbeginn HH:MM": "بداية الليل HH:MM",
+    "Nachtende HH:MM": "نهاية الليل HH:MM",
+    "Setze Nachtmodus global auf allen Geräten im Mesh": "تطبيق الوضع الليلي على جميع أجهزة الشبكة المتداخلة",
+    "Helligkeit ändern": "تغيير السطوع",
+    "Nachtmodus einstellen": "إعداد الوضع الليلي",
+    "Änderung vorgemerkt": "التغيير قيد الانتظار"
   },
   "web_static": {
     "KatMed · Einstellungen": "KatMed · الإعدادات",
@@ -229,7 +245,15 @@
     "Dieser Vorgang löscht WLAN-Profile, persönliche Laufzeittexte und Einstellungen, gespeicherte Mesh-Bindungen, Alarm- und Bestätigungszustände samt Historie, Webanmeldung und Sitzungen, private Zertifikats-/ACME-Zustände, eigene Uploads und veränderbare Caches.": "تقوم هذه العملية بحذف ملفات تعريف Wi-Fi والنصوص والإعدادات الشخصية الخاصة بوقت التشغيل وارتباطات الشبكة المحفوظة وحالات التنبيه والتأكيد بما في ذلك السجل وتسجيل الدخول إلى الويب والجلسات والشهادة الخاصة/حالات ACME والتحميلات المخصصة وذاكرة التخزين المؤقت القابلة للتعديل.",
     "Die Firmware und unveränderliche Standardbilder bleiben erhalten. In einem ausdrücklich gewählten privaten Build bleiben einkompilierte private Vorgaben Teil der Firmware; der Datenreset entfernt sie nicht.": "يتم الاحتفاظ بالبرامج الثابتة والصور الافتراضية غير القابلة للتغيير. في البنية الخاصة التي تم اختيارها بشكل صريح، تظل الإعدادات الافتراضية الخاصة المجمعة جزءًا من البرنامج الثابت؛ إعادة تعيين البيانات لا تؤدي إلى إزالتها.",
     "Nein, abbrechen": "لا، إلغاء",
-    "Gerätestatus aktualisieren": "تحديث حالة الجهاز"
+    "Gerätestatus aktualisieren": "تحديث حالة الجهاز",
+    "Helligkeit und Nachtmodus": "السطوع والوضع الليلي",
+    "Helligkeit in Prozent": "السطوع بالنسبة المئوية",
+    "Nachtmodus": "الوضع الليلي",
+    "Ein": "تشغيل",
+    "Nachtbeginn HH:MM": "بداية الليل HH:MM",
+    "Nachtende HH:MM": "نهاية الليل HH:MM",
+    "Setze Nachtmodus global auf allen Geräten im Mesh": "تطبيق الوضع الليلي على جميع أجهزة الشبكة المتداخلة",
+    "Noch keine globale Nachtkopie": "لم يتم نسخ الوضع الليلي عالميا بعد"
   },
   "web_dynamic": {
     "Gerät: {0}": "الجهاز: {0}",
@@ -321,6 +345,10 @@
     "Diese Konfiguration ist nur über HTTPS erreichbar.": "لا يمكن الوصول إلى هذا التكوين إلا عبر HTTPS.",
     "Lokaler Test": "اختبار محلي",
     "Sichere lokale Verbindung": "اتصال محلي آمن",
-    "Automatisch": "تلقائي"
+    "Automatisch": "تلقائي",
+    "Noch keine globale Nachtkopie": "لم يتم نسخ الوضع الليلي عالميا بعد",
+    "Mesh-Ergebnis noch unbekannt": "نتيجة الشبكة غير معروفة بعد",
+    "Mesh: {0}/{1} bestätigt, {2} abgelehnt, {3} offen": "الشبكة: {0}/{1} مؤكدة، {2} مرفوضة، {3} معلقة",
+    "Lokal gespeichert; Mesh-Bestätigungen prüfen": "تم الحفظ محليا؛ تحقق من تأكيدات الشبكة"
   }
 }

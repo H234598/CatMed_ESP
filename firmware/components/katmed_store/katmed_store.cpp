@@ -15,7 +15,7 @@ namespace {
 constexpr uint8_t kMagic[4] = {'K', 'M', 'S', 'T'};
 /* v11 appends one local language byte after the unchanged v10 payload.
  * Versions 8 and 9 were never an on-device release. */
-constexpr uint16_t kCurrentVersion = 13;
+constexpr uint16_t kCurrentVersion = 14;
 constexpr size_t kHeaderSize = 12;
 
 uint32_t checksum(const uint8_t *data, size_t length) {
@@ -380,6 +380,9 @@ bool valid_provision(const StoreProvision &p) {
 }
 
 bool valid_record(const StoreRecord &v) {
+    if (!katmed_display_valid(v.display)) return false;
+    if ((v.last_night_copy.device || v.last_night_copy.epoch || v.last_night_copy.sequence) &&
+        (!v.last_night_copy.device || !v.last_night_copy.epoch || !v.last_night_copy.sequence)) return false;
     if (v.device==0 || v.epoch==0 || v.next_sequence < 2 || !valid_settings(v.shared) ||
         !valid_local(v.local,v.device) || v.pending_count > KATMED_STORE_PENDING_MAX ||
         v.conflict_count > KATMED_STORE_CONFLICT_MAX ||
@@ -490,6 +493,14 @@ StoreResult encode_record(const StoreRecord &v, uint8_t *bytes, size_t *length, 
     if (version>=11) w.u8(v.language);
     if (version>=12) {w.u8(v.provision.network_mode);w.boolean(v.setup_requested);}
     if (version>=13) w.boolean(v.orientation_manual);
+    if (version>=14) {
+        // Four packed bytes preserve the existing 4096-byte maximum, including
+        // the 24-byte durable operation ID. Reserved bits stay canonical zero.
+        w.u8(uint8_t(v.display.brightness | (v.display.night_enabled ? 128u : 0u)));
+        const uint32_t times=uint32_t(v.display.night_start)|(uint32_t(v.display.night_end)<<11);
+        w.u8(uint8_t(times));w.u8(uint8_t(times>>8));w.u8(uint8_t(times>>16));
+        put_id(w,v.last_night_copy);
+    }
     if (!w.good || w.position > UINT16_MAX) return STORE_FULL;
     const uint16_t n=static_cast<uint16_t>(w.position);
     bytes[6]=static_cast<uint8_t>(n); bytes[7]=static_cast<uint8_t>(n>>8);
@@ -511,6 +522,7 @@ StoreResult decode_record(const uint8_t *bytes, size_t length, StoreRecord *out)
      * validated by app_make_snapshot during a pending-confirmation reboot. */
     StoreRecord &v=*out;
     v={};
+    v.display=katmed_display_defaults();
     const auto corrupt=[out]() {
         *out=StoreRecord{}; /* Do not retain a partially decoded record. */
         return STORE_CORRUPT;
@@ -584,6 +596,16 @@ StoreResult decode_record(const uint8_t *bytes, size_t length, StoreRecord *out)
     if (version>=11) v.language=r.u8();
     if (version>=12) {v.provision.network_mode=r.u8();v.setup_requested=r.boolean();}
     if (version>=13) v.orientation_manual=r.boolean();
+    if (version>=14) {
+        const uint8_t flags=r.u8();v.display.brightness=flags&127u;
+        v.display.night_enabled=(flags&128u)!=0;
+        uint32_t times=r.u8();times|=uint32_t(r.u8())<<8;times|=uint32_t(r.u8())<<16;
+        if (times>>22) return corrupt();
+        v.display.night_start=uint16_t(times&2047u);v.display.night_end=uint16_t(times>>11);
+        v.last_night_copy=get_id(r);
+        if ((v.last_night_copy.device || v.last_night_copy.epoch || v.last_night_copy.sequence) &&
+            (!v.last_night_copy.device || !v.last_night_copy.epoch || !v.last_night_copy.sequence)) return corrupt();
+    }
     if (v.language>=KATMED_LANGUAGE_COUNT) return corrupt();
     if (!r.good || r.position!=length || !valid_record(v)) return corrupt();
     return STORE_OK;
@@ -728,6 +750,7 @@ StoreResult store_open(Store *store, StoreBackend backend, uint64_t device,
     const StoreResult read=backend.read(backend.context,store->scratch,&length);
     if (read==STORE_NOT_FOUND) {
         StoreRecord &r=store->staged;
+        r.display=katmed_display_defaults();
         r.device=device; r.epoch=1; r.next_sequence=2;
         r.group_origin=STORE_GROUP_ORIGIN_FRESH_UNBOUND;
         r.image_count=image_count;
@@ -858,6 +881,29 @@ StoreResult store_apply_event(Store *store, AppState *active, const AppEvent *ev
 
 /* Commit the angle and its override together, even when the angle is equal.
  * Runtime sensor poses are deliberately never written through this API. */
+StoreResult store_set_display(Store *store, const KatmedDisplaySettings *settings) {
+    if (!ready(store)) return STORE_UNAVAILABLE;
+    if (!settings || !katmed_display_valid(*settings)) return store->last_error=STORE_INVALID;
+    const auto &old=store->record.display;
+    if (old.brightness==settings->brightness && old.night_enabled==settings->night_enabled &&
+        old.night_start==settings->night_start && old.night_end==settings->night_end)
+        return store->last_error=STORE_DUPLICATE;
+    store->staged=store->record;store->staged.display=*settings;
+    return write_record(store,store->staged);
+}
+StoreResult store_apply_night_copy(Store *store, const KatmedDisplaySettings *settings, EventId op) {
+    if (!ready(store)) return STORE_UNAVAILABLE;
+    if (!settings || !katmed_display_valid(*settings) || !op.device || !op.epoch || !op.sequence)
+        return store->last_error=STORE_INVALID;
+    if (same_id(store->record.last_night_copy,op)) return store->last_error=STORE_DUPLICATE;
+    store->staged=store->record;
+    store->staged.display.night_enabled=settings->night_enabled;
+    store->staged.display.night_start=settings->night_start;
+    store->staged.display.night_end=settings->night_end;
+    store->staged.last_night_copy=op; // brightness and wake duration are never copied
+    return write_record(store,store->staged);
+}
+
 StoreResult store_set_orientation(Store *store, LocalSettings *active,
                                    Orientation orientation, bool manual) {
     if (!ready(store) || !active) return STORE_UNAVAILABLE;

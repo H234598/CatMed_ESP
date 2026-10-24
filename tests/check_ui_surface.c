@@ -604,6 +604,40 @@ static int check_option_sync(int width, int height)
         ui_render(&option_model,&option_local,SETTINGS,&option_clock);
     }
     assert(image_orientations_seen==15u);
+    settings_parent();click_label(screen,"Languages");
+    char arabic_name[80];lv_text_ap_proc("العربية",arabic_name);
+    assert(find_label(screen,arabic_name)); // native shaping is required even under English UI
+    settings_parent();
+    calls=host.submit_calls;
+    click_label(screen,"Change brightness");
+    assert(host.submit_calls==calls);
+    click_label(screen,"<");click_label(screen,"<");click_label(screen,"<");
+    click_label(screen,"2");click_label(screen,"5");click_label(screen,"Save");
+    assert(host.last_request.kind==UI_REQUEST_SET_BRIGHTNESS && host.last_request.value.display_value==25);
+    click_label(screen,"Configure night mode");
+    calls=host.submit_calls;
+    click_label(screen,"Enable night mode");
+    assert(host.submit_calls==calls+1 && host.last_request.kind==UI_REQUEST_SET_NIGHT_ENABLED);
+    click_label(screen,"Set night mode globally on all devices in the mesh");
+    assert(host.last_request.kind==UI_REQUEST_COPY_NIGHT);
+    assert(find_label(screen,"No global night copy yet"));
+    settings_parent();click_label(screen,"Change brightness");host.result=UI_SUBMIT_QUEUED;
+    click_label(screen,"<");click_label(screen,"<");click_label(screen,"<");
+    click_label(screen,"1");click_label(screen,"5");click_label(screen,"Save");
+    assert(find_label(screen,"Change queued"));UiRequest queued=host.last_request;
+    click_label(screen,"Configure night mode");click_label(screen,"Night starts HH:MM");
+    calls=host.submit_calls;ui_deferred_result(&queued,UI_SUBMIT_COMMITTED);
+    assert(find_label(screen,"Night time HH:MM") && host.submit_calls==calls);
+    click_label(screen,"Cancel");host.result=UI_SUBMIT_COMMITTED;
+    puts("N-M1 deferred UI result: queued is not saved; completion neither resubmits nor closes a newer editor PASS");
+    ui_set_display_awake(false);
+    assert(!ui_lvgl_touch_allowed(true,50,50,true,1000));
+    ui_set_display_awake(true);
+    assert(!ui_lvgl_touch_allowed(true,50,50,true,1000));
+    assert(!ui_lvgl_touch_allowed(false,50,50,true,1001));
+    assert(ui_lvgl_touch_allowed(true,50,50,true,1000));
+    (void)ui_lvgl_touch_allowed(false,50,50,true,1001);
+    puts("night UI: genuine controls, percent edit, explicit copy and complete wake-contact quarantine PASS");
     puts("option-sync: pending/rejected/accepted/external/orientation/navigation PASS");
     return 0;
 }
@@ -1774,10 +1808,27 @@ int main(int argc, char **argv)
         assert(translated);
         lv_obj_scroll_to_view(translated, LV_ANIM_OFF);
         lv_obj_update_layout(screen);
+        report_memory(suffix[i]);
         lv_refr_now(display);
         snprintf(name, sizeof(name), "%s-i18n-%s", prefix, suffix[i]);
         snapshot(&host, dir, name);
     }
+    katmed_i18n_select(KATMED_LANG_EN);
+    clock.monotonic_ms+=1000;ui_render(&state,&local,SETTINGS,&clock);
+    click_label(screen,"Configure night mode");
+    for(uint8_t language=0;language<KATMED_LANGUAGE_COUNT;++language){
+        katmed_i18n_select(language);clock.monotonic_ms+=1000;
+        ui_render(&state,&local,SETTINGS,&clock);
+        const char *copy=katmed_i18n_text("Setze Nachtmodus global auf allen Geräten im Mesh");
+        char shaped_copy[512];
+        if(language==KATMED_LANG_AR){
+            assert(lv_text_ap_strlen(copy)<sizeof(shaped_copy));lv_text_ap_proc(copy,shaped_copy);copy=shaped_copy;
+        }
+        assert(find_label(screen,copy));
+        lv_obj_update_layout(screen);lv_refr_now(display);
+    }
+    puts("night actual LVGL page: all12 locales render within the unchanged pool");
+    settings_parent();
     katmed_i18n_select(KATMED_LANG_FR);
     clock.monotonic_ms += 1000;
     /* This is an isolated typography fixture, not a second settings overlay.

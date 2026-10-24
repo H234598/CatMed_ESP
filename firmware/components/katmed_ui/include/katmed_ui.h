@@ -1,6 +1,7 @@
 #ifndef KATMED_UI_H
 #define KATMED_UI_H
 #include "katmed_types.h"
+#include "katmed_display.h"
 #include "katmed_interaction.h"
 #include "katmed_language.h"
 #ifdef __cplusplus
@@ -24,12 +25,13 @@ typedef enum {
     UI_REQUEST_SET_ROTATION_MODE,
     UI_REQUEST_SET_ORIENTATION,
     UI_REQUEST_SET_CLOCK_STYLE,
-    UI_REQUEST_SET_LANGUAGE, UI_REQUEST_SET_SYSTEM_TIME, UI_REQUEST_OPEN_SETUP, UI_REQUEST_EMERGENCY, UI_REQUEST_SET_ORIENTATION_AUTOMATIC
+    UI_REQUEST_SET_LANGUAGE, UI_REQUEST_SET_SYSTEM_TIME, UI_REQUEST_OPEN_SETUP, UI_REQUEST_EMERGENCY, UI_REQUEST_SET_ORIENTATION_AUTOMATIC, UI_REQUEST_SET_BRIGHTNESS, UI_REQUEST_SET_NIGHT_ENABLED, UI_REQUEST_SET_NIGHT_START, UI_REQUEST_SET_NIGHT_END, UI_REQUEST_COPY_NIGHT
 } UiRequestKind;
 typedef struct {
     UiRequestKind kind;
     union {
         uint32_t seconds;
+        uint16_t display_value;
         struct {
             uint8_t hour;
             uint8_t minute;
@@ -49,7 +51,8 @@ typedef enum {
     UI_SUBMIT_REJECTED,
     UI_SUBMIT_UNAVAILABLE,
     UI_SUBMIT_STALE,
-    UI_SUBMIT_DISMISSED /* Transient boot notice closed; no durable mutation. */
+    UI_SUBMIT_DISMISSED, /* Transient boot notice closed; no durable mutation. */
+    UI_SUBMIT_QUEUED /* App-loop intent accepted, not a durable result. */
 } UiSubmitResult;
 typedef struct {
     EventId id;
@@ -102,6 +105,8 @@ typedef struct {
     int (*reset_confirm)(void *context, const char *token, size_t length);
     bool orientation_auto_available;
     bool (*orientation_automatic)(void *context);
+    void (*display_settings)(void *context, KatmedDisplaySettings *out);
+    void (*night_copy_status)(void *context, KatmedNightCopyStatus *out);
 } UiServices;
 
 /* A display render cycle caused by a change of the alarm bar's visibility.
@@ -129,9 +134,12 @@ void ui_clear_pairing_code(void);
 /* Called by the board before LVGL evaluates pointer buttons or scrolling. */
 bool ui_lvgl_touch_allowed(bool down, int16_t x, int16_t y, bool valid, uint64_t now_ms);
 void ui_set_services(const UiServices *services);
+/* Caller holds existing LVGL lock; pauses only display refresh, never touch or Mesh. */
+void ui_set_display_awake(bool awake);
 /* Called under the LVGL lock after the pending shared request's authenticated
  * coordinator result is known. Only accepted may show shared-save success. */
 void ui_shared_result(bool accepted);
+void ui_deferred_result(const UiRequest *request,UiSubmitResult result);
 void ui_shared_timeout(void);
 void ui_touch_sample(bool touched, int16_t x, int16_t y,
                      bool valid, uint64_t monotonic_ms);

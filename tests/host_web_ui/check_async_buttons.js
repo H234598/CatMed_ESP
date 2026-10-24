@@ -78,7 +78,21 @@ async function submit(id) {
   const config={revision:"synthetic-r1",medication_hours:"6",image_hours:"8",
     next_due_hhmm:null,next_due_state:"none",restore_status:"none",
     clock_style:"digital_large",orientation:0,rotation:"off",
-    orientation_auto_supported:false,orientation_automatic:false};
+    orientation_auto_supported:false,orientation_automatic:false,
+    brightness:"100",night_enabled:"off",night_start:"22:00",night_end:"07:00",
+    night_copy:{local_saved:false,active:false,finished:false,membership_known:false,expected:0,acknowledged:0,rejected:0}};
+  assert.equal(window.__validConfig({...config,brightness:"0"}),false);
+  assert.equal(window.__validConfig({...config,night_end:"22:00"}),false);
+  window.__renderConfig(config);
+  const beforeCopy=calls.length;
+  const copied={...config,night_copy:{local_saved:true,active:false,finished:true,membership_known:true,expected:2,acknowledged:1,rejected:0}};
+  replies.push({status:200,body:copied});
+  await click("copy-night");
+  assert.equal(calls.length,beforeCopy+1);
+  assert.equal(JSON.parse(calls.at(-1).options.body).field,"copy_night");
+  assert.equal(JSON.parse(calls.at(-1).options.body).value,"copy");
+  assert.match(element("night-copy-status").textContent,/1\/2/);
+  assert.match(element("night-copy-status").textContent,/1 offen/);
   window.__renderConfig(config);
   assert.equal(element("orientation").querySelector('option[value="auto"]'),null);
   assert.equal(window.__validConfig({...config,orientation_automatic:true}),false);

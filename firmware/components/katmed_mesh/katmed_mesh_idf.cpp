@@ -1,4 +1,5 @@
 #include "katmed_mesh.h"
+#include "katmed_night_wire.h"
 #include "katmed_names_wire.h"
 #include "katmed_dhcp_diag.h"
 #include "katmed_mesh_payload.h"
@@ -100,6 +101,7 @@ EventId interaction_id{};
 uint64_t pending_admission[KATMED_MESH_PEERS]{};
 bool admission_verified[KATMED_MESH_PEERS]{};
 uint64_t greeting_id=0,greeting_until=0;
+void night_cancel();
 bool root();
 bool linked();
 void apply_hostname();
@@ -191,6 +193,7 @@ bool rekey(){
     uint8_t nonce[16];esp_fill_random(nonce,sizeof(nonce));
     if(!katmed_mesh_sessions_init(&ctx.sessions,nonce))return false;
     names_reset_rights();
+    night_cancel();
     ctx.coordinator_device=0;ctx.tx_counter=0;ctx.dirty=true;interaction_id=EventId{};
     interaction.bind(ctx.services.store?ctx.services.store->record.device:0,0,0,false,false,ctx.status.now_ms);std::memset(pending_admission,0,sizeof(pending_admission));std::memset(admission_verified,0,sizeof(admission_verified));
     const uint64_t observed=ctx.status.now_ms;
@@ -371,6 +374,8 @@ void receive_status(const KatmedMeshFrame &f){
         if(!ctx.status.current_valid)ctx.status.root_flags|=MS_CAPACITY;
     }
 }
+#include "katmed_mesh_night.inc"
+
 void send_ack(EventId subject,uint64_t destination,uint8_t status){
     EventId id{};if(!next_event_id(id))return;
     auto f=frame_for(MESH_ACK,id,destination);
@@ -735,6 +740,7 @@ void receive(const KatmedMeshFrame &f,const ClockSample *now){
     if(!katmed_mesh_sessions_check(&ctx.sessions,f.sender,f.session_nonce,
                                    f.session_counter,true))return;
     if(!root()&&f.sender!=ctx.coordinator_device)return;
+    if(f.kind==MESH_NIGHT){night_receive(f,now->monotonic_ms);return;}
     names_activity(f.sender,now->monotonic_ms);
     if(f.kind==MESH_NAME_SYNC){names_frame(f,now->monotonic_ms);return;}
     if(f.kind==MESH_INTERACTION){
@@ -984,6 +990,7 @@ extern "C" KatmedMeshResult katmed_mesh_start(const StoreProvision *provision,
     return MESH_ACCEPTED;
 }
 extern "C" void katmed_mesh_stop(void){
+    night_cancel();
     if(!ctx.started)return;
     interaction.bind(ctx.services.store?ctx.services.store->record.device:0,0,0,false,false,ctx.status.now_ms);greeting_id=0;greeting_until=0;
     ctx.active=false;ctx.has_ip=false;ctx.shared_waiting=false;
@@ -1139,6 +1146,7 @@ extern "C" void katmed_mesh_poll(const ClockSample *now){
         mesh_history_commit(&history,ctx.services.store->scratch);
         if(!history.error&&!history.dirty){if(new_member==history.self_initial)history.self_initial=0;greeting_id=new_member;greeting_until=now->monotonic_ms+1800000;}
     }
+    night_tick(now->monotonic_ms);
     bind_interaction(now->monotonic_ms);
     uint64_t destination=0;katmed::InteractionMessage message;
     if(interaction.transmit(now->monotonic_ms,destination,message)){
@@ -1190,3 +1198,19 @@ extern "C" void katmed_mesh_interaction_status(KatmedInteractionStatus *out,uint
     out->greeting_visible=greeting_id&&now<greeting_until&&!out->alarm_active&&current_group();
     out->known_devices=history.count;
 }
+
+extern "C" KatmedMeshResult katmed_mesh_copy_night(uint64_t now){
+    if(!ctx.started || !linked() || !ctx.services.store || (!root() && !session_live()))return MESH_UNAVAILABLE;
+    if(night.status.active)return MESH_UNAVAILABLE; // do not claim a second explicit action joined the old copy
+    EventId id{};if(!next_event_id(id))return MESH_STORE_ERROR;
+    const auto settings=ctx.services.store->record.display;
+    if(root())return night_begin_root(id,ctx.services.store->record.device,settings,now) ? MESH_ACCEPTED : MESH_STORE_ERROR;
+    const int index=status_peer(ctx.coordinator_device);if(index<0)return MESH_UNAVAILABLE;
+    const StoreResult saved=store_apply_night_copy(ctx.services.store,&settings,id);
+    if(saved!=STORE_OK && saved!=STORE_DUPLICATE)return MESH_STORE_ERROR;
+    night=NightJob{};night.id=id;night.settings=settings;night.origin=ctx.services.store->record.device;
+    night.root_device=ctx.coordinator_device;night.started=now;night.status.local_saved=true;night.status.active=true;
+    std::memcpy(night.root_nonce,ctx.sessions.peers[index].nonce,16);
+    night_tick(now);return MESH_PENDING;
+}
+extern "C" void katmed_mesh_night_status(KatmedNightCopyStatus *out){if(out)*out=night.status;}

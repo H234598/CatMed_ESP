@@ -10,6 +10,9 @@
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "driver/gpio.h"
+#ifdef ESP_PLATFORM
+#include "driver/ledc.h"
+#endif
 #include "driver/i2c_master.h"
 #include "driver/spi_master.h"
 #include "esp_lcd_panel_io.h"
@@ -90,6 +93,11 @@ static lv_indev_t *lv_touch;
 static bool spi_ready;
 static bool port_ready;
 static bool backlight_ready;
+static uint8_t backlight_percent=100;
+static bool backlight_enabled;
+#ifdef ESP_PLATFORM
+static bool pwm_ready;
+#endif
 static Orientation current_orientation = ORIENTATION_0;
 static portMUX_TYPE touch_lock = portMUX_INITIALIZER_UNLOCKED;
 static BoardTouch latest_touch;
@@ -434,10 +442,30 @@ static esp_err_t init_panel(void)
     return esp_lcd_panel_disp_on_off(panel, true);
 }
 
-BoardResult board_set_backlight(bool enabled)
+static BoardResult apply_backlight(void)
 {
     if (!backlight_ready) return BOARD_INVALID;
-    return gpio_set_level(LCD_BACKLIGHT, enabled ? 1 : 0) == ESP_OK ? BOARD_OK : BOARD_IO_ERROR;
+#ifdef ESP_PLATFORM
+    if (pwm_ready) {
+        const uint32_t duty=backlight_enabled ? (1023u*backlight_percent+50u)/100u : 0;
+        return ledc_set_duty_and_update(LEDC_LOW_SPEED_MODE,LEDC_CHANNEL_0,duty,0)==ESP_OK
+            ? BOARD_OK : BOARD_IO_ERROR;
+    }
+#endif
+    return gpio_set_level(LCD_BACKLIGHT,backlight_enabled?1:0)==ESP_OK ? BOARD_OK : BOARD_IO_ERROR;
+}
+BoardResult board_set_backlight(bool enabled)
+{
+    const bool previous=backlight_enabled;backlight_enabled=enabled;
+    BoardResult result=apply_backlight();if(result!=BOARD_OK)backlight_enabled=previous;
+    return result;
+}
+BoardResult board_set_brightness(uint8_t percent)
+{
+    if (percent<1 || percent>100) return BOARD_INVALID;
+    const uint8_t previous=backlight_percent;backlight_percent=percent;
+    BoardResult result=apply_backlight();if(result!=BOARD_OK)backlight_percent=previous;
+    return result;
 }
 
 static esp_err_t apply_panel_orientation(Orientation orientation)
@@ -510,7 +538,9 @@ BoardResult board_read_touch(BoardTouch *touch)
     }
 #else
     uint8_t packet[14];
-    err = touch_read_register(0x01, packet, sizeof(packet), true);
+    /* Match the C6 reference's STOP-separated register read. The existing
+     * helper returns the TX error immediately and only then permits RX. */
+    err = touch_read_register(0x01, packet, sizeof(packet), false);
     const bool transfer_ok = err == ESP_OK;
     const uint32_t native_result = err == ESP_OK ? 1u :
         err == ESP_ERR_TIMEOUT ? 2u : err == ESP_ERR_INVALID_RESPONSE ? 3u : 4u;
@@ -573,6 +603,9 @@ void board_deinit(void)
     if (panel) { (void)esp_lcd_panel_del(panel); panel = NULL; }
     if (panel_io) { (void)esp_lcd_panel_io_del(panel_io); panel_io = NULL; }
     if (spi_ready) { (void)spi_bus_free(SPI2_HOST); spi_ready = false; }
+#ifdef ESP_PLATFORM
+    if (pwm_ready) {(void)ledc_stop(LEDC_LOW_SPEED_MODE,LEDC_CHANNEL_0,0);pwm_ready=false;}
+#endif
     if (backlight_ready) { (void)gpio_reset_pin(LCD_BACKLIGHT); backlight_ready = false; }
     portENTER_CRITICAL(&touch_lock);
     latest_valid = false;
@@ -589,6 +622,18 @@ BoardResult board_init(lv_display_t **display)
     esp_err_t err = gpio_config(&bl_cfg);
     if (err != ESP_OK) return BOARD_IO_ERROR;
     backlight_ready = true;
+    backlight_percent=100;backlight_enabled=false;
+#ifdef ESP_PLATFORM
+    const ledc_timer_config_t pwm_timer={.speed_mode=LEDC_LOW_SPEED_MODE,
+        .duty_resolution=LEDC_TIMER_10_BIT,.timer_num=LEDC_TIMER_0,.freq_hz=5000,
+        .clk_cfg=LEDC_AUTO_CLK};
+    err=ledc_timer_config(&pwm_timer);if(err!=ESP_OK)goto fail;
+    const ledc_channel_config_t pwm_channel={.gpio_num=LCD_BACKLIGHT,
+        .speed_mode=LEDC_LOW_SPEED_MODE,.channel=LEDC_CHANNEL_0,
+        .timer_sel=LEDC_TIMER_0,.duty=0,.hpoint=0};
+    err=ledc_channel_config(&pwm_channel);if(err!=ESP_OK)goto fail;
+    pwm_ready=true;
+#endif
     if (board_set_backlight(false) != BOARD_OK) goto fail;
     err = init_panel();
     if (err != ESP_OK) goto fail;

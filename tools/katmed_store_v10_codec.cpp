@@ -32,7 +32,7 @@ int main() {
     const size_t n=static_cast<size_t>(std::cin.gcount());
     if (n<12 || n> KATMED_STORE_BLOB_MAX ||
         (bytes[4]!=5 && bytes[4]!=7 && bytes[4]!=9 &&
-         bytes[4]!=10 && bytes[4]!=11 && bytes[4]!=12 && bytes[4]!=kCurrentVersion) || bytes[5]!=0 ||
+         bytes[4]!=10 && bytes[4]!=11 && bytes[4]!=12 && bytes[4]!=13 && bytes[4]!=kCurrentVersion) || bytes[5]!=0 ||
         std::cin.bad()) return 1;
     StoreRecord record{};
     if (decode_record(bytes.data(),n,&record)!=STORE_OK) return 1;

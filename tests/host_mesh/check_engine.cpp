@@ -1,4 +1,8 @@
 #include "katmed_mesh.h"
+#include "katmed_night_wire.h"
+#include "../../firmware/main/display_ui_mailbox.h"
+#include <atomic>
+#include <thread>
 #include "katmed_mesh_names.h"
 #include "katmed_names_wire.h"
 #include "../host_names/memory_backend.hpp"
@@ -20,6 +24,7 @@ uint8_t level=0;
 raw_msg_process_cb_t receiver=nullptr;
 unsigned dropped=0,boot_random=0,failed_sends=0;
 bool fail_send=false;
+void (*night_interleave_hook)()=nullptr;
 unsigned router_configs=0, mesh_starts=0;
 bool share_time=true;
 bool time_shareable(void *) {return share_time;}
@@ -73,6 +78,7 @@ StoreResult read_blob(void *arg,uint8_t *out,size_t *n){
 }
 StoreResult write_blob(void *arg,const uint8_t *in,size_t n){
     auto &m=*static_cast<Memory *>(arg);
+    if(night_interleave_hook)night_interleave_hook();
     if(m.fail)return STORE_COMMIT_UNKNOWN;
     m.blob.assign(in,in+n);++m.commits;return STORE_OK;
 }
@@ -153,6 +159,7 @@ esp_err_t esp_mesh_lite_set_softap_info(const char *ssid,const char *){assert(st
 esp_err_t esp_mesh_lite_set_router_config(mesh_lite_sta_config_t *){++router_configs;return ESP_OK;}
 esp_err_t esp_mesh_lite_raw_msg_action_list_register(const esp_mesh_lite_raw_msg_action_t *actions){receiver=actions[0].raw_process;return ESP_OK;}
 esp_err_t esp_mesh_lite_send_msg(int,esp_mesh_lite_msg_config_t *request){
+    if(night_interleave_hook)night_interleave_hook();
     if(fail_send){++failed_sends;return ESP_FAIL;}
     sent.emplace_back(request->raw_msg.data,request->raw_msg.data+request->raw_msg.size);
     return ESP_OK;
@@ -247,6 +254,98 @@ int main(int argc,char **argv){
     }
     #include "check_names_barrier.inc"
     #include "check_names_leaf.inc"
+    if(argc==2 && !std::strcmp(argv[1],"night_interleave")) {
+        level=ROOT;katmed_mesh_poll(&now);
+        auto challenge=latest_kind(MESH_HELLO);std::memcpy(current_local_nonce,challenge.session_nonce,16);
+        auto hello=peer_frame(MESH_HELLO,1);
+        assert(katmed_mesh_encode_hello(current_local_nonce,catalog,"d941fae",0,hello.payload,sizeof(hello.payload),&hello.payload_length));
+        inject(hello);katmed_mesh_poll(&now);assert(katmed_mesh_connected());
+        static DisplayUiMailbox box=DISPLAY_MB_INITIALIZER;
+        static std::atomic<unsigned> stage{0},done{0};static std::atomic<bool> quit{false};
+        static unsigned observations=0;
+        display_mb_publish(&box,katmed_display_defaults(),KatmedNightCopyStatus{});
+        std::thread ui([&]{
+            while(!quit.load(std::memory_order_acquire)){
+                unsigned n=stage.load(std::memory_order_acquire);
+                if(n>done.load(std::memory_order_relaxed)){
+                    KatmedDisplaySettings settings;KatmedNightCopyStatus status;
+                    display_mb_snapshot(&box,&settings,&status);
+                    assert(katmed_display_valid(settings));
+                    assert(status.acknowledged+status.rejected<=status.expected && !(status.active&&status.finished));
+                    UiRequest second{};second.kind=UI_REQUEST_COPY_NIGHT;
+                    assert(!display_mb_submit(&box,&second)); // processing/result belongs to original action
+                    ++observations;done.store(n,std::memory_order_release);
+                }else std::this_thread::yield();
+            }
+        });
+        night_interleave_hook=[](){unsigned n=stage.fetch_add(1,std::memory_order_release)+1;
+            while(done.load(std::memory_order_acquire)<n)std::this_thread::yield();};
+        UiRequest intent{};intent.kind=UI_REQUEST_COPY_NIGHT;uint32_t first_sequence=0;
+        for(unsigned operation=0;operation<2;++operation){
+            assert(display_mb_submit(&box,&intent));UiRequest consumed{};uint32_t sequence;
+            assert(display_mb_take(&box,&consumed,&sequence) && consumed.kind==UI_REQUEST_COPY_NIGHT);
+            if(!operation)first_sequence=sequence;
+            else assert(!display_mb_complete(&box,first_sequence,UI_SUBMIT_COMMITTED));
+            assert(katmed_mesh_copy_night(now.monotonic_ms)==MESH_ACCEPTED);
+            assert(display_mb_complete(&box,sequence,UI_SUBMIT_COMMITTED));
+            katmed_mesh_poll(&now);auto apply=latest_kind(MESH_NIGHT);KatmedNightMessage m{};
+            assert(katmed_night_decode(apply.payload,apply.payload_length,&m));
+            if(!operation){
+                auto ack=peer_frame(MESH_NIGHT,2);m.op=3;m.expected=1;m.acknowledged=1;m.finished=true;
+                EventId correct=m.id;++m.id.sequence;assert(katmed_night_encode(&m,ack.payload));ack.payload_length=KATMED_NIGHT_BYTES;
+                inject(ack);katmed_mesh_poll(&now);KatmedNightCopyStatus status{};katmed_mesh_night_status(&status);assert(!status.acknowledged);
+                m.id=correct;ack.session_counter=3;assert(katmed_night_encode(&m,ack.payload));inject(ack);katmed_mesh_poll(&now);
+                katmed_mesh_night_status(&status);assert(status.finished && status.acknowledged==1 && status.expected==1);
+            }else{level=2;katmed_mesh_poll(&now);}
+            KatmedNightCopyStatus status{};katmed_mesh_night_status(&status);
+            if(operation)assert(status.finished && !status.active && !status.membership_known && !status.acknowledged);
+            display_mb_publish(&box,store.record.display,status);
+            night_interleave_hook();UiSubmitResult result;UiRequest completed;
+            assert(display_mb_result(&box,&completed,&result) && result==UI_SUBMIT_COMMITTED && completed.kind==UI_REQUEST_COPY_NIGHT);
+            assert(!display_mb_complete(&box,sequence,UI_SUBMIT_REJECTED));
+        }
+        night_interleave_hook=nullptr;quit.store(true,std::memory_order_release);ui.join();assert(observations>=4);
+        std::puts("N-M1 actual two-thread Store/TX interleavings: coherent getter, busy/lifetime/stale completion, wrong/right ACK ID and rekey cancellation PASS");return 0;
+    }
+    if(argc==2 && !std::strcmp(argv[1],"night_solo")) {
+        level=ROOT;katmed_mesh_poll(&now);
+        assert(katmed_mesh_copy_night(now.monotonic_ms)==MESH_ACCEPTED);
+        KatmedNightCopyStatus status{};katmed_mesh_night_status(&status);
+        assert(status.local_saved && status.finished && !status.active && !status.expected && !status.acknowledged);
+        std::puts("night solo: local save without imaginary remote acknowledgements PASS");return 0;
+    }
+    if(argc==2 && !std::strcmp(argv[1],"night_copy")) {
+        level=ROOT;katmed_mesh_poll(&now);
+        auto challenge=latest_kind(MESH_HELLO);
+        std::memcpy(current_local_nonce,challenge.session_nonce,16);
+        auto hello=peer_frame(MESH_HELLO,1);
+        assert(katmed_mesh_encode_hello(current_local_nonce,catalog,"d941fae",0,hello.payload,sizeof(hello.payload),&hello.payload_length));
+        inject(hello);katmed_mesh_poll(&now);assert(katmed_mesh_connected());
+        auto settings=katmed_display_defaults();settings.brightness=25;settings.night_enabled=true;
+        assert(store_set_display(&store,&settings)==STORE_OK);
+        const auto medical=state.revision;
+        assert(katmed_mesh_copy_night(now.monotonic_ms)==MESH_ACCEPTED);
+        KatmedNightCopyStatus status{};katmed_mesh_night_status(&status);
+        assert(status.local_saved && status.active && status.expected==1 && status.acknowledged==0);
+        const unsigned active_commits=memory.commits;
+        assert(katmed_mesh_copy_night(now.monotonic_ms)==MESH_UNAVAILABLE && memory.commits==active_commits);
+        katmed_mesh_poll(&now);
+        auto apply=latest_kind(MESH_NIGHT);KatmedNightMessage message{};
+        assert(katmed_night_decode(apply.payload,apply.payload_length,&message) && message.op==2);
+        assert(message.settings.brightness==100); // brightness is deliberately absent from wire
+        auto ack=peer_frame(MESH_NIGHT,2);message.op=3;message.expected=1;message.acknowledged=1;message.finished=true;
+        assert(katmed_night_encode(&message,ack.payload));ack.payload_length=KATMED_NIGHT_BYTES;
+        auto foreign=ack;foreign.group[0]^=1;inject(foreign);katmed_mesh_poll(&now);
+        katmed_mesh_night_status(&status);assert(status.acknowledged==0);
+        inject(ack);katmed_mesh_poll(&now);katmed_mesh_night_status(&status);
+        assert(status.finished && !status.active && status.acknowledged==1 && status.rejected==0);
+        inject(ack);katmed_mesh_poll(&now);katmed_mesh_night_status(&status);assert(status.acknowledged==1);
+        assert(state.revision.number==medical.number && store.record.display.brightness==25);
+        assert(katmed_mesh_copy_night(now.monotonic_ms)==MESH_ACCEPTED);
+        advance_now(now.monotonic_ms+10001);katmed_mesh_poll(&now);katmed_mesh_night_status(&status);
+        assert(status.finished && status.acknowledged==0 && status.expected==1); // missing ACK never success
+        std::puts("night-copy authenticated actual adapter: explicit action, ACK, replay, foreign group and timeout OK");return 0;
+    }
     #include "check_names_engine.inc"
     #include "check_names_recovery.inc"
     if(argc==2&&std::strcmp(argv[1],"name_assignment")==0){
@@ -484,7 +583,7 @@ int main(int argc,char **argv){
         std::puts("mesh eight-pending outbox and >49-day monotonic OK");
         return 0;
     }
-    if(argc==2&&(std::strcmp(argv[1],"leaf")==0||
+    if(argc==2&&(std::strcmp(argv[1],"night_leaf")==0||std::strcmp(argv[1],"leaf")==0||
                  std::strcmp(argv[1],"leaf_shared_negative")==0||
                  std::strcmp(argv[1],"leaf_shared_timeout")==0||
                  std::strcmp(argv[1],"leaf_running")==0||
@@ -516,6 +615,30 @@ int main(int argc,char **argv){
                std::memcmp(echo.payload,reply.session_nonce,16)==0){found=true;break;}
         }
         assert(found);
+        if(!std::strcmp(argv[1],"night_leaf")) {
+            auto local=katmed_display_defaults();local.brightness=17;
+            assert(store_set_display(&store,&local)==STORE_OK);
+            KatmedNightMessage message{};message.op=2;message.id={99,5,400};
+            message.settings=local;message.settings.night_enabled=true;message.settings.night_start=1200;
+            auto f=peer_frame(MESH_NIGHT,2);f.payload_length=KATMED_NIGHT_BYTES;
+            assert(katmed_night_encode(&message,f.payload));
+            auto broken=f;broken.payload[35]=1;unsigned commits=memory.commits;
+            inject(broken);katmed_mesh_poll(&now);assert(memory.commits==commits);
+            f.session_counter=3;inject(f);katmed_mesh_poll(&now);
+            assert(store.record.display.night_start==1200 && store.record.display.brightness==17);
+            auto answer=latest_kind(MESH_NIGHT);KatmedNightMessage ack{};
+            assert(katmed_night_decode(answer.payload,answer.payload_length,&ack) && ack.op==3 && ack.acknowledged==1);
+            local.night_start=1100;assert(store_set_display(&store,&local)==STORE_OK);
+            commits=memory.commits;f.session_counter=4;inject(f);katmed_mesh_poll(&now);
+            assert(memory.commits==commits && store.record.display.night_start==1100); // retry cannot undo local override
+            message.id.sequence=401;message.settings.night_start=1000;
+            assert(katmed_night_encode(&message,f.payload));f.session_counter=5;
+            const unsigned replies=count_kind(MESH_NIGHT);
+            memory.fail=true;inject(f);katmed_mesh_poll(&now);
+            assert(count_kind(MESH_NIGHT)==replies); // unhealthy Store forbids authenticated TX; no false ACK
+            assert(store.record.display.night_start==1100 && store.uncertain);
+            std::puts("night leaf: strict payload, durable ACK, local override/idempotent retry and write failure rejection PASS");return 0;
+        }
         if(std::strcmp(argv[1],"leaf_ack2")==0||
            std::strcmp(argv[1],"leaf_ack2_fail")==0){
             prepare_due_round();

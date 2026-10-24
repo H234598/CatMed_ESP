@@ -78,6 +78,8 @@ KatmedMeshResult katmed_mesh_submit_shared(const AppEvent *event,
                                            const ClockSample *now,
                                            AppEffects *effects);
 void katmed_mesh_notify_local_commit(void);
+KatmedMeshResult katmed_mesh_copy_night(uint64_t now_ms);
+void katmed_mesh_night_status(KatmedNightCopyStatus *status);
 /* Transient interactions. These never submit medical events. Receiver state
  * is device-wide; only sending and completion dialogs require menu_entry. */
 bool katmed_mesh_interaction_input(const KatmedInteractionInput *input,

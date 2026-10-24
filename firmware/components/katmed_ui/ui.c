@@ -23,11 +23,11 @@
 #include <time.h>
 #endif
 
-typedef enum { EDIT_NONE, EDIT_MEDICATION, EDIT_IMAGE, EDIT_NEXT_TIME, EDIT_SYSTEM_TIME } EditKind;
+typedef enum { EDIT_NONE, EDIT_MEDICATION, EDIT_IMAGE, EDIT_NEXT_TIME, EDIT_SYSTEM_TIME, EDIT_BRIGHTNESS, EDIT_NIGHT_START, EDIT_NIGHT_END } EditKind;
 #define ALARM_STRIPS 6u
 typedef enum {
     SETTINGS_ROOT, SETTINGS_TIMES, SETTINGS_LANGUAGES,
-    SETTINGS_ROTATION, SETTINGS_PLAYBACK
+    SETTINGS_ROTATION, SETTINGS_PLAYBACK, SETTINGS_NIGHT
 } SettingsMenu;
 
 typedef struct {
@@ -78,6 +78,8 @@ typedef struct {
     char entry[24];
     bool preview_valid;
     SettingsMenu settings_menu;
+    lv_obj_t *night_status;
+    lv_obj_t *night_toggle;
     bool reset_dialog_pressed;
     uint8_t reset_stage; /* 0 idle, 1 physical button tile, 2 warning. */
     char reset_token[33];
@@ -103,7 +105,7 @@ typedef struct {
     bool morse_alarm_confirmed;
     bool morse_color_valid;
     bool morse_shown_white;
-    int32_t scroll_y[13]; /* Nine tiles and four independent settings submenus. */
+    int32_t scroll_y[14]; /* Nine tiles and four independent settings submenus. */
     uint8_t status_scroll_slot;
     uint8_t applied_language;
 } UiContext;
@@ -118,6 +120,31 @@ typedef struct {
     uint64_t render_started_us;
     bool rendering;
 } BlinkMetricsState;
+static bool display_sleeping, wake_quarantine;
+void ui_set_display_awake(bool awake)
+{
+    if(display_sleeping==!awake)return;
+    display_sleeping=!awake;
+    if(!awake)wake_quarantine=true;
+    lv_display_t *display=lv_display_get_default();if(!display)return;
+    lv_timer_t *timer=lv_display_get_refr_timer(display);
+    if(timer){if(awake)lv_timer_resume(timer);else lv_timer_pause(timer);}
+    if(awake && lv_screen_active())lv_obj_invalidate(lv_screen_active());
+}
+static KatmedDisplaySettings display_values(void)
+{
+    KatmedDisplaySettings out=katmed_display_defaults();
+    if(ui.services.display_settings)ui.services.display_settings(ui.services.context,&out);
+    return out;
+}
+static bool display_time_edit(void){return ui.edit==EDIT_NIGHT_START || ui.edit==EDIT_NIGHT_END;}
+static bool parse_percent(const char *text,unsigned *value)
+{
+    size_t n=strlen(text);unsigned v=0;if(!n || n>3)return false;
+    for(size_t i=0;i<n;++i){if(text[i]<'0'||text[i]>'9')return false;v=v*10u+(unsigned)(text[i]-'0');}
+    if(v<1 || v>100)return false;
+    *value=v;return true;
+}
 static BlinkMetricsState blink_metrics;
 
 static uint64_t metrics_now_us(void)
@@ -257,6 +284,8 @@ static void destroy_menu(void)
     if (ui.settings) lv_obj_delete(ui.settings);
     ui.settings = NULL;
     ui.settings_options = NULL;
+    ui.night_status = NULL;
+    ui.night_toggle = NULL;
     ui.pairing_label = NULL;
 }
 
@@ -288,6 +317,7 @@ static const char *result_text(UiSubmitResult result)
 {
     switch (result) {
     case UI_SUBMIT_COMMITTED: return T("Gespeichert");
+    case UI_SUBMIT_QUEUED: return T("Änderung vorgemerkt");
     case UI_SUBMIT_DISMISSED: return T("Hinweis geschlossen");
     case UI_SUBMIT_PENDING: return T("Lokal gespeichert; Gruppe ausstehend");
     case UI_SUBMIT_PENDING_SHARED: return T("Koordinator prüft Änderung");
@@ -328,7 +358,7 @@ static UiSubmitResult request_action(const UiRequest *request)
         ui.shared_pending = true;
         ui.shared_result_status = 0;
     }
-    if (result == UI_SUBMIT_COMMITTED && ui.keypad) {
+    if ((result == UI_SUBMIT_COMMITTED || result == UI_SUBMIT_QUEUED) && ui.keypad) {
         lv_obj_delete(ui.keypad);
         ui.keypad = NULL;
         ui.entry_label = NULL;
@@ -339,6 +369,15 @@ static UiSubmitResult request_action(const UiRequest *request)
     }
     if (result == UI_SUBMIT_STALE) ui.preview_valid = false;
     return result;
+}
+
+void ui_deferred_result(const UiRequest *request,UiSubmitResult result)
+{
+    /* Completion never closes a newly opened editor or resubmits an action. */
+    if(result==UI_SUBMIT_COMMITTED && ui.services.read_model)
+        ui.services.read_model(ui.services.context,&ui.state,&ui.local,&ui.clock);
+    show_feedback(request->kind==UI_REQUEST_COPY_NIGHT && result==UI_SUBMIT_COMMITTED ?
+        T("Lokal gespeichert; Mesh-Bestätigungen prüfen") : result_text(result));
 }
 
 void ui_shared_result(bool accepted)
@@ -380,11 +419,25 @@ void ui_shared_timeout(void)
 static lv_obj_t *label(lv_obj_t *parent, const char *text, int width)
 {
     lv_obj_t *obj = lv_label_create(parent);
-    lv_obj_set_width(obj, width);
-    lv_obj_set_style_text_font(obj, &katmed_font_14, 0);
-    lv_obj_set_style_text_color(obj, lv_color_white(), 0);
+    if(parent==ui.settings){
+        static lv_style_t heading;
+        static bool ready;
+        if(!ready){lv_style_init(&heading);ready=true;}
+        lv_style_set_width(&heading,width);
+        lv_obj_add_style(obj,&heading,0);
+    }else lv_obj_set_width(obj, width);
+    const bool settings_text=parent==ui.settings ||
+        (lv_obj_check_type(parent,&lv_button_class) && lv_obj_get_parent(parent)==ui.settings);
+    if(!settings_text){
+        lv_obj_set_style_text_font(obj, &katmed_font_14, 0);
+        lv_obj_set_style_text_color(obj, lv_color_white(), 0);
+    }
     lv_label_set_long_mode(obj, LV_LABEL_LONG_WRAP);
-    lv_label_set_text(obj, text);
+    /* Settings rows receive stable catalog/literal strings, never stack data.
+     * Share these strings; Arabic keeps the normal shaping/allocation path,
+     * as do mutable status/code labels. */
+    if(settings_text && katmed_i18n_selected()!=KATMED_LANG_AR)lv_label_set_text_static(obj,text);
+    else lv_label_set_text(obj, text);
     return obj;
 }
 
@@ -392,13 +445,45 @@ static lv_obj_t *button(lv_obj_t *parent, const char *text, int w, int h,
                         lv_event_cb_t cb, void *data)
 {
     lv_obj_t *obj = lv_button_create(parent);
+    const bool settings_row=parent==ui.settings;
+    static lv_style_t normal,pressed,disabled,caption_style;
+    static bool ready;
+    if(settings_row){
+        /* These repeated rows share the same appearance. Keeping the generic
+         * theme's per-object style lists for every new row exhausts the fixed
+         * 34 KiB pool during drawing; share their explicit existing styling. */
+        if(!ready){
+            lv_style_init(&normal);lv_style_init(&pressed);lv_style_init(&disabled);lv_style_init(&caption_style);
+            lv_style_set_bg_color(&normal,lv_color_hex(0x22384a));
+            lv_style_set_bg_opa(&normal,LV_OPA_COVER);lv_style_set_radius(&normal,8);
+            lv_style_set_border_width(&normal,0);lv_style_set_pad_all(&normal,0);
+            lv_style_set_text_font(&normal,&katmed_font_14);
+            lv_style_set_text_color(&normal,lv_color_white());
+            lv_style_set_text_align(&normal,LV_TEXT_ALIGN_CENTER);
+            lv_style_set_align(&caption_style,LV_ALIGN_CENTER);
+            lv_style_set_bg_color(&pressed,lv_color_hex(0x1b2e3c));
+            lv_style_set_bg_color(&disabled,lv_color_hex(0x172430));
+            lv_style_set_text_color(&disabled,lv_color_hex(0x8a969f));ready=true;
+        }
+        lv_style_set_width(&caption_style,w-8); // all rows of the live page share this width
+        lv_obj_remove_style_all(obj);
+        lv_obj_add_style(obj,&normal,LV_PART_MAIN);
+        lv_obj_add_style(obj,&pressed,LV_STATE_PRESSED);
+        lv_obj_add_style(obj,&disabled,LV_STATE_DISABLED);
+    }else{
+        lv_obj_set_style_bg_color(obj, lv_color_hex(0x22384a), 0);
+        lv_obj_set_style_radius(obj, 8, 0);
+    }
     lv_obj_set_size(obj, w, h);
-    lv_obj_set_style_bg_color(obj, lv_color_hex(0x22384a), 0);
-    lv_obj_set_style_radius(obj, 8, 0);
     if (cb) lv_obj_add_event_cb(obj, cb, LV_EVENT_CLICKED, data);
     lv_obj_t *caption = label(obj, text, w - 8);
-    lv_obj_set_style_text_align(caption, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_center(caption);
+    if(settings_row){
+        lv_obj_remove_style_all(caption);
+        lv_obj_add_style(caption,&caption_style,0);
+    }else{
+        lv_obj_set_style_text_align(caption, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_center(caption);
+    }
     return obj;
 }
 
@@ -462,6 +547,13 @@ static void update_preview(void)
     if (!ui.preview_label) return;
     ui.preview_valid = false;
     char text[96];
+    if(ui.edit==EDIT_BRIGHTNESS){unsigned value;
+        ui.preview_valid=parse_percent(ui.entry,&value);
+        lv_label_set_text(ui.preview_label,ui.preview_valid?ui.entry:T("Helligkeit: 1 bis 100 Prozent"));return;}
+    if(display_time_edit()){unsigned h,m;const KatmedDisplaySettings d=display_values();
+        ui.preview_valid=parse_hhmm(ui.entry,&h,&m) &&
+            h*60u+m!=(ui.edit==EDIT_NIGHT_START?d.night_end:d.night_start);
+        lv_label_set_text(ui.preview_label,ui.preview_valid?ui.entry:T("HH:MM eingeben"));return;}
     if(ui.edit==EDIT_SYSTEM_TIME) {
         char civil[17];int64_t utc;
         ui.preview_valid=system_datetime(civil) && app_parse_local_datetime(civil,&utc)==APP_OK;
@@ -538,7 +630,7 @@ static void key_press(lv_event_t *event)
         else if(length<12 && key[0]>='0' && key[0]<='9' && !key[1]){ui.entry[length]=key[0];ui.entry[length+1]=0;}
         refresh_entry();return;
     }
-    if (ui.edit == EDIT_NEXT_TIME) {
+    if (ui.edit == EDIT_NEXT_TIME || display_time_edit()) {
         char digits[5] = {0};
         size_t count = 0;
         for (size_t i = 0; i < length && count < 4; ++i)
@@ -582,6 +674,12 @@ static void save_edit(lv_event_t *event)
         return;
     }
     UiRequest request = {0};
+    if(ui.edit==EDIT_BRIGHTNESS){unsigned value;if(!parse_percent(ui.entry,&value))return;
+        request.kind=UI_REQUEST_SET_BRIGHTNESS;request.value.display_value=(uint16_t)value;
+        request_action(&request);return;}
+    if(display_time_edit()){unsigned h,m;if(!parse_hhmm(ui.entry,&h,&m))return;
+        request.kind=ui.edit==EDIT_NIGHT_START?UI_REQUEST_SET_NIGHT_START:UI_REQUEST_SET_NIGHT_END;
+        request.value.display_value=(uint16_t)(h*60u+m);request_action(&request);return;}
     if(ui.edit==EDIT_SYSTEM_TIME) {
         request.kind=UI_REQUEST_SET_SYSTEM_TIME;
         if(!system_datetime(request.value.local_datetime))return;
@@ -611,7 +709,11 @@ static void open_edit(EditKind edit)
     destroy_settings();
     ui.edit = edit;
     ui.entry[0] = '\0';
-    if (edit == EDIT_IMAGE || edit == EDIT_MEDICATION)
+    if(edit==EDIT_BRIGHTNESS)snprintf(ui.entry,sizeof(ui.entry),"%u",display_values().brightness);
+    else if(display_time_edit()){KatmedDisplaySettings d=display_values();
+        unsigned minute=edit==EDIT_NIGHT_START?d.night_start:d.night_end;
+        snprintf(ui.entry,sizeof(ui.entry),"%02u:%02u",minute/60u,minute%60u);}
+    else if (edit == EDIT_IMAGE || edit == EDIT_MEDICATION)
         format_hours(ui.entry, sizeof(ui.entry), edit == EDIT_MEDICATION ?
                      ui.state.settings.medication_seconds : ui.state.settings.image_seconds);
     else if (edit == EDIT_NEXT_TIME) {
@@ -647,7 +749,7 @@ static void open_edit(EditKind edit)
                                      "7", "8", "9", "<", "\n",
                                      "0", "0", "0", "<", ""};
     lv_obj_t *keys = lv_buttonmatrix_create(ui.keypad);
-    lv_buttonmatrix_set_map(keys, (edit == EDIT_NEXT_TIME || edit==EDIT_SYSTEM_TIME) ? time_map : key_map);
+    lv_buttonmatrix_set_map(keys, (edit == EDIT_NEXT_TIME || edit==EDIT_SYSTEM_TIME || display_time_edit()) ? time_map : key_map);
     lv_obj_set_size(keys, keys_w, 4 * (key_h + 2));
     lv_obj_set_pos(keys, x0, y0);
     lv_obj_set_style_pad_all(keys, 0, LV_PART_MAIN);
@@ -661,7 +763,7 @@ static void open_edit(EditKind edit)
     int info_x = landscape ? keys_w + 14 : round ? 50 : 20;
     int info_w = landscape ? ui.width - info_x - 8 :
                  round ? 140 : ui.width - 40;
-    lv_obj_t *heading = label(ui.keypad, edit==EDIT_SYSTEM_TIME ? "YYYYMMDDHHMM Berlin" : round ?
+    lv_obj_t *heading = label(ui.keypad, edit==EDIT_BRIGHTNESS ? T("Helligkeit") : display_time_edit() ? T("Nachtzeit HH:MM") : edit==EDIT_SYSTEM_TIME ? "YYYYMMDDHHMM Berlin" : round ?
           (edit == EDIT_NEXT_TIME ? "HH:MM" : edit == EDIT_MEDICATION ? T("Medikamente") : T("Bilder")) :
           edit == EDIT_NEXT_TIME ? T("Nächste Zeit HH:MM") :
           edit == EDIT_MEDICATION ? T("Medikamente: Stunden") : T("Bilder: Stunden"),
@@ -921,6 +1023,37 @@ static void status_button(lv_event_t *event)
 static void open_setup(lv_event_t *event) {
     (void)event;UiRequest request={.kind=UI_REQUEST_OPEN_SETUP};request_action(&request);
 }
+static void toggle_night(lv_event_t *event)
+{
+    (void)event;KatmedDisplaySettings d=display_values();
+    UiRequest request={.kind=UI_REQUEST_SET_NIGHT_ENABLED};request.value.display_value=!d.night_enabled;
+    if(request_action(&request)==UI_SUBMIT_COMMITTED){destroy_settings();build_settings();}
+}
+static void copy_night(lv_event_t *event)
+{
+    (void)event;const UiRequest request={.kind=UI_REQUEST_COPY_NIGHT};
+    if(request_action(&request)==UI_SUBMIT_COMMITTED)
+        show_feedback(T("Lokal gespeichert; Mesh-Bestätigungen prüfen"));
+}
+static void update_night_status(void)
+{
+    if(!ui.night_status)return;
+    if(ui.night_toggle){const KatmedDisplaySettings d=display_values();
+        const char *text=d.night_enabled?T("Nachtmodus ausschalten"):T("Nachtmodus einschalten");
+        lv_obj_t *label=lv_obj_get_child(ui.night_toggle,0);
+        if(label && strcmp(lv_label_get_text(label),text)!=0)lv_label_set_text(label,text);
+    }
+    KatmedNightCopyStatus status={0};
+    if(ui.services.night_copy_status)ui.services.night_copy_status(ui.services.context,&status);
+    char text[180];
+    if(!status.local_saved)snprintf(text,sizeof(text),"%s",T("Noch keine globale Nachtkopie"));
+    else if(!status.membership_known)snprintf(text,sizeof(text),"%s",T("Mesh-Ergebnis noch unbekannt"));
+    else snprintf(text,sizeof(text),T("Mesh: %u/%u bestätigt, %u abgelehnt, %u offen"),
+        status.acknowledged,status.expected,status.rejected,
+        status.expected-status.acknowledged-status.rejected);
+    if(strcmp(lv_label_get_text(ui.night_status),text)!=0)lv_label_set_text(ui.night_status,text);
+}
+
 static void build_settings(void)
 {
     retire_clock_for_menu();
@@ -942,6 +1075,8 @@ static void build_settings(void)
     lv_obj_set_style_pad_bottom(ui.settings, ui.width == 240 ? 38 : 8, 0);
     lv_obj_set_flex_flow(ui.settings, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_style_pad_row(ui.settings, 5, 0);
+    lv_obj_set_style_text_font(ui.settings,&katmed_font_14,0);
+    lv_obj_set_style_text_color(ui.settings,lv_color_white(),0);
     int row_w = ui.width - (ui.width == 240 ? 100 : 18) - 4;
     if (ui.settings_menu != SETTINGS_ROOT) {
         if (ui.settings_menu == SETTINGS_TIMES) {
@@ -965,6 +1100,10 @@ static void build_settings(void)
             for (size_t i = 0; i < sizeof(languages)/sizeof(languages[0]); ++i) {
                 lv_obj_t *choice=button(ui.settings,languages[i].name,row_w,34,
                                         language_select,(void *)(intptr_t)languages[i].id);
+                /* This literal remains Arabic even when another UI locale is
+                 * selected, so it must take LVGL's normal shaping path too. */
+                if(languages[i].id==KATMED_LANG_AR)
+                    lv_label_set_text(lv_obj_get_child(choice,0),languages[i].name);
                 if (languages[i].id==katmed_i18n_selected())
                     lv_obj_set_style_bg_color(choice,lv_color_hex(0x13708b),0);
             }
@@ -976,6 +1115,14 @@ static void build_settings(void)
             auto_map[8]=T("Automatisch");
             option_matrix(ui.settings, ui.services.orientation_auto_available ? auto_map : angle_map,
                           row_w, ui.services.orientation_auto_available ? 5 : 4, true);
+        } else if (ui.settings_menu == SETTINGS_NIGHT) {
+            label(ui.settings,T("Nachtmodus"),row_w);
+            const KatmedDisplaySettings d=display_values();
+            ui.night_toggle=button(ui.settings,d.night_enabled?T("Nachtmodus ausschalten"):T("Nachtmodus einschalten"),row_w,42,toggle_night,NULL);
+            button(ui.settings,T("Nachtbeginn HH:MM"),row_w,40,edit_button,(void*)(intptr_t)EDIT_NIGHT_START);
+            button(ui.settings,T("Nachtende HH:MM"),row_w,40,edit_button,(void*)(intptr_t)EDIT_NIGHT_END);
+            button(ui.settings,T("Setze Nachtmodus global auf allen Geräten im Mesh"),row_w,90,copy_night,NULL);
+            ui.night_status=label(ui.settings,"",row_w);update_night_status();
         } else if (ui.settings_menu == SETTINGS_PLAYBACK) {
             label(ui.settings, T("Diashow / Abspielreienfolge"), row_w);
             static const char *rotation_map[] = {"", "\n", "", "\n", "", ""};
@@ -1021,6 +1168,10 @@ static void build_settings(void)
         lv_obj_t *access=label(ui.settings,"",row_w);
         lv_label_set_text_fmt(access,"%s\n%s",setup.setup_ssid,setup.setup_password);
     }
+    label(ui.settings,T("Helligkeit"),row_w);
+    button(ui.settings,T("Helligkeit ändern"),row_w,40,edit_button,(void*)(intptr_t)EDIT_BRIGHTNESS);
+    label(ui.settings,T("Nachtmodus"),row_w);
+    button(ui.settings,T("Nachtmodus einstellen"),row_w,40,settings_submenu_button,(void*)(intptr_t)SETTINGS_NIGHT);
     label(ui.settings, T("Reset"), row_w);
     button(ui.settings, T("Werkseinstellungen zurücksetzen"), row_w, 42,
            reset_open, NULL);
@@ -1032,7 +1183,7 @@ static void build_settings(void)
 static void settings_submenu_button(lv_event_t *event)
 {
     const SettingsMenu next=(SettingsMenu)(intptr_t)lv_event_get_user_data(event);
-    if (next < SETTINGS_TIMES || next > SETTINGS_PLAYBACK) return;
+    if (next < SETTINGS_TIMES || next > SETTINGS_NIGHT) return;
     destroy_menu();
     ui.settings_menu=next;
     build_settings();
@@ -1830,6 +1981,10 @@ static void update_interaction(uint64_t now)
 bool ui_lvgl_touch_allowed(bool down, int16_t x, int16_t y, bool valid, uint64_t now)
 {
     (void)now;
+    if(wake_quarantine || display_sleeping){
+        if(valid && !down && !display_sleeping){wake_quarantine=false;ui.lv_contact=false;ui.lv_blocked=false;return false;}
+        ui.lv_blocked=true;return false;
+    }
     if (!valid) { ui.lv_blocked = true; return false; }
     if (!down) {
         bool allowed = !ui.lv_blocked && ui.lv_overlay_generation == ui.overlay_generation;
@@ -2147,6 +2302,7 @@ static void update_alarm_bar(const AppState *state, const ClockSample *clock)
 void ui_render(const AppState *state, const LocalSettings *local,
                UiView view, const ClockSample *clock)
 {
+    if(display_sleeping)return;
     if (!state || !local || !clock) return;
     bool alarm_started = state->alarm_active && ui.view != ALARM;
     if (alarm_started && ui.reset_stage && !reset_abandon()) return;
@@ -2253,6 +2409,7 @@ void ui_render(const AppState *state, const LocalSettings *local,
     if (ui.view == SETTINGS && !ui.keypad && !ui.style_dialog && !ui.status)
         build_settings();
     sync_settings_options();
+    update_night_status();
     if (ui.image_id != state->image_id || ui.image_orientation != local->orientation) {
         katmed_images_present(ui.background, ui.fallback, state->image_id,
                               local->orientation);

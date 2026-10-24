@@ -47,6 +47,7 @@ void remove_v9_names(Fake &f) {
 }
 void remove_v10_wifi_profiles(Fake &f);
 void remove_v12_mode(Fake &f) {
+    if(f.bytes[4]==14) {f.length-=28;f.bytes[4]=13;repair_crc(f);}
     if(f.bytes[4]==13) {--f.length;f.bytes[4]=12;repair_crc(f);}
     if(f.bytes[4]==12) {f.length-=2;f.bytes[4]=11;repair_crc(f);}
 }
@@ -176,7 +177,7 @@ void test_v8_mesh_name_migration_past_999() {
     assert(std::strcmp(store_mesh_name(&migrated),"KatmedESP-999")==0);
     assert(store_mesh_name_next_index(&migrated)==1000);
     assert(store_mesh_name_assign(&migrated,UINT64_C(0xAC276E46BC2D),1000)==STORE_OK);
-    assert(fixture.bytes[4]==13 && store_mesh_name_next_index(&migrated)==1001);
+    assert(fixture.bytes[4]==14 && store_mesh_name_next_index(&migrated)==1001);
 }
 void test_corrupt_legacy_future() {
     Fake original{}; Store *s=fresh_store(); StoreRecovery r=open(original,s);
@@ -550,7 +551,7 @@ void test_usb() {
         Fake forged=f;
         constexpr size_t mesh_name_suffix=1+17+2+1+KATMED_MESH_NAME_MAX_ENTRIES*10+4;
         constexpr size_t wifi_suffix=5u+103u;
-        forged.bytes[forged.length-1-wifi_suffix-mesh_name_suffix]=9; // Invalid mesh-name state.
+        forged.bytes[forged.length-32-wifi_suffix-mesh_name_suffix]=9; // Invalid mesh-name state.
         repair_crc(forged);
         StoreRecovery x{}; const unsigned before_forged=forged.writes;
         Store forged_store{};
@@ -614,10 +615,10 @@ void test_orientation_override_migration() {
     retry.record.shared.image_seconds=8u*3600u;
     LocalSettings requested=local; requested.clock_style=ANALOG;
     assert(store_set_local(&retry,&local,&requested)==STORE_OK);
-    Fake legacy=disk; --legacy.length; legacy.bytes[4]=12; repair_crc(legacy);
+    Fake legacy=disk; legacy.length-=29; legacy.bytes[4]=12; repair_crc(legacy);
     Store migrated{};
     assert(store_open(&migrated,backend(legacy),kDevice,catalog,75,&recovery)==STORE_OK);
-    assert(legacy.bytes[4]==13 && !migrated.record.orientation_manual);
+    assert(legacy.bytes[4]==14 && !migrated.record.orientation_manual);
     assert(recovery.local.orientation==ORIENTATION_90 && recovery.local.clock_style==ANALOG);
     assert(migrated.record.shared.image_seconds==8u*3600u);
     assert(migrated.record.has_history==retry.record.has_history);
@@ -634,7 +635,7 @@ void test_language_reboot_and_factory_default() {
     assert(initial.language==KATMED_LANG_EN && first.record.language==KATMED_LANG_EN);
     for (uint8_t language=1; language<KATMED_LANGUAGE_COUNT; ++language) {
         assert(store_set_language(&first,language)==STORE_OK);
-        assert(disk.length>12 && disk.bytes[4]==13 && first.record.language==language);
+        assert(disk.length>12 && disk.bytes[4]==14 && first.record.language==language);
         assert(store_set_language(&first,language)==STORE_DUPLICATE);
         Store reboot{};
         StoreRecovery restored{};
@@ -685,9 +686,72 @@ void test_explicit_network_modes() {
     assert(again.record.provision.network_mode==STORE_NETWORK_OFFLINE && again.uncertain);
 }
 
+void test_night_policy_contacts() {
+    auto s=katmed_display_defaults(); s.night_enabled=true;
+    assert(!katmed_display_night(s,false,1320));
+    assert(!katmed_display_night(s,true,1319));
+    assert(katmed_display_night(s,true,1320) && katmed_display_night(s,true,419));
+    assert(!katmed_display_night(s,true,420));
+    s.night_start=600;s.night_end=900;
+    assert(katmed_display_night(s,true,600) && !katmed_display_night(s,true,900));
+    KatmedDisplayPolicy p{};
+    assert(!katmed_display_evaluate(&p,s,true,700,false,100));
+    assert(!katmed_display_touch(&p,true,true,false,101));
+    assert(p.awake && p.wake_until_ms==900101);
+    assert(!katmed_display_touch(&p,true,true,false,201)); // hold cannot renew
+    assert(p.wake_until_ms==900101);
+    assert(!katmed_display_touch(&p,true,false,false,202)); // complete first contact consumed
+    assert(katmed_display_touch(&p,true,true,false,303));
+    assert(p.wake_until_ms==900303);
+    assert(katmed_display_touch(&p,true,false,false,304));
+    assert(!katmed_display_evaluate(&p,s,true,700,false,900303));
+    assert(katmed_display_evaluate(&p,s,true,700,true,900304));
+    assert(katmed_display_touch(&p,true,true,true,900305)); // alarm ACK does not wake for 15min
+    assert(!p.wake_until_ms);
+    assert(!katmed_display_evaluate(&p,s,true,700,false,900306));
+    assert(katmed_display_evaluate(&p,s,false,700,false,900307));
+    s.night_end=s.night_start; assert(!katmed_display_valid(s));
+}
+void test_display_local_copy_and_v13() {
+    Fake disk{}; Store store{}; StoreRecovery recovery{};
+    assert(store_open(&store,backend(disk),kDevice,catalog,75,&recovery)==STORE_OK);
+    assert(store.record.display.brightness==100 && !store.record.display.night_enabled);
+    auto settings=katmed_display_defaults(); settings.brightness=31; settings.night_enabled=true;
+    store.record.shared.image_seconds=8*3600;
+    assert(store_set_display(&store,&settings)==STORE_OK);
+    const auto shared=store.record.shared;
+    EventId id{kDevice,8,9};
+    auto copied=settings; copied.brightness=99; copied.night_start=1200;
+    assert(store_apply_night_copy(&store,&copied,id)==STORE_OK);
+    assert(store.record.display.brightness==31 && store.record.display.night_start==1200);
+    settings.night_start=1100;
+    assert(store_set_display(&store,&settings)==STORE_OK);
+    unsigned writes=disk.writes;
+    assert(store_apply_night_copy(&store,&copied,id)==STORE_DUPLICATE);
+    assert(disk.writes==writes && store.record.display.night_start==1100);
+    assert(store.record.shared.image_seconds==shared.image_seconds);
+    Store reboot{};
+    assert(store_open(&reboot,backend(disk),kDevice,catalog,75,&recovery)==STORE_OK);
+    assert(reboot.record.display.brightness==31 && reboot.record.display.night_start==1100);
+    writes=disk.writes;
+    auto invalid=settings; invalid.night_end=invalid.night_start;
+    assert(store_set_display(&reboot,&invalid)==STORE_INVALID && disk.writes==writes);
+    Fake old=disk; old.length-=28; old.bytes[4]=13; repair_crc(old);
+    Store migrated{};
+    assert(store_open(&migrated,backend(old),kDevice,catalog,75,&recovery)==STORE_OK);
+    assert(migrated.record.display.brightness==100 && !migrated.record.display.night_enabled);
+    assert(migrated.record.shared.image_seconds==8*3600 && old.bytes[4]==14);
+    disk.fault=BEFORE;
+    settings.brightness=45;
+    assert(store_set_display(&reboot,&settings)==STORE_IO);
+    assert(reboot.record.display.brightness==31 && reboot.uncertain);
+}
+
 }
 int main() {
     for (unsigned i=0;i<sizeof(catalog);++i) catalog[i]=static_cast<uint8_t>(i+1);
+    test_night_policy_contacts();
+    test_display_local_copy_and_v13();
     test_explicit_network_modes();
     test_missing_and_local();
     test_orientation_override_migration();

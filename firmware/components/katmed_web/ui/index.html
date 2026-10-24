@@ -108,6 +108,20 @@
 </form>
 </section>
 
+<section class="panel" aria-labelledby="display-night-title" data-main-panel>
+<h2 id="display-night-title">Helligkeit und Nachtmodus</h2>
+<form class="setting-row" data-field="brightness"><label for="brightness">Helligkeit in Prozent</label>
+<input id="brightness" name="value" type="number" min="1" max="100" step="1" required><button>Speichern</button></form>
+<form class="setting-row" data-field="night_enabled"><label for="night-enabled">Nachtmodus</label>
+<select id="night-enabled" name="value"><option value="off">Aus</option><option value="on">Ein</option></select><button>Speichern</button></form>
+<form class="setting-row" data-field="night_start"><label for="night-start">Nachtbeginn HH:MM</label>
+<input id="night-start" name="value" placeholder="HH:MM" maxlength="5" required><button>Speichern</button></form>
+<form class="setting-row" data-field="night_end"><label for="night-end">Nachtende HH:MM</label>
+<input id="night-end" name="value" placeholder="HH:MM" maxlength="5" required><button>Speichern</button></form>
+<button id="copy-night" type="button">Setze Nachtmodus global auf allen Geräten im Mesh</button>
+<p id="night-copy-status" role="status">Noch keine globale Nachtkopie</p>
+</section>
+
 <section class="panel" aria-labelledby="wifi-title" data-main-panel>
 <h2 id="wifi-title">WLAN-Profile</h2>
 <p id="wifi-state" class="help" role="status">WLAN-Status wird geladen.</p>

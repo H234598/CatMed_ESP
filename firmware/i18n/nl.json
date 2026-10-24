@@ -127,7 +127,23 @@
     "Weiter": "Volgende",
     "Eingabe nach Drehung verworfen": "Inzending wordt na rotatie weggegooid",
     "Zeit nicht synchronisiert": "Tijd niet gesynchroniseerd",
-    "Automatisch": "Automatisch"
+    "Automatisch": "Automatisch",
+    "Helligkeit: 1 bis 100 Prozent": "Helderheid: 1 tot 100 procent",
+    "Helligkeit": "Helderheid",
+    "Nachtzeit HH:MM": "Nachttijd HH:MM",
+    "Lokal gespeichert; Mesh-Bestätigungen prüfen": "Lokaal opgeslagen; controleer mesh-bevestigingen",
+    "Nachtmodus ausschalten": "Nachtmodus uitschakelen",
+    "Nachtmodus einschalten": "Nachtmodus inschakelen",
+    "Noch keine globale Nachtkopie": "Nog geen globale nachtkopie",
+    "Mesh-Ergebnis noch unbekannt": "Mesh-resultaat nog onbekend",
+    "Mesh: %u/%u bestätigt, %u abgelehnt, %u offen": "Mesh: %u/%u bevestigd, %u afgewezen, %u open",
+    "Nachtmodus": "Nachtmodus",
+    "Nachtbeginn HH:MM": "Nachtbegin HH:MM",
+    "Nachtende HH:MM": "Nachteinde HH:MM",
+    "Setze Nachtmodus global auf allen Geräten im Mesh": "Nachtmodus op alle apparaten in het mesh instellen",
+    "Helligkeit ändern": "Helderheid wijzigen",
+    "Nachtmodus einstellen": "Nachtmodus instellen",
+    "Änderung vorgemerkt": "Wijziging in wachtrij"
   },
   "web_static": {
     "KatMed · Einstellungen": "KatMed · Instellingen",
@@ -229,7 +245,15 @@
     "Dieser Vorgang löscht WLAN-Profile, persönliche Laufzeittexte und Einstellungen, gespeicherte Mesh-Bindungen, Alarm- und Bestätigungszustände samt Historie, Webanmeldung und Sitzungen, private Zertifikats-/ACME-Zustände, eigene Uploads und veränderbare Caches.": "Dit proces verwijdert Wi-Fi-profielen, persoonlijke runtime-teksten en -instellingen, opgeslagen mesh-bindingen, alarm- en bevestigingsstatussen inclusief geschiedenis, inloggen op het web en sessies, privécertificaat/ACME-statussen, aangepaste uploads en aanpasbare caches.",
     "Die Firmware und unveränderliche Standardbilder bleiben erhalten. In einem ausdrücklich gewählten privaten Build bleiben einkompilierte private Vorgaben Teil der Firmware; der Datenreset entfernt sie nicht.": "De firmware en onveranderlijke standaardafbeeldingen blijven behouden. Bij een expliciet gekozen private build blijven de gecompileerde private defaults onderdeel van de firmware; de gegevensreset verwijdert ze niet.",
     "Nein, abbrechen": "Nee, annuleer",
-    "Gerätestatus aktualisieren": "Apparaatstatus bijwerken"
+    "Gerätestatus aktualisieren": "Apparaatstatus bijwerken",
+    "Helligkeit und Nachtmodus": "Helderheid en nachtmodus",
+    "Helligkeit in Prozent": "Helderheid in procenten",
+    "Nachtmodus": "Nachtmodus",
+    "Ein": "Aan",
+    "Nachtbeginn HH:MM": "Nachtbegin HH:MM",
+    "Nachtende HH:MM": "Nachteinde HH:MM",
+    "Setze Nachtmodus global auf allen Geräten im Mesh": "Nachtmodus op alle apparaten in het mesh instellen",
+    "Noch keine globale Nachtkopie": "Nog geen globale nachtkopie"
   },
   "web_dynamic": {
     "Gerät: {0}": "Apparaat: {0}",
@@ -321,6 +345,10 @@
     "Diese Konfiguration ist nur über HTTPS erreichbar.": "Deze configuratie is alleen toegankelijk via HTTPS.",
     "Lokaler Test": "Lokale test",
     "Sichere lokale Verbindung": "Veilige lokale verbinding",
-    "Automatisch": "Automatisch"
+    "Automatisch": "Automatisch",
+    "Noch keine globale Nachtkopie": "Nog geen globale nachtkopie",
+    "Mesh-Ergebnis noch unbekannt": "Mesh-resultaat nog onbekend",
+    "Mesh: {0}/{1} bestätigt, {2} abgelehnt, {3} offen": "Mesh: {0}/{1} bevestigd, {2} afgewezen, {3} open",
+    "Lokal gespeichert; Mesh-Bestätigungen prüfen": "Lokaal opgeslagen; controleer mesh-bevestigingen"
   }
 }

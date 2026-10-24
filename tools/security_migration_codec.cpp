@@ -78,7 +78,7 @@ static int validate()
 
 static int fixture(unsigned version)
 {
-    StoreRecord r{};
+    StoreRecord r{}; r.display=katmed_display_defaults();
     r.device = 1; r.epoch = 1; r.next_sequence = 2; r.image_count = 75;
     r.shared = app_default_settings(); r.shared.revision.coordinator = 1;
     r.local = {ORIENTATION_0, DIGITAL_LARGE, 1};
@@ -163,6 +163,7 @@ int main(int argc, char **argv)
     if (argc != 2) return 2;
     if (std::strcmp(argv[1], "validate") == 0) return validate();
     if (std::strcmp(argv[1], "synthetic-fixture") == 0) return fixture(kCurrentVersion);
+    if (std::strcmp(argv[1], "synthetic-v13-fixture") == 0) return fixture(13);
     if (std::strcmp(argv[1], "synthetic-v12-fixture") == 0) return fixture(12);
     if (std::strcmp(argv[1], "synthetic-v11-fixture") == 0) return fixture(11);
     if (std::strcmp(argv[1], "synthetic-v10-fixture") == 0) return fixture(10);

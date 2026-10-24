@@ -127,7 +127,23 @@
     "Weiter": "Далі",
     "Eingabe nach Drehung verworfen": "Запис скасовано після ротації",
     "Zeit nicht synchronisiert": "Час не синхронізовано",
-    "Automatisch": "Автоматично"
+    "Automatisch": "Автоматично",
+    "Helligkeit: 1 bis 100 Prozent": "Яскравість: від 1 до 100 відсотків",
+    "Helligkeit": "Яскравість",
+    "Nachtzeit HH:MM": "Нічний час HH:MM",
+    "Lokal gespeichert; Mesh-Bestätigungen prüfen": "Збережено локально; перевірте підтвердження mesh",
+    "Nachtmodus ausschalten": "Вимкнути нічний режим",
+    "Nachtmodus einschalten": "Увімкнути нічний режим",
+    "Noch keine globale Nachtkopie": "Глобальної копії нічного режиму ще немає",
+    "Mesh-Ergebnis noch unbekannt": "Результат mesh ще невідомий",
+    "Mesh: %u/%u bestätigt, %u abgelehnt, %u offen": "Mesh: %u/%u підтверджено, %u відхилено, %u очікують",
+    "Nachtmodus": "Нічний режим",
+    "Nachtbeginn HH:MM": "Початок ночі HH:MM",
+    "Nachtende HH:MM": "Кінець ночі HH:MM",
+    "Setze Nachtmodus global auf allen Geräten im Mesh": "Застосувати нічний режим до всіх пристроїв mesh",
+    "Helligkeit ändern": "Змінити яскравість",
+    "Nachtmodus einstellen": "Налаштувати нічний режим",
+    "Änderung vorgemerkt": "Зміну поставлено в чергу"
   },
   "web_static": {
     "KatMed · Einstellungen": "KatMed · Налаштування",
@@ -229,7 +245,15 @@
     "Dieser Vorgang löscht WLAN-Profile, persönliche Laufzeittexte und Einstellungen, gespeicherte Mesh-Bindungen, Alarm- und Bestätigungszustände samt Historie, Webanmeldung und Sitzungen, private Zertifikats-/ACME-Zustände, eigene Uploads und veränderbare Caches.": "Цей процес видаляє профілі Wi-Fi, особисті тексти та налаштування середовища виконання, збережені прив’язки сітки, стани нагадувань і підтвердження, включаючи історію, веб-вхід і сеанси, стани приватного сертифіката/ACME, спеціальні завантаження та модифіковані кеші.",
     "Die Firmware und unveränderliche Standardbilder bleiben erhalten. In einem ausdrücklich gewählten privaten Build bleiben einkompilierte private Vorgaben Teil der Firmware; der Datenreset entfernt sie nicht.": "Прошивка та незмінні зображення за замовчуванням зберігаються. У явно вибраній приватній збірці скомпільовані приватні параметри за замовчуванням залишаються частиною мікропрограми; скидання даних не видаляє їх.",
     "Nein, abbrechen": "Ні, скасувати",
-    "Gerätestatus aktualisieren": "Оновити статус пристрою"
+    "Gerätestatus aktualisieren": "Оновити статус пристрою",
+    "Helligkeit und Nachtmodus": "Яскравість і нічний режим",
+    "Helligkeit in Prozent": "Яскравість у відсотках",
+    "Nachtmodus": "Нічний режим",
+    "Ein": "Увімкнено",
+    "Nachtbeginn HH:MM": "Початок ночі HH:MM",
+    "Nachtende HH:MM": "Кінець ночі HH:MM",
+    "Setze Nachtmodus global auf allen Geräten im Mesh": "Застосувати нічний режим до всіх пристроїв mesh",
+    "Noch keine globale Nachtkopie": "Глобальної копії нічного режиму ще немає"
   },
   "web_dynamic": {
     "Gerät: {0}": "Пристрій: {0}",
@@ -321,6 +345,10 @@
     "Diese Konfiguration ist nur über HTTPS erreichbar.": "Ця конфігурація доступна лише через HTTPS.",
     "Lokaler Test": "Місцевий тест",
     "Sichere lokale Verbindung": "Безпечне локальне з'єднання",
-    "Automatisch": "Автоматично"
+    "Automatisch": "Автоматично",
+    "Noch keine globale Nachtkopie": "Глобальної копії нічного режиму ще немає",
+    "Mesh-Ergebnis noch unbekannt": "Результат mesh ще невідомий",
+    "Mesh: {0}/{1} bestätigt, {2} abgelehnt, {3} offen": "Mesh: {0}/{1} підтверджено, {2} відхилено, {3} очікують",
+    "Lokal gespeichert; Mesh-Bestätigungen prüfen": "Збережено локально; перевірте підтвердження mesh"
   }
 }

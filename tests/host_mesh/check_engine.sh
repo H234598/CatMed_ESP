@@ -7,7 +7,8 @@ trap 'rm -f "$out" "$fixture"' EXIT
 adapter="$repo/firmware/components/katmed_mesh/katmed_mesh_idf.cpp"
 sanitizers=()
 if [[ "${KATMED_HOST_SANITIZE:-0}" == 1 ]]; then sanitizers=(-fsanitize=address,undefined -fno-omit-frame-pointer); fi
-g++ "${sanitizers[@]}" -std=c++17 -Wall -Wextra -Werror -DKATMED_MESH_HOST \
+g++ -pthread "${sanitizers[@]}" -std=c++17 -Wall -Wextra -Werror -DKATMED_MESH_HOST \
+  -I"$repo/firmware/components/katmed_ui/include" \
   -I"$repo/tests/host_mesh/stubs" \
   -I"$repo/firmware/components/katmed_names/include" \
   -I"$repo/firmware/components/katmed_mesh/include" \
@@ -28,6 +29,10 @@ if [[ $# -gt 0 ]]; then
     exit 0
 fi
 "$out"
+"$out" night_interleave
+"$out" night_solo
+"$out" night_copy
+"$out" night_leaf
 "$out" mesh_only
 "$out" offline
 "$out" manual_source

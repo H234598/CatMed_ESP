@@ -1014,6 +1014,21 @@ static cJSON *config_object(const KatmedConfigSnapshot *snapshot)
     cJSON_AddNumberToObject(obj, "orientation", orientation_degrees(snapshot->orientation));
     cJSON_AddBoolToObject(obj,"orientation_auto_supported",snapshot->orientation_auto_supported);
     cJSON_AddBoolToObject(obj,"orientation_automatic",snapshot->orientation_automatic);
+    char brightness[4];snprintf(brightness,sizeof(brightness),"%u",snapshot->display.brightness);
+    cJSON_AddStringToObject(obj,"brightness",brightness);
+    cJSON_AddStringToObject(obj,"night_enabled",snapshot->display.night_enabled?"on":"off");
+    char night_time[10];snprintf(night_time,sizeof(night_time),"%02u:%02u",snapshot->display.night_start/60u,snapshot->display.night_start%60u);
+    cJSON_AddStringToObject(obj,"night_start",night_time);
+    snprintf(night_time,sizeof(night_time),"%02u:%02u",snapshot->display.night_end/60u,snapshot->display.night_end%60u);
+    cJSON_AddStringToObject(obj,"night_end",night_time);
+    cJSON *copy=cJSON_AddObjectToObject(obj,"night_copy");
+    cJSON_AddBoolToObject(copy,"local_saved",snapshot->night_copy.local_saved);
+    cJSON_AddBoolToObject(copy,"active",snapshot->night_copy.active);
+    cJSON_AddBoolToObject(copy,"finished",snapshot->night_copy.finished);
+    cJSON_AddBoolToObject(copy,"membership_known",snapshot->night_copy.membership_known);
+    cJSON_AddNumberToObject(copy,"expected",snapshot->night_copy.expected);
+    cJSON_AddNumberToObject(copy,"acknowledged",snapshot->night_copy.acknowledged);
+    cJSON_AddNumberToObject(copy,"rejected",snapshot->night_copy.rejected);
     cJSON_AddStringToObject(obj, "rotation", rotation_name(snapshot->rotation));
     cJSON_AddStringToObject(obj, "revision", snapshot->revision);
     return obj;
@@ -1134,6 +1149,9 @@ static KatmedConfigField config_field(const char *name, bool *found)
         {"clock_style", KATMED_CONFIG_CLOCK_STYLE},
         {"orientation", KATMED_CONFIG_ORIENTATION},
         {"rotation", KATMED_CONFIG_ROTATION},
+        {"brightness",KATMED_CONFIG_BRIGHTNESS},{"night_enabled",KATMED_CONFIG_NIGHT_ENABLED},
+        {"night_start",KATMED_CONFIG_NIGHT_START},{"night_end",KATMED_CONFIG_NIGHT_END},
+        {"copy_night",KATMED_CONFIG_COPY_NIGHT},
     };
     for (size_t i = 0; i < sizeof(fields) / sizeof(fields[0]); ++i)
         if (strcmp(name, fields[i].name) == 0) {

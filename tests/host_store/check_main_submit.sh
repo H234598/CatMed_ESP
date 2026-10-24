@@ -51,4 +51,5 @@ c++ -std=c++17 -Wall -Wextra -Werror -ffunction-sections -fdata-sections \
     -I"$repo_root/firmware/components/katmed_store/include" \
     -c "$repo_root/firmware/components/katmed_store/katmed_store.cpp" -o "$out/store.o"
 c++ -Wl,--gc-sections "$out/main.o" "$out/navigation.o" "$out/i18n_catalog.o" "$out/reset_journal.o" "$out/time.o" "$out/core.o" "$out/store.o" -lz -o "$out/check_main_submit"
+if [[ $# -eq 0 ]]; then "$out/check_main_submit" night; "$out/check_main_submit" night_bridge; fi
 "$out/check_main_submit" "$@"

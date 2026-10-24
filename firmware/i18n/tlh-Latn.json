@@ -127,7 +127,23 @@
     "Weiter": "yItaH",
     "Eingabe nach Drehung verworfen": "jIH tlhe'DI', De' DaghItlhpu'bogh Qaw'lu'",
     "Zeit nicht synchronisiert": "poH rapmoHlu'be'",
-    "Automatisch": "mIw motlh"
+    "Automatisch": "mIw motlh",
+    "Helligkeit: 1 bis 100 Prozent": "wovqu'ghach: vatlhvI' 1 patlh 100",
+    "Helligkeit": "wovqu'ghach",
+    "Nachtzeit HH:MM": "ram poH HH:MM",
+    "Lokal gespeichert; Mesh-Bestätigungen prüfen": "naDev pol; mesh jangmey yInuD",
+    "Nachtmodus ausschalten": "ram mIw chu'Ha'",
+    "Nachtmodus einschalten": "ram mIw chu'",
+    "Noch keine globale Nachtkopie": "HochvaD ram mIw ghItlhlu'pu'be'",
+    "Mesh-Ergebnis noch unbekannt": "mesh ta' Sovbe'lu'",
+    "Mesh: %u/%u bestätigt, %u abgelehnt, %u offen": "mesh: %u/%u laj, %u lajHa', %u loS",
+    "Nachtmodus": "ram mIw",
+    "Nachtbeginn HH:MM": "ram tagh HH:MM",
+    "Nachtende HH:MM": "ram van HH:MM",
+    "Setze Nachtmodus global auf allen Geräten im Mesh": "Hoch mesh janmeyvaD ram mIw cher",
+    "Helligkeit ändern": "wovqu'ghach choH",
+    "Nachtmodus einstellen": "ram mIw cher",
+    "Änderung vorgemerkt": "choH loSlu'"
   },
   "web_dynamic": {
     "Gerät: {0}": "jan: {0}",
@@ -219,7 +235,11 @@
     "Diese Konfiguration ist nur über HTTPS erreichbar.": "HTTPS lo'lu'chugh neH navvam naw'lu'laH.",
     "Lokaler Test": "naDev wa'logh yInuD",
     "Sichere lokale Verbindung": "naDev rarmeH He Qanlu'bogh",
-    "Automatisch": "mIw motlh"
+    "Automatisch": "mIw motlh",
+    "Noch keine globale Nachtkopie": "HochvaD ram mIw ghItlhlu'pu'be'",
+    "Mesh-Ergebnis noch unbekannt": "mesh ta' Sovbe'lu'",
+    "Mesh: {0}/{1} bestätigt, {2} abgelehnt, {3} offen": "mesh: {0}/{1} laj, {2} lajHa', {3} loS",
+    "Lokal gespeichert; Mesh-Bestätigungen prüfen": "naDev pol; mesh jangmey yInuD"
   },
   "web_static": {
     "KatMed · Einstellungen": "KatMed · jan SeHmeH De'",
@@ -321,6 +341,14 @@
     "Dieser Vorgang löscht WLAN-Profile, persönliche Laufzeittexte und Einstellungen, gespeicherte Mesh-Bindungen, Alarm- und Bestätigungszustände samt Historie, Webanmeldung und Sitzungen, private Zertifikats-/ACME-Zustände, eigene Uploads und veränderbare Caches.": "mIwvam WLAN naw'mey, DaghItlhpu'bogh QInmey jan SeHmeH De' je, SIr'o' janmey rarbogh De' pollu'pu'bogh, ghum Dotlh woq Dotlh qun je, weQmoQnaQ mab naw' De', Qoyje'/ACME De' pegh, mIlloghmey DangeHpu'bogh, De' polmeH Daq choHlaHbogh je Qaw'. weQmoQnaQ mab naw' Dotlhmey Hoch luQaw'lu' je. weQmoQnaQ naw' DaneHchugh, mab yIngaQHa'moH.",
     "Die Firmware und unveränderliche Standardbilder bleiben erhalten. In einem ausdrücklich gewählten privaten Build bleiben einkompilierte private Vorgaben Teil der Firmware; der Datenreset entfernt sie nicht.": "jan nIqHom mIlloghmey motlh choHlaHbe'bogh je poltaHlu'. jan nIqHom pegh wIvlu'pu'chugh, De' pegh ghunlu'pu'bogh jan nIqHomDaq poltaHlu'; De' Qaw'meH mIw De'vam teqbe'.",
     "Nein, abbrechen": "ghobe', yImev",
-    "Gerätestatus aktualisieren": "jan Dotlh yIHevqa'"
+    "Gerätestatus aktualisieren": "jan Dotlh yIHevqa'",
+    "Helligkeit und Nachtmodus": "wovqu'ghach je ram mIw je",
+    "Helligkeit in Prozent": "vatlhvI' wovqu'ghach",
+    "Nachtmodus": "ram mIw",
+    "Ein": "chu'",
+    "Nachtbeginn HH:MM": "ram tagh HH:MM",
+    "Nachtende HH:MM": "ram van HH:MM",
+    "Setze Nachtmodus global auf allen Geräten im Mesh": "Hoch mesh janmeyvaD ram mIw cher",
+    "Noch keine globale Nachtkopie": "HochvaD ram mIw ghItlhlu'pu'be'"
   }
 }

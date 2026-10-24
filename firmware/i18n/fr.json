@@ -127,7 +127,23 @@
     "Weiter": "Suivant",
     "Eingabe nach Drehung verworfen": "Entrée rejetée après la rotation",
     "Zeit nicht synchronisiert": "Heure non synchronisée",
-    "Automatisch": "Automatique"
+    "Automatisch": "Automatique",
+    "Helligkeit: 1 bis 100 Prozent": "Luminosité : de 1 à 100 pour cent",
+    "Helligkeit": "Luminosité",
+    "Nachtzeit HH:MM": "Horaire de nuit HH:MM",
+    "Lokal gespeichert; Mesh-Bestätigungen prüfen": "Enregistré localement ; vérifier les confirmations mesh",
+    "Nachtmodus ausschalten": "Désactiver le mode nuit",
+    "Nachtmodus einschalten": "Activer le mode nuit",
+    "Noch keine globale Nachtkopie": "Aucune copie globale du mode nuit",
+    "Mesh-Ergebnis noch unbekannt": "Résultat du mesh encore inconnu",
+    "Mesh: %u/%u bestätigt, %u abgelehnt, %u offen": "Mesh : %u/%u confirmés, %u refusés, %u en attente",
+    "Nachtmodus": "Mode nuit",
+    "Nachtbeginn HH:MM": "Début de nuit HH:MM",
+    "Nachtende HH:MM": "Fin de nuit HH:MM",
+    "Setze Nachtmodus global auf allen Geräten im Mesh": "Appliquer le mode nuit à tous les appareils du mesh",
+    "Helligkeit ändern": "Modifier la luminosité",
+    "Nachtmodus einstellen": "Configurer le mode nuit",
+    "Änderung vorgemerkt": "Modification en attente"
   },
   "web_static": {
     "KatMed · Einstellungen": "KatMed · Paramètres",
@@ -229,7 +245,15 @@
     "Dieser Vorgang löscht WLAN-Profile, persönliche Laufzeittexte und Einstellungen, gespeicherte Mesh-Bindungen, Alarm- und Bestätigungszustände samt Historie, Webanmeldung und Sitzungen, private Zertifikats-/ACME-Zustände, eigene Uploads und veränderbare Caches.": "Ce processus supprime les profils Wi-Fi, les textes et paramètres d'exécution personnels, les liaisons de maillage enregistrées, les états d'alarme et de confirmation, y compris l'historique, la connexion et les sessions Web, les états de certificat privé/ACME, les téléchargements personnalisés et les caches modifiables.",
     "Die Firmware und unveränderliche Standardbilder bleiben erhalten. In einem ausdrücklich gewählten privaten Build bleiben einkompilierte private Vorgaben Teil der Firmware; der Datenreset entfernt sie nicht.": "Le firmware et les images par défaut non modifiables sont conservés. Dans une version privée explicitement choisie, les valeurs par défaut privées compilées font toujours partie du micrologiciel ; la réinitialisation des données ne les supprime pas.",
     "Nein, abbrechen": "Non, annule",
-    "Gerätestatus aktualisieren": "Mettre à jour l'état de l'appareil"
+    "Gerätestatus aktualisieren": "Mettre à jour l'état de l'appareil",
+    "Helligkeit und Nachtmodus": "Luminosité et mode nuit",
+    "Helligkeit in Prozent": "Luminosité en pourcentage",
+    "Nachtmodus": "Mode nuit",
+    "Ein": "Activé",
+    "Nachtbeginn HH:MM": "Début de nuit HH:MM",
+    "Nachtende HH:MM": "Fin de nuit HH:MM",
+    "Setze Nachtmodus global auf allen Geräten im Mesh": "Appliquer le mode nuit à tous les appareils du mesh",
+    "Noch keine globale Nachtkopie": "Aucune copie globale du mode nuit"
   },
   "web_dynamic": {
     "Gerät: {0}": "Appareil : {0}",
@@ -321,6 +345,10 @@
     "Diese Konfiguration ist nur über HTTPS erreichbar.": "Cette configuration est accessible uniquement via HTTPS.",
     "Lokaler Test": "Test local",
     "Sichere lokale Verbindung": "Connexion locale sécurisée",
-    "Automatisch": "Automatique"
+    "Automatisch": "Automatique",
+    "Noch keine globale Nachtkopie": "Aucune copie globale du mode nuit",
+    "Mesh-Ergebnis noch unbekannt": "Résultat du mesh encore inconnu",
+    "Mesh: {0}/{1} bestätigt, {2} abgelehnt, {3} offen": "Mesh : {0}/{1} confirmés, {2} refusés, {3} en attente",
+    "Lokal gespeichert; Mesh-Bestätigungen prüfen": "Enregistré localement ; vérifier les confirmations mesh"
   }
 }

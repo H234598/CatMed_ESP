@@ -127,7 +127,23 @@
     "Weiter": "Poste",
     "Eingabe nach Drehung verworfen": "Eniro forĵetita post rotacio",
     "Zeit nicht synchronisiert": "Tempo ne sinkronigita",
-    "Automatisch": "Aŭtomata"
+    "Automatisch": "Aŭtomata",
+    "Helligkeit: 1 bis 100 Prozent": "Heleco: de 1 ĝis 100 procentoj",
+    "Helligkeit": "Heleco",
+    "Nachtzeit HH:MM": "Nokta horo HH:MM",
+    "Lokal gespeichert; Mesh-Bestätigungen prüfen": "Konservita loke; kontrolu retajn konfirmojn",
+    "Nachtmodus ausschalten": "Malŝalti noktan reĝimon",
+    "Nachtmodus einschalten": "Ŝalti noktan reĝimon",
+    "Noch keine globale Nachtkopie": "Ankoraŭ neniu tutreta nokta kopio",
+    "Mesh-Ergebnis noch unbekannt": "Reta rezulto ankoraŭ nekonata",
+    "Mesh: %u/%u bestätigt, %u abgelehnt, %u offen": "Reto: %u/%u konfirmitaj, %u rifuzitaj, %u atendantaj",
+    "Nachtmodus": "Nokta reĝimo",
+    "Nachtbeginn HH:MM": "Nokta komenco HH:MM",
+    "Nachtende HH:MM": "Nokta fino HH:MM",
+    "Setze Nachtmodus global auf allen Geräten im Mesh": "Apliki noktan reĝimon al ĉiuj aparatoj en la reto",
+    "Helligkeit ändern": "Ŝanĝi helecon",
+    "Nachtmodus einstellen": "Agordi noktan reĝimon",
+    "Änderung vorgemerkt": "Ŝanĝo atendoviciĝis"
   },
   "web_static": {
     "KatMed · Einstellungen": "KatMed · Agordoj",
@@ -229,7 +245,15 @@
     "Dieser Vorgang löscht WLAN-Profile, persönliche Laufzeittexte und Einstellungen, gespeicherte Mesh-Bindungen, Alarm- und Bestätigungszustände samt Historie, Webanmeldung und Sitzungen, private Zertifikats-/ACME-Zustände, eigene Uploads und veränderbare Caches.": "Ĉi tiu procezo forigas Wi-Fi-profilojn, personajn rultempajn tekstojn kaj agordojn, konservitajn maŝligojn, alarmajn kaj konfirmŝtatojn inkluzive de historio, retsaluto kaj sesioj, privataj atestiloj/ACME-ŝtatoj, kutimaj alŝutoj kaj modifeblaj kaŝmemoroj.",
     "Die Firmware und unveränderliche Standardbilder bleiben erhalten. In einem ausdrücklich gewählten privaten Build bleiben einkompilierte private Vorgaben Teil der Firmware; der Datenreset entfernt sie nicht.": "La firmvaro kaj neŝanĝeblaj defaŭltaj bildoj estas konservitaj. En eksplicite elektita privata konstruo, kompilitaj privataj defaŭltoj restas parto de la firmvaro; la datumo rekomencigita ne forigas ilin.",
     "Nein, abbrechen": "Ne, nuligi",
-    "Gerätestatus aktualisieren": "Ĝisdatigu la statuson de la aparato"
+    "Gerätestatus aktualisieren": "Ĝisdatigu la statuson de la aparato",
+    "Helligkeit und Nachtmodus": "Heleco kaj nokta reĝimo",
+    "Helligkeit in Prozent": "Heleco en procentoj",
+    "Nachtmodus": "Nokta reĝimo",
+    "Ein": "Ŝaltita",
+    "Nachtbeginn HH:MM": "Nokta komenco HH:MM",
+    "Nachtende HH:MM": "Nokta fino HH:MM",
+    "Setze Nachtmodus global auf allen Geräten im Mesh": "Apliki noktan reĝimon al ĉiuj aparatoj en la reto",
+    "Noch keine globale Nachtkopie": "Ankoraŭ neniu tutreta nokta kopio"
   },
   "web_dynamic": {
     "Gerät: {0}": "Aparato: {0}",
@@ -321,6 +345,10 @@
     "Diese Konfiguration ist nur über HTTPS erreichbar.": "Ĉi tiu agordo estas nur alirebla per HTTPS.",
     "Lokaler Test": "Loka provo",
     "Sichere lokale Verbindung": "Sekura loka konekto",
-    "Automatisch": "Aŭtomata"
+    "Automatisch": "Aŭtomata",
+    "Noch keine globale Nachtkopie": "Ankoraŭ neniu tutreta nokta kopio",
+    "Mesh-Ergebnis noch unbekannt": "Reta rezulto ankoraŭ nekonata",
+    "Mesh: {0}/{1} bestätigt, {2} abgelehnt, {3} offen": "Reto: {0}/{1} konfirmitaj, {2} rifuzitaj, {3} atendantaj",
+    "Lokal gespeichert; Mesh-Bestätigungen prüfen": "Konservita loke; kontrolu retajn konfirmojn"
   }
 }

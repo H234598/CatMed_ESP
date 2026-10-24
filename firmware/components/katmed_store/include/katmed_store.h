@@ -5,6 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "katmed_core.h"
+#include "katmed_display.h"
 #include "katmed_language.h"
 
 #ifdef __cplusplus
@@ -151,6 +152,8 @@ typedef struct {
     uint32_t next_wifi_profile_id;
     bool setup_requested; /* Explicit local reopening; never inferred from missing UTC/SSID. */
     uint8_t language; /* v11: local presentation preference, English on legacy records. */
+    KatmedDisplaySettings display; /* v14 local only, never medical/shared settings. */
+    EventId last_night_copy; /* Last explicitly applied protected copy; preserves later local overrides on retry. */
     bool orientation_manual; /* v13: C6 manual override; legacy/factory default automatic. C3 ignores it. */
 } StoreRecord;
 
@@ -219,6 +222,8 @@ StoreResult store_reserve_event_ids(Store *store, uint32_t count, EventId *first
 StoreResult store_apply_event(Store *store, AppState *active, const AppEvent *event,
                               const ClockSample *now, bool queue_offline,
                               AppEffects *effects, AppResult *core_result);
+StoreResult store_set_display(Store *store, const KatmedDisplaySettings *settings);
+StoreResult store_apply_night_copy(Store *store, const KatmedDisplaySettings *settings, EventId operation);
 StoreResult store_set_orientation(Store *store, LocalSettings *active,
                                    Orientation orientation, bool manual);
 StoreResult store_set_local(Store *store, LocalSettings *active,

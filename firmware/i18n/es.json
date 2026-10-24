@@ -127,7 +127,23 @@
     "Weiter": "Siguiente",
     "Eingabe nach Drehung verworfen": "Entrada descartada después de la rotación",
     "Zeit nicht synchronisiert": "Hora no sincronizada",
-    "Automatisch": "Automático"
+    "Automatisch": "Automático",
+    "Helligkeit: 1 bis 100 Prozent": "Brillo: del 1 al 100 por ciento",
+    "Helligkeit": "Brillo",
+    "Nachtzeit HH:MM": "Horario nocturno HH:MM",
+    "Lokal gespeichert; Mesh-Bestätigungen prüfen": "Guardado localmente; compruebe las confirmaciones de la malla",
+    "Nachtmodus ausschalten": "Desactivar modo nocturno",
+    "Nachtmodus einschalten": "Activar modo nocturno",
+    "Noch keine globale Nachtkopie": "Sin copia global del modo nocturno",
+    "Mesh-Ergebnis noch unbekannt": "Resultado de la malla aún desconocido",
+    "Mesh: %u/%u bestätigt, %u abgelehnt, %u offen": "Malla: %u/%u confirmados, %u rechazados, %u pendientes",
+    "Nachtmodus": "Modo nocturno",
+    "Nachtbeginn HH:MM": "Inicio nocturno HH:MM",
+    "Nachtende HH:MM": "Fin nocturno HH:MM",
+    "Setze Nachtmodus global auf allen Geräten im Mesh": "Aplicar el modo nocturno a todos los dispositivos de la malla",
+    "Helligkeit ändern": "Cambiar brillo",
+    "Nachtmodus einstellen": "Configurar modo nocturno",
+    "Änderung vorgemerkt": "Cambio en cola"
   },
   "web_static": {
     "KatMed · Einstellungen": "KatMed · Configuración",
@@ -229,7 +245,15 @@
     "Dieser Vorgang löscht WLAN-Profile, persönliche Laufzeittexte und Einstellungen, gespeicherte Mesh-Bindungen, Alarm- und Bestätigungszustände samt Historie, Webanmeldung und Sitzungen, private Zertifikats-/ACME-Zustände, eigene Uploads und veränderbare Caches.": "Este proceso elimina perfiles de Wi-Fi, textos y configuraciones de tiempo de ejecución personales, enlaces de malla guardados, estados de alarma y confirmación, incluido el historial, inicios de sesión y sesiones web, estados de certificados privados/ACME, cargas personalizadas y cachés modificables.",
     "Die Firmware und unveränderliche Standardbilder bleiben erhalten. In einem ausdrücklich gewählten privaten Build bleiben einkompilierte private Vorgaben Teil der Firmware; der Datenreset entfernt sie nicht.": "Se conservan el firmware y las imágenes predeterminadas que no se pueden modificar. En una compilación privada elegida explícitamente, los valores predeterminados privados compilados siguen siendo parte del firmware; el restablecimiento de datos no los elimina.",
     "Nein, abbrechen": "No, cancelar",
-    "Gerätestatus aktualisieren": "Actualizar el estado del dispositivo"
+    "Gerätestatus aktualisieren": "Actualizar el estado del dispositivo",
+    "Helligkeit und Nachtmodus": "Brillo y modo nocturno",
+    "Helligkeit in Prozent": "Brillo en porcentaje",
+    "Nachtmodus": "Modo nocturno",
+    "Ein": "Activado",
+    "Nachtbeginn HH:MM": "Inicio nocturno HH:MM",
+    "Nachtende HH:MM": "Fin nocturno HH:MM",
+    "Setze Nachtmodus global auf allen Geräten im Mesh": "Aplicar el modo nocturno a todos los dispositivos de la malla",
+    "Noch keine globale Nachtkopie": "Sin copia global del modo nocturno"
   },
   "web_dynamic": {
     "Gerät: {0}": "Dispositivo: {0}",
@@ -321,6 +345,10 @@
     "Diese Konfiguration ist nur über HTTPS erreichbar.": "Solo se puede acceder a esta configuración a través de HTTPS.",
     "Lokaler Test": "prueba local",
     "Sichere lokale Verbindung": "Conexión local segura",
-    "Automatisch": "Automático"
+    "Automatisch": "Automático",
+    "Noch keine globale Nachtkopie": "Sin copia global del modo nocturno",
+    "Mesh-Ergebnis noch unbekannt": "Resultado de la malla aún desconocido",
+    "Mesh: {0}/{1} bestätigt, {2} abgelehnt, {3} offen": "Malla: {0}/{1} confirmados, {2} rechazados, {3} pendientes",
+    "Lokal gespeichert; Mesh-Bestätigungen prüfen": "Guardado localmente; compruebe las confirmaciones de la malla"
   }
 }

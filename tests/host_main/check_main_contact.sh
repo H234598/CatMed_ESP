@@ -56,6 +56,7 @@ objects=(
     "${object_root}/katmed_core/katmed_core.cpp.o")
 g++ -Wl,--gc-sections "${out_dir}/main_contact_regression.o" "${out_dir}/ui.o" \
     "${objects[@]}" "${build_dir}/lvgl/liblvgl.a" -lm -o "${out_dir}/check_main_contact"
+"${out_dir}/check_main_contact" night_wake
 timeout 20s "${out_dir}/check_main_contact" lost_error
 timeout 20s "${out_dir}/check_main_contact" lost_move
 timeout 20s "${out_dir}/check_main_contact" round_switch

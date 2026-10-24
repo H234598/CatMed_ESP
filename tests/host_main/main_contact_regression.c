@@ -159,10 +159,11 @@ int main(int argc, char **argv) {
         puts("interaction_queue: four contacts/eight edges retained; application-loop-only; alarm before old Down");
         return 0;
     }
+    bool night = strcmp(argv[1],"night_wake") == 0;
     bool movement = strcmp(argv[1], "lost_move") == 0;
     bool round_switch = strcmp(argv[1], "round_switch") == 0;
     bool round_switch_due = strcmp(argv[1], "round_switch_due") == 0;
-    assert(movement || round_switch || round_switch_due ||
+    assert(night || movement || round_switch || round_switch_due ||
            strcmp(argv[1], "lost_error") == 0);
     lv_init();
     lv_display_t *display = lv_display_create(240, 240);
@@ -176,6 +177,25 @@ int main(int argc, char **argv) {
     test_local.clock_style = DIGITAL_LARGE;
     ClockSample clock = {.domain = 1};
     ui_render(&test_state, &test_local, ALARM, &clock);
+    if(night){
+        test_state.alarm_active=false;ui_render(&test_state,&test_local,CLOCK,&clock);
+        const UiView before=ui_current_view();
+        KatmedDisplaySettings settings=katmed_display_defaults();settings.night_enabled=true;
+        assert(!katmed_display_evaluate(&runtime.display_policy,settings,true,1320,false,0));
+        ui_set_display_awake(false);
+        dispatch(true,90,true,100,false,false);
+        assert(runtime.display_policy.awake && runtime.display_policy.wake_until_ms==900100 && !commits);
+        dispatch(true,90,true,150,false,false);dispatch(false,90,true,200,false,false);
+        assert(!commits && ui_current_view()==before && runtime.display_policy.wake_until_ms==900100);
+        test_state.alarm_active=true;
+        assert(katmed_display_evaluate(&runtime.display_policy,settings,true,1320,true,300));
+        dispatch(false,90,true,300,false,true);dispatch(true,90,true,400,false,false);
+        dispatch(false,90,true,500,false,false);
+        assert(commits==1 && runtime.display_policy.wake_until_ms==900100);
+        assert(!katmed_display_evaluate(&runtime.display_policy,settings,true,1320,false,900100));
+        puts("night real Main touch dispatch: full first-contact consumption, later alarm ACK and no window renewal PASS");
+        lv_display_delete(display);lv_deinit();return 0;
+    }
     dispatch(false, 90, true, 0, false, false);
     dispatch(true, 90, true, 10, false, false);
     if (round_switch || round_switch_due) {

@@ -211,8 +211,8 @@ int main(int argc, char **argv) {
     if (mode == "success") {
         ok = katmed_import_apply(&in, &b) &&
             m.values.count("katmed/state") == 1 &&
-            m.values.at("katmed/state")[4] == 13 &&
-            m.values.at("katmed/state").at(m.values.at("katmed/state").size() - 4) == 1 &&
+            m.values.at("katmed/state")[4] == 14 &&
+            m.values.at("katmed/state").at(m.values.at("katmed/state").size() - 32) == 1 &&
             m.values.at("katmed/state").back() == 0 &&
             m.values.count("katmed_imp/journal") == 0 &&
             m.values.count("katmed_imp/stage") == 0 &&
@@ -312,10 +312,10 @@ int main(int argc, char **argv) {
             katmed_import_resume(&b, 1);
     } else if (mode == "bridge_capacity") {
         // Full v11 State, Mesh history and four typed Bridge entries.
-        m.available_entries = 439;
+        m.available_entries = 440;
         ok = !katmed_import_apply(&in, &b) &&
             m.writes == 0 && m.erases == 0 && m.values.empty();
-        m.available_entries = 440;
+        m.available_entries = 441;
         ok = ok && katmed_import_apply(&in, &b) &&
             m.values.count("netif_ip_info/WIFI_AP_DEF") == 1 &&
             m.values.count("netif_ip_info/WIFI_STA_DEF") == 1 &&
@@ -350,9 +350,9 @@ int main(int argc, char **argv) {
         ok = katmed_import_apply(&in, &b) &&
             m.final_files.size() == 2 && m.staged_files.empty() &&
             m.values.count("katmed/state") == 1 &&
-            m.values.at("katmed/state").size() == 4068 &&
-            m.values.at("katmed/state")[4] == 13 &&
-            m.values.at("katmed/state").at(m.values.at("katmed/state").size() - 4) == 1 &&
+            m.values.at("katmed/state").size() == 4096 &&
+            m.values.at("katmed/state")[4] == 14 &&
+            m.values.at("katmed/state").at(m.values.at("katmed/state").size() - 32) == 1 &&
             m.values.at("katmed/state").back() == 0 &&
             m.values.count("katmed_web/identity") == 1 &&
             m.values.count("katmed_web/auth") == 1 &&
@@ -463,7 +463,7 @@ int main(int argc, char **argv) {
             katmed_import_resume(&b, 1);
     } else if (mode == "capacity_97" || mode == "capacity_123") {
         const size_t images = mode == "capacity_97" ? 97 : 123;
-        const size_t required = mode == "capacity_97" ? 631 : 641;
+        const size_t required = mode == "capacity_97" ? 632 : 642;
         m.available_entries = required - 1;
         ok = !katmed_import_apply(&in, &b) &&
             m.writes == 0 && m.erases == 0 && m.values.empty() &&

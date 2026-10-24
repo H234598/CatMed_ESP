@@ -23,6 +23,7 @@ typedef enum { BOARD_OK, BOARD_UNPROVEN_WIRING, BOARD_IO_ERROR, BOARD_INVALID } 
  * On failure it leaves no live partially initialized device. */
 BoardResult board_init(lv_display_t **display);
 BoardResult board_set_backlight(bool enabled);
+BoardResult board_set_brightness(uint8_t percent);
 void board_deinit(void);
 /* Implement only against verified board/controller pin evidence. */
 BoardResult board_set_orientation(Orientation orientation);
