@@ -17,6 +17,7 @@ typedef int portMUX_TYPE;
 #define portEXIT_CRITICAL(x) ((void)(x))
 #define ESP_OK 0
 #define ESP_ERR_INVALID_RESPONSE -1
+#define ESP_ERR_TIMEOUT -2
 #define ESP_ERR_INVALID_ARG -3
 #define I2C_NUM_0 0
 #define I2C_CLK_SRC_DEFAULT 0

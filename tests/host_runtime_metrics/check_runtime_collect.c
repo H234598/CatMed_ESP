@@ -11,7 +11,7 @@
 #include "katmed_images.h"
 #include "katmed_ui.h"
 #include "katmed_board.h"
-BoardTouchDiagnostics board_touch_diagnostics(void) {return (BoardTouchDiagnostics){.init=4,.probe=1,.sequence=8,.transfer=2,.sample=4};}
+BoardTouchDiagnostics board_touch_diagnostics(void) {return (BoardTouchDiagnostics){.init=4,.probe=1,.sequence=8,.transfer=2,.sample=4,.native_result=3};}
 
 static bool lock_allowed = true;
 static bool task_available = true;
@@ -68,7 +68,7 @@ KatmedImageTimingSample katmed_images_jpeg_decode_timing(void)
 {
     ++image_calls;
     return (KatmedImageTimingSample){.elapsed_us=789,.status=KATMED_IMAGE_OK,.measured=true,
-      .sequence=3,.decode_stage=KATMED_JPEG_COMPLETE,.decoded_areas=220};
+      .sequence=3,.decode_stage=KATMED_JPEG_COMPLETE,.decoded_areas=220,.pool_valid=true,.pool_free=8192,.pool_largest=1024};
 }
 UiBlinkRenderMetrics ui_blink_render_metrics(void)
 {
@@ -96,6 +96,7 @@ int main(void)
     assert(result.variant_sequence==7 && result.variant_io_stage==KATMED_IMAGE_IO_FILE_OPEN &&
            result.variant_io_status==KATMED_IMAGE_NOT_FOUND);
     assert(result.native_diagnostic_valid && result.jpeg_detail_valid && result.jpeg_sequence==3 && result.jpeg_stage==KATMED_JPEG_COMPLETE && result.jpeg_mcus==220);
+    assert(result.jpeg_pool_valid && result.jpeg_pool_free==8192 && result.jpeg_pool_largest==1024 && result.touch_result==3);
     assert(result.touch_init==4 && result.touch_probe==1 && result.touch_sequence==8 && result.touch_transfer==2 && result.touch_sample==4);
     assert(result.blink_cycle_valid && result.blink_cycle_us == 800 && result.blink_cycle_count == 4);
     assert(result.blink_changes == 5 && result.blink_flush_segments == 6 && result.blink_flush_pixels == 700);

@@ -130,10 +130,12 @@ static void check_log(void)
     assert(log_count == 2 && strlen(log_line) < 768);
     KatmedRuntimeMetricInput diagnostic={.uptime_ms=UINT64_MAX,.native_diagnostic_valid=true,
       .jpeg_detail_valid=true,.jpeg_sequence=UINT32_MAX,.jpeg_stage=2,.jpeg_decode_status=5,.jpeg_mcus=1280,
-      .touch_init=4,.touch_probe=1,.touch_sequence=UINT32_MAX,.touch_transfer=2,.touch_sample=4};
+      .touch_init=4,.touch_probe=1,.touch_sequence=UINT32_MAX,.touch_transfer=2,.touch_sample=4,
+      .jpeg_pool_valid=true,.jpeg_pool_free=UINT32_MAX,.jpeg_pool_largest=UINT32_MAX,.touch_result=4};
     katmed_runtime_metrics_log(&diagnostic);
     assert(log_count==4 && strstr(native_line,"jpeg_detail_v=1 jpeg_seq=4294967295 jpeg_stage=2 jpeg_result=5 jpeg_mcus=1280"));
     assert(strstr(native_line,"touch_init=4 touch_probe=1 touch_seq=4294967295 touch_transfer=2 touch_sample=4"));
+    assert(strstr(native_line,"jpeg_pool_v=1 jpeg_pool_free=4294967295 jpeg_pool_largest=4294967295 touch_result=4"));
     assert(strlen(native_line)+32<512);
 
 }

@@ -40,6 +40,8 @@ typedef struct {
     bool native_diagnostic_valid, jpeg_detail_valid;
     uint32_t jpeg_sequence, jpeg_stage, jpeg_mcus;
     uint32_t touch_init, touch_probe, touch_sequence, touch_transfer, touch_sample;
+    bool jpeg_pool_valid;
+    uint32_t jpeg_pool_free, jpeg_pool_largest, touch_result;
 } KatmedRuntimeMetricInput;
 
 /* The two additional lines describe one serialized post-reducer sample.

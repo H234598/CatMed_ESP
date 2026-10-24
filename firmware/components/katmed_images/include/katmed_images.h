@@ -77,6 +77,10 @@ typedef struct {
     KatmedImageStatus io_status;
     KatmedJpegStage decode_stage; /* JPEG samples only. */
     uint32_t decoded_areas; /* Successful MCU areas in that same check, <=1280. */
+    /* C6 LVGL allocator snapshot immediately before this invocation's Open.
+     * Not platform heap/current retained-time free memory. */
+    bool pool_valid;
+    uint32_t pool_free, pool_largest;
 } KatmedImageTimingSample;
 
 /* Must be called before UI uses the image catalogue. It verifies the entire

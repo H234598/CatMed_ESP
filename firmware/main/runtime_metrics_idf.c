@@ -43,6 +43,7 @@ void katmed_runtime_metrics_collect(uint64_t now_ms, KatmedRuntimeMetricInput *o
     out->touch_sequence = touch.sequence;
     out->touch_transfer = touch.transfer;
     out->touch_sample = touch.sample;
+    out->touch_result = touch.native_result;
 #endif
 
     /* The UI and decoder update these values on the serialized LVGL path.
@@ -69,6 +70,9 @@ void katmed_runtime_metrics_collect(uint64_t now_ms, KatmedRuntimeMetricInput *o
         out->jpeg_sequence = jpeg.sequence;
         out->jpeg_stage = jpeg.decode_stage;
         out->jpeg_mcus = jpeg.decoded_areas;
+        out->jpeg_pool_valid = jpeg.pool_valid;
+        out->jpeg_pool_free = jpeg.pool_free;
+        out->jpeg_pool_largest = jpeg.pool_largest;
 #ifdef ESP_PLATFORM
         out->image_failed_presentations = katmed_images_failed_presentations();
         out->image_failure_valid = true;

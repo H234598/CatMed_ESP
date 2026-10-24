@@ -335,7 +335,7 @@ foreach(property IN ITEMS INCLUDE_DIRECTORIES COMPILE_DEFINITIONS COMPILE_OPTION
     set_property(TARGET check_alarm_render_c6 PROPERTY ${property} "${value}")
 endforeach()
 target_compile_features(check_alarm_render_c6 PRIVATE cxx_std_17)
-target_compile_definitions(check_alarm_render_c6 PRIVATE KATMED_ALARM_C6_EDGE_TEST=1)
+target_compile_definitions(check_alarm_render_c6 PRIVATE KATMED_ALARM_C6_EDGE_TEST=1 CONFIG_IDF_TARGET_ESP32C6=1)
 add_custom_target(alarm_c6_fixture DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/c6_alarm_stream_fixture.bin")
 add_dependencies(check_alarm_render_c6 alarm_c6_fixture)
 add_test(NAME alarm_render_native_c6_320x172 COMMAND check_alarm_render_c6 320 172

@@ -48,10 +48,12 @@ void katmed_runtime_metrics_log(const KatmedRuntimeMetricInput *input)
             "uptime_ms=%" PRIu64 " jpeg_detail_v=%u jpeg_seq=%" PRIu32
             " jpeg_stage=%" PRIu32 " jpeg_result=%" PRId32 " jpeg_mcus=%" PRIu32
             " touch_init=%" PRIu32 " touch_probe=%" PRIu32
-            " touch_seq=%" PRIu32 " touch_transfer=%" PRIu32 " touch_sample=%" PRIu32,
+            " touch_seq=%" PRIu32 " touch_transfer=%" PRIu32 " touch_sample=%" PRIu32
+            " jpeg_pool_v=%u jpeg_pool_free=%" PRIu32 " jpeg_pool_largest=%" PRIu32 " touch_result=%" PRIu32,
             input->uptime_ms,input->jpeg_detail_valid,input->jpeg_sequence,
             input->jpeg_stage,input->jpeg_decode_status,input->jpeg_mcus,input->touch_init,input->touch_probe,
-            input->touch_sequence,input->touch_transfer,input->touch_sample);
+            input->touch_sequence,input->touch_transfer,input->touch_sample,
+            input->jpeg_pool_valid,input->jpeg_pool_free,input->jpeg_pool_largest,input->touch_result);
 }
 
 void katmed_runtime_evidence_log(const KatmedRuntimeEvidenceState *s,

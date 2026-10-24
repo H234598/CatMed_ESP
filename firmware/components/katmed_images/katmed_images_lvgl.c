@@ -592,12 +592,24 @@ static KatmedImageStatus decode_check(const KatmedImageSelection *selection)
 #endif
     FILE *cache = writer ? begin_render_cache(selection) : NULL;
     lv_image_decoder_dsc_t decoder;
+    bool pool_valid = false;
+    uint32_t pool_free = 0, pool_largest = 0;
+#if CONFIG_IDF_TARGET_ESP32C6 && LV_USE_STDLIB_MALLOC == LV_STDLIB_BUILTIN
+    lv_mem_monitor_t memory;
+    lv_mem_monitor(&memory);
+    if(memory.free_size <= UINT32_MAX && memory.free_biggest_size <= memory.free_size) {
+        pool_valid = true;
+        pool_free = (uint32_t)memory.free_size;
+        pool_largest = (uint32_t)memory.free_biggest_size;
+    }
+#endif
     if(lv_image_decoder_open(&decoder, selection->lvgl_path, NULL) != LV_RESULT_OK) {
         uint64_t end = monotonic_us();
         jpeg_decode_timing = (KatmedImageTimingSample){
             .elapsed_us = end >= start ? end - start : 0,
             .status = KATMED_IMAGE_IO_ERROR, .measured = true,
-            .sequence=jpeg_sequence, .decode_stage=KATMED_JPEG_OPEN_FAILED};
+            .sequence=jpeg_sequence, .decode_stage=KATMED_JPEG_OPEN_FAILED,
+            .pool_valid=pool_valid, .pool_free=pool_free, .pool_largest=pool_largest};
         if(cache) { fclose(cache); clear_render_cache(); }
 #ifdef ESP_PLATFORM
         if(writer) katmed_source_writer_leave();
@@ -639,7 +651,8 @@ static KatmedImageStatus decode_check(const KatmedImageSelection *selection)
         .elapsed_us = end >= start ? end - start : 0,
         .status = status, .measured = true, .sequence=jpeg_sequence,
         .decode_stage=complete ? KATMED_JPEG_COMPLETE : stage,
-        .decoded_areas=decoded_areas};
+        .decoded_areas=decoded_areas,
+        .pool_valid=pool_valid, .pool_free=pool_free, .pool_largest=pool_largest};
     return status;
 }
 

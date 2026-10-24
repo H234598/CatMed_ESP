@@ -36,6 +36,9 @@ BoardResult board_read_touch(BoardTouch *touch);
  * Sequence wraps locally and is not a boot identity. C3 returns all zero. */
 typedef struct {
     uint32_t init, probe, sequence, transfer, sample;
+    /* Latest read API result:0 unattempted,1 OK,2 timeout,
+     * 3 invalid response/NACK boundary,4 other native error. */
+    uint32_t native_result;
 } BoardTouchDiagnostics;
 BoardTouchDiagnostics board_touch_diagnostics(void);
 /* Polls the I2C controller independently of LVGL's potentially long render

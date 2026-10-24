@@ -12,4 +12,10 @@ class NativeMetrics(unittest.TestCase):
    self.assertIsNone(usb._metric_line(bad))
   empty=b"I (10) katmed_metrics: uptime_ms=10 jpeg_detail_v=0 jpeg_seq=0 jpeg_stage=0 jpeg_result=0 jpeg_mcus=0 touch_init=0 touch_probe=0 touch_seq=0 touch_transfer=0 touch_sample=0"
   self.assertIsNotNone(usb._metric_line(empty))
+ def test_open_pool_snapshot_and_closed_native_transfer_result(self):
+  line=b"I (10) katmed_metrics: uptime_ms=10 jpeg_detail_v=1 jpeg_seq=2 jpeg_stage=1 jpeg_result=5 jpeg_mcus=0 touch_init=4 touch_probe=1 touch_seq=3 touch_transfer=2 touch_sample=4 jpeg_pool_v=1 jpeg_pool_free=8192 jpeg_pool_largest=1024 touch_result=2"
+  self.assertIsNotNone(usb._metric_line(line))
+  for bad in (line.replace(b"jpeg_pool_v=1",b"jpeg_pool_v=0"),line.replace(b"jpeg_pool_largest=1024",b"jpeg_pool_largest=9000"),line.replace(b"touch_result=2",b"touch_result=1"),line.replace(b"touch_result=2",b"touch_result=5")):
+   self.assertIsNone(usb._metric_line(bad))
+  self.assertIsNotNone(usb._metric_line(line.replace(b"jpeg_pool_v=1 jpeg_pool_free=8192 jpeg_pool_largest=1024",b"jpeg_pool_v=0 jpeg_pool_free=0 jpeg_pool_largest=0")))
 if __name__=="__main__":unittest.main()

@@ -430,6 +430,8 @@ BoardResult board_read_touch(BoardTouch *touch)
     uint8_t packet[14];
     err = touch_read_register(0x01, packet, sizeof(packet), true);
     const bool transfer_ok = err == ESP_OK;
+    const uint32_t native_result = err == ESP_OK ? 1u :
+        err == ESP_ERR_TIMEOUT ? 2u : err == ESP_ERR_INVALID_RESPONSE ? 3u : 4u;
     if (err == ESP_OK && !board_c6_touch_decode(packet, &touch->down, &x, &y))
         err = ESP_ERR_INVALID_RESPONSE;
 #endif
@@ -448,6 +450,7 @@ BoardResult board_read_touch(BoardTouch *touch)
 #if CONFIG_IDF_TARGET_ESP32C6
     if(++touch_diagnostics.sequence == 0) ++touch_diagnostics.sequence;
     touch_diagnostics.transfer = transfer_ok ? 1u : 2u;
+    touch_diagnostics.native_result = native_result;
     touch_diagnostics.sample = !transfer_ok ? 4u : !read_ok ? 2u :
                                result == BOARD_OK ? 1u : 3u;
 #endif

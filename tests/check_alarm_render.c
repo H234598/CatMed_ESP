@@ -233,12 +233,20 @@ static void check_jpeg_diagnostics(Orientation orientation) {
         assert(sample.decode_stage==(fault==1?KATMED_JPEG_OPEN_FAILED: fault==2?KATMED_JPEG_AREA_FAILED:KATMED_JPEG_COMPLETE));
         assert(fault==1 ? sample.decoded_areas==0 : sample.decoded_areas>0);
         assert(sample.decoded_areas<=1280 && katmed_images_open_file_count()==0);
+#if CONFIG_IDF_TARGET_ESP32C6
+        assert(sample.pool_valid && sample.pool_largest<=sample.pool_free);
+        void *later=lv_malloc(64);assert(later);
+        KatmedImageTimingSample retained=katmed_images_jpeg_decode_timing();
+        assert(retained.pool_valid && retained.pool_free==sample.pool_free && retained.pool_largest==sample.pool_largest);
+        lv_free(later);
+#endif
         if(fault==1) assert(jpeg_open_alloc_hit);
         printf("jpeg_diagnostic_fault=%u stage=%u mcus=%u closed=1\n",fault,sample.decode_stage,sample.decoded_areas);
     }
     jpeg_fault=0;
     assert(katmed_images_present(image,fallback,KATMED_IMAGE_COUNT,orientation)==KATMED_IMAGE_BAD_ID);
     assert(!katmed_images_jpeg_decode_timing().measured && katmed_images_jpeg_decode_timing().decode_stage==KATMED_JPEG_NONE);
+    assert(!katmed_images_jpeg_decode_timing().pool_valid);
     assert(katmed_images_present(image,fallback,0,orientation)==KATMED_IMAGE_OK);
     assert(katmed_images_jpeg_decode_timing().decode_stage==KATMED_JPEG_COMPLETE);
     lv_image_decoder_set_open_cb(dec,diag_original_open);lv_image_decoder_set_get_area_cb(dec,diag_original_area);

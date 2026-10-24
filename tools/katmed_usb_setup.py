@@ -53,6 +53,9 @@ NATIVE_METRIC_KEYS = (
     "uptime_ms", "jpeg_detail_v", "jpeg_seq", "jpeg_stage", "jpeg_result", "jpeg_mcus",
     "touch_init", "touch_probe", "touch_seq", "touch_transfer", "touch_sample",
 )
+NATIVE_RESOURCE_METRIC_KEYS = NATIVE_METRIC_KEYS + (
+    "jpeg_pool_v", "jpeg_pool_free", "jpeg_pool_largest", "touch_result",
+)
 SIGNED_METRICS = frozenset({"pack_status", "variant_status", "jpeg_status"})
 STATE_KEYS = (
     "schema", "sample_seq", "uptime_ms", "boot_domain", "round_d", "round_e",
@@ -370,7 +373,7 @@ def _metric_line(raw: bytes) -> tuple[str, int] | None:
     if match is None:
         return None
     tokens = match.group(1).split(b" ")
-    keys = next((keys for keys in (METRIC_KEYS, LEGACY_METRIC_KEYS, NATIVE_METRIC_KEYS)
+    keys = next((keys for keys in (METRIC_KEYS, LEGACY_METRIC_KEYS, NATIVE_METRIC_KEYS, NATIVE_RESOURCE_METRIC_KEYS)
                  if len(tokens) == len(keys)), ())
     if len(tokens) != len(keys):
         return None
@@ -391,7 +394,7 @@ def _metric_line(raw: bytes) -> tuple[str, int] | None:
     uptime = int(values[0].removeprefix("uptime_ms="))
     if uptime > 0xffffffffffffffff:
         return None
-    if keys == NATIVE_METRIC_KEYS:
+    if keys in (NATIVE_METRIC_KEYS, NATIVE_RESOURCE_METRIC_KEYS):
         fields = {k: int(v.split("=", 1)[1]) for k, v in zip(keys, values)}
         limits = {"jpeg_detail_v": 1, "jpeg_seq": 0xffffffff, "jpeg_stage": 4,
                   "jpeg_result": 10, "jpeg_mcus": 1280, "touch_init": 4, "touch_probe": 2,
@@ -420,6 +423,18 @@ def _metric_line(raw: bytes) -> tuple[str, int] | None:
             return None
         if ((fields["touch_transfer"] == 2) != (fields["touch_sample"] == 4)):
             return None
+        if keys == NATIVE_RESOURCE_METRIC_KEYS:
+            if (fields["jpeg_pool_v"] > 1 or fields["jpeg_pool_free"] > 0xffffffff or
+                    fields["jpeg_pool_largest"] > fields["jpeg_pool_free"] or fields["touch_result"] > 4):
+                return None
+            if not fields["jpeg_pool_v"] and (fields["jpeg_pool_free"] or fields["jpeg_pool_largest"]):
+                return None
+            if fields["jpeg_pool_v"] and not fields["jpeg_detail_v"]:
+                return None
+            if (fields["touch_seq"] == 0) != (fields["touch_result"] == 0):
+                return None
+            if fields["touch_seq"] and ((fields["touch_transfer"] == 1) != (fields["touch_result"] == 1)):
+                return None
     return "Messung " + " ".join(values), uptime
 
 
