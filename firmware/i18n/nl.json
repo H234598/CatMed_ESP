@@ -126,7 +126,8 @@
     "Ja": "Ja",
     "Weiter": "Volgende",
     "Eingabe nach Drehung verworfen": "Inzending wordt na rotatie weggegooid",
-    "Zeit nicht synchronisiert": "Tijd niet gesynchroniseerd"
+    "Zeit nicht synchronisiert": "Tijd niet gesynchroniseerd",
+    "Automatisch": "Automatisch"
   },
   "web_static": {
     "KatMed · Einstellungen": "KatMed · Instellingen",
@@ -319,6 +320,7 @@
     "HTTPS erforderlich": "HTTPS vereist",
     "Diese Konfiguration ist nur über HTTPS erreichbar.": "Deze configuratie is alleen toegankelijk via HTTPS.",
     "Lokaler Test": "Lokale test",
-    "Sichere lokale Verbindung": "Veilige lokale verbinding"
+    "Sichere lokale Verbindung": "Veilige lokale verbinding",
+    "Automatisch": "Automatisch"
   }
 }

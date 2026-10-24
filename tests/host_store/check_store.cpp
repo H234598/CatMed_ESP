@@ -47,6 +47,7 @@ void remove_v9_names(Fake &f) {
 }
 void remove_v10_wifi_profiles(Fake &f);
 void remove_v12_mode(Fake &f) {
+    if(f.bytes[4]==13) {--f.length;f.bytes[4]=12;repair_crc(f);}
     if(f.bytes[4]==12) {f.length-=2;f.bytes[4]=11;repair_crc(f);}
 }
 void remove_v11_language(Fake &f) {
@@ -175,7 +176,7 @@ void test_v8_mesh_name_migration_past_999() {
     assert(std::strcmp(store_mesh_name(&migrated),"KatmedESP-999")==0);
     assert(store_mesh_name_next_index(&migrated)==1000);
     assert(store_mesh_name_assign(&migrated,UINT64_C(0xAC276E46BC2D),1000)==STORE_OK);
-    assert(fixture.bytes[4]==12 && store_mesh_name_next_index(&migrated)==1001);
+    assert(fixture.bytes[4]==13 && store_mesh_name_next_index(&migrated)==1001);
 }
 void test_corrupt_legacy_future() {
     Fake original{}; Store *s=fresh_store(); StoreRecovery r=open(original,s);
@@ -585,6 +586,46 @@ void test_usb() {
     assert(std::strstr(reply,"durable=0") && std::strstr(reply,"error=CORRUPT"));
     assert(store_usb_handle_line(t,"KM1 RESET CONFIG\n",17,&info,reply,sizeof(reply))==STORE_UNAVAILABLE);
 }
+void test_orientation_override_migration() {
+    Fake disk{}; Store store{}; StoreRecovery recovery{};
+    assert(store_open(&store,backend(disk),kDevice,catalog,75,&recovery)==STORE_OK);
+    assert(!store.record.orientation_manual);
+    LocalSettings local=recovery.local;
+    const unsigned before=disk.writes;
+    // Same-angle manual choice must commit the mode change, once.
+    assert(store_set_orientation(&store,&local,ORIENTATION_0,true)==STORE_OK);
+    assert(disk.writes==before+1 && store.record.orientation_manual);
+    assert(store_set_orientation(&store,&local,ORIENTATION_0,true)==STORE_DUPLICATE);
+    assert(disk.writes==before+1);
+    Store reboot{};
+    assert(store_open(&reboot,backend(disk),kDevice,catalog,75,&recovery)==STORE_OK);
+    assert(reboot.record.orientation_manual && recovery.local.orientation==ORIENTATION_0);
+    local=recovery.local;
+    disk.fault=BEFORE;
+    assert(store_set_orientation(&reboot,&local,ORIENTATION_90,false)==STORE_IO);
+    assert(local.orientation==ORIENTATION_0 && reboot.record.orientation_manual);
+    disk.fault=NONE;
+    Store retry{};
+    assert(store_open(&retry,backend(disk),kDevice,catalog,75,&recovery)==STORE_OK);
+    local=recovery.local;
+    assert(store_set_orientation(&retry,&local,ORIENTATION_90,false)==STORE_OK);
+    assert(!retry.record.orientation_manual);
+    // A canonical old v12 record retains local angle, interval 8 and history.
+    retry.record.shared.image_seconds=8u*3600u;
+    LocalSettings requested=local; requested.clock_style=ANALOG;
+    assert(store_set_local(&retry,&local,&requested)==STORE_OK);
+    Fake legacy=disk; --legacy.length; legacy.bytes[4]=12; repair_crc(legacy);
+    Store migrated{};
+    assert(store_open(&migrated,backend(legacy),kDevice,catalog,75,&recovery)==STORE_OK);
+    assert(legacy.bytes[4]==13 && !migrated.record.orientation_manual);
+    assert(recovery.local.orientation==ORIENTATION_90 && recovery.local.clock_style==ANALOG);
+    assert(migrated.record.shared.image_seconds==8u*3600u);
+    assert(migrated.record.has_history==retry.record.has_history);
+    assert(memcmp(migrated.record.bound_group,retry.record.bound_group,16)==0);
+    Fake empty{}; Store reset{};
+    assert(store_open(&reset,backend(empty),kDevice,catalog,75,&recovery)==STORE_OK);
+    assert(!reset.record.orientation_manual);
+}
 void test_language_reboot_and_factory_default() {
     Fake disk{};
     Store first{};
@@ -593,7 +634,7 @@ void test_language_reboot_and_factory_default() {
     assert(initial.language==KATMED_LANG_EN && first.record.language==KATMED_LANG_EN);
     for (uint8_t language=1; language<KATMED_LANGUAGE_COUNT; ++language) {
         assert(store_set_language(&first,language)==STORE_OK);
-        assert(disk.length>12 && disk.bytes[4]==12 && first.record.language==language);
+        assert(disk.length>12 && disk.bytes[4]==13 && first.record.language==language);
         assert(store_set_language(&first,language)==STORE_DUPLICATE);
         Store reboot{};
         StoreRecovery restored{};
@@ -649,6 +690,7 @@ int main() {
     for (unsigned i=0;i<sizeof(catalog);++i) catalog[i]=static_cast<uint8_t>(i+1);
     test_explicit_network_modes();
     test_missing_and_local();
+    test_orientation_override_migration();
     test_language_reboot_and_factory_default();
     test_v8_mesh_name_migration_past_999();
     test_corrupt_legacy_future();

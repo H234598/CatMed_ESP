@@ -126,7 +126,8 @@
     "Ja": "так",
     "Weiter": "Далі",
     "Eingabe nach Drehung verworfen": "Запис скасовано після ротації",
-    "Zeit nicht synchronisiert": "Час не синхронізовано"
+    "Zeit nicht synchronisiert": "Час не синхронізовано",
+    "Automatisch": "Автоматично"
   },
   "web_static": {
     "KatMed · Einstellungen": "KatMed · Налаштування",
@@ -319,6 +320,7 @@
     "HTTPS erforderlich": "Потрібен HTTPS",
     "Diese Konfiguration ist nur über HTTPS erreichbar.": "Ця конфігурація доступна лише через HTTPS.",
     "Lokaler Test": "Місцевий тест",
-    "Sichere lokale Verbindung": "Безпечне локальне з'єднання"
+    "Sichere lokale Verbindung": "Безпечне локальне з'єднання",
+    "Automatisch": "Автоматично"
   }
 }

@@ -1012,6 +1012,8 @@ static cJSON *config_object(const KatmedConfigSnapshot *snapshot)
                             restore_status_name(snapshot->restore_status));
     cJSON_AddStringToObject(obj, "clock_style", clock_style_name(snapshot->clock_style));
     cJSON_AddNumberToObject(obj, "orientation", orientation_degrees(snapshot->orientation));
+    cJSON_AddBoolToObject(obj,"orientation_auto_supported",snapshot->orientation_auto_supported);
+    cJSON_AddBoolToObject(obj,"orientation_automatic",snapshot->orientation_automatic);
     cJSON_AddStringToObject(obj, "rotation", rotation_name(snapshot->rotation));
     cJSON_AddStringToObject(obj, "revision", snapshot->revision);
     return obj;

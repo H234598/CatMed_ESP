@@ -707,15 +707,23 @@ static void edit_button(lv_event_t *event)
     open_edit((EditKind)(intptr_t)lv_event_get_user_data(event));
 }
 
+static unsigned orientation_selection(void)
+{
+    return ui.services.orientation_auto_available &&
+           ui.services.orientation_automatic &&
+           ui.services.orientation_automatic(ui.services.context) ? 4u :
+           (unsigned)ui.local.orientation;
+}
+
 /* Project accepted state into the existing submenu, without sending requests. */
 static void sync_settings_options(void)
 {
     lv_obj_t *matrix = ui.settings_options;
     if (!matrix) return;
     const unsigned current = ui.settings_menu == SETTINGS_ROTATION ?
-        (unsigned)ui.local.orientation : (unsigned)ui.state.settings.rotation;
+        orientation_selection() : (unsigned)ui.state.settings.rotation;
     const unsigned count = ui.settings_menu == SETTINGS_ROTATION ?
-        (unsigned)ORIENTATION_270 + 1u : (unsigned)ROTATION_RANDOM + 1u;
+        (ui.services.orientation_auto_available ? 5u : 4u) : (unsigned)ROTATION_RANDOM + 1u;
     if (current >= count) return;
     bool matches = lv_buttonmatrix_get_selected_button(matrix) == current;
     for (unsigned i = 0; i < count && matches; ++i)
@@ -734,9 +742,13 @@ static void option_selected(lv_event_t *event)
     bool orientation = (intptr_t)lv_event_get_user_data(event) != 0;
     UiRequest request = {0};
     if (orientation) {
-        if (selected > ORIENTATION_270) return;
-        request.kind = UI_REQUEST_SET_ORIENTATION;
-        request.value.orientation = (Orientation)selected;
+        if (selected == 4u && ui.services.orientation_auto_available)
+            request.kind = UI_REQUEST_SET_ORIENTATION_AUTOMATIC;
+        else {
+            if (selected > ORIENTATION_270) return;
+            request.kind = UI_REQUEST_SET_ORIENTATION;
+            request.value.orientation = (Orientation)selected;
+        }
     } else {
         if (selected > ROTATION_RANDOM) return;
         request.kind = UI_REQUEST_SET_ROTATION_MODE;
@@ -763,7 +775,7 @@ static lv_obj_t *option_matrix(lv_obj_t *parent, const char *const map[],
     for (int i = 0; i < rows; ++i)
         lv_buttonmatrix_set_button_ctrl(matrix, i,
             LV_BUTTONMATRIX_CTRL_CLICK_TRIG | LV_BUTTONMATRIX_CTRL_NO_REPEAT);
-    const unsigned selected=orientation ? (unsigned)ui.local.orientation :
+    const unsigned selected=orientation ? orientation_selection() :
                                           (unsigned)ui.state.settings.rotation;
     lv_buttonmatrix_set_one_checked(matrix, true);
     lv_buttonmatrix_set_button_ctrl_all(matrix, LV_BUTTONMATRIX_CTRL_CHECKABLE);
@@ -960,7 +972,10 @@ static void build_settings(void)
             label(ui.settings, T("Rotation"), row_w);
             static const char *angle_map[] = {"0°", "\n", "90°", "\n",
                                               "180°", "\n", "270°", ""};
-            option_matrix(ui.settings, angle_map, row_w, 4, true);
+            static const char *auto_map[]={"0°","\n","90°","\n","180°","\n","270°","\n","",""};
+            auto_map[8]=T("Automatisch");
+            option_matrix(ui.settings, ui.services.orientation_auto_available ? auto_map : angle_map,
+                          row_w, ui.services.orientation_auto_available ? 5 : 4, true);
         } else if (ui.settings_menu == SETTINGS_PLAYBACK) {
             label(ui.settings, T("Diashow / Abspielreienfolge"), row_w);
             static const char *rotation_map[] = {"", "\n", "", "\n", "", ""};

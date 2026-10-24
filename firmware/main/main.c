@@ -601,6 +601,37 @@ static void mesh_shared_result(void *context, EventId id, KatmedMeshSharedOutcom
 
 static bool accept_manual_clock(Runtime *rt, const char *text);
 
+static bool orientation_auto_supported(void)
+{
+#if CONFIG_IDF_TARGET_ESP32C6
+    return true;
+#else
+    return false;
+#endif
+}
+static bool orientation_auto_for(const Runtime *rt)
+{
+    return orientation_auto_supported() && rt && rt->store_ready &&
+           !rt->store.record.orientation_manual;
+}
+
+static void poll_auto_orientation(Runtime *rt)
+{
+#if CONFIG_IDF_TARGET_ESP32C6
+    Orientation sensed;
+    if (orientation_auto_for(rt) && board_auto_orientation(&sensed) &&
+        sensed!=rt->local.orientation && board_set_orientation(sensed)==BOARD_OK)
+        rt->local.orientation=sensed; /* no Store, shared event or clock mutation */
+#else
+    (void)rt;
+#endif
+}
+
+static bool orientation_automatic(void *context)
+{
+    return orientation_auto_for(context);
+}
+
 static UiSubmitResult submit_ui_with_id(void *context, const UiRequest *request,
                                        const EventId *retry_id)
 {
@@ -639,17 +670,22 @@ static UiSubmitResult submit_ui_with_id(void *context, const UiRequest *request,
         return store_set_local(&rt->store, &rt->local, &wanted) == STORE_OK
             ? UI_SUBMIT_COMMITTED : UI_SUBMIT_UNAVAILABLE;
     }
+    if (request->kind == UI_REQUEST_SET_ORIENTATION_AUTOMATIC) {
+        if (!orientation_auto_supported()) return UI_SUBMIT_REJECTED;
+        const StoreResult result=store_set_orientation(&rt->store,&rt->local,
+                                                       rt->local.orientation,false);
+        return result==STORE_OK || result==STORE_DUPLICATE ? UI_SUBMIT_COMMITTED : UI_SUBMIT_UNAVAILABLE;
+    }
     if (request->kind == UI_REQUEST_SET_ORIENTATION) {
         if (request->value.orientation > ORIENTATION_270) return UI_SUBMIT_REJECTED;
-        if (request->value.orientation == rt->local.orientation)
-            return UI_SUBMIT_COMMITTED;
-        const Orientation previous = rt->local.orientation;
-        if (board_set_orientation(request->value.orientation) != BOARD_OK)
+        const Orientation previous=rt->local.orientation;
+        if (request->value.orientation!=previous &&
+            board_set_orientation(request->value.orientation)!=BOARD_OK)
             return UI_SUBMIT_UNAVAILABLE;
-        LocalSettings wanted = rt->local;
-        wanted.orientation = request->value.orientation;
-        if (store_set_local(&rt->store, &rt->local, &wanted) != STORE_OK) {
-            (void)board_set_orientation(previous);
+        const StoreResult result=store_set_orientation(&rt->store,&rt->local,
+            request->value.orientation,orientation_auto_supported());
+        if (result!=STORE_OK && result!=STORE_DUPLICATE) {
+            if (request->value.orientation!=previous) (void)board_set_orientation(previous);
             return UI_SUBMIT_UNAVAILABLE;
         }
         return UI_SUBMIT_COMMITTED;
@@ -803,7 +839,8 @@ static void config_revision(const Runtime *rt, char out[KATMED_CONFIG_REVISION_M
     hash = config_mix(hash, rt->state.countdown_origin.sequence);
     hash = config_mix(hash, (uint64_t)rt->state.alarm_active);
     hash = config_mix(hash, (uint64_t)rt->state.start_reason);
-    hash = config_mix(hash, (uint64_t)rt->local.orientation);
+    hash = config_mix(hash, (uint64_t)(rt->store_ready ? rt->store.record.local.orientation : rt->local.orientation));
+    hash = config_mix(hash, orientation_auto_for(rt));
     hash = config_mix(hash, (uint64_t)rt->local.clock_style);
     hash = config_mix(hash, (uint64_t)rt->store.record.manual_intent.pending);
     (void)snprintf(out, KATMED_CONFIG_REVISION_MAX, "%016" PRIx64, hash);
@@ -849,6 +886,8 @@ static void config_snapshot(const Runtime *rt, KatmedConfigSnapshot *out)
     config_hours(out->image_hours,rt->state.settings.image_seconds);
     out->clock_style=rt->local.clock_style;
     out->orientation=rt->local.orientation;
+    out->orientation_auto_supported=orientation_auto_supported();
+    out->orientation_automatic=orientation_auto_for(rt);
     out->rotation=rt->state.settings.rotation;
     out->restore_status=rt->state.start_reason==START_MANUAL ?
         KATMED_RESTORE_NONE : rt->manual_restore_status;
@@ -1062,7 +1101,9 @@ static void config_execute(void *context, const KatmedConfigRequest *request,
             break;
         case KATMED_CONFIG_ORIENTATION:
             ui_request.kind=UI_REQUEST_SET_ORIENTATION;
-            if (strcmp(request->value,"0")==0) ui_request.value.orientation=ORIENTATION_0;
+            if (strcmp(request->value,"auto")==0 && orientation_auto_supported())
+                ui_request.kind=UI_REQUEST_SET_ORIENTATION_AUTOMATIC;
+            else if (strcmp(request->value,"0")==0) ui_request.value.orientation=ORIENTATION_0;
             else if (strcmp(request->value,"90")==0) ui_request.value.orientation=ORIENTATION_90;
             else if (strcmp(request->value,"180")==0) ui_request.value.orientation=ORIENTATION_180;
             else if (strcmp(request->value,"270")==0) ui_request.value.orientation=ORIENTATION_270;
@@ -1736,6 +1777,7 @@ static bool render_ui(const AppState *state, const LocalSettings *local,
     static bool contact_interrupted;
     static bool projected_state_available;
     static bool projected_alarm_active;
+    static Orientation projected_orientation;
     static AlarmRoundId projected_round;
     if (!lvgl_port_lock(100)) {
 #if defined(ESP_PLATFORM) || defined(KATMED_HOST_TOUCH_SAMPLER)
@@ -1756,11 +1798,12 @@ static bool render_ui(const AppState *state, const LocalSettings *local,
     /* A new alarm or round must reach the UI before a release is evaluated.
      * This holds even on the 25 ms tick between scheduled redraws. */
     const bool alarm_changed = state != NULL && local != NULL &&
-        (!projected_state_available ||
+        (!projected_state_available || projected_orientation!=local->orientation ||
         projected_alarm_active != state->alarm_active ||
         (state->alarm_active && !same_alarm_round(projected_round, state->round)));
     if (alarm_changed) {
         ui_render(state, local, ui_current_view(), clock);
+        projected_orientation=local->orientation;
         projected_alarm_active = state->alarm_active;
         projected_round = state->round;
         projected_state_available = true;
@@ -1947,6 +1990,8 @@ void app_main(void)
     }
     const UiServices services = {
         .context = &runtime,
+        .orientation_auto_available = orientation_auto_supported(),
+        .orientation_automatic = orientation_automatic,
         .submit = submit_ui,
         .read_model = read_ui_model,
         .interaction_input = interaction_submit,
@@ -2094,6 +2139,7 @@ void app_main(void)
         }
         now = clock_sample(runtime.boot_domain);
         tick_runtime(&runtime, &now);
+        poll_auto_orientation(&runtime);
         process_usb(&runtime, &now);
         now = clock_sample(runtime.boot_domain);
         restore_manual_if_ready(&runtime,&now);

@@ -27,6 +27,8 @@ void board_deinit(void);
 /* Implement only against verified board/controller pin evidence. */
 BoardResult board_set_orientation(Orientation orientation);
 BoardResult board_read_touch(BoardTouch *touch);
+/* Cached sampler result only; never performs I2C or changes persisted settings. */
+bool board_auto_orientation(Orientation *orientation);
 /* Fixed C6 diagnostics only, copied together under the existing touch lock.
  * Init:0 unattempted,1 bus failed,2 device failed,3 driver failed,4 initialized.
  * Probe/transfer:0 unattempted,1 OK,2 failed.

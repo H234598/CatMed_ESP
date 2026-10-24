@@ -17,6 +17,7 @@ PY
 trap cleanup EXIT
 flags=(-std=c11 -Wall -Wextra -Werror -Wno-error=cpp -Wno-unused-variable -ffunction-sections -fdata-sections
     -DKATMED_FULL_STACK=1 -DKATMED_WITH_CORE=1
+    "-DCONFIG_IDF_TARGET_ESP32C${KATMED_TEST_CHIP:-3}=1"
     "-DLV_CONF_PATH=\"${repo_root}/firmware/components/katmed_images/host/lv_conf.h\""
     -DLV_KCONFIG_IGNORE -DLV_LVGL_H_INCLUDE_SIMPLE
     "-I${repo_root}/tests/host_store/stubs"

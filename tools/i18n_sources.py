@@ -72,7 +72,7 @@ def collect():
     }]
     js = unique(c_strings(WEB / "app.js"))
     js = [s for s in js if (" " in s or re.search(r"[ÄÖÜäöüß…]", s) or
-                            s in {"Bearbeiten", "Entfernen", "Freigegeben."})
+                            s in {"Bearbeiten", "Entfernen", "Freigegeben.", "Automatisch"})
           and s not in {"use strict", "HTTP request failed", "PRIVATE KEY",
                         "-----BEGIN CERTIFICATE-----", "same-origin", "no-store"}
           and not s.startswith("Invalid ")]

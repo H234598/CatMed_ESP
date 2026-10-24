@@ -5,6 +5,7 @@
 #include "board_touch_buffer.h"
 #include "board_display_budget.h"
 #include "board_boot_gate.h"
+#include "board_orientation.h"
 #include <string.h>
 #include "esp_heap_caps.h"
 #include "esp_log.h"
@@ -77,6 +78,12 @@ static i2c_master_bus_handle_t i2c_bus;
 static i2c_master_dev_handle_t i2c_dev;
 #if CONFIG_IDF_TARGET_ESP32C6
 static esp_lcd_touch_handle_t c6_touch;
+static i2c_master_dev_handle_t imu_dev;
+static BoardOrientationPolicy orientation_policy;
+static uint64_t imu_poll_ms;
+#if defined(ESP_PLATFORM) || defined(KATMED_ORIENTATION_HOST_TEST)
+static void poll_orientation(uint64_t now);
+#endif
 #endif
 static lv_display_t *lv_display;
 static lv_indev_t *lv_touch;
@@ -93,6 +100,7 @@ static BoardIndevGate indev_gate = {.quarantined = true};
 static TaskHandle_t touch_sampler_task;
 static volatile bool touch_sampler_active;
 static BoardTouchBuffer touch_samples;
+static uint32_t touch_generation;
 static BoardBootGate boot_gate;
 static bool boot_input_ready;
 
@@ -129,10 +137,17 @@ static void touch_sampler(void *argument)
     TickType_t last = xTaskGetTickCount();
     while (touch_sampler_active) {
         BoardTouch sample;
+        portENTER_CRITICAL(&touch_lock);
+        const uint32_t generation=touch_generation;
+        portEXIT_CRITICAL(&touch_lock);
         BoardResult result = board_read_touch(&sample);
         portENTER_CRITICAL(&touch_lock);
-        board_touch_buffer_push(&touch_samples, sample, result);
+        if (generation==touch_generation)
+            board_touch_buffer_push(&touch_samples, sample, result);
         portEXIT_CRITICAL(&touch_lock);
+#if CONFIG_IDF_TARGET_ESP32C6
+        poll_orientation((uint64_t)(esp_timer_get_time()/1000));
+#endif
         vTaskDelayUntil(&last, pdMS_TO_TICKS(20));
     }
     touch_sampler_task = NULL;
@@ -225,6 +240,69 @@ BoardTouchDiagnostics board_touch_diagnostics(void)
     BoardTouchDiagnostics sample = touch_diagnostics;
     portEXIT_CRITICAL(&touch_lock);
     return sample;
+}
+
+/* QST QMI8658A datasheet 13-52-25 Rev A: WHO_AM_I=05, address 6b.
+ * CTRL1 ADDR_AI/little endian, CTRL2 ±4g/31.25Hz, CTRL7 accel only.
+ * Do not copy the vendor demo's self-test bit or enable its unused gyro. */
+#if CONFIG_IDF_TARGET_ESP32C6
+static bool imu_write(uint8_t reg, uint8_t value)
+{
+    const uint8_t command[2]={reg,value};
+    return i2c_master_transmit(imu_dev,command,sizeof(command),20)==ESP_OK;
+}
+static void init_orientation(void)
+{
+    orientation_policy=(BoardOrientationPolicy){0};
+    imu_poll_ms=0;
+    const i2c_device_config_t config={.dev_addr_length=I2C_ADDR_BIT_LEN_7,
+        .device_address=0x6b,.scl_speed_hz=400000};
+    if (i2c_master_bus_add_device(i2c_bus,&config,&imu_dev)!=ESP_OK) {
+        imu_dev=NULL; return;
+    }
+    const uint8_t reg=0; uint8_t id=0;
+    if (i2c_master_transmit_receive(imu_dev,&reg,1,&id,1,20)!=ESP_OK || id!=0x05) {
+        (void)i2c_master_bus_rm_device(imu_dev); imu_dev=NULL; return;
+    }
+    if (!imu_write(0x08,0x00) || !imu_write(0x02,0x40) ||
+        !imu_write(0x03,0x18) || !imu_write(0x08,0x01)) {
+        (void)imu_write(0x08,0x00);
+        (void)i2c_master_bus_rm_device(imu_dev); imu_dev=NULL;
+    }
+    /* Optional sensor errors cannot make the board or manual rotation fail. */
+}
+#if defined(ESP_PLATFORM) || defined(KATMED_ORIENTATION_HOST_TEST)
+static void poll_orientation(uint64_t now)
+{
+    if (!imu_dev || now-imu_poll_ms<100) return;
+    imu_poll_ms=now;
+    uint8_t status=0, bytes[6]={0};
+    const uint8_t status_reg=0x2e, accel_reg=0x35;
+    bool ok=i2c_master_transmit_receive(imu_dev,&status_reg,1,&status,1,20)==ESP_OK;
+    ok=ok && (status&1u)!=0;
+    if (ok) ok=i2c_master_transmit_receive(imu_dev,&accel_reg,1,bytes,6,20)==ESP_OK;
+    const int16_t x=(int16_t)((uint16_t)bytes[0]|(uint16_t)bytes[1]<<8);
+    const int16_t y=(int16_t)((uint16_t)bytes[2]|(uint16_t)bytes[3]<<8);
+    const int16_t z=(int16_t)((uint16_t)bytes[4]|(uint16_t)bytes[5]<<8);
+    /* Only the small cached policy is shared; no I2C inside this section. */
+    portENTER_CRITICAL(&touch_lock);
+    (void)board_orientation_update(&orientation_policy,ok,x,y,z,now);
+    portEXIT_CRITICAL(&touch_lock);
+}
+#endif
+#endif
+bool board_auto_orientation(Orientation *orientation)
+{
+#if CONFIG_IDF_TARGET_ESP32C6
+    if (!orientation) return false;
+    portENTER_CRITICAL(&touch_lock);
+    const bool valid=orientation_policy.valid;
+    if (valid) *orientation=orientation_policy.accepted;
+    portEXIT_CRITICAL(&touch_lock);
+    return valid;
+#else
+    (void)orientation; return false;
+#endif
 }
 
 static esp_err_t init_touch(void)
@@ -398,9 +476,13 @@ BoardResult board_set_orientation(Orientation orientation)
         lvgl_port_unlock();
         return BOARD_IO_ERROR;
     }
-    current_orientation = orientation;
     portENTER_CRITICAL(&touch_lock);
+    current_orientation = orientation;
     latest_valid = false;
+#ifdef ESP_PLATFORM
+    ++touch_generation;
+    touch_samples=(BoardTouchBuffer){0};
+#endif
     board_indev_gate_invalidate(&indev_gate);
     portEXIT_CRITICAL(&touch_lock);
     lvgl_port_unlock();
@@ -436,6 +518,9 @@ BoardResult board_read_touch(BoardTouch *touch)
         err = ESP_ERR_INVALID_RESPONSE;
 #endif
     const bool read_ok = err == ESP_OK;
+    /* The sampler and the main-thread rotation share only the pure transform
+     * and cached result; all slow I2C has already completed outside this lock. */
+    portENTER_CRITICAL(&touch_lock);
     bool decoded_down = touch->down;
     bool valid = board_geometry_sample(geometry, current_orientation, read_ok,
                                        decoded_down, x, y, &touch->down, &touch->x, &touch->y);
@@ -446,7 +531,6 @@ BoardResult board_read_touch(BoardTouch *touch)
         result = BOARD_INVALID;
         touch->down = false;
     }
-    portENTER_CRITICAL(&touch_lock);
 #if CONFIG_IDF_TARGET_ESP32C6
     if(++touch_diagnostics.sequence == 0) ++touch_diagnostics.sequence;
     touch_diagnostics.transfer = transfer_ok ? 1u : 2u;
@@ -481,6 +565,8 @@ void board_deinit(void)
     if (port_ready) { (void)lvgl_port_deinit(); port_ready = false; }
 #if CONFIG_IDF_TARGET_ESP32C6
     if (c6_touch) { (void)esp_lcd_touch_del(c6_touch); c6_touch = NULL; }
+    if (imu_dev) { (void)imu_write(0x08,0x00); (void)i2c_master_bus_rm_device(imu_dev); imu_dev=NULL; }
+    orientation_policy=(BoardOrientationPolicy){0};
 #endif
     if (i2c_dev) { (void)i2c_master_bus_rm_device(i2c_dev); i2c_dev = NULL; }
     if (i2c_bus) { (void)i2c_del_master_bus(i2c_bus); i2c_bus = NULL; }
@@ -508,6 +594,9 @@ BoardResult board_init(lv_display_t **display)
     if (err != ESP_OK) goto fail;
     err = init_touch();
     if (err != ESP_OK) goto fail;
+#if CONFIG_IDF_TARGET_ESP32C6
+    init_orientation();
+#endif
     lvgl_port_cfg_t port_cfg = ESP_LVGL_PORT_INIT_CONFIG();
     err = lvgl_port_init(&port_cfg);
     if (err != ESP_OK) goto fail;

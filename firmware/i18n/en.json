@@ -126,7 +126,8 @@
     "Ja": "Yes",
     "Weiter": "Next",
     "Eingabe nach Drehung verworfen": "Entry discarded after rotation",
-    "Zeit nicht synchronisiert": "Time not synchronized"
+    "Zeit nicht synchronisiert": "Time not synchronized",
+    "Automatisch": "Automatic"
   },
   "web_static": {
     "KatMed · Einstellungen": "KatMed · Settings",
@@ -319,6 +320,7 @@
     "HTTPS erforderlich": "HTTPS required",
     "Diese Konfiguration ist nur über HTTPS erreichbar.": "This configuration is only accessible via HTTPS.",
     "Lokaler Test": "Local test",
-    "Sichere lokale Verbindung": "Secure local connection"
+    "Sichere lokale Verbindung": "Secure local connection",
+    "Automatisch": "Automatic"
   }
 }

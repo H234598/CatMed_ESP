@@ -126,7 +126,8 @@
     "Ja",
     "Weiter",
     "Eingabe nach Drehung verworfen",
-    "Zeit nicht synchronisiert"
+    "Zeit nicht synchronisiert",
+    "Automatisch"
   ],
   "web_static": [
     "KatMed · Einstellungen",
@@ -326,6 +327,7 @@
     "Freigegeben: {0}",
     "{0} von {1} WLAN-Profilen belegt. Priorität 1 ist die höchste.",
     "Priorität {0} · {1} · {2}",
-    "Termin: {0}. Wirksam: {1}."
+    "Termin: {0}. Wirksam: {1}.",
+    "Automatisch"
   ]
 }

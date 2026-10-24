@@ -15,7 +15,7 @@ namespace {
 constexpr uint8_t kMagic[4] = {'K', 'M', 'S', 'T'};
 /* v11 appends one local language byte after the unchanged v10 payload.
  * Versions 8 and 9 were never an on-device release. */
-constexpr uint16_t kCurrentVersion = 12;
+constexpr uint16_t kCurrentVersion = 13;
 constexpr size_t kHeaderSize = 12;
 
 uint32_t checksum(const uint8_t *data, size_t length) {
@@ -489,6 +489,7 @@ StoreResult encode_record(const StoreRecord &v, uint8_t *bytes, size_t *length, 
     }
     if (version>=11) w.u8(v.language);
     if (version>=12) {w.u8(v.provision.network_mode);w.boolean(v.setup_requested);}
+    if (version>=13) w.boolean(v.orientation_manual);
     if (!w.good || w.position > UINT16_MAX) return STORE_FULL;
     const uint16_t n=static_cast<uint16_t>(w.position);
     bytes[6]=static_cast<uint8_t>(n); bytes[7]=static_cast<uint8_t>(n>>8);
@@ -582,6 +583,7 @@ StoreResult decode_record(const uint8_t *bytes, size_t length, StoreRecord *out)
     }
     if (version>=11) v.language=r.u8();
     if (version>=12) {v.provision.network_mode=r.u8();v.setup_requested=r.boolean();}
+    if (version>=13) v.orientation_manual=r.boolean();
     if (v.language>=KATMED_LANGUAGE_COUNT) return corrupt();
     if (!r.good || r.position!=length || !valid_record(v)) return corrupt();
     return STORE_OK;
@@ -852,6 +854,26 @@ StoreResult store_apply_event(Store *store, AppState *active, const AppEvent *ev
     *active=candidate;
     if (effects) *effects=candidate_effects;
     return store->last_error=STORE_OK;
+}
+
+/* Commit the angle and its override together, even when the angle is equal.
+ * Runtime sensor poses are deliberately never written through this API. */
+StoreResult store_set_orientation(Store *store, LocalSettings *active,
+                                   Orientation orientation, bool manual) {
+    if (!ready(store) || !active) return STORE_UNAVAILABLE;
+    LocalSettings requested=*active; requested.orientation=orientation;
+    if (!valid_local(requested,store->record.device)) return store->last_error=STORE_INVALID;
+    if (store->record.local.orientation==orientation &&
+        store->record.orientation_manual==manual) {
+        active->orientation=orientation;
+        return store->last_error=STORE_DUPLICATE;
+    }
+    store->staged=store->record;
+    store->staged.local=requested;
+    store->staged.orientation_manual=manual;
+    const StoreResult result=write_record(store,store->staged);
+    if (result==STORE_OK) *active=requested;
+    return result;
 }
 
 StoreResult store_set_local(Store *store, LocalSettings *active,

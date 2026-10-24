@@ -75,6 +75,7 @@ typedef struct {
     Orientation orientation;
     RotationMode rotation;
     char revision[KATMED_CONFIG_REVISION_MAX];
+    bool orientation_auto_supported, orientation_automatic;
 } KatmedConfigSnapshot;
 
 typedef struct {

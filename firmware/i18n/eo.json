@@ -126,7 +126,8 @@
     "Ja": "Jes",
     "Weiter": "Poste",
     "Eingabe nach Drehung verworfen": "Eniro forĵetita post rotacio",
-    "Zeit nicht synchronisiert": "Tempo ne sinkronigita"
+    "Zeit nicht synchronisiert": "Tempo ne sinkronigita",
+    "Automatisch": "Aŭtomata"
   },
   "web_static": {
     "KatMed · Einstellungen": "KatMed · Agordoj",
@@ -319,6 +320,7 @@
     "HTTPS erforderlich": "HTTPS bezonata",
     "Diese Konfiguration ist nur über HTTPS erreichbar.": "Ĉi tiu agordo estas nur alirebla per HTTPS.",
     "Lokaler Test": "Loka provo",
-    "Sichere lokale Verbindung": "Sekura loka konekto"
+    "Sichere lokale Verbindung": "Sekura loka konekto",
+    "Automatisch": "Aŭtomata"
   }
 }

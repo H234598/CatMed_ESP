@@ -133,6 +133,7 @@ static const Entry entries[] = {
     {"Weiter", {"Next", "Weiter", "Suivant", "Volgende", "Далі", "التالي", "下一步", "Siguiente", "次へ", "Weiter", "Poste", "yItaH"}},
     {"Eingabe nach Drehung verworfen", {"Entry discarded after rotation", "Eingabe nach Drehung verworfen", "Entrée rejetée après la rotation", "Inzending wordt na rotatie weggegooid", "Запис скасовано після ротації", "تم تجاهل الإدخال بعد التدوير", "轮转后条目被丢弃", "Entrada descartada después de la rotación", "ローテーション後にエントリが破棄されました", "Eingab nachm Drehn verworfn", "Eniro forĵetita post rotacio", "jIH tlhe'DI', De' DaghItlhpu'bogh Qaw'lu'"}},
     {"Zeit nicht synchronisiert", {"Time not synchronized", "Zeit nicht synchronisiert", "Heure non synchronisée", "Tijd niet gesynchroniseerd", "Час не синхронізовано", "الوقت غير متزامن", "时间不同步", "Hora no sincronizada", "時間が同期されていません", "Zeit ned abglicha", "Tempo ne sinkronigita", "poH rapmoHlu'be'"}},
+    {"Automatisch", {"Automatic", "Automatisch", "Automatique", "Automatisch", "Автоматично", "تلقائي", "自动", "Automático", "自動", "Automaddisch", "Aŭtomata", "mIw motlh"}},
 };
 
 bool katmed_i18n_available(uint8_t language) {

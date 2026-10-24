@@ -126,7 +126,8 @@
     "Ja": "نعم",
     "Weiter": "التالي",
     "Eingabe nach Drehung verworfen": "تم تجاهل الإدخال بعد التدوير",
-    "Zeit nicht synchronisiert": "الوقت غير متزامن"
+    "Zeit nicht synchronisiert": "الوقت غير متزامن",
+    "Automatisch": "تلقائي"
   },
   "web_static": {
     "KatMed · Einstellungen": "KatMed · الإعدادات",
@@ -319,6 +320,7 @@
     "HTTPS erforderlich": "HTTPS مطلوب",
     "Diese Konfiguration ist nur über HTTPS erreichbar.": "لا يمكن الوصول إلى هذا التكوين إلا عبر HTTPS.",
     "Lokaler Test": "اختبار محلي",
-    "Sichere lokale Verbindung": "اتصال محلي آمن"
+    "Sichere lokale Verbindung": "اتصال محلي آمن",
+    "Automatisch": "تلقائي"
   }
 }

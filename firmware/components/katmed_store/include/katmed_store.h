@@ -151,6 +151,7 @@ typedef struct {
     uint32_t next_wifi_profile_id;
     bool setup_requested; /* Explicit local reopening; never inferred from missing UTC/SSID. */
     uint8_t language; /* v11: local presentation preference, English on legacy records. */
+    bool orientation_manual; /* v13: C6 manual override; legacy/factory default automatic. C3 ignores it. */
 } StoreRecord;
 
 typedef struct {
@@ -218,6 +219,8 @@ StoreResult store_reserve_event_ids(Store *store, uint32_t count, EventId *first
 StoreResult store_apply_event(Store *store, AppState *active, const AppEvent *event,
                               const ClockSample *now, bool queue_offline,
                               AppEffects *effects, AppResult *core_result);
+StoreResult store_set_orientation(Store *store, LocalSettings *active,
+                                   Orientation orientation, bool manual);
 StoreResult store_set_local(Store *store, LocalSettings *active,
                             const LocalSettings *requested);
 StoreResult store_set_language(Store *store, uint8_t language);

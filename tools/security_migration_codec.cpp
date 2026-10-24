@@ -47,6 +47,13 @@ static int validate()
         if (mesh_history_decode(&history, input.data() + 8 + state_size,
                                 history_size, record.provision.group) != STORE_OK) return 1;
     }
+    if (input[8] >= 12) {
+        std::array<uint8_t, KATMED_STORE_BLOB_MAX> previous{};
+        size_t previous_size=0;
+        if (encode_record(record,previous.data(),&previous_size,input[8])!=STORE_OK ||
+            previous_size!=state_size ||
+            std::memcmp(previous.data(),input.data()+4,state_size)!=0) return 1;
+    }
     std::array<uint8_t, KATMED_STORE_BLOB_MAX> canonical{};
     size_t canonical_size = 0;
     if (encode_record(record, canonical.data(), &canonical_size) != STORE_OK) return 2;
@@ -59,7 +66,8 @@ static int validate()
         check.mesh_name_count != record.mesh_name_count ||
         check.pending_count != record.pending_count ||
         check.conflict_count != record.conflict_count ||
-        check.language != record.language) return 1;
+        check.language != record.language ||
+        check.orientation_manual != record.orientation_manual) return 1;
     write32(static_cast<uint32_t>(canonical_size));
     std::cout.write(reinterpret_cast<const char *>(canonical.data()), canonical_size);
     write32(static_cast<uint32_t>(history_size));
@@ -155,6 +163,7 @@ int main(int argc, char **argv)
     if (argc != 2) return 2;
     if (std::strcmp(argv[1], "validate") == 0) return validate();
     if (std::strcmp(argv[1], "synthetic-fixture") == 0) return fixture(kCurrentVersion);
+    if (std::strcmp(argv[1], "synthetic-v12-fixture") == 0) return fixture(12);
     if (std::strcmp(argv[1], "synthetic-v11-fixture") == 0) return fixture(11);
     if (std::strcmp(argv[1], "synthetic-v10-fixture") == 0) return fixture(10);
     if (std::strcmp(argv[1], "synthetic-v9-fixture") == 0) return fixture(9);

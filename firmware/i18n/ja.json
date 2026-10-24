@@ -126,7 +126,8 @@
     "Ja": "はい",
     "Weiter": "次へ",
     "Eingabe nach Drehung verworfen": "ローテーション後にエントリが破棄されました",
-    "Zeit nicht synchronisiert": "時間が同期されていません"
+    "Zeit nicht synchronisiert": "時間が同期されていません",
+    "Automatisch": "自動"
   },
   "web_static": {
     "KatMed · Einstellungen": "KatMed · 設定",
@@ -319,6 +320,7 @@
     "HTTPS erforderlich": "HTTPSが必要です",
     "Diese Konfiguration ist nur über HTTPS erreichbar.": "この設定には HTTPS 経由でのみアクセスできます。",
     "Lokaler Test": "ローカルテスト",
-    "Sichere lokale Verbindung": "安全なローカル接続"
+    "Sichere lokale Verbindung": "安全なローカル接続",
+    "Automatisch": "自動"
   }
 }

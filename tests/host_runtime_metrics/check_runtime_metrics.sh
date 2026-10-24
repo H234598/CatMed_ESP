@@ -55,6 +55,7 @@ cc -std=c11 -Wall -Wextra -Werror -Wno-unused-variable \
    "${repo_root}/firmware/components/board/board_geometry.c" \
    "${repo_root}/firmware/components/board/board_protocol.c" \
    "${repo_root}/firmware/components/board/board_indev_gate.c" \
+   "${repo_root}/firmware/components/board/board_orientation.c" \
    -Wl,--gc-sections -o "${out}/check_c6_diagnostics"
 "${out}/check_c6_diagnostics"
 python3 "${repo_root}/tests/host_runtime_metrics/test_native_diagnostics.py"

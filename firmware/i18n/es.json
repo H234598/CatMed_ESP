@@ -126,7 +126,8 @@
     "Ja": "si",
     "Weiter": "Siguiente",
     "Eingabe nach Drehung verworfen": "Entrada descartada después de la rotación",
-    "Zeit nicht synchronisiert": "Hora no sincronizada"
+    "Zeit nicht synchronisiert": "Hora no sincronizada",
+    "Automatisch": "Automático"
   },
   "web_static": {
     "KatMed · Einstellungen": "KatMed · Configuración",
@@ -319,6 +320,7 @@
     "HTTPS erforderlich": "Se requiere HTTPS",
     "Diese Konfiguration ist nur über HTTPS erreichbar.": "Solo se puede acceder a esta configuración a través de HTTPS.",
     "Lokaler Test": "prueba local",
-    "Sichere lokale Verbindung": "Conexión local segura"
+    "Sichere lokale Verbindung": "Conexión local segura",
+    "Automatisch": "Automático"
   }
 }

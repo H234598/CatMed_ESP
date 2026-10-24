@@ -126,7 +126,8 @@
     "Ja": "是的",
     "Weiter": "下一步",
     "Eingabe nach Drehung verworfen": "轮转后条目被丢弃",
-    "Zeit nicht synchronisiert": "时间不同步"
+    "Zeit nicht synchronisiert": "时间不同步",
+    "Automatisch": "自动"
   },
   "web_static": {
     "KatMed · Einstellungen": "KatMed · 设置",
@@ -319,6 +320,7 @@
     "HTTPS erforderlich": "需要 HTTPS",
     "Diese Konfiguration ist nur über HTTPS erreichbar.": "此配置只能通过 HTTPS 访问。",
     "Lokaler Test": "本地测试",
-    "Sichere lokale Verbindung": "安全的本地连接"
+    "Sichere lokale Verbindung": "安全的本地连接",
+    "Automatisch": "自动"
   }
 }

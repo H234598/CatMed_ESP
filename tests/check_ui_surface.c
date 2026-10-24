@@ -165,11 +165,13 @@ static int reset_confirm(void *context, const char *token, size_t length)
 static uint16_t test_image[320 * 320];
 static lv_image_dsc_t image_dsc;
 
+static unsigned image_orientations_seen;
 KatmedImageStatus katmed_images_present(lv_obj_t *image, lv_obj_t *fallback,
                                         uint32_t image_id, Orientation orientation)
 {
     (void)image_id;
     assert(orientation >= ORIENTATION_0 && orientation <= ORIENTATION_270);
+    image_orientations_seen|=1u<<orientation;
     int width = lv_display_get_horizontal_resolution(lv_display_get_default());
     int height = lv_display_get_vertical_resolution(lv_display_get_default());
     int source_width = orientation == ORIENTATION_90 || orientation == ORIENTATION_270 ?
@@ -489,6 +491,8 @@ static void enter_keys(lv_obj_t *screen, const char *text)
 static AppState option_model;
 static LocalSettings option_local;
 static ClockSample option_clock;
+static bool option_auto;
+static bool read_option_auto(void *context) {(void)context;return option_auto;}
 static bool read_option_model(void *context, AppState *state,
                               LocalSettings *local, ClockSample *clock)
 {
@@ -573,6 +577,33 @@ static int check_option_sync(int width, int height)
     matrix = find_matrix_with_first_button(screen, "Off"); assert(matrix);
     assert_option(matrix, ROTATION_OFF, 3);
     assert(host.submit_calls == calls && host.store_calls == 0);
+    settings_parent();
+    services.orientation_auto_available=true;
+    services.orientation_automatic=read_option_auto;
+    option_auto=true; ui_set_services(&services);
+    ui_render(&option_model,&option_local,SETTINGS,&option_clock);
+    click_label(screen,"Rotation");
+    matrix=find_matrix_with_first_button(screen,"0°"); assert(matrix);
+    assert_option(matrix,4,5);
+    host.result=UI_SUBMIT_REJECTED;
+    click_label(screen,"270°"); // same displayed angle, still a real manual request
+    assert(host.last_request.kind==UI_REQUEST_SET_ORIENTATION);
+    assert_option(matrix,4,5);
+    host.result=UI_SUBMIT_COMMITTED; option_auto=false;
+    click_label(screen,"270°"); assert_option(matrix,3,5);
+    option_auto=true;
+    click_label(screen,"Automatic");
+    assert(host.last_request.kind==UI_REQUEST_SET_ORIENTATION_AUTOMATIC);
+    assert_option(matrix,4,5);
+    calls=host.submit_calls;
+    settings_parent(); click_label(screen,"Rotation");
+    matrix=find_matrix_with_first_button(screen,"0°"); assert_option(matrix,4,5);
+    assert(host.submit_calls==calls);
+    for(unsigned angle=0;angle<4;++angle){
+        option_local.orientation=(Orientation)angle;
+        ui_render(&option_model,&option_local,SETTINGS,&option_clock);
+    }
+    assert(image_orientations_seen==15u);
     puts("option-sync: pending/rejected/accepted/external/orientation/navigation PASS");
     return 0;
 }

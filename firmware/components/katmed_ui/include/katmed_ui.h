@@ -24,7 +24,7 @@ typedef enum {
     UI_REQUEST_SET_ROTATION_MODE,
     UI_REQUEST_SET_ORIENTATION,
     UI_REQUEST_SET_CLOCK_STYLE,
-    UI_REQUEST_SET_LANGUAGE, UI_REQUEST_SET_SYSTEM_TIME, UI_REQUEST_OPEN_SETUP, UI_REQUEST_EMERGENCY
+    UI_REQUEST_SET_LANGUAGE, UI_REQUEST_SET_SYSTEM_TIME, UI_REQUEST_OPEN_SETUP, UI_REQUEST_EMERGENCY, UI_REQUEST_SET_ORIENTATION_AUTOMATIC
 } UiRequestKind;
 typedef struct {
     UiRequestKind kind;
@@ -100,6 +100,8 @@ typedef struct {
     bool (*reset_prepare)(void *context, char *token, size_t capacity,
                           size_t *length);
     int (*reset_confirm)(void *context, const char *token, size_t length);
+    bool orientation_auto_available;
+    bool (*orientation_automatic)(void *context);
 } UiServices;
 
 /* A display render cycle caused by a change of the alarm bar's visibility.

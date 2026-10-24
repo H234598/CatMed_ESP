@@ -11,6 +11,11 @@ function element(id) {
     id, disabled: false, hidden: false, textContent: "", value: "",
     classList: { toggle() {} }, listeners: {}, dataset: {}, style: {},
     addEventListener(type, callback) { this.listeners[type] = callback; },
+    children: [],
+    querySelector(selector) { return selector === 'option[value="auto"]' ?
+      this.children.find(child => child.value === "auto") || null : null; },
+    appendChild(child) { child.parent = this; this.children.push(child); },
+    remove() { if (this.parent) this.parent.children = this.parent.children.filter(child => child !== this); },
     querySelectorAll() { return []; }, reset() {}, replaceChildren() {}, append() {},
     focus() { document.activeElement = this; }, showModal() { this.open = true; }, close() { this.open = false; }
   });
@@ -33,6 +38,7 @@ const location = { hostname: "device.local", protocol: "http:", hash: "", pathna
 const script = fs.readFileSync(path.join(__dirname,
   "../../firmware/components/katmed_web/ui/app.js"), "utf8");
 vm.runInNewContext(script.replace("const state = {", "const state = window.__testState = {")
+  .replace("function renderConfig(config) {", "window.__renderConfig=renderConfig; window.__validConfig=validConfig; window.__saveField=saveField; function renderConfig(config) {")
   .replace("function cancelResetOnLeave() {", "window.__testShow = show; function cancelResetOnLeave() {"), {
   document, window, history, location,
   setTimeout: (callback, delay) => { callback.delay = delay; timers.push(callback); },
@@ -69,6 +75,31 @@ async function submit(id) {
 }
 
 (async () => {
+  const config={revision:"synthetic-r1",medication_hours:"6",image_hours:"8",
+    next_due_hhmm:null,next_due_state:"none",restore_status:"none",
+    clock_style:"digital_large",orientation:0,rotation:"off",
+    orientation_auto_supported:false,orientation_automatic:false};
+  window.__renderConfig(config);
+  assert.equal(element("orientation").querySelector('option[value="auto"]'),null);
+  assert.equal(window.__validConfig({...config,orientation_automatic:true}),false);
+  const autoConfig={...config,orientation_auto_supported:true,orientation_automatic:true};
+  window.__renderConfig(autoConfig);
+  assert.equal(element("orientation").value,"auto");
+  assert.ok(element("orientation").querySelector('option[value="auto"]'));
+  window.__renderConfig({...autoConfig,orientation_automatic:false,orientation:90});
+  assert.equal(element("orientation").value,"90");
+  window.__renderConfig(autoConfig);
+  const form=element("orientation-form");form.dataset.field="orientation";
+  form.elements={namedItem:()=>element("orientation")};form.reportValidity=()=>true;
+  // A transient sensor pose can change between commit and readback without
+  // changing the accepted automatic policy or its revision.
+  replies.push({status:200,body:autoConfig},{status:200,body:{...autoConfig,orientation:90}});
+  await window.__saveField(form);
+  assert.equal(JSON.parse(calls[calls.length-2].options.body).value,"auto");
+  assert.equal(element("orientation").value,"auto");
+  assert.match(element("save-status").textContent,/Gespeichert/);
+  window.__renderConfig(config);
+  assert.equal(element("orientation").querySelector('option[value="auto"]'),null);
   replies.push({ status: 401, body: { error: "denied" } });
   await click("cert-login");
   assert.match(element("notice").textContent, /Anmeldung fehlgeschlagen/);

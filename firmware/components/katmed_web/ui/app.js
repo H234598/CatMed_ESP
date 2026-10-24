@@ -175,6 +175,9 @@
     if (!["none", "expired", "conflict"].includes(config.restore_status)) return false;
     if (!["digital_large", "digital_date", "analog"].includes(config.clock_style)) return false;
     if (![0, 90, 180, 270].includes(config.orientation)) return false;
+    for (const key of ["orientation_auto_supported", "orientation_automatic"])
+      if (key in config && typeof config[key] !== "boolean") return false;
+    if (config.orientation_automatic && !config.orientation_auto_supported) return false;
     return ["off", "name_order", "random"].includes(config.rotation);
   }
 
@@ -185,7 +188,14 @@
     $(controls.image_hours).value = config.image_hours;
     $(controls.next_due_hhmm).value = config.next_due_hhmm || "";
     $(controls.clock_style).value = config.clock_style;
-    $(controls.orientation).value = String(config.orientation);
+    const orientation = $(controls.orientation);
+    let autoOption = orientation.querySelector('option[value="auto"]');
+    if (config.orientation_auto_supported && !autoOption) {
+      autoOption = document.createElement("option"); autoOption.value = "auto";
+      autoOption.textContent = tr("Automatisch"); orientation.appendChild(autoOption);
+    } else if (!config.orientation_auto_supported && autoOption) autoOption.remove();
+    if (autoOption) autoOption.textContent = tr("Automatisch");
+    orientation.value = config.orientation_automatic ? "auto" : String(config.orientation);
     $(controls.rotation).value = config.rotation;
     $("due-current").textContent = config.next_due_state === "none" ?
       tr("Derzeit kein Termin verfügbar.") : config.next_due_state === "paused_boot" ?
@@ -443,7 +453,7 @@
     if (!fields.includes(field)) return;
     const input = form.elements.namedItem("value");
     if (!input || !form.reportValidity()) return;
-    const value = field === "orientation" ? Number(input.value) : input.value.trim();
+    const value = field === "orientation" ? (input.value === "auto" ? "auto" : Number(input.value)) : input.value.trim();
     const request = { field, value, revision: state.config.revision };
     if (field === "next_due_hhmm") {
       if (!state.preview || state.preview.time !== value ||
@@ -461,7 +471,10 @@
       const readback = await api("/api/config");
       if (!validConfig(committed) || !validConfig(readback) ||
           committed.revision !== readback.revision ||
-          committed[field] !== readback[field])
+          (field === "orientation" ?
+            (committed.orientation_automatic !== readback.orientation_automatic ||
+             (!readback.orientation_automatic && committed.orientation !== readback.orientation)) :
+            committed[field] !== readback[field]))
         throw new Error("Readback differs from committed configuration");
       renderConfig(readback);
       $("save-status").textContent = tr("Gespeichert und bestätigt.");

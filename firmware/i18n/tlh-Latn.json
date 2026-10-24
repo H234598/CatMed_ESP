@@ -126,7 +126,8 @@
     "Ja": "HISlaH",
     "Weiter": "yItaH",
     "Eingabe nach Drehung verworfen": "jIH tlhe'DI', De' DaghItlhpu'bogh Qaw'lu'",
-    "Zeit nicht synchronisiert": "poH rapmoHlu'be'"
+    "Zeit nicht synchronisiert": "poH rapmoHlu'be'",
+    "Automatisch": "mIw motlh"
   },
   "web_dynamic": {
     "Gerät: {0}": "jan: {0}",
@@ -217,7 +218,8 @@
     "HTTPS erforderlich": "HTTPS poQlu'",
     "Diese Konfiguration ist nur über HTTPS erreichbar.": "HTTPS lo'lu'chugh neH navvam naw'lu'laH.",
     "Lokaler Test": "naDev wa'logh yInuD",
-    "Sichere lokale Verbindung": "naDev rarmeH He Qanlu'bogh"
+    "Sichere lokale Verbindung": "naDev rarmeH He Qanlu'bogh",
+    "Automatisch": "mIw motlh"
   },
   "web_static": {
     "KatMed · Einstellungen": "KatMed · jan SeHmeH De'",

@@ -34,6 +34,8 @@ static unsigned writes;
 static bool fail_commit;
 static int64_t fake_microseconds;
 static Orientation board_orientation;
+static Orientation sensed_orientation;
+static bool sensed_valid;
 static bool fake_mesh_connected;
 static bool fake_mesh_coordinator;
 static KatmedMeshResult fake_mesh_result = MESH_UNAVAILABLE;
@@ -78,6 +80,7 @@ static StoreResult test_write(void *context, const uint8_t *data, size_t length)
 }
 int64_t esp_timer_get_time(void) { return fake_microseconds; }
 BoardResult board_set_orientation(Orientation o) { board_orientation=o; return BOARD_OK; }
+bool board_auto_orientation(Orientation *o) {*o=sensed_orientation;return sensed_valid;}
 bool katmed_mesh_connected(void) { return fake_mesh_connected; }
 bool katmed_mesh_is_coordinator(void) { return fake_mesh_coordinator; }
 void katmed_mesh_notify_local_commit(void) { ++fake_mesh_notifications; }
@@ -362,8 +365,55 @@ static void test_offline_confirmations_do_not_fill_mesh_queue(void)
     fake_mesh_connected=false;fake_mesh_coordinator=false;
 }
 
+static void test_orientation_mode(void)
+{
+    initialize_runtime();
+    const unsigned before=writes;
+    const bool c6=orientation_auto_supported();
+    assert(orientation_auto_for(&runtime)==c6);
+    const AppState state=runtime.state;
+    sensed_valid=true;
+    for(unsigned i=0;i<10;++i){sensed_orientation=(Orientation)(i%4);poll_auto_orientation(&runtime);}
+    assert(writes==before && memcmp(&state,&runtime.state,sizeof(state))==0);
+    if(c6)assert(runtime.local.orientation==ORIENTATION_90);
+    sensed_valid=false;
+    UiRequest manual={.kind=UI_REQUEST_SET_ORIENTATION};
+    manual.value.orientation=runtime.local.orientation;
+    assert(submit_ui(&runtime,&manual)==UI_SUBMIT_COMMITTED);
+    assert(writes==before+(c6 ? 1u : 0u));
+    assert(!orientation_auto_for(&runtime));
+    sensed_valid=true;sensed_orientation=ORIENTATION_180;poll_auto_orientation(&runtime);
+    assert(runtime.local.orientation==manual.value.orientation);
+    const unsigned selected=writes;
+    assert(submit_ui(&runtime,&manual)==UI_SUBMIT_COMMITTED && writes==selected);
+    assert(memcmp(&state,&runtime.state,sizeof(state))==0);
+    initialize_runtime();
+    assert(!orientation_auto_for(&runtime));
+    UiRequest automatic={.kind=UI_REQUEST_SET_ORIENTATION_AUTOMATIC};
+    assert(submit_ui(&runtime,&automatic)==(c6 ? UI_SUBMIT_COMMITTED : UI_SUBMIT_REJECTED));
+    assert(orientation_auto_for(&runtime)==c6);
+    KatmedConfigSnapshot snapshot={0};config_snapshot(&runtime,&snapshot);
+    assert(snapshot.orientation_auto_supported==c6 && snapshot.orientation_automatic==c6);
+    const unsigned pose_writes=writes;
+    const Orientation initial=runtime.local.orientation;
+    if(c6) {
+        runtime.local.orientation=(Orientation)((initial+1)%4);
+        KatmedConfigSnapshot moved={0};config_snapshot(&runtime,&moved);
+        assert(strcmp(snapshot.revision,moved.revision)==0 && writes==pose_writes);
+        runtime.local.orientation=initial;
+    }
+    // Web and display share the same policy command and CAS revision.
+    KatmedConfigRequest request={.operation=KATMED_CONFIG_SAVE,.field=KATMED_CONFIG_ORIENTATION};
+    snprintf(request.revision,sizeof(request.revision),"%s",snapshot.revision);
+    snprintf(request.value,sizeof(request.value),"auto");
+    KatmedConfigResponse reply={0};config_execute(&runtime,&request,&reply);
+    assert(reply.status==(c6 ? KATMED_CONFIG_OK : KATMED_CONFIG_INVALID));
+    printf("orientation main C%d: same-angle persistence, reboot, auto and Web capability PASS\n",c6 ? 6 : 3);
+}
+
 int main(int argc, char **argv)
 {
+    if (argc==2 && strcmp(argv[1],"orientation")==0) {test_orientation_mode();return 0;}
     if (argc==2 && strcmp(argv[1],"offline_confirm")==0) {
         test_offline_confirmations_do_not_fill_mesh_queue();return 0;
     }

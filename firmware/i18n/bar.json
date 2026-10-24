@@ -126,7 +126,8 @@
     "Ja": "Ja",
     "Weiter": "Weiter",
     "Eingabe nach Drehung verworfen": "Eingab nachm Drehn verworfn",
-    "Zeit nicht synchronisiert": "Zeit ned abglicha"
+    "Zeit nicht synchronisiert": "Zeit ned abglicha",
+    "Automatisch": "Automaddisch"
   },
   "web_static": {
     "KatMed · Einstellungen": "KatMed · Eistellunga",
@@ -319,6 +320,7 @@
     "HTTPS erforderlich": "HTTPS is nötig",
     "Diese Konfiguration ist nur über HTTPS erreichbar.": "Die Eistellungsseit is bloß über HTTPS erreichbar.",
     "Lokaler Test": "Lokaltest (Loopback)",
-    "Sichere lokale Verbindung": "Sichere lokale Verbindung"
+    "Sichere lokale Verbindung": "Sichere lokale Verbindung",
+    "Automatisch": "Automaddisch"
   }
 }
