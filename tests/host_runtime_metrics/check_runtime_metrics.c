@@ -9,6 +9,7 @@
 #include "runtime_metrics.h"
 
 static unsigned log_count;
+static char native_line[512];
 static char log_tag[32];
 static char log_line[1024];
 
@@ -22,6 +23,7 @@ void test_log_info(const char *tag, const char *format, ...)
     const int length = vsnprintf(log_line, sizeof(log_line), format, args);
     va_end(args);
     assert(length > 0 && (size_t)length < sizeof(log_line));
+    if(strstr(log_line,"jpeg_detail_v=")) {assert(length<512);strcpy(native_line,log_line);}
 }
 
 static void check_gate(void)
@@ -126,6 +128,14 @@ static void check_log(void)
     };
     katmed_runtime_metrics_log(&worst);
     assert(log_count == 2 && strlen(log_line) < 768);
+    KatmedRuntimeMetricInput diagnostic={.uptime_ms=UINT64_MAX,.native_diagnostic_valid=true,
+      .jpeg_detail_valid=true,.jpeg_sequence=UINT32_MAX,.jpeg_stage=2,.jpeg_decode_status=5,.jpeg_mcus=1280,
+      .touch_init=4,.touch_probe=1,.touch_sequence=UINT32_MAX,.touch_transfer=2,.touch_sample=4};
+    katmed_runtime_metrics_log(&diagnostic);
+    assert(log_count==4 && strstr(native_line,"jpeg_detail_v=1 jpeg_seq=4294967295 jpeg_stage=2 jpeg_result=5 jpeg_mcus=1280"));
+    assert(strstr(native_line,"touch_init=4 touch_probe=1 touch_seq=4294967295 touch_transfer=2 touch_sample=4"));
+    assert(strlen(native_line)+32<512);
+
 }
 
 int main(void)

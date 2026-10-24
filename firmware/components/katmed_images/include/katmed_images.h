@@ -61,13 +61,22 @@ typedef struct {
 /* Snapshot of one completed operation on the serialized UI thread. A failed
  * operation is measured too; measured=false means it has not run yet. Values
  * are elapsed microseconds, not a wall-clock timestamp or a device benchmark. */
+/* Last completed full JPEG check, not a later screen refresh or DMA result.
+ * Zero is unavailable. Sequence is local/wrapping, never a boot identity. */
+typedef enum {
+    KATMED_JPEG_NONE = 0, KATMED_JPEG_OPEN_FAILED,
+    KATMED_JPEG_AREA_FAILED, KATMED_JPEG_INCOMPLETE, KATMED_JPEG_COMPLETE
+} KatmedJpegStage;
+
 typedef struct {
     uint64_t elapsed_us;
     KatmedImageStatus status;
     bool measured;
-    uint32_t sequence; /* Variant validation invocation, wrapping; not device identity. */
+    uint32_t sequence; /* Producer-local invocation, wrapping; not device identity. */
     KatmedImageIoStage io_stage;
     KatmedImageStatus io_status;
+    KatmedJpegStage decode_stage; /* JPEG samples only. */
+    uint32_t decoded_areas; /* Successful MCU areas in that same check, <=1280. */
 } KatmedImageTimingSample;
 
 /* Must be called before UI uses the image catalogue. It verifies the entire

@@ -73,9 +73,11 @@ enum BinFault { BIN_FAULT_NONE, BIN_OPEN_CONTEXT, BIN_OPEN_FILE, BIN_AREA_CONTEX
 static enum BinFault bin_fault;
 static bool bin_allocation_scope, bin_fault_hit;
 static unsigned allocation_until_fail;
+static bool jpeg_open_alloc_scope, jpeg_open_alloc_hit;
 static uint64_t reads_in_failed_call;
 void *__real_lv_malloc_core(size_t);
 void *__wrap_lv_malloc_core(size_t bytes) {
+    if(jpeg_open_alloc_scope && bytes==4096u) { jpeg_open_alloc_hit=true; return NULL; }
     if(bin_allocation_scope && allocation_until_fail && --allocation_until_fail==0) {
         bin_fault_hit=true; return NULL;
     }
@@ -201,9 +203,51 @@ static void check_decoder_clip(int width, int height)
            first_calls, full_calls);
 }
 
+static lv_image_decoder_open_f_t diag_original_open;
+static lv_image_decoder_get_area_cb_t diag_original_area;
+static unsigned jpeg_fault, diag_successful_areas;
+static lv_result_t diag_open(lv_image_decoder_t *dec,lv_image_decoder_dsc_t *dsc) {
+    jpeg_open_alloc_scope=jpeg_fault==1;
+    lv_result_t result=diag_original_open(dec,dsc);
+    jpeg_open_alloc_scope=false;return result;
+}
+static lv_result_t diag_area(lv_image_decoder_t *dec,lv_image_decoder_dsc_t *dsc,
+                             const lv_area_t *full,lv_area_t *area) {
+    fail_decoder_read=jpeg_fault==2 && diag_successful_areas>=5;
+    lv_result_t result=diag_original_area(dec,dsc,full,area);
+    if(result==LV_RESULT_OK) ++diag_successful_areas;
+    fail_decoder_read=false;return result;
+}
+static void check_jpeg_diagnostics(Orientation orientation) {
+    lv_image_decoder_t *dec=NULL;
+    while((dec=lv_image_decoder_get_next(dec))) if(dec->name && strcmp(dec->name,"TJPGD")==0) break;
+    assert(dec);diag_original_open=dec->open_cb;diag_original_area=dec->get_area_cb;
+    lv_image_decoder_set_open_cb(dec,diag_open);lv_image_decoder_set_get_area_cb(dec,diag_area);
+    lv_obj_t *image=lv_image_create(lv_screen_active()),*fallback=lv_label_create(lv_screen_active());
+    uint32_t previous=0;
+    for(unsigned fault=0;fault<3;++fault) {
+        jpeg_fault=fault;diag_successful_areas=0;assert(katmed_images_present(image,fallback,0,orientation)==
+            (fault?KATMED_IMAGE_IO_ERROR:KATMED_IMAGE_OK));
+        KatmedImageTimingSample sample=katmed_images_jpeg_decode_timing();
+        assert(sample.measured && sample.sequence && sample.sequence!=previous);previous=sample.sequence;
+        assert(sample.decode_stage==(fault==1?KATMED_JPEG_OPEN_FAILED: fault==2?KATMED_JPEG_AREA_FAILED:KATMED_JPEG_COMPLETE));
+        assert(fault==1 ? sample.decoded_areas==0 : sample.decoded_areas>0);
+        assert(sample.decoded_areas<=1280 && katmed_images_open_file_count()==0);
+        if(fault==1) assert(jpeg_open_alloc_hit);
+        printf("jpeg_diagnostic_fault=%u stage=%u mcus=%u closed=1\n",fault,sample.decode_stage,sample.decoded_areas);
+    }
+    jpeg_fault=0;
+    assert(katmed_images_present(image,fallback,KATMED_IMAGE_COUNT,orientation)==KATMED_IMAGE_BAD_ID);
+    assert(!katmed_images_jpeg_decode_timing().measured && katmed_images_jpeg_decode_timing().decode_stage==KATMED_JPEG_NONE);
+    assert(katmed_images_present(image,fallback,0,orientation)==KATMED_IMAGE_OK);
+    assert(katmed_images_jpeg_decode_timing().decode_stage==KATMED_JPEG_COMPLETE);
+    lv_image_decoder_set_open_cb(dec,diag_original_open);lv_image_decoder_set_get_area_cb(dec,diag_original_area);
+    lv_obj_delete(image);lv_obj_delete(fallback);
+}
+
 int main(int argc, char **argv)
 {
-    assert(argc == 4);
+    assert(argc == 4 || argc == 5);
     Host host = {.width = atoi(argv[1]), .height = atoi(argv[2]),
                  .result = UI_SUBMIT_COMMITTED};
     size_t count = (size_t)host.width * host.height;
@@ -223,6 +267,11 @@ int main(int argc, char **argv)
     FILE *pack=fopen(argv[3],"rb");assert(pack);source_file=pack;
     KatmedStorage storage={pack,katmed_generated_catalog.pack_bytes,alarm_pack_read,NULL};
     assert(katmed_images_mount_storage(storage)==KATMED_IMAGE_OK);
+    if(argc==5) {
+        check_jpeg_diagnostics(host.width>host.height?ORIENTATION_90:ORIENTATION_0);
+        lv_display_delete(display);katmed_images_unmount();fclose(pack);lv_deinit();
+        free(incremental);free(baseline);free(buffer);free(host.frame);return 0;
+    }
     check_decoder_clip(host.width, host.height);
     lv_image_decoder_t *dec=NULL;
     while((dec=lv_image_decoder_get_next(dec))) if(dec->name && strcmp(dec->name,"TJPGD")==0) {

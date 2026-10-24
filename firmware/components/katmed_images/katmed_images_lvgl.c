@@ -49,6 +49,7 @@ static lv_image_decoder_info_f_t bin_info;
 static lv_image_decoder_open_f_t bin_open;
 static lv_image_decoder_get_area_cb_t bin_get_area;
 static KatmedImageTimingSample jpeg_decode_timing;
+static uint32_t jpeg_sequence;
 static uint32_t failed_presentations;
 
 /* One disposable file for the active scene, never a multi-image or RAM cache.
@@ -583,6 +584,7 @@ void katmed_images_register_lvgl_fs(void)
 static KatmedImageStatus decode_check(const KatmedImageSelection *selection)
 {
     uint64_t start = monotonic_us();
+    if(++jpeg_sequence == 0) ++jpeg_sequence;
 #ifdef ESP_PLATFORM
     bool writer = katmed_source_writer_enter();
 #else
@@ -594,7 +596,8 @@ static KatmedImageStatus decode_check(const KatmedImageSelection *selection)
         uint64_t end = monotonic_us();
         jpeg_decode_timing = (KatmedImageTimingSample){
             .elapsed_us = end >= start ? end - start : 0,
-            .status = KATMED_IMAGE_IO_ERROR, .measured = true};
+            .status = KATMED_IMAGE_IO_ERROR, .measured = true,
+            .sequence=jpeg_sequence, .decode_stage=KATMED_JPEG_OPEN_FAILED};
         if(cache) { fclose(cache); clear_render_cache(); }
 #ifdef ESP_PLATFORM
         if(writer) katmed_source_writer_leave();
@@ -605,9 +608,15 @@ static KatmedImageStatus decode_check(const KatmedImageSelection *selection)
                       (lv_coord_t)selection->height - 1};
     lv_area_t area = {LV_COORD_MIN, LV_COORD_MIN, LV_COORD_MIN, LV_COORD_MIN};
     bool complete = false;
+    uint32_t decoded_areas = 0;
+    KatmedJpegStage stage = KATMED_JPEG_INCOMPLETE;
     CacheBand band = {0};
     for(uint32_t i = 0; i < 1280u; ++i) {
-        if(lv_image_decoder_get_area(&decoder, &full, &area) != LV_RESULT_OK) break;
+        if(lv_image_decoder_get_area(&decoder, &full, &area) != LV_RESULT_OK) {
+            stage = KATMED_JPEG_AREA_FAILED;
+            break;
+        }
+        ++decoded_areas;
         if(cache && !cache_decoded_area(cache, &decoder, &area, &band)) {
             fclose(cache); cache=NULL; clear_render_cache();
             for(unsigned row=0; row<16; ++row) { free(band.row[row]); band.row[row]=NULL; }
@@ -628,7 +637,9 @@ static KatmedImageStatus decode_check(const KatmedImageSelection *selection)
     uint64_t end = monotonic_us();
     jpeg_decode_timing = (KatmedImageTimingSample){
         .elapsed_us = end >= start ? end - start : 0,
-        .status = status, .measured = true};
+        .status = status, .measured = true, .sequence=jpeg_sequence,
+        .decode_stage=complete ? KATMED_JPEG_COMPLETE : stage,
+        .decoded_areas=decoded_areas};
     return status;
 }
 

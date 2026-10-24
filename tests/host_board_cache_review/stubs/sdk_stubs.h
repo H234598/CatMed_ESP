@@ -17,6 +17,7 @@ typedef int portMUX_TYPE;
 #define portEXIT_CRITICAL(x) ((void)(x))
 #define ESP_OK 0
 #define ESP_ERR_INVALID_RESPONSE -1
+#define ESP_ERR_INVALID_ARG -3
 #define I2C_NUM_0 0
 #define I2C_CLK_SRC_DEFAULT 0
 #define I2C_ADDR_BIT_LEN_7 0
@@ -39,7 +40,7 @@ typedef struct {int sclk_io_num,mosi_io_num,miso_io_num,quadwp_io_num,quadhd_io_
 typedef struct {int dummy;} esp_lcd_panel_io_spi_config_t;
 typedef struct {int reset_gpio_num,rgb_ele_order,bits_per_pixel;} esp_lcd_panel_dev_config_t;
 typedef struct {int dummy;} lvgl_port_cfg_t;
-typedef struct {void*io_handle,*panel_handle;unsigned buffer_size;bool double_buffer;int hres,vres,color_format;struct {bool buff_dma,swap_bytes;} flags;} lvgl_port_display_cfg_t;
+typedef struct {void*io_handle,*panel_handle;unsigned buffer_size;bool double_buffer;int hres,vres,color_format;struct {bool mirror_x,mirror_y,swap_xy;} rotation;struct {bool buff_dma,swap_bytes;} flags;} lvgl_port_display_cfg_t;
 int64_t esp_timer_get_time(void);
 esp_err_t i2c_master_transmit_receive(i2c_master_dev_handle_t,const void*,size_t,void*,size_t,int);
 esp_err_t i2c_master_transmit(i2c_master_dev_handle_t,const void*,size_t,int);

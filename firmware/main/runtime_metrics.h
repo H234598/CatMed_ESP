@@ -36,6 +36,10 @@ typedef struct {
     uint32_t variant_sequence;
     uint32_t variant_io_stage;
     uint32_t variant_io_status;
+    /* Separate retained JPEG and touch producers, not one transaction. */
+    bool native_diagnostic_valid, jpeg_detail_valid;
+    uint32_t jpeg_sequence, jpeg_stage, jpeg_mcus;
+    uint32_t touch_init, touch_probe, touch_sequence, touch_transfer, touch_sample;
 } KatmedRuntimeMetricInput;
 
 /* The two additional lines describe one serialized post-reducer sample.

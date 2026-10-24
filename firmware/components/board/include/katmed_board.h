@@ -27,6 +27,17 @@ void board_deinit(void);
 /* Implement only against verified board/controller pin evidence. */
 BoardResult board_set_orientation(Orientation orientation);
 BoardResult board_read_touch(BoardTouch *touch);
+/* Fixed C6 diagnostics only, copied together under the existing touch lock.
+ * Init:0 unattempted,1 bus failed,2 device failed,3 driver failed,4 initialized.
+ * Probe/transfer:0 unattempted,1 OK,2 failed.
+ * Sample:0 unattempted,1 valid (including release),2 decode rejected,
+ * 3 geometry rejected,4 transfer failed. No contact/coordinate payload.
+ * Init/probe retained until next init; transfer/sample are the latest read.
+ * Sequence wraps locally and is not a boot identity. C3 returns all zero. */
+typedef struct {
+    uint32_t init, probe, sequence, transfer, sample;
+} BoardTouchDiagnostics;
+BoardTouchDiagnostics board_touch_diagnostics(void);
 /* Polls the I2C controller independently of LVGL's potentially long render
  * lock. Events retain their acquisition timestamps and are consumed in order. */
 BoardResult board_touch_sampler_start(void);

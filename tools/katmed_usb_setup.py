@@ -49,6 +49,10 @@ METRIC_KEYS = (
 )
 LEGACY_METRIC_KEYS = METRIC_KEYS
 METRIC_KEYS += ("variant_seq", "variant_io_stage", "variant_io_status")
+NATIVE_METRIC_KEYS = (
+    "uptime_ms", "jpeg_detail_v", "jpeg_seq", "jpeg_stage", "jpeg_result", "jpeg_mcus",
+    "touch_init", "touch_probe", "touch_seq", "touch_transfer", "touch_sample",
+)
 SIGNED_METRICS = frozenset({"pack_status", "variant_status", "jpeg_status"})
 STATE_KEYS = (
     "schema", "sample_seq", "uptime_ms", "boot_domain", "round_d", "round_e",
@@ -366,7 +370,8 @@ def _metric_line(raw: bytes) -> tuple[str, int] | None:
     if match is None:
         return None
     tokens = match.group(1).split(b" ")
-    keys = METRIC_KEYS if len(tokens) == len(METRIC_KEYS) else LEGACY_METRIC_KEYS
+    keys = next((keys for keys in (METRIC_KEYS, LEGACY_METRIC_KEYS, NATIVE_METRIC_KEYS)
+                 if len(tokens) == len(keys)), ())
     if len(tokens) != len(keys):
         return None
     values: list[str] = []
@@ -386,6 +391,35 @@ def _metric_line(raw: bytes) -> tuple[str, int] | None:
     uptime = int(values[0].removeprefix("uptime_ms="))
     if uptime > 0xffffffffffffffff:
         return None
+    if keys == NATIVE_METRIC_KEYS:
+        fields = {k: int(v.split("=", 1)[1]) for k, v in zip(keys, values)}
+        limits = {"jpeg_detail_v": 1, "jpeg_seq": 0xffffffff, "jpeg_stage": 4,
+                  "jpeg_result": 10, "jpeg_mcus": 1280, "touch_init": 4, "touch_probe": 2,
+                  "touch_seq": 0xffffffff, "touch_transfer": 2, "touch_sample": 4}
+        if any(fields[k] > limit for k, limit in limits.items()):
+            return None
+        if (not fields["jpeg_detail_v"] and any(fields[k] for k in
+                ("jpeg_seq", "jpeg_stage", "jpeg_result", "jpeg_mcus"))):
+            return None
+        if fields["jpeg_detail_v"] and (not fields["jpeg_seq"] or not fields["jpeg_stage"]):
+            return None
+        if fields["jpeg_detail_v"] and fields["jpeg_result"] != (0 if fields["jpeg_stage"] == 4 else 5):
+            return None
+        if fields["jpeg_stage"] == 1 and fields["jpeg_mcus"] != 0:
+            return None
+        if fields["jpeg_stage"] == 4 and fields["jpeg_mcus"] == 0:
+            return None
+        if fields["touch_seq"] == 0:
+            if fields["touch_transfer"] or fields["touch_sample"]:
+                return None
+        elif not fields["touch_transfer"] or not fields["touch_sample"]:
+            return None
+        if fields["touch_probe"] and fields["touch_init"] != 4:
+            return None
+        if fields["touch_seq"] and (fields["touch_init"] != 4 or fields["touch_probe"] != 1):
+            return None
+        if ((fields["touch_transfer"] == 2) != (fields["touch_sample"] == 4)):
+            return None
     return "Messung " + " ".join(values), uptime
 
 

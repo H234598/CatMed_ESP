@@ -41,6 +41,17 @@ void katmed_runtime_metrics_log(const KatmedRuntimeMetricInput *input)
         input->internal_min_free_bytes, input->internal_largest_block_bytes,
         input->main_stack_hwm_bytes, input->lvgl_stack_hwm_bytes,
         input->lvgl_stack_valid,input->variant_sequence,input->variant_io_stage,input->variant_io_status);
+    /* Second small fixed form keeps the historical line and its byte limit.
+     * No boot identity, coordinates, input payload or new command. C6 only. */
+    if (input->native_diagnostic_valid)
+        ESP_LOGI("katmed_metrics",
+            "uptime_ms=%" PRIu64 " jpeg_detail_v=%u jpeg_seq=%" PRIu32
+            " jpeg_stage=%" PRIu32 " jpeg_result=%" PRId32 " jpeg_mcus=%" PRIu32
+            " touch_init=%" PRIu32 " touch_probe=%" PRIu32
+            " touch_seq=%" PRIu32 " touch_transfer=%" PRIu32 " touch_sample=%" PRIu32,
+            input->uptime_ms,input->jpeg_detail_valid,input->jpeg_sequence,
+            input->jpeg_stage,input->jpeg_decode_status,input->jpeg_mcus,input->touch_init,input->touch_probe,
+            input->touch_sequence,input->touch_transfer,input->touch_sample);
 }
 
 void katmed_runtime_evidence_log(const KatmedRuntimeEvidenceState *s,

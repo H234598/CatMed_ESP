@@ -218,14 +218,33 @@ static esp_err_t touch_read_register(uint8_t reg, uint8_t *out, size_t len, bool
     return err == ESP_OK ? i2c_master_receive(i2c_dev, out, len, I2C_TIMEOUT_MS) : err;
 }
 
+static BoardTouchDiagnostics touch_diagnostics;
+BoardTouchDiagnostics board_touch_diagnostics(void)
+{
+    portENTER_CRITICAL(&touch_lock);
+    BoardTouchDiagnostics sample = touch_diagnostics;
+    portEXIT_CRITICAL(&touch_lock);
+    return sample;
+}
+
 static esp_err_t init_touch(void)
 {
+#if CONFIG_IDF_TARGET_ESP32C6
+    portENTER_CRITICAL(&touch_lock);
+    touch_diagnostics = (BoardTouchDiagnostics){0};
+    portEXIT_CRITICAL(&touch_lock);
+#endif
     const i2c_master_bus_config_t bus_cfg = {
         .i2c_port = I2C_NUM_0, .sda_io_num = TOUCH_SDA, .scl_io_num = TOUCH_SCL,
         .clk_source = I2C_CLK_SRC_DEFAULT, .glitch_ignore_cnt = 7,
         .flags.enable_internal_pullup = true,
     };
     esp_err_t err = i2c_new_master_bus(&bus_cfg, &i2c_bus);
+#if CONFIG_IDF_TARGET_ESP32C6
+    portENTER_CRITICAL(&touch_lock);
+    touch_diagnostics.init = err == ESP_OK ? 0u : 1u;
+    portEXIT_CRITICAL(&touch_lock);
+#endif
     if (err != ESP_OK) return err;
     const i2c_device_config_t dev_cfg = {
         .dev_addr_length = I2C_ADDR_BIT_LEN_7, .device_address = TOUCH_ADDRESS,
@@ -236,6 +255,11 @@ static esp_err_t init_touch(void)
 #endif
     };
     err = i2c_master_bus_add_device(i2c_bus, &dev_cfg, &i2c_dev);
+#if CONFIG_IDF_TARGET_ESP32C6
+    portENTER_CRITICAL(&touch_lock);
+    touch_diagnostics.init = err == ESP_OK ? 0u : 2u;
+    portEXIT_CRITICAL(&touch_lock);
+#endif
     if (err != ESP_OK) return err;
 #if CONFIG_IDF_TARGET_ESP32C3
     gpio_config_t gpio_cfg = {.pin_bit_mask = (1ULL << TOUCH_INTERRUPT) | (1ULL << TOUCH_RESET),
@@ -267,9 +291,18 @@ static esp_err_t init_touch(void)
         .rst_gpio_num = TOUCH_RESET, .int_gpio_num = TOUCH_INTERRUPT,
     };
     err = esp_lcd_touch_new_i2c_axs5106(i2c_dev, &config, &c6_touch);
+    portENTER_CRITICAL(&touch_lock);
+    touch_diagnostics.init = err == ESP_OK ? 4u : 3u;
+    portEXIT_CRITICAL(&touch_lock);
     if (err != ESP_OK) { c6_touch = NULL; return err; }
 #endif
-    return i2c_master_probe(i2c_bus, TOUCH_ADDRESS, I2C_TIMEOUT_MS);
+    err = i2c_master_probe(i2c_bus, TOUCH_ADDRESS, I2C_TIMEOUT_MS);
+#if CONFIG_IDF_TARGET_ESP32C6
+    portENTER_CRITICAL(&touch_lock);
+    touch_diagnostics.probe = err == ESP_OK ? 1u : 2u;
+    portEXIT_CRITICAL(&touch_lock);
+#endif
+    return err;
 }
 
 static esp_err_t init_panel(void)
@@ -396,6 +429,7 @@ BoardResult board_read_touch(BoardTouch *touch)
 #else
     uint8_t packet[14];
     err = touch_read_register(0x01, packet, sizeof(packet), true);
+    const bool transfer_ok = err == ESP_OK;
     if (err == ESP_OK && !board_c6_touch_decode(packet, &touch->down, &x, &y))
         err = ESP_ERR_INVALID_RESPONSE;
 #endif
@@ -411,6 +445,12 @@ BoardResult board_read_touch(BoardTouch *touch)
         touch->down = false;
     }
     portENTER_CRITICAL(&touch_lock);
+#if CONFIG_IDF_TARGET_ESP32C6
+    if(++touch_diagnostics.sequence == 0) ++touch_diagnostics.sequence;
+    touch_diagnostics.transfer = transfer_ok ? 1u : 2u;
+    touch_diagnostics.sample = !transfer_ok ? 4u : !read_ok ? 2u :
+                               result == BOARD_OK ? 1u : 3u;
+#endif
     latest_touch = *touch;
     latest_valid = result == BOARD_OK;
     latest_base_x = base_x;

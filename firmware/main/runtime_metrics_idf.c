@@ -5,6 +5,9 @@
 #include "freertos/task.h"
 #include "katmed_images.h"
 #include "katmed_ui.h"
+#if CONFIG_IDF_TARGET_ESP32C6
+#include "katmed_board.h"
+#endif
 #include <limits.h>
 #include <stddef.h>
 
@@ -32,6 +35,16 @@ void katmed_runtime_metrics_collect(uint64_t now_ms, KatmedRuntimeMetricInput *o
         out->lvgl_stack_valid = true;
     }
 
+#if CONFIG_IDF_TARGET_ESP32C6
+    const BoardTouchDiagnostics touch = board_touch_diagnostics();
+    out->native_diagnostic_valid = true;
+    out->touch_init = touch.init;
+    out->touch_probe = touch.probe;
+    out->touch_sequence = touch.sequence;
+    out->touch_transfer = touch.transfer;
+    out->touch_sample = touch.sample;
+#endif
+
     /* The UI and decoder update these values on the serialized LVGL path.
      * A missed lock marks samples unavailable without blocking the loop. */
     if (lvgl_port_lock(100)) {
@@ -52,6 +65,10 @@ void katmed_runtime_metrics_collect(uint64_t now_ms, KatmedRuntimeMetricInput *o
         /* A retained JPEG success cannot attest a later failed validation. */
         out->jpeg_decode_valid = jpeg.measured && variant.measured && variant.status==KATMED_IMAGE_OK;
         out->jpeg_decode_status = jpeg.status;
+        out->jpeg_detail_valid = jpeg.measured;
+        out->jpeg_sequence = jpeg.sequence;
+        out->jpeg_stage = jpeg.decode_stage;
+        out->jpeg_mcus = jpeg.decoded_areas;
 #ifdef ESP_PLATFORM
         out->image_failed_presentations = katmed_images_failed_presentations();
         out->image_failure_valid = true;
