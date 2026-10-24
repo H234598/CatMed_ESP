@@ -62,10 +62,11 @@ def expect(status, result):
 
 def run(info):
     files = {name: (ASSETS / name).read_bytes() for name in ("index.html", "style.css", "app.js", "i18n.js")}
-    # Twelve-language network/setup wizard adds 22 translated entries and its form.
-    # Bound their measured ~175 KiB uncompressed footprint; target slot and C6
-    # compressed asset limits remain independently checked by firmware builds.
-    assert sum(map(len, files.values())) < 180 * 1024
+    # Twelve-language setup plus brightness/night controls and copy progress now
+    # occupy 188714 uncompressed bytes. Keep a tight 185 KiB host-asset bound;
+    # this is not a target RAM budget. Native gzip and app-slot bounds remain
+    # independently enforced by firmware builds and their existing checks.
+    assert sum(map(len, files.values())) < 185 * 1024
     links = Links()
     links.feed(files["index.html"].decode())
     assert links.resources == ["/style.css", "/i18n.js", "/app.js"]

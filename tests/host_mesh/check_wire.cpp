@@ -59,7 +59,13 @@ int main() {
     assert(katmed_mesh_wire_decode(wire,n,group,secret,&output)&&output.kind==MESH_NAME_SYNC);
     for(size_t i=0;i<n;++i){wire[i]^=0x80;
         assert(!katmed_mesh_wire_decode(wire,n,group,secret,&output));wire[i]^=0x80;}
-    input.kind=static_cast<KatmedMeshKind>(11);
+    input.kind=MESH_NIGHT;input.payload_length=36;
+    assert(katmed_mesh_wire_encode(&input,secret,wire,sizeof(wire),&n)&&n==192);
+    assert(katmed_mesh_wire_decode(wire,n,group,secret,&output)&&output.kind==MESH_NIGHT);
+    assert(!katmed_mesh_wire_decode(wire,n,group,wrong,&output));
+    for(size_t i=0;i<n;++i){wire[i]^=0x80;
+        assert(!katmed_mesh_wire_decode(wire,n,group,secret,&output));wire[i]^=0x80;}
+    input.kind=static_cast<KatmedMeshKind>(12); // first still-unassigned kind after NIGHT11
     assert(!katmed_mesh_wire_encode(&input,secret,wire,sizeof(wire),&n));
     std::puts("mesh wire auth/bounds plus STATUS7 1060-byte HMAC tamper rejection OK");
 }

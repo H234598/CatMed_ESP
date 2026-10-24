@@ -73,7 +73,7 @@ int main(int argc,char **argv)
     }
     if(!strcmp(argv[3],"order")) {
         const char *root_labels[]={"Intervalls","Times","Languages","Rotation",
-                                  "Slideshow / playback order","Setup","Date and time","Open setup","Reset","Factory reset"};
+                                  "Slideshow / playback order","Setup","Date and time","Open setup","Brightness","Change brightness","Night mode","Configure night mode","Reset","Factory reset"};
         int previous=INT32_MIN;
         for(unsigned i=0;i<sizeof(root_labels)/sizeof(root_labels[0]);++i) {
             lv_obj_t *label=find_text(lv_screen_active(),root_labels[i]);
@@ -108,6 +108,13 @@ int main(int argc,char **argv)
             assert(find_text(lv_obj_get_child(categories,i+1),"Date and time"));
             assert(find_text(lv_obj_get_child(categories,i+2),"Open setup"));
             i+=3;
+            const char *display_sections[]={"Brightness","Change brightness",
+                                            "Night mode","Configure night mode"};
+            for(unsigned j=0;j<4;++j,++i) {
+                lv_obj_t *entry=lv_obj_get_child(categories,i);
+                assert(lv_obj_check_type(entry,j%2 ? &lv_button_class : &lv_label_class));
+                assert(find_text(entry,display_sections[j]));
+            }
             assert(find_text(lv_obj_get_child(categories,i),"Reset"));
             assert(find_text(lv_obj_get_child(categories,i+1),"Factory reset"));
             i+=2;section=7;
