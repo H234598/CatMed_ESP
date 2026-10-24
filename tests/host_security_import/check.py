@@ -256,7 +256,7 @@ with tempfile.TemporaryDirectory(prefix="katmed-import-test-") as temporary:
             "nvs/katmed/state": state,
             "nvs/katmed/mesh_history": history_bytes,
         })
-        assert len(state) == 4067 and struct.unpack_from("<H", capsule, 8)[0] == 2
+        assert len(state) == 4068 and struct.unpack_from("<H", capsule, 8)[0] == 2
         assert struct.unpack_from("<I", capsule, 12)[0] == zlib.crc32(capsule[16:])
         path = root / f"invalid-history-{label}.bin"
         path.write_bytes(capsule)
