@@ -34,6 +34,25 @@ int main(void)
     assert(!board_orientation_update(&p,true,8192,0,0,419));
     assert(board_orientation_update(&p,true,8192,0,0,420));
     const BoardGeometry c6={172,320,true};
+    /* Four asymmetric physical corners, not just the central alarm target.
+     * These expected points also match the pinned LVGL clockwise point map
+     * applied once after the board's zero-angle mirror. They establish the
+     * software frame contract, not the unknown physical IMU axis signs. */
+    const uint16_t raw[4][2]={{0,0},{171,0},{0,319},{171,319}};
+    const int16_t corners[4][4][2]={
+        {{171,0},{0,0},{171,319},{0,319}},
+        {{319,171},{319,0},{0,171},{0,0}},
+        {{0,319},{171,319},{0,0},{171,0}},
+        {{0,0},{0,171},{319,0},{319,171}}
+    };
+    for(unsigned angle=0;angle<4;++angle)for(unsigned corner=0;corner<4;++corner){
+        int16_t x,y;bool down;
+        assert(board_geometry_sample(c6,(Orientation)angle,true,true,
+            raw[corner][0],raw[corner][1],&down,&x,&y) && down);
+        assert(x==corners[angle][corner][0] && y==corners[angle][corner][1]);
+        assert(!board_geometry_sample(c6,(Orientation)angle,true,true,172,0,&down,&x,&y));
+        assert(!down);
+    }
     const int16_t expected_x[]={171,319,0,0},expected_y[]={0,171,319,0};
     for(unsigned angle=0;angle<4;++angle){
         int16_t x,y;uint16_t w,h;

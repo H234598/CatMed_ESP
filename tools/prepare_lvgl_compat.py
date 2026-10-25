@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Apply narrowly source-pinned allocation guards to LVGL 9.6.0.
+"""Apply narrowly source-pinned compatibility guards to LVGL 9.6.0.
 
 The managed component is downloaded by ESP-IDF and excluded from Katmed Git.
 Unexpected upstream source changes fail closed rather than receiving a fuzzy
@@ -12,6 +12,13 @@ from pathlib import Path
 
 
 PATCHES = (
+    (
+        "src/libs/tjpgd/tjpgd.h",
+        'e0d16ca7451d57e0370adebed5d4e7104c8a77e696c137e966f7821a8f49d258',
+        '2e6396c0933e62d8e84948913bd3447ea26df70cd23616611f930f03e3cd9c42',
+        b'/* TJpgDec API functions */\n',
+        b'/* TJpgDec API functions */\n/* ESP32-C6 ROM exports an older, incompatible JDEC ABI under these names.\n * Keep declarations, definitions and LVGL callers bound to this pinned copy. */\n#define jd_prepare katmed_lvgl_jd_prepare\n#define jd_decomp katmed_lvgl_jd_decomp\n',
+    ),
     (
         'src/misc/lv_text_ap.c',
         '111d15c7c6ac956892980432b30a7c7aa46382d278855442cdc2a5064d82d689',

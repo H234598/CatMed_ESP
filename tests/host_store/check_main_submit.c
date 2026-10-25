@@ -420,6 +420,40 @@ static void test_orientation_mode(void)
     snprintf(request.value,sizeof(request.value),"auto");
     KatmedConfigResponse reply={0};config_execute(&runtime,&request,&reply);
     assert(reply.status==(c6 ? KATMED_CONFIG_OK : KATMED_CONFIG_INVALID));
+    // The LVGL callback only queues. The app loop owns mode, angle and Store.
+    display_ui_publish(&runtime);
+    manual.value.orientation=runtime.local.orientation;
+    const unsigned queued_writes=writes;
+    assert(submit_ui_dispatch(&runtime,&manual)==UI_SUBMIT_QUEUED);
+    assert(writes==queued_writes && orientation_auto_for(&runtime)==c6);
+    assert(submit_ui_dispatch(&runtime,&automatic)==UI_SUBMIT_UNAVAILABLE);
+    display_ui_poll(&runtime);
+    assert(!orientation_auto_for(&runtime) && !orientation_automatic(&runtime));
+    assert(runtime.local.orientation==manual.value.orientation);
+    UiRequest done;UiSubmitResult completion;
+    assert(display_mb_result(&display_mailbox,&done,&completion));
+    assert(done.kind==manual.kind && done.value.orientation==manual.value.orientation &&
+           completion==UI_SUBMIT_COMMITTED);
+    sensed_valid=true;sensed_orientation=(Orientation)((manual.value.orientation+1)%4);
+    poll_auto_orientation(&runtime);
+    assert(runtime.local.orientation==manual.value.orientation);
+    // UI getters read only the last published mode, not live owner state.
+    runtime.store.record.orientation_manual=false;
+    assert(!orientation_automatic(&runtime));
+    runtime.store.record.orientation_manual=c6;
+    assert(submit_ui_dispatch(&runtime,&automatic)==UI_SUBMIT_QUEUED);
+    fail_commit=true;display_ui_poll(&runtime);fail_commit=false;
+    assert(display_mb_result(&display_mailbox,&done,&completion));
+    assert(done.kind==automatic.kind && completion==(c6 ? UI_SUBMIT_UNAVAILABLE : UI_SUBMIT_REJECTED));
+    assert(!orientation_automatic(&runtime));
+    // An uncertain commit faults the Store. Recover from durable state before
+    // a later attempt; never treat the failed transition as an auto-mode pass.
+    initialize_runtime();display_ui_publish(&runtime);
+    assert(submit_ui_dispatch(&runtime,&automatic)==UI_SUBMIT_QUEUED);
+    display_ui_poll(&runtime);
+    assert(display_mb_result(&display_mailbox,&done,&completion));
+    assert(done.kind==automatic.kind && completion==(c6 ? UI_SUBMIT_COMMITTED : UI_SUBMIT_REJECTED));
+    assert(orientation_automatic(&runtime)==c6);
     printf("orientation main C%d: same-angle persistence, reboot, auto and Web capability PASS\n",c6 ? 6 : 3);
 }
 

@@ -631,12 +631,18 @@ static void poll_auto_orientation(Runtime *rt)
 #endif
 }
 
+static DisplayUiMailbox display_mailbox=DISPLAY_MB_INITIALIZER;
+/* The LVGL callback must not read the app-loop-owned Store mode. Reuse the
+ * mailbox's short POD lock for this published scalar, never for Store/I2C. */
+static bool published_orientation_automatic;
 static bool orientation_automatic(void *context)
 {
-    return orientation_auto_for(context);
+    (void)context;
+    DISPLAY_MB_LOCK(&display_mailbox);
+    const bool automatic=published_orientation_automatic;
+    DISPLAY_MB_UNLOCK(&display_mailbox);
+    return automatic;
 }
-
-static DisplayUiMailbox display_mailbox=DISPLAY_MB_INITIALIZER;
 /* UI callbacks only read a published snapshot; NightJob itself is app-loop owned. */
 static void display_settings(void *context,KatmedDisplaySettings *out)
 {
@@ -650,7 +656,11 @@ static void display_ui_publish(Runtime *rt)
 {
     const KatmedDisplaySettings settings=rt->store_ready ? rt->store.record.display : katmed_display_defaults();
     KatmedNightCopyStatus night={0};katmed_mesh_night_status(&night);
+    const bool automatic=orientation_auto_for(rt);
     display_mb_publish(&display_mailbox,settings,night);
+    DISPLAY_MB_LOCK(&display_mailbox);
+    published_orientation_automatic=automatic;
+    DISPLAY_MB_UNLOCK(&display_mailbox);
 }
 static void display_policy_step(Runtime *rt,const ClockSample *now)
 {
@@ -873,7 +883,9 @@ static UiSubmitResult submit_ui(void *context, const UiRequest *request)
 /* Called from taskLVGL: new display intents perform no Store/Mesh work here. */
 static UiSubmitResult submit_ui_dispatch(void *context,const UiRequest *request)
 {
-    if(request && request->kind>=UI_REQUEST_SET_BRIGHTNESS && request->kind<=UI_REQUEST_COPY_NIGHT)
+    if(request && ((request->kind>=UI_REQUEST_SET_BRIGHTNESS && request->kind<=UI_REQUEST_COPY_NIGHT) ||
+                   request->kind==UI_REQUEST_SET_ORIENTATION ||
+                   request->kind==UI_REQUEST_SET_ORIENTATION_AUTOMATIC))
         return display_mb_submit(&display_mailbox,request) ? UI_SUBMIT_QUEUED : UI_SUBMIT_UNAVAILABLE;
     return submit_ui(context,request);
 }
