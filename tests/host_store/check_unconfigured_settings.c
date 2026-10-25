@@ -4,14 +4,6 @@
 #undef SETTINGS_VALUES_ENTRYPOINT
 #include "src/misc/lv_text_ap.h"
 
-void katmed_mesh_device_name(char *out,size_t capacity,bool *assigned,bool *uncertain) {
-    if(capacity) {snprintf(out,capacity,"KatmedESP");}
-    *assigned=false;*uncertain=false;
-}
-bool katmed_mesh_radio_channel(uint8_t *out){*out=0;return false;}
-void katmed_mesh_counts(KatmedMeshCounts *out){memset(out,0,sizeof(*out));}
-uint32_t katmed_time_idf_sync_server_ipv4(void){return 0;}
-
 static void dismiss_start(void)
 {
     unsigned before=writes, notifications=fake_mesh_notifications;
@@ -73,7 +65,7 @@ int main(int argc,char **argv)
     }
     if(!strcmp(argv[3],"order")) {
         const char *root_labels[]={"Intervalls","Times","Languages","Rotation",
-                                  "Slideshow / playback order","Setup","Date and time","Open setup","Brightness","Change brightness","Night mode","Configure night mode","Reset","Factory reset"};
+                                  "Slideshow / playback order","Setup","Date and time","Open setup","Brightness","Night mode","Configure night mode","Reset","Factory reset"};
         int previous=INT32_MIN;
         for(unsigned i=0;i<sizeof(root_labels)/sizeof(root_labels[0]);++i) {
             lv_obj_t *label=find_text(lv_screen_active(),root_labels[i]);
@@ -108,13 +100,19 @@ int main(int argc,char **argv)
             assert(find_text(lv_obj_get_child(categories,i+1),"Date and time"));
             assert(find_text(lv_obj_get_child(categories,i+2),"Open setup"));
             i+=3;
-            const char *display_sections[]={"Brightness","Change brightness",
-                                            "Night mode","Configure night mode"};
-            for(unsigned j=0;j<4;++j,++i) {
-                lv_obj_t *entry=lv_obj_get_child(categories,i);
-                assert(lv_obj_check_type(entry,j%2 ? &lv_button_class : &lv_label_class));
-                assert(find_text(entry,display_sections[j]));
-            }
+            assert(find_text(lv_obj_get_child(categories,i++),"Brightness"));
+            lv_obj_t *percent=lv_obj_get_child(categories,i++);
+            assert(lv_obj_check_type(percent,&lv_label_class));
+            assert(strchr(lv_label_get_text(percent),'%'));
+            lv_obj_t *brightness=lv_obj_get_child(categories,i++);
+            assert(lv_obj_check_type(brightness,&lv_slider_class));
+            assert(lv_slider_get_min_value(brightness)==1 &&
+                   lv_slider_get_max_value(brightness)==100);
+            assert(!find_text(categories,"Change brightness"));
+            assert(find_text(lv_obj_get_child(categories,i++),"Night mode"));
+            lv_obj_t *night=lv_obj_get_child(categories,i++);
+            assert(lv_obj_check_type(night,&lv_button_class));
+            assert(find_text(night,"Configure night mode"));
             assert(find_text(lv_obj_get_child(categories,i),"Reset"));
             assert(find_text(lv_obj_get_child(categories,i+1),"Factory reset"));
             i+=2;section=7;
