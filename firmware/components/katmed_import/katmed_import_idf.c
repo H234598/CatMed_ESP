@@ -13,7 +13,7 @@
 static bool local_device_id(uint64_t *out)
 {
     uint8_t mac[6];
-    if (!out || esp_efuse_mac_get_default(mac) != ESP_OK) return false;
+    if (!out || esp_read_mac(mac, ESP_MAC_EFUSE_FACTORY) != ESP_OK) return false;
     uint64_t device = 0;
     for (unsigned i = 0; i < sizeof(mac); ++i)
         device = (device << 8) | mac[i];

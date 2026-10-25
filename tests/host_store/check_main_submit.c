@@ -57,9 +57,36 @@ BoardResult board_set_brightness(uint8_t value){
 BoardResult board_set_backlight(bool awake){(void)awake;return BOARD_OK;}
 bool lvgl_port_lock(uint32_t timeout){(void)timeout;return true;}
 void lvgl_port_unlock(void){}
-void ui_set_display_awake(bool awake){(void)awake;}
+/* Standalone Main bridge only: native UI integration links its strong implementation. */
+__attribute__((weak)) void ui_set_display_awake(bool awake){(void)awake;}
 
-uint32_t esp_random(void) { return ++fake_random_counter; }
+static bool boot_mac_error,boot_mac_zero,boot_zero_epoch;
+static unsigned boot_legacy_calls;
+static const uint8_t boot_factory_mac[6]={0x02,0x13,0x24,0x35,0x46,0x57};
+int esp_efuse_mac_get_default(uint8_t *mac)
+{
+    ++boot_legacy_calls;if(boot_mac_error)return -1;
+#if CONFIG_IDF_TARGET_ESP32C6
+    /* Existing SDK C6 contract: extension insertion writes eight bytes. */
+    const uint8_t eui[8]={0x02,0x13,0x24,0xff,0xfe,0x35,0x46,0x57};
+    struct {uint8_t six[6],sentinel[2];} contract={{0},{0xa5,0x5a}};
+    memcpy(&contract,eui,sizeof(eui));
+    assert(contract.sentinel[0]!=0xa5 && contract.sentinel[1]!=0x5a);
+    /* Expose the SDK's eight-byte result/six-byte sentinel violation without
+     * invoking undefined host writes into the actual producer's mac[6]. */
+    memcpy(mac,contract.six,6);
+#else
+    memcpy(mac,boot_factory_mac,sizeof(boot_factory_mac));
+#endif
+    return ESP_OK;
+}
+int esp_read_mac(uint8_t *mac,esp_mac_type_t type)
+{
+    assert(type==ESP_MAC_EFUSE_FACTORY);if(boot_mac_error)return -1;
+    if(boot_mac_zero)memset(mac,0,6);else memcpy(mac,boot_factory_mac,6);
+    return ESP_OK;
+}
+uint32_t esp_random(void) { return boot_zero_epoch ? 0 : ++fake_random_counter; }
 void esp_fill_random(void *out,size_t length)
 {
     unsigned char *bytes=out;
@@ -469,6 +496,31 @@ static void test_orientation_mode(void)
     printf("orientation main C%d: same-angle persistence, reboot, auto and Web capability PASS\n",c6 ? 6 : 3);
 }
 
+static void test_boot_factory_identity(void)
+{
+    boot_mac_error=boot_mac_zero=boot_zero_epoch=false;boot_legacy_calls=0;
+    EventId id={0};assert(boot_identity(&id));
+    assert(id.device==UINT64_C(0x021324354657) && id.epoch!=0 && id.sequence==1);
+    assert(boot_legacy_calls==0);
+    struct {uint8_t mac[6],sentinel[2];} out={{0},{0xa5,0x5a}};
+    assert(esp_read_mac(out.mac,ESP_MAC_EFUSE_FACTORY)==ESP_OK);
+    assert(out.sentinel[0]==0xa5 && out.sentinel[1]==0x5a);
+    EventId unchanged=id;boot_mac_error=true;assert(!boot_identity(&id));
+    assert(memcmp(&id,&unchanged,sizeof(id))==0);boot_mac_error=false;
+    boot_mac_zero=true;assert(!boot_identity(&id));boot_mac_zero=false;
+    assert(memcmp(&id,&unchanged,sizeof(id))==0);
+    boot_zero_epoch=true;assert(boot_identity(&id) && id.epoch==1 && id.sequence==1);
+    boot_zero_epoch=false;fake_random_counter=UINT32_C(0x12345678);
+    // Do not conceal the pre-existing Store identity boundary with a migration/bypass.
+    committed_length=0;Store store;StoreRecovery recovery;uint8_t catalog[KATMED_CATALOG_BYTES]={3};
+    const StoreBackend backend={NULL,test_read,test_write};
+    assert(store_open(&store,backend,UINT64_C(0x021324fffe35),catalog,75,&recovery)==STORE_OK);
+    const unsigned before=writes;
+    assert(store_open(&store,backend,UINT64_C(0x021324354657),catalog,75,&recovery)==STORE_CORRUPT);
+    assert(writes==before);committed_length=0;
+    puts("boot identity: actual producer fixed factoryMAC48, sentinel6/error/zero/epoch/C3contract; mismatched persisted Store identity stays failclosed PASS");
+}
+
 static void test_display_app_loop_bridge(void) {
     initialize_runtime();display_ui_publish(&runtime);
     unsigned before=writes;
@@ -564,7 +616,8 @@ static void test_local_display_settings(void) {
 
 int main(int argc, char **argv)
 {
-    if(argc==2 && !strcmp(argv[1],"night_bridge")){test_display_app_loop_bridge();test_brightness_preview_bridge();return 0;}
+    if(argc==2 && !strcmp(argv[1],"boot_identity")){test_boot_factory_identity();return 0;}
+    if(argc==2 && !strcmp(argv[1],"night_bridge")){test_display_app_loop_bridge();test_brightness_preview_bridge();test_boot_factory_identity();return 0;}
     if(argc==2 && !strcmp(argv[1],"night")){test_local_display_settings();return 0;}
     if (argc==2 && strcmp(argv[1],"orientation")==0) {test_orientation_mode();return 0;}
     if (argc==2 && strcmp(argv[1],"offline_confirm")==0) {

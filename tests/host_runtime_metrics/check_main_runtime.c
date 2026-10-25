@@ -50,8 +50,9 @@ StoreResult store_idf_open_backend(StoreIdfNvs *nvs, StoreBackend *backend)
 
 void store_idf_close_backend(StoreIdfNvs *nvs) { nvs->opened = false; }
 unsigned esp_get_free_heap_size(void) { return 80000; }
-int esp_efuse_mac_get_default(uint8_t *mac)
+int esp_read_mac(uint8_t *mac,esp_mac_type_t type)
 {
+    assert(type==ESP_MAC_EFUSE_FACTORY);
     const uint8_t id[6] = {0xac, 0x27, 0x6e, 0x46, 0xbc, 0x2c};
     memcpy(mac, id, sizeof(id));
     return ESP_OK;

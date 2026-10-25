@@ -1883,7 +1883,8 @@ static ClockSample clock_sample(uint64_t domain)
 static bool boot_identity(EventId *identity)
 {
     uint8_t mac[6];
-    if (esp_efuse_mac_get_default(mac) != ESP_OK) return false;
+    /* The default API writes EUI-64 on C6. Device identity is factory MAC-48. */
+    if (esp_read_mac(mac, ESP_MAC_EFUSE_FACTORY) != ESP_OK) return false;
     uint64_t device = 0;
     for (unsigned i = 0; i < sizeof(mac); ++i) device = (device << 8) | mac[i];
     if (device == 0) return false;
