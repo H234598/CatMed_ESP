@@ -98,6 +98,8 @@ typedef struct {
     int submit_calls, store_calls, network_calls;
     UiSubmitResult result;
     UiRequest last_request;
+    uint8_t display_percent, preview_percent;
+    unsigned preview_calls;
     UiNetworkStatus network;
     bool reset_prepared, reset_warning;
     bool reset_marker;
@@ -216,9 +218,22 @@ static UiSubmitResult submit(void *context, const UiRequest *request)
     assert(request);
     host->last_request = *request;
     host->submit_calls++;
+    if(request->kind==UI_REQUEST_SET_BRIGHTNESS && host->result==UI_SUBMIT_COMMITTED)
+        host->display_percent=(uint8_t)request->value.display_value;
     if (request->kind == UI_REQUEST_CONFIRM) host->store_calls++;
     else host->network_calls++;
     return host->result;
+}
+
+static void read_display(void *context,KatmedDisplaySettings *out)
+{
+    Host *host=context;*out=katmed_display_defaults();
+    if(host->display_percent)out->brightness=host->display_percent;
+}
+static bool preview_brightness(void *context,uint8_t percent)
+{
+    Host *host=context;assert(percent<=100);host->preview_percent=percent;
+    ++host->preview_calls;return true;
 }
 
 static bool connected(void *context)
@@ -417,6 +432,15 @@ static lv_obj_t *find_control_caption(lv_obj_t *node, const char *text)
     return NULL;
 }
 
+static lv_obj_t *find_slider(lv_obj_t *node)
+{
+    if(lv_obj_check_type(node,&lv_slider_class))return node;
+    for(uint32_t i=0;i<lv_obj_get_child_count(node);++i){
+        lv_obj_t *found=find_slider(lv_obj_get_child(node,i));if(found)return found;
+    }
+    return NULL;
+}
+
 static void click_label(lv_obj_t *screen, const char *text)
 {
     if ((strcmp(text, "Status") == 0 && ui_current_view() == SETTINGS && !find_label(screen, text)) ||
@@ -577,6 +601,46 @@ static void check_rotation_pointer(lv_display_t *display, Host *host)
     puts("rotation hitarea: native pointer center/padding/corners, held-render, exact single queued intent PASS");
 }
 
+/* Real LVGL pointer events plus the production gesture gates, never callback injection. */
+static uint16_t drag_brightness(lv_display_t *display,Host *host,bool right)
+{
+    lv_obj_t *slider=find_slider(lv_screen_active());assert(slider);
+    lv_obj_update_layout(lv_screen_active());lv_area_t area;lv_obj_get_coords(slider,&area);
+    const int calls=host->submit_calls;const unsigned previews=host->preview_calls;
+    const uint8_t stored=host->display_percent;
+    const int y=(area.y1+area.y2)/2,span=area.x2-area.x1;
+    const int from=area.x1+span*(right?1:4)/5,to=area.x1+span*(right?4:1)/5;
+    lv_indev_t *pointer=lv_indev_create();assert(pointer);lv_indev_set_type(pointer,LV_INDEV_TYPE_POINTER);
+    lv_indev_set_display(pointer,display);lv_indev_set_read_cb(pointer,pointer_read);
+    static uint64_t ticks=20000000;ticks+=1000;
+    ui_touch_sample(false,from,y,true,ticks);
+    pointer_down=true;pointer_point=(lv_point_t){from,y};
+    assert(ui_lvgl_touch_allowed(true,from,y,true,ticks+30));
+    ui_touch_sample(true,from,y,true,ticks+30);lv_indev_read(pointer);
+    for(int step=1;step<=4;++step){
+        const int x=from+(to-from)*step/4;pointer_point=(lv_point_t){x,y};
+        assert(ui_lvgl_touch_allowed(true,x,y,true,ticks+30+40*step));
+        ui_touch_sample(true,x,y,true,ticks+30+40*step);lv_indev_read(pointer);
+        const int32_t held=lv_slider_get_value(slider);
+        option_clock.monotonic_ms=ticks+30+40*step;
+        ui_render(&option_model,&option_local,SETTINGS,&option_clock);lv_tick_inc(25);lv_timer_handler();
+        assert(lv_slider_get_value(slider)==held && ui_current_view()==SETTINGS);
+        char percentage[12];snprintf(percentage,sizeof(percentage),"%u%%",(unsigned)held);
+        assert(find_label(lv_screen_active(),percentage));
+        assert(host->submit_calls==calls && host->display_percent==stored);
+    }
+    const uint16_t wanted=(uint16_t)lv_slider_get_value(slider);
+    assert(wanted>=1 && wanted<=100 && wanted!=stored && host->preview_calls>previews);
+    assert(host->preview_percent==wanted);
+    pointer_down=false;
+    assert(ui_lvgl_touch_allowed(false,to,y,true,ticks+250));
+    ui_touch_sample(false,to,y,true,ticks+250);lv_indev_read(pointer);lv_indev_read(pointer);
+    assert(ui_current_view()==SETTINGS && find_slider(lv_screen_active())==slider);
+    assert(host->submit_calls==calls+1 && host->last_request.kind==UI_REQUEST_SET_BRIGHTNESS &&
+           host->last_request.value.display_value==wanted && host->preview_percent==0);
+    lv_indev_reset(pointer,NULL);lv_indev_delete(pointer);return wanted;
+}
+
 static int check_option_sync(int width, int height, bool hitarea_only)
 {
     Host host = {.width = width, .height = height, .result = UI_SUBMIT_PENDING_SHARED};
@@ -592,7 +656,8 @@ static int check_option_sync(int width, int height, bool hitarea_only)
     option_local = (LocalSettings){.clock_style=DIGITAL_LARGE,
                                    .orientation=ORIENTATION_0};
     katmed_i18n_select(KATMED_LANG_EN);
-    UiServices services = {.context=&host, .submit=submit, .read_model=read_option_model};
+    UiServices services = {.context=&host, .submit=submit, .read_model=read_option_model,
+        .display_settings=read_display,.brightness_preview=preview_brightness};
     ui_set_services(&services);
     ui_render(&option_model, &option_local, SETTINGS, &option_clock);
     lv_obj_t *screen = lv_screen_active();
@@ -683,28 +748,42 @@ static int check_option_sync(int width, int height, bool hitarea_only)
     char arabic_name[80];lv_text_ap_proc("العربية",arabic_name);
     assert(find_label(screen,arabic_name)); // native shaping is required even under English UI
     settings_parent();
-    calls=host.submit_calls;
+    calls=host.submit_calls;host.display_percent=37;host.result=UI_SUBMIT_QUEUED;
     click_label(screen,"Change brightness");
-    assert(host.submit_calls==calls);
-    click_label(screen,"<");click_label(screen,"<");click_label(screen,"<");
-    click_label(screen,"2");click_label(screen,"5");click_label(screen,"Save");
-    assert(host.last_request.kind==UI_REQUEST_SET_BRIGHTNESS && host.last_request.value.display_value==25);
+    assert(find_slider(screen) && host.submit_calls==calls);
+    assert(lv_slider_get_min_value(find_slider(screen))==1 && lv_slider_get_max_value(find_slider(screen))==100);
+    assert(lv_slider_get_value(find_slider(screen))==37 && find_label(screen,"37%"));
+    uint16_t wanted=drag_brightness(lv_display_get_default(),&host,true);
+    assert(host.display_percent==37 && find_label(screen,"Change queued"));
+    assert(lv_obj_has_state(find_slider(screen),LV_STATE_DISABLED));
+    UiRequest queued=host.last_request;
+    host.display_percent=(uint8_t)wanted;ui_deferred_result(&queued,UI_SUBMIT_COMMITTED);
+    assert(!lv_obj_has_state(find_slider(screen),LV_STATE_DISABLED));
+    assert(lv_slider_get_value(find_slider(screen))==wanted && find_label(screen,"Saved"));
+    click_label(screen,"Cancel");click_label(screen,"Change brightness");
+    assert(lv_slider_get_value(find_slider(screen))==wanted); /* reopen accepted value */
+    host.result=UI_SUBMIT_UNAVAILABLE;
+    (void)drag_brightness(lv_display_get_default(),&host,false);
+    assert(lv_slider_get_value(find_slider(screen))==wanted); /* rollback, not saved */
+    assert(find_label(screen,"Save currently not available"));
+    host.result=UI_SUBMIT_QUEUED;
+    (void)drag_brightness(lv_display_get_default(),&host,false);queued=host.last_request;
+    ui_deferred_result(&queued,UI_SUBMIT_UNAVAILABLE);
+    assert(lv_slider_get_value(find_slider(screen))==wanted &&
+           !lv_obj_has_state(find_slider(screen),LV_STATE_DISABLED));
+    (void)drag_brightness(lv_display_get_default(),&host,false);queued=host.last_request;
+    click_label(screen,"Cancel");
     click_label(screen,"Configure night mode");
-    calls=host.submit_calls;
-    click_label(screen,"Enable night mode");
+    host.result=UI_SUBMIT_COMMITTED;
+    calls=host.submit_calls;click_label(screen,"Enable night mode");
     assert(host.submit_calls==calls+1 && host.last_request.kind==UI_REQUEST_SET_NIGHT_ENABLED);
     click_label(screen,"Set night mode globally on all devices in the mesh");
-    assert(host.last_request.kind==UI_REQUEST_COPY_NIGHT);
-    assert(find_label(screen,"No global night copy yet"));
-    settings_parent();click_label(screen,"Change brightness");host.result=UI_SUBMIT_QUEUED;
-    click_label(screen,"<");click_label(screen,"<");click_label(screen,"<");
-    click_label(screen,"1");click_label(screen,"5");click_label(screen,"Save");
-    assert(find_label(screen,"Change queued"));UiRequest queued=host.last_request;
-    click_label(screen,"Configure night mode");click_label(screen,"Night starts HH:MM");
-    calls=host.submit_calls;ui_deferred_result(&queued,UI_SUBMIT_COMMITTED);
+    assert(host.last_request.kind==UI_REQUEST_COPY_NIGHT && find_label(screen,"No global night copy yet"));
+    click_label(screen,"Night starts HH:MM");calls=host.submit_calls;
+    host.display_percent=(uint8_t)queued.value.display_value;ui_deferred_result(&queued,UI_SUBMIT_COMMITTED);
     assert(find_label(screen,"Night time HH:MM") && host.submit_calls==calls);
-    click_label(screen,"Cancel");host.result=UI_SUBMIT_COMMITTED;
-    puts("N-M1 deferred UI result: queued is not saved; completion neither resubmits nor closes a newer editor PASS");
+    click_label(screen,"Cancel");
+    puts("brightness slider: native drag both ways, held render, percent, one release intent, queued/deferred/busy rollback/reopen/gesture capture PASS");
     ui_set_display_awake(false);
     assert(!ui_lvgl_touch_allowed(true,50,50,true,1000));
     ui_set_display_awake(true);

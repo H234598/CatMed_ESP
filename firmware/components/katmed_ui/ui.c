@@ -68,6 +68,8 @@ typedef struct {
     lv_obj_t *pairing_label, *settings_options;
     char pairing_code[7];
     lv_obj_t *entry_label, *preview_label;
+    lv_obj_t *brightness_slider, *brightness_percent;
+    bool brightness_dragging, brightness_pending, slider_contact, lv_slider_contact;
     lv_obj_t *style_dialog, *style_title, *style_options[3];
     uint32_t image_id;
     Orientation image_orientation;
@@ -137,14 +139,25 @@ static KatmedDisplaySettings display_values(void)
     if(ui.services.display_settings)ui.services.display_settings(ui.services.context,&out);
     return out;
 }
-static bool display_time_edit(void){return ui.edit==EDIT_NIGHT_START || ui.edit==EDIT_NIGHT_END;}
-static bool parse_percent(const char *text,unsigned *value)
+static bool brightness_hit(int16_t x,int16_t y)
 {
-    size_t n=strlen(text);unsigned v=0;if(!n || n>3)return false;
-    for(size_t i=0;i<n;++i){if(text[i]<'0'||text[i]>'9')return false;v=v*10u+(unsigned)(text[i]-'0');}
-    if(v<1 || v>100)return false;
-    *value=v;return true;
+    if(!ui.brightness_slider || ui.edit!=EDIT_BRIGHTNESS)return false;
+    lv_area_t area;lv_obj_get_coords(ui.brightness_slider,&area);
+    return x>=area.x1-16 && x<=area.x2+16 && y>=area.y1-16 && y<=area.y2+16;
 }
+static void cancel_brightness_preview(void)
+{
+    if(ui.services.brightness_preview)ui.services.brightness_preview(ui.services.context,0);
+    ui.brightness_dragging=false;
+}
+static void sync_brightness_slider(void)
+{
+    if(!ui.brightness_slider || ui.brightness_dragging || ui.brightness_pending)return;
+    const unsigned value=display_values().brightness;
+    lv_slider_set_value(ui.brightness_slider,(int32_t)value,LV_ANIM_OFF);
+    lv_label_set_text_fmt(ui.brightness_percent,"%u%%",value);
+}
+static bool display_time_edit(void){return ui.edit==EDIT_NIGHT_START || ui.edit==EDIT_NIGHT_END;}
 static BlinkMetricsState blink_metrics;
 
 static uint64_t metrics_now_us(void)
@@ -376,6 +389,11 @@ void ui_deferred_result(const UiRequest *request,UiSubmitResult result)
     /* Completion never closes a newly opened editor or resubmits an action. */
     if(result==UI_SUBMIT_COMMITTED && ui.services.read_model)
         ui.services.read_model(ui.services.context,&ui.state,&ui.local,&ui.clock);
+    if(request->kind==UI_REQUEST_SET_BRIGHTNESS && ui.brightness_pending){
+        ui.brightness_pending=false;
+        if(ui.brightness_slider)lv_obj_remove_state(ui.brightness_slider,LV_STATE_DISABLED);
+        sync_brightness_slider();
+    }
     show_feedback(request->kind==UI_REQUEST_COPY_NIGHT && result==UI_SUBMIT_COMMITTED ?
         T("Lokal gespeichert; Mesh-Bestätigungen prüfen") : result_text(result));
 }
@@ -547,9 +565,6 @@ static void update_preview(void)
     if (!ui.preview_label) return;
     ui.preview_valid = false;
     char text[96];
-    if(ui.edit==EDIT_BRIGHTNESS){unsigned value;
-        ui.preview_valid=parse_percent(ui.entry,&value);
-        lv_label_set_text(ui.preview_label,ui.preview_valid?ui.entry:T("Helligkeit: 1 bis 100 Prozent"));return;}
     if(display_time_edit()){unsigned h,m;const KatmedDisplaySettings d=display_values();
         ui.preview_valid=parse_hhmm(ui.entry,&h,&m) &&
             h*60u+m!=(ui.edit==EDIT_NIGHT_START?d.night_end:d.night_start);
@@ -658,6 +673,8 @@ static void key_press(lv_event_t *event)
 static void cancel_edit(lv_event_t *event)
 {
     (void)event;
+    if(ui.brightness_slider)cancel_brightness_preview();
+    ui.brightness_slider=ui.brightness_percent=NULL;
     if (ui.keypad) lv_obj_delete(ui.keypad);
     ui.keypad = NULL;
     ui.entry_label = NULL;
@@ -674,9 +691,6 @@ static void save_edit(lv_event_t *event)
         return;
     }
     UiRequest request = {0};
-    if(ui.edit==EDIT_BRIGHTNESS){unsigned value;if(!parse_percent(ui.entry,&value))return;
-        request.kind=UI_REQUEST_SET_BRIGHTNESS;request.value.display_value=(uint16_t)value;
-        request_action(&request);return;}
     if(display_time_edit()){unsigned h,m;if(!parse_hhmm(ui.entry,&h,&m))return;
         request.kind=ui.edit==EDIT_NIGHT_START?UI_REQUEST_SET_NIGHT_START:UI_REQUEST_SET_NIGHT_END;
         request.value.display_value=(uint16_t)(h*60u+m);request_action(&request);return;}
@@ -703,14 +717,42 @@ static void save_edit(lv_event_t *event)
     request_action(&request);
 }
 
+static void brightness_changed(lv_event_t *event)
+{
+    lv_obj_t *slider=lv_event_get_current_target(event);
+    const lv_event_code_t code=lv_event_get_code(event);
+    if(code==LV_EVENT_PRESSED){ui.brightness_dragging=true;return;}
+    if(code==LV_EVENT_VALUE_CHANGED){
+        const uint8_t value=(uint8_t)lv_slider_get_value(slider);
+        lv_label_set_text_fmt(ui.brightness_percent,"%u%%",(unsigned)value);
+        if(ui.services.brightness_preview &&
+           !ui.services.brightness_preview(ui.services.context,value)){
+            cancel_brightness_preview();sync_brightness_slider();
+            show_feedback(result_text(UI_SUBMIT_UNAVAILABLE));
+        }
+        return;
+    }
+    if(code==LV_EVENT_PRESS_LOST){cancel_brightness_preview();sync_brightness_slider();return;}
+    if(code!=LV_EVENT_RELEASED || !ui.brightness_dragging)return;
+    ui.brightness_dragging=false;
+    const uint16_t value=(uint16_t)lv_slider_get_value(slider);
+    cancel_brightness_preview();
+    if(value==display_values().brightness){sync_brightness_slider();return;}
+    const UiRequest request={.kind=UI_REQUEST_SET_BRIGHTNESS,.value.display_value=value};
+    const UiSubmitResult result=submit(&request);
+    ui.brightness_pending=result==UI_SUBMIT_QUEUED;
+    if(ui.brightness_pending)lv_obj_add_state(slider,LV_STATE_DISABLED);
+    else sync_brightness_slider();
+    show_feedback(result_text(result));
+}
+
 static void open_edit(EditKind edit)
 {
     if (!ui.screen || ui.keypad) return;
     destroy_settings();
     ui.edit = edit;
     ui.entry[0] = '\0';
-    if(edit==EDIT_BRIGHTNESS)snprintf(ui.entry,sizeof(ui.entry),"%u",display_values().brightness);
-    else if(display_time_edit()){KatmedDisplaySettings d=display_values();
+    if(display_time_edit()){KatmedDisplaySettings d=display_values();
         unsigned minute=edit==EDIT_NIGHT_START?d.night_start:d.night_end;
         snprintf(ui.entry,sizeof(ui.entry),"%02u:%02u",minute/60u,minute%60u);}
     else if (edit == EDIT_IMAGE || edit == EDIT_MEDICATION)
@@ -734,6 +776,25 @@ static void open_edit(EditKind edit)
     lv_obj_set_scrollable(ui.keypad, false);
 
     bool round = ui.width == 240 && ui.height == 240;
+    if(edit==EDIT_BRIGHTNESS){
+        lv_obj_t *heading=label(ui.keypad,T("Helligkeit"),ui.width-48);
+        lv_obj_align(heading,LV_ALIGN_TOP_MID,0,round?38:16);
+        ui.brightness_percent=label(ui.keypad,"",ui.width-48);
+        lv_label_set_text_fmt(ui.brightness_percent,"%u%%",(unsigned)display_values().brightness);
+        lv_obj_align(ui.brightness_percent,LV_ALIGN_CENTER,0,-30);
+        ui.brightness_slider=lv_slider_create(ui.keypad);
+        lv_obj_set_size(ui.brightness_slider,round?140:ui.width-64,12);
+        lv_obj_align(ui.brightness_slider,LV_ALIGN_CENTER,0,0);
+        lv_slider_set_range(ui.brightness_slider,1,100);
+        lv_slider_set_value(ui.brightness_slider,display_values().brightness,LV_ANIM_OFF);
+        lv_obj_set_gesture_bubble(ui.brightness_slider,false);
+        lv_obj_add_event_cb(ui.brightness_slider,brightness_changed,LV_EVENT_ALL,NULL);
+        if(ui.brightness_pending)lv_obj_add_state(ui.brightness_slider,LV_STATE_DISABLED);
+        else sync_brightness_slider();
+        lv_obj_t *back=button(ui.keypad,T("Abbrechen"),100,32,cancel_edit,NULL);
+        lv_obj_align(back,LV_ALIGN_BOTTOM_MID,0,round?-38:-16);
+        return;
+    }
     int keys_w = landscape ? ui.width / 2 : round ? 180 : ui.width - 32;
     int x0 = landscape ? 8 : round ? 30 : 16;
     int y0 = landscape ? 8 : round ? 110 : 125;
@@ -1585,6 +1646,9 @@ static void build_screen(int16_t width, int16_t height)
     ui.settings_options = NULL;
     ui.pairing_label = NULL;
     ui.status = NULL;
+    if(ui.brightness_slider)cancel_brightness_preview();
+    ui.brightness_slider=ui.brightness_percent=NULL;
+    ui.slider_contact=ui.lv_slider_contact=false;
     ui.keypad = NULL;
     ui.feedback = NULL;
     ui.morse_layer = NULL;
@@ -1995,12 +2059,14 @@ bool ui_lvgl_touch_allowed(bool down, int16_t x, int16_t y, bool valid, uint64_t
     if (!down) {
         bool allowed = !ui.lv_blocked && ui.lv_overlay_generation == ui.overlay_generation;
         ui.lv_contact = false;
+        ui.lv_slider_contact=false;
         ui.lv_blocked = false;
         return allowed;
     }
     if (!ui.lv_contact) {
         ui.lv_contact = true;
         ui.lv_start_x = x; ui.lv_start_y = y;
+        ui.lv_slider_contact=brightness_hit(x,y);
         ui.lv_overlay_generation = ui.overlay_generation;
         ui.lv_blocked = !ui.reset_stage &&
             (ui.state.alarm_active || notice_kind() ||
@@ -2008,7 +2074,7 @@ bool ui_lvgl_touch_allowed(bool down, int16_t x, int16_t y, bool valid, uint64_t
              (ui.view != SETTINGS && ui.view != UI_VIEW_STATUS));
     }
     if (ui.lv_overlay_generation != ui.overlay_generation ||
-        (abs(x-ui.lv_start_x) >= 40 && abs(x-ui.lv_start_x) >= 2*abs(y-ui.lv_start_y)))
+        (!ui.lv_slider_contact && abs(x-ui.lv_start_x) >= 40 && abs(x-ui.lv_start_x) >= 2*abs(y-ui.lv_start_y)))
         ui.lv_blocked = true;
     return !ui.lv_blocked;
 }
@@ -2150,6 +2216,7 @@ void ui_touch_sample(bool touched, int16_t x, int16_t y,
         return;
     }
     if (!valid) {
+        if(ui.brightness_slider)cancel_brightness_preview();
         if (ui.touch_down) ui.reject_contact = true;
         else ui.touch_armed = false;
         return;
@@ -2160,6 +2227,7 @@ void ui_touch_sample(bool touched, int16_t x, int16_t y,
             return;
         }
         ui.touch_down = false;
+        if(ui.slider_contact){ui.slider_contact=false;ui.touch_armed=true;return;}
         if (ui.reject_contact) {
             ui.reject_contact = false;
             ui.reject_confirm_motion = false;
@@ -2224,6 +2292,7 @@ void ui_touch_sample(bool touched, int16_t x, int16_t y,
         ui.start_y = y;
         ui.down_ms = monotonic_ms;
         ui.edge_contact = at_edge(y);
+        ui.slider_contact=brightness_hit(x,y);
         if (ui.view == UI_VIEW_INTERACTION && !ui.edge_contact && send_hit(x, y) &&
             (ui.interaction.can_request || ui.interaction.owns_token)) {
             ui.active_contact = ++ui.contact_sequence;
@@ -2412,6 +2481,7 @@ void ui_render(const AppState *state, const LocalSettings *local,
         ui.clock_view = NULL;
         ui.shown_clock_tick = INT64_MIN;
     }
+    sync_brightness_slider();
     if (ui.view == SETTINGS && !ui.keypad && !ui.style_dialog && !ui.status)
         build_settings();
     sync_settings_options();

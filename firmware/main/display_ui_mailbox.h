@@ -6,7 +6,7 @@
 #else
 #define DISPLAY_MB_ZERO {0}
 #endif
-#define DISPLAY_MB_PAYLOAD .state=0,.sequence=0,.request=DISPLAY_MB_ZERO,.result=UI_SUBMIT_UNAVAILABLE,.settings=DISPLAY_MB_ZERO,.night=DISPLAY_MB_ZERO
+#define DISPLAY_MB_PAYLOAD .state=0,.preview_pending=false,.preview_value=0,.sequence=0,.request=DISPLAY_MB_ZERO,.result=UI_SUBMIT_UNAVAILABLE,.settings=DISPLAY_MB_ZERO,.night=DISPLAY_MB_ZERO
 #ifdef ESP_PLATFORM
 #include "freertos/FreeRTOS.h"
 #define DISPLAY_MB_MUTEX portMUX_TYPE
@@ -25,17 +25,35 @@
 typedef struct {
     DISPLAY_MB_MUTEX lock;
     unsigned state; /* 0 idle,1 queued,2 app-loop processing,3 result awaiting UI */
+    bool preview_pending;
+    uint8_t preview_value; /* 0 cancel; latest value replaces prior unconsumed preview */
     uint32_t sequence;
     UiRequest request;
     UiSubmitResult result;
     KatmedDisplaySettings settings;
     KatmedNightCopyStatus night;
 } DisplayUiMailbox;
+static inline bool display_mb_preview(DisplayUiMailbox *m,uint8_t value)
+{
+    if(value>100)return false;
+    DISPLAY_MB_LOCK(m);
+    if(value && m->state){DISPLAY_MB_UNLOCK(m);return false;}
+    m->preview_value=value;m->preview_pending=true;
+    DISPLAY_MB_UNLOCK(m);return true;
+}
+static inline bool display_mb_take_preview(DisplayUiMailbox *m,uint8_t *value)
+{
+    DISPLAY_MB_LOCK(m);
+    const bool pending=m->preview_pending;
+    if(pending){*value=m->preview_value;m->preview_pending=false;}
+    DISPLAY_MB_UNLOCK(m);return pending;
+}
 static inline bool display_mb_submit(DisplayUiMailbox *m,const UiRequest *r)
 {
     DISPLAY_MB_LOCK(m);
     if(m->state){DISPLAY_MB_UNLOCK(m);return false;}
     if(++m->sequence==0)++m->sequence;
+    if(r->kind==UI_REQUEST_SET_BRIGHTNESS){m->preview_value=0;m->preview_pending=true;}
     m->request=*r;m->state=1;DISPLAY_MB_UNLOCK(m);return true;
 }
 static inline bool display_mb_take(DisplayUiMailbox *m,UiRequest *r,uint32_t *sequence)

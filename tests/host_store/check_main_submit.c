@@ -46,6 +46,18 @@ static unsigned fake_mesh_notifications;
 static AppEvent fake_shared_event;
 static uint32_t fake_random_counter=UINT32_C(0x12345678);
 static bool reset_marker;
+static uint8_t applied_brightness;
+static unsigned brightness_calls;
+static bool fail_brightness;
+BoardResult board_set_brightness(uint8_t value){
+    assert(value>=1 && value<=100);++brightness_calls;
+    if(fail_brightness)return BOARD_IO_ERROR;
+    applied_brightness=value;return BOARD_OK;
+}
+BoardResult board_set_backlight(bool awake){(void)awake;return BOARD_OK;}
+bool lvgl_port_lock(uint32_t timeout){(void)timeout;return true;}
+void lvgl_port_unlock(void){}
+void ui_set_display_awake(bool awake){(void)awake;}
 
 uint32_t esp_random(void) { return ++fake_random_counter; }
 void esp_fill_random(void *out,size_t length)
@@ -475,6 +487,51 @@ static void test_display_app_loop_bridge(void) {
     puts("N-M1 real Main bridge: callback no Store/Mesh; actual Store interleave getter nonblocking/coherent; exact result ownership PASS");
 }
 
+static void test_brightness_preview_bridge(void)
+{
+    committed_length=0;initialize_runtime();display_ui_publish(&runtime);
+    ClockSample now=clock_sample(runtime.boot_domain);
+    runtime.brightness_applied=100;applied_brightness=100;
+    unsigned before=writes,board_before=brightness_calls;
+    for(unsigned i=1;i<=70;++i)assert(brightness_preview(&runtime,(uint8_t)i));
+    assert(writes==before && brightness_calls==board_before && !runtime.brightness_preview);
+    display_ui_poll(&runtime);assert(runtime.brightness_preview==70);
+    display_policy_step(&runtime,&now);
+    assert(applied_brightness==70 && brightness_calls==board_before+1 && writes==before);
+    assert(runtime.store.record.display.brightness==100);
+    assert(brightness_preview(&runtime,0));display_ui_poll(&runtime);display_policy_step(&runtime,&now);
+    assert(applied_brightness==100 && writes==before);
+    assert(!brightness_preview(&runtime,101));
+    assert(brightness_preview(&runtime,45));display_ui_poll(&runtime);display_policy_step(&runtime,&now);
+    UiRequest request={.kind=UI_REQUEST_SET_BRIGHTNESS,.value.display_value=45};
+    assert(submit_ui_dispatch(&runtime,&request)==UI_SUBMIT_QUEUED);
+    assert(!brightness_preview(&runtime,50)); // pending commit must not accept a newer preview
+    display_ui_poll(&runtime);display_policy_step(&runtime,&now);
+    assert(writes==before+1 && applied_brightness==45 && !runtime.brightness_preview);
+    UiRequest done;UiSubmitResult result;
+    assert(display_mb_result(&display_mailbox,&done,&result) && result==UI_SUBMIT_COMMITTED);
+    initialize_runtime();assert(runtime.store.record.display.brightness==45); // durable reopen
+    display_ui_publish(&runtime);runtime.brightness_applied=45;before=writes;
+    assert(brightness_preview(&runtime,60));display_ui_poll(&runtime);display_policy_step(&runtime,&now);
+    assert(applied_brightness==60 && writes==before);
+    request.value.display_value=60;assert(submit_ui_dispatch(&runtime,&request)==UI_SUBMIT_QUEUED);
+    fail_commit=true;display_ui_poll(&runtime);fail_commit=false;display_policy_step(&runtime,&now);
+    assert(display_mb_result(&display_mailbox,&done,&result) && result==UI_SUBMIT_UNAVAILABLE);
+    assert(!runtime.brightness_preview && applied_brightness==45 && runtime.store.record.display.brightness==45);
+    // COMMIT_UNKNOWN does not become success through a preview or a matching value.
+    assert(brightness_preview(&runtime,80));display_ui_poll(&runtime);display_policy_step(&runtime,&now);
+    assert(!runtime.brightness_preview && applied_brightness==45);
+    request.value.display_value=45;assert(submit_ui_dispatch(&runtime,&request)==UI_SUBMIT_QUEUED);
+    display_ui_poll(&runtime);assert(display_mb_result(&display_mailbox,&done,&result) && result==UI_SUBMIT_UNAVAILABLE);
+    initialize_runtime();display_ui_publish(&runtime);before=writes;runtime.brightness_applied=45;
+    fail_brightness=true;request.value.display_value=80;
+    assert(submit_ui_dispatch(&runtime,&request)==UI_SUBMIT_QUEUED);display_ui_poll(&runtime);
+    assert(display_mb_result(&display_mailbox,&done,&result) && result==UI_SUBMIT_UNAVAILABLE && writes==before);
+    fail_brightness=false;
+    assert(!runtime.display_policy.wake_until_ms && !fake_mesh_notifications);
+    puts("brightness preview: app-loop sole Board/Store owner, coalescing, zero preview writes, one release commit, cancel/reopen/unknown/Board failure rollback PASS");
+}
+
 static void test_local_display_settings(void) {
     initialize_runtime();
     UiRequest dismiss={.kind=UI_REQUEST_DISMISS_BOOT};
@@ -507,7 +564,7 @@ static void test_local_display_settings(void) {
 
 int main(int argc, char **argv)
 {
-    if(argc==2 && !strcmp(argv[1],"night_bridge")){test_display_app_loop_bridge();return 0;}
+    if(argc==2 && !strcmp(argv[1],"night_bridge")){test_display_app_loop_bridge();test_brightness_preview_bridge();return 0;}
     if(argc==2 && !strcmp(argv[1],"night")){test_local_display_settings();return 0;}
     if (argc==2 && strcmp(argv[1],"orientation")==0) {test_orientation_mode();return 0;}
     if (argc==2 && strcmp(argv[1],"offline_confirm")==0) {

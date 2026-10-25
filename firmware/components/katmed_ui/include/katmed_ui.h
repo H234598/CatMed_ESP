@@ -106,6 +106,8 @@ typedef struct {
     bool orientation_auto_available;
     bool (*orientation_automatic)(void *context);
     void (*display_settings)(void *context, KatmedDisplaySettings *out);
+    /* Coalesced local preview intent only; 0 cancels, 1..100 previews. No Store/PWM here. */
+    bool (*brightness_preview)(void *context, uint8_t percent);
     void (*night_copy_status)(void *context, KatmedNightCopyStatus *out);
 } UiServices;
 

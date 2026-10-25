@@ -72,6 +72,7 @@ typedef struct {
     KatmedDisplayPolicy display_policy;
     bool backlight_applied;
     uint8_t brightness_applied;
+    uint8_t brightness_preview; /* app-loop owned; zero means no transient override */
     EventId boot;
     uint64_t boot_domain; /* Distinguishes independent monotonic clocks. */
     KatmedTime time;
@@ -648,6 +649,10 @@ static void display_settings(void *context,KatmedDisplaySettings *out)
 {
     (void)context;display_mb_snapshot(&display_mailbox,out,NULL);
 }
+static bool brightness_preview(void *context,uint8_t percent)
+{
+    (void)context;return display_mb_preview(&display_mailbox,percent);
+}
 static void night_copy_status(void *context,KatmedNightCopyStatus *out)
 {
     (void)context;display_mb_snapshot(&display_mailbox,NULL,out);
@@ -670,8 +675,13 @@ static void display_policy_step(Runtime *rt,const ClockSample *now)
     const uint16_t minute=valid ? (uint16_t)(local.hour*60+local.minute) : 0;
     const bool awake=katmed_display_evaluate(&rt->display_policy,settings,valid,minute,
                                             rt->state.alarm_active,now->monotonic_ms);
-    if(rt->brightness_applied!=settings.brightness && board_set_brightness(settings.brightness)==BOARD_OK)
-        rt->brightness_applied=settings.brightness;
+    if(!rt->store_ready || rt->reboot_required || store_get_status(&rt->store,NULL,NULL,NULL)!=STORE_OK)
+        rt->brightness_preview=0;
+    const uint8_t brightness=rt->brightness_preview ? rt->brightness_preview : settings.brightness;
+    if(rt->brightness_applied!=brightness){
+        if(board_set_brightness(brightness)==BOARD_OK)rt->brightness_applied=brightness;
+        else rt->brightness_preview=0; /* retry only the accepted value on the next policy step */
+    }
     if(rt->backlight_applied!=awake && lvgl_port_lock(10)){
         ui_set_display_awake(awake);lvgl_port_unlock();
         if(board_set_backlight(awake)==BOARD_OK)rt->backlight_applied=awake;
@@ -718,15 +728,23 @@ static UiSubmitResult submit_ui_with_id(void *context, const UiRequest *request,
     }
     if(request->kind>=UI_REQUEST_SET_BRIGHTNESS && request->kind<=UI_REQUEST_SET_NIGHT_END){
         KatmedDisplaySettings settings=rt->store.record.display;
+        const uint8_t previous_brightness=settings.brightness;
         if(request->kind==UI_REQUEST_SET_BRIGHTNESS){
             if(request->value.display_value<1 || request->value.display_value>100)return UI_SUBMIT_REJECTED;
             settings.brightness=(uint8_t)request->value.display_value;
+            if(rt->brightness_applied!=settings.brightness){
+                if(board_set_brightness(settings.brightness)!=BOARD_OK)return UI_SUBMIT_UNAVAILABLE;
+                rt->brightness_applied=settings.brightness;
+            }
         }else if(request->kind==UI_REQUEST_SET_NIGHT_ENABLED){
             if(request->value.display_value>1)return UI_SUBMIT_REJECTED;
             settings.night_enabled=request->value.display_value!=0;
         }else if(request->kind==UI_REQUEST_SET_NIGHT_START)settings.night_start=request->value.display_value;
         else settings.night_end=request->value.display_value;
         const StoreResult result=store_set_display(&rt->store,&settings);
+        if(request->kind==UI_REQUEST_SET_BRIGHTNESS && result!=STORE_OK && result!=STORE_DUPLICATE &&
+           board_set_brightness(previous_brightness)==BOARD_OK)
+            rt->brightness_applied=previous_brightness;
         return result==STORE_INVALID ? UI_SUBMIT_REJECTED :
             result==STORE_OK || result==STORE_DUPLICATE ? UI_SUBMIT_COMMITTED : UI_SUBMIT_UNAVAILABLE;
     }
@@ -892,8 +910,13 @@ static UiSubmitResult submit_ui_dispatch(void *context,const UiRequest *request)
 /* Sole consumer, on app_main before rendering; no UI lock held. */
 static void display_ui_poll(Runtime *rt)
 {
+    uint8_t preview;
+    if(display_mb_take_preview(&display_mailbox,&preview))
+        rt->brightness_preview=rt->store_ready && !rt->reboot_required &&
+            store_get_status(&rt->store,NULL,NULL,NULL)==STORE_OK ? preview : 0;
     UiRequest request;uint32_t sequence;
     if(display_mb_take(&display_mailbox,&request,&sequence)){
+        if(request.kind==UI_REQUEST_SET_BRIGHTNESS)rt->brightness_preview=0;
         UiSubmitResult result=submit_ui(rt,&request);
         display_ui_publish(rt);
         (void)display_mb_complete(&display_mailbox,sequence,result);
@@ -2119,6 +2142,7 @@ void app_main(void)
     const UiServices services = {
         .context = &runtime,
         .display_settings=display_settings,
+        .brightness_preview=brightness_preview,
         .night_copy_status=night_copy_status,
         .orientation_auto_available = orientation_auto_supported(),
         .orientation_automatic = orientation_automatic,
