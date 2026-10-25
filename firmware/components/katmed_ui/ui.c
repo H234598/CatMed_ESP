@@ -1316,7 +1316,12 @@ static void reset_execute(lv_event_t *event)
 
 static void reset_open(lv_event_t *event)
 {
-    if (!ui.screen || ui.state.alarm_active || ui.reset_dialog || !ui.services.reset_arm ||
+#if KATMED_APPSTORE_MAINTENANCE
+    const bool alarm_blocks = ui.state.alarm_active && ui.state.start_reason != START_BOOT;
+#else
+    const bool alarm_blocks = ui.state.alarm_active;
+#endif
+    if (!ui.screen || alarm_blocks || ui.reset_dialog || !ui.services.reset_arm ||
         !ui.services.reset_cancel) {
         show_feedback(T("Reset nicht verfügbar"));
         return;
@@ -1329,10 +1334,15 @@ static void reset_open(lv_event_t *event)
     lv_obj_set_style_pad_all(ui.reset_dialog, 12, 0);
     lv_obj_set_scrollable(ui.reset_dialog, false);
     lv_obj_set_flex_flow(ui.reset_dialog, LV_FLEX_FLOW_COLUMN);
+#if KATMED_APPSTORE_MAINTENANCE
+    label(ui.reset_dialog, T("C6 App-Testdaten-Wartung vorbereiten"), ui.width - 32);
+    label(ui.reset_dialog, T("Nur App-Testdaten: vier katmed-Schlüssel und zwei Mesh-Namensdateien. Andere Daten bleiben erhalten. RESET drücken, während diese Kachel offen ist."), ui.width - 32);
+#else
     label(ui.reset_dialog, T("Factory Reset vorbereiten"), ui.width - 32);
     label(ui.reset_dialog,
           T("Um den Factory Reset durchzuführen, bitte die RESET-Taste links oben auf der Rückseite des Displays drücken, während diese Kachel offen ist."),
           ui.width - 32);
+#endif
     lv_obj_t *cancel = button(ui.reset_dialog, T("Abbrechen"), ui.width - 36,
                               42, reset_cancel, NULL);
     lv_obj_add_event_cb(cancel, reset_dialog_press, LV_EVENT_PRESSED, NULL);
@@ -1347,9 +1357,13 @@ static void reset_open(lv_event_t *event)
 
 bool ui_reset_offer_from_web(void)
 {
+#if KATMED_APPSTORE_MAINTENANCE
+    return false;
+#else
     if (ui.reset_dialog) return false;
     reset_open(NULL);
     return ui.reset_stage == 1;
+#endif
 }
 
 void ui_reset_close_remote(void)
@@ -1396,7 +1410,11 @@ void ui_reset_show_warning(void)
     lv_obj_set_scroll_elastic(warning_view, false);
     lv_obj_set_scroll_momentum(warning_view, false);
     lv_obj_t *warning = label(warning_view,
+#if KATMED_APPSTORE_MAINTENANCE
+        T("WARNUNG: Nach Ihrer Bestätigung werden ausschließlich App-Testdaten gelöscht: katmed/state, mesh_history, names_ctl, names_view und zwei Mesh-Namensdateien. Bilder, Webzugang, Zertifikate und Gerätesicherheit bleiben erhalten. Ohne Bestätigung wird nichts gelöscht."),
+#else
         T("WARNUNG: Löscht WLAN, Laufzeittexte, Mesh, Alarm/Verlauf, Webzugang, Zertifikate/ACME, Uploads und Cache. Firmware und Standardbilder bleiben. In einem privaten Build bleiben einkompilierte private Vorgaben erhalten."),
+#endif
         ui.width - 40);
     lv_obj_set_style_text_color(warning, lv_color_white(), 0);
     lv_obj_set_style_text_font(warning, &katmed_font_12, 0);
@@ -1423,6 +1441,35 @@ void ui_reset_show_warning(void)
     lv_obj_add_event_cb(no, reset_dialog_press, LV_EVENT_PRESSED, NULL);
     lv_obj_move_foreground(ui.reset_dialog);
 }
+
+#if KATMED_APPSTORE_MAINTENANCE
+void ui_appmaint_show_status(unsigned status)
+{
+    static lv_obj_t *panel;
+    if (!ui.screen || status > 2) return;
+    if (panel) lv_obj_delete(panel);
+    panel = lv_obj_create(ui.screen);
+    lv_obj_set_size(panel, ui.width, ui.height);
+    lv_obj_center(panel);
+    lv_obj_set_style_bg_color(panel, lv_color_hex(0x172b38), 0);
+    lv_obj_set_style_bg_opa(panel, LV_OPA_COVER, 0);
+    lv_obj_set_style_pad_all(panel, 12, 0);
+    lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_scrollable(panel, false);
+    label(panel, T("C6 AppStore-Wartung"), ui.width - 32);
+    if (status == 0) {
+        label(panel, T("Lokale Vorbereitung möglich. Erst RESET, Warnung und ausdrückliche Bestätigung können die begrenzte Löschung starten."), ui.width - 32);
+        lv_obj_t *start = button(panel, T("Wartung vorbereiten"), ui.width - 36,
+                                  48, reset_open, NULL);
+        (void)start;
+    } else if (status == 1) {
+        label(panel, T("Wartung angehalten. Keine weitere Löschung und kein normaler Start. Prüfbericht erforderlich."), ui.width - 32);
+    } else {
+        label(panel, T("Wartung abgeschlossen. Gerät angehalten; kein automatischer Neustart."), ui.width - 32);
+    }
+    lv_obj_move_foreground(panel);
+}
+#endif
 
 /* Stable status rows avoid deleting/reallocating every label each second. */
 static lv_obj_t *status_label(uint32_t *next, const char *text, int width)
@@ -2068,10 +2115,24 @@ bool ui_lvgl_touch_allowed(bool down, int16_t x, int16_t y, bool valid, uint64_t
         ui.lv_start_x = x; ui.lv_start_y = y;
         ui.lv_slider_contact=brightness_hit(x,y);
         ui.lv_overlay_generation = ui.overlay_generation;
+#if KATMED_APPSTORE_MAINTENANCE
+        const bool maintenance_notice = ui.state.alarm_active &&
+            ui.state.start_reason == START_BOOT;
+#endif
         ui.lv_blocked = !ui.reset_stage &&
-            (ui.state.alarm_active || notice_kind() ||
+            (
+#if KATMED_APPSTORE_MAINTENANCE
+             (ui.state.alarm_active && !maintenance_notice) ||
+#else
+             ui.state.alarm_active ||
+#endif
+             notice_kind() ||
              ui.view == MORSE || ui.view == UI_VIEW_INTERACTION || at_edge(y) ||
+#if KATMED_APPSTORE_MAINTENANCE
+             (ui.view != SETTINGS && ui.view != UI_VIEW_STATUS && !maintenance_notice));
+#else
              (ui.view != SETTINGS && ui.view != UI_VIEW_STATUS));
+#endif
     }
     if (ui.lv_overlay_generation != ui.overlay_generation ||
         (!ui.lv_slider_contact && abs(x-ui.lv_start_x) >= 40 && abs(x-ui.lv_start_x) >= 2*abs(y-ui.lv_start_y)))

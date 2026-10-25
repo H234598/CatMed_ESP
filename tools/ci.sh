@@ -58,6 +58,8 @@ elif [[ "$mode" == host ]]; then
     mkdir -p "$host_bootstrap/bootstrap/bin"
     ln -sf "$(command -v cmake)" "$host_bootstrap/bootstrap/bin/cmake"
     ln -sf "$(command -v ninja)" "$host_bootstrap/bootstrap/bin/ninja"
+    bash tests/host_reset_physical/check.sh
+    KATMED_TOOLS_DIR="$host_bootstrap" bash tests/host_reset_physical/check_ui.sh
     KATMED_TOOLS_DIR="$host_bootstrap" bash tests/host_main/check_main_contact.sh
     bash tests/host_mesh/check_interaction.sh
     bash tests/host_mesh/check_admission.sh

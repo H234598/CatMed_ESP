@@ -47,6 +47,13 @@
 #include "katmed_ui.h"
 #include "usb_console.h"
 #include "display_ui_mailbox.h"
+#if KATMED_APPSTORE_MAINTENANCE
+#include "esp_partition.h"
+#include "appmaint_target_match.h"
+#if !CONFIG_NVS_ENCRYPTION || !CONFIG_IDF_TARGET_ESP32C6
+#error "AppStore maintenance requires encrypted C6 security profile"
+#endif
+#endif
 
 /* A transport integration can provide a bounded, private sink. A NULL sink
  * leaves the normal boot untouched; no snapshot is ever emitted implicitly. */
@@ -144,6 +151,11 @@ static bool katmed_runtime_reset_arm(void *context,bool from_web)
         return false;
     const bool ok=!rt->reset_active && !rt->reset_requested &&
         !rt->reset_warning_ready && !rt->reset_prepared &&
+#if KATMED_APPSTORE_MAINTENANCE
+        !from_web &&
+        katmed_reset_idf_maintenance_status(NULL) == KATMED_APPMAINT_ABSENT &&
+        katmed_reset_idf_maintenance_preflight() &&
+#endif
         (from_web ? rt->reset_web_offer : !rt->reset_web_offer) &&
         katmed_reset_idf_prepare();
     if (ok) {
@@ -241,6 +253,9 @@ bool katmed_runtime_reset_prepare(void *context,char *out,size_t capacity,size_t
     if (!rt || !reset_mutex || xSemaphoreTake(reset_mutex,pdMS_TO_TICKS(1000))!=pdTRUE)
         return false;
     const bool ok=rt->reset_warning_ready && !rt->reset_active && !rt->reset_requested &&
+#if KATMED_APPSTORE_MAINTENANCE
+        katmed_reset_idf_maintenance_status(NULL) == KATMED_APPMAINT_ABSENT &&
+#endif
         katmed_reset_confirmation_prepare(&rt->reset_confirmation,reset_random_bytes,NULL,
             monotonic_ms(),90000u,out,capacity,length);
     xSemaphoreGive(reset_mutex);
@@ -255,6 +270,9 @@ int katmed_runtime_reset_confirm(void *context,const char *token,size_t length)
     if (!rt || !reset_mutex || xSemaphoreTake(reset_mutex,pdMS_TO_TICKS(1000))!=pdTRUE)
         return 2;
     const bool valid=rt->reset_warning_ready &&
+#if KATMED_APPSTORE_MAINTENANCE
+        katmed_reset_idf_maintenance_status(NULL) == KATMED_APPMAINT_ABSENT &&
+#endif
         katmed_reset_confirmation_consume(&rt->reset_confirmation,
         token,length,monotonic_ms());
     if (valid) {
@@ -1987,8 +2005,122 @@ static bool render_ui(const AppState *state, const LocalSettings *local,
 }
 #endif
 
+#if KATMED_APPSTORE_MAINTENANCE && KATMED_FULL_STACK && KATMED_WITH_CORE
+static bool appmaint_target_and_existing_guard(void)
+{
+    uint8_t mac[6];
+    if (esp_read_mac(mac, ESP_MAC_EFUSE_FACTORY) != ESP_OK) return false;
+    if (!katmed_appmaint_target_matches(mac)) return false;
+    static const uint8_t marker[16] = {
+        'K','A','T','M','E','D','-','N','V','S','-','S','1',0,0,1
+    };
+    const esp_partition_t *guard = esp_partition_find_first(
+        ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_ANY, "nvs_guard");
+    uint8_t observed[sizeof(marker)];
+    return guard && guard->size >= sizeof(marker) &&
+        esp_partition_read_raw(guard, 0, observed, sizeof(observed)) == ESP_OK &&
+        memcmp(observed, marker, sizeof(marker)) == 0;
+}
+
+static void appmaint_status_ui(unsigned status)
+{
+    if (lvgl_port_lock(1000)) {
+        ui_appmaint_show_status(status);
+        lvgl_port_unlock();
+    }
+}
+
+static void appmaint_main(void)
+{
+    static const char *tag = "katmed_appmaint";
+    /* A failed identity or existing guard check reaches no NVS, FS or UI. */
+    if (!appmaint_target_and_existing_guard()) {
+        ESP_LOGE(tag, "target or existing guard unavailable; maintenance held");
+        return;
+    }
+    if (katmed_nvs_init() != ESP_OK) {
+        ESP_LOGE(tag, "existing encrypted NVS unavailable; maintenance held");
+        return;
+    }
+    uint8_t stage = 0;
+    KatmedAppmaintStatus status = katmed_reset_idf_maintenance_status(&stage);
+    if (status == KATMED_APPMAINT_PENDING) {
+        bool pending = true;
+        if (stage != KATMED_RESET_FILES || katmed_reset_idf_maintenance_preflight()) {
+            if (katmed_reset_resume(reset_backend(), &pending) && !pending)
+                status = katmed_reset_idf_maintenance_status(NULL);
+            else status = KATMED_APPMAINT_HOLD;
+        } else status = KATMED_APPMAINT_HOLD;
+    }
+    if (status == KATMED_APPMAINT_ABSENT) {
+        if (!katmed_reset_idf_take_preparation(&runtime.reset_warning_ready))
+            status = KATMED_APPMAINT_HOLD;
+        else runtime.reset_warning_ready = katmed_reset_warning_after_boot(
+            runtime.reset_warning_ready, reset_reason_allows_warning(esp_reset_reason()));
+    }
+    if (!boot_identity(&runtime.boot)) return;
+    reset_mutex = xSemaphoreCreateMutexStatic(&reset_mutex_storage);
+    if (!reset_mutex) return;
+    lv_display_t *display = NULL;
+    if (board_init(&display) != BOARD_OK || !display) { board_deinit(); return; }
+    runtime.local = (LocalSettings){.orientation=ORIENTATION_0,
+        .clock_style=DIGITAL_LARGE,.device=runtime.boot.device};
+    runtime.boot_domain = new_boot_domain(runtime.boot);
+    katmed_time_init(&runtime.time, runtime.boot_domain);
+    ClockSample now = clock_sample(runtime.boot_domain);
+    SharedSettings defaults = app_default_settings();
+    if (app_init(&runtime.state, &defaults, &now, runtime.boot, 0,
+                 katmed_images_catalog_sha256()) != APP_OK ||
+        board_set_orientation(runtime.local.orientation) != BOARD_OK ||
+        !lvgl_port_lock(1000)) { board_deinit(); return; }
+    const UiServices services = {
+        .context = &runtime,
+        .reset_arm = katmed_runtime_reset_arm,
+        .reset_cancel = katmed_runtime_reset_cancel,
+        .reset_prepare = katmed_runtime_reset_prepare,
+        .reset_confirm = katmed_runtime_reset_confirm,
+    };
+    ui_set_services(&services);
+    katmed_i18n_select(KATMED_LANG_DE);
+    board_set_touch_filter(ui_lvgl_touch_allowed);
+    ui_render(&runtime.state, &runtime.local, ui_current_view(), &now);
+    ui_appmaint_show_status(status == KATMED_APPMAINT_ABSENT ? 0 :
+                            status == KATMED_APPMAINT_COMPLETED ? 2 : 1);
+    if (status == KATMED_APPMAINT_ABSENT && runtime.reset_warning_ready)
+        ui_reset_show_warning();
+    lvgl_port_unlock();
+    if (board_touch_sampler_start() != BOARD_OK) return;
+    for (;;) {
+        vTaskDelay(pdMS_TO_TICKS(25));
+        if (status == KATMED_APPMAINT_ABSENT && reset_mutex &&
+            xSemaphoreTake(reset_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+            bool requested = runtime.reset_requested;
+            runtime.reset_requested = false;
+            if (requested) runtime.reset_active = true;
+            xSemaphoreGive(reset_mutex);
+            if (requested) {
+                bool pending = true;
+                if (katmed_reset_idf_maintenance_preflight() &&
+                    katmed_reset_begin(reset_backend()) &&
+                    katmed_reset_resume(reset_backend(), &pending) && !pending &&
+                    katmed_reset_idf_maintenance_status(NULL) == KATMED_APPMAINT_COMPLETED)
+                    status = KATMED_APPMAINT_COMPLETED;
+                else status = KATMED_APPMAINT_HOLD;
+                appmaint_status_ui(status == KATMED_APPMAINT_COMPLETED ? 2 : 1);
+            }
+        }
+        now = clock_sample(runtime.boot_domain);
+        (void)render_ui(&runtime.state, &runtime.local, &now, NULL, false, false);
+    }
+}
+#endif
+
 void app_main(void)
 {
+#if KATMED_APPSTORE_MAINTENANCE
+    appmaint_main();
+    return;
+#endif
 #if KATMED_FULL_STACK && KATMED_WITH_CORE
     static const char *tag = "katmed";
 #if CONFIG_NVS_ENCRYPTION

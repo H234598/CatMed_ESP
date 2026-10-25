@@ -25,3 +25,15 @@ target_compile_definitions(check_reset_ui PRIVATE LV_LVGL_H_INCLUDE_SIMPLE)
 target_compile_options(check_reset_ui PRIVATE -Wall -Wextra -Werror)
 target_compile_features(check_reset_ui PRIVATE cxx_std_17)
 target_link_libraries(check_reset_ui PRIVATE lvgl m)
+get_target_property(APPMAINT_UI_SOURCES check_reset_ui SOURCES)
+add_executable(check_appmaint_ui ${APPMAINT_UI_SOURCES})
+target_include_directories(check_appmaint_ui PRIVATE
+    "${ROOT}/firmware/boards" "${UI}/include"
+    "${ROOT}/firmware/components/katmed_core/include"
+    "${ROOT}/firmware/components/katmed_reset/include"
+    "${ROOT}/firmware/components/katmed_images/include")
+target_compile_definitions(check_appmaint_ui PRIVATE
+    LV_LVGL_H_INCLUDE_SIMPLE KATMED_APPSTORE_MAINTENANCE=1)
+target_compile_options(check_appmaint_ui PRIVATE -Wall -Wextra -Werror)
+target_compile_features(check_appmaint_ui PRIVATE cxx_std_17)
+target_link_libraries(check_appmaint_ui PRIVATE lvgl m)

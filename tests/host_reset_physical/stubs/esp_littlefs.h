@@ -1,0 +1,14 @@
+#ifndef TEST_ESP_LITTLEFS_H
+#define TEST_ESP_LITTLEFS_H
+#include <stdbool.h>
+#include "esp_err.h"
+typedef struct {
+    const char *base_path;
+    const char *partition_label;
+    bool format_if_mount_failed;
+    bool read_only;
+    bool dont_mount;
+    bool grow_on_mount;
+} esp_vfs_littlefs_conf_t;
+esp_err_t esp_vfs_littlefs_register(const esp_vfs_littlefs_conf_t *config);
+#endif

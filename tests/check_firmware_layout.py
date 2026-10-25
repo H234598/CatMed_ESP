@@ -16,6 +16,19 @@ spec.loader.exec_module(layout)
 
 class FirmwareLayoutTests(unittest.TestCase):
     @staticmethod
+    def app_image(project_name: str) -> bytes:
+        """Synthetic IDF image header and first DROM esp_app_desc_t."""
+        name = project_name.encode("ascii")
+        if len(name) >= 32:
+            raise ValueError("Synthetic project name is too long")
+        header = bytearray(24)
+        header[0:2] = b"\xe9\x01"
+        descriptor = bytearray(256)
+        struct.pack_into("<I", descriptor, 0, 0xABCD5432)
+        descriptor[48:80] = name.ljust(32, b"\0")
+        return bytes(header) + struct.pack("<II", 0x3C000000, len(descriptor)) + descriptor
+
+    @staticmethod
     def write_partition_fixture(csv_path: Path, binary_path: Path) -> None:
         """Build IDF-format entries from the checked-in CSV, without a firmware build."""
         subtypes = {"nvs": 2, "nvs_keys": 4, "phy": 1,
@@ -60,7 +73,7 @@ class FirmwareLayoutTests(unittest.TestCase):
                                      self.build / "partition_table/partition-table.bin")
         (self.build / "bootloader").mkdir()
         (self.build / "bootloader/bootloader.bin").write_bytes(b"test bootloader")
-        (self.build / "katmed_foundation.bin").write_bytes(b"test app")
+        (self.build / "katmed_foundation.bin").write_bytes(self.app_image("katmed_foundation"))
         (self.build / "user_images.bin").write_bytes(b"\xff" * 0x180000)
 
     def tearDown(self):
@@ -95,6 +108,44 @@ class FirmwareLayoutTests(unittest.TestCase):
         self.assertEqual(result["nvs_available_entries"], 756)
         self.assertGreater(result["app_free"], 0)
         self.assertEqual(result["image_free"], 0x1ca000 - 1232856)
+
+    def test_c6_normal_project_role(self):
+        self.config.write_text(self.config.read_text().replace(
+            "boards/c3.partitions.csv", "boards/c6.partitions.csv"))
+        self.write_partition_fixture(self.root / "firmware/boards/c6.partitions.csv",
+                                     self.build / "partition_table/partition-table.bin")
+        (self.build / "user_images.bin").write_bytes(b"\xff" * 0x580000)
+        result = layout.check_layout(self.root, "c6", self.build)
+        self.assertEqual(result["app_image"], "katmed_foundation.bin")
+
+    def test_c6_private_project_role(self):
+        self.security_fixture()
+        self.config.write_text(self.config.read_text().replace(
+            "boards/c3.security.partitions.csv", "boards/c6.security.partitions.csv"))
+        self.write_partition_fixture(self.root / "firmware/boards/c6.security.partitions.csv",
+                                     self.build / "partition_table/partition-table.bin")
+        (self.build / "user_images.bin").write_bytes(b"\xff" * 0x5ca000)
+        (self.build / "katmed_appmaint_c6.bin").write_bytes(self.app_image("katmed_appmaint_c6"))
+        result = layout.check_layout(self.root, "c6", self.build, True, "katmed_appmaint_c6.bin")
+        self.assertEqual(result["app_image"], "katmed_appmaint_c6.bin")
+
+    def test_normal_name_rejects_maintenance_project_role(self):
+        (self.build / "katmed_foundation.bin").write_bytes(self.app_image("katmed_appmaint_c6"))
+        with self.assertRaisesRegex(ValueError, "project role"):
+            layout.check_layout(self.root, "c3", self.build)
+
+    def test_missing_app_descriptor_rejected(self):
+        image = bytearray(self.app_image("katmed_foundation"))
+        image[32:36] = b"\0" * 4
+        (self.build / "katmed_foundation.bin").write_bytes(image)
+        with self.assertRaisesRegex(ValueError, "descriptor"):
+            layout.check_layout(self.root, "c3", self.build)
+
+    def test_truncated_app_descriptor_rejected(self):
+        (self.build / "katmed_foundation.bin").write_bytes(
+            self.app_image("katmed_foundation")[:100])
+        with self.assertRaisesRegex(ValueError, "descriptor"):
+            layout.check_layout(self.root, "c3", self.build)
 
     def test_security_profile_rejects_old_image_boundary(self):
         self.security_fixture()

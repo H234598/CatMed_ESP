@@ -146,6 +146,10 @@ void ui_shared_timeout(void);
 void ui_touch_sample(bool touched, int16_t x, int16_t y,
                      bool valid, uint64_t monotonic_ms);
 bool ui_reset_offer_from_web(void);
+#if KATMED_APPSTORE_MAINTENANCE
+/* Local private maintenance status; 0 ready, 1 hold, 2 completed. */
+void ui_appmaint_show_status(unsigned status);
+#endif
 void ui_reset_show_warning(void);
 void ui_reset_close_remote(void);
 UiView ui_current_view(void);

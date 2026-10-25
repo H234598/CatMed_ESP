@@ -13,7 +13,32 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 
-def check_layout(repo: Path, board: str, build: Path, security_profile: bool = False) -> dict:
+def require_app_project_role(app: Path, app_bytes: int, expected: str) -> None:
+    # IDF 6.1 places esp_app_desc_t at the start of the first DROM segment.
+    # These offsets match esp_image_header_t, esp_image_segment_header_t and
+    # esp_app_desc_t (also used by esptool image-info).
+    with app.open("rb") as source:
+        image_header = source.read(24)
+        segment_header = source.read(8)
+        descriptor = source.read(256)
+    if (len(image_header) != 24 or image_header[0] != 0xE9 or
+            not 1 <= image_header[1] <= 16):
+        raise ValueError("Invalid ESP app image header")
+    if len(segment_header) != 8 or len(descriptor) != 256:
+        raise ValueError("App descriptor missing or truncated")
+    _, segment_bytes = struct.unpack("<II", segment_header)
+    if segment_bytes < 256 or 32 + segment_bytes > app_bytes:
+        raise ValueError("App descriptor segment missing or truncated")
+    if struct.unpack_from("<I", descriptor)[0] != 0xABCD5432:
+        raise ValueError("App descriptor magic missing")
+    if descriptor[48:80] != expected.encode("ascii").ljust(32, b"\0"):
+        raise ValueError(f"App project role differs from selected image: expected {expected}")
+
+
+def check_layout(repo: Path, board: str, build: Path, security_profile: bool = False,
+                 app_image: str = "katmed_foundation.bin") -> dict:
+    if app_image == "katmed_appmaint_c6.bin" and (board != "c6" or not security_profile):
+        raise ValueError("AppStore maintenance image requires C6 security profile")
     # Existing target-local sdkconfig files survive a defaults change. Verify
     # both the input and the generated header consumed by the compiler.
     config = (build / "sdkconfig").read_text()
@@ -120,11 +145,13 @@ def check_layout(repo: Path, board: str, build: Path, security_profile: bool = F
     bootloader_bytes = (build / "bootloader" / "bootloader.bin").stat().st_size
     if bootloader_bytes > table_offset:
         raise ValueError("Bootloader overlaps partition table")
-    app = build / "katmed_foundation.bin"
+    app = build / app_image
     app_bytes = app.stat().st_size
     app_budget = partitions["factory"][1]
     if not 0 < app_bytes <= app_budget:
         raise ValueError(f"App size {app_bytes} exceeds budget {app_budget}")
+    expected_project = "katmed_appmaint_c6" if app_image == "katmed_appmaint_c6.bin" else "katmed_foundation"
+    require_app_project_role(app, app_bytes, expected_project)
     if "images" in partitions:
         raise ValueError("Obsolete separate image partition")
     image_partition = partitions["user_images"]
@@ -140,7 +167,7 @@ def check_layout(repo: Path, board: str, build: Path, security_profile: bool = F
     seed = build / "user_images.bin"
     if not seed.is_file() or seed.stat().st_size != image_partition[1]:
         raise ValueError("Built image filesystem size differs from partition")
-    return {"board": board, "security_profile": security_profile,
+    return {"board": board, "security_profile": security_profile, "app_image": app_image,
             "bootloader_bytes": bootloader_bytes,
             "app_bytes": app_bytes, "app_budget": app_budget,
             "app_free": app_budget - app_bytes, "image_bytes": image_bytes,
@@ -154,10 +181,13 @@ def main() -> None:
     parser.add_argument("board", choices=("c3", "c6"))
     parser.add_argument("--build-dir", type=Path)
     parser.add_argument("--security-profile", action="store_true")
+    parser.add_argument("--app-image", choices=("katmed_foundation.bin", "katmed_appmaint_c6.bin"),
+                        default="katmed_foundation.bin")
     args = parser.parse_args()
     repo = Path(__file__).resolve().parents[1]
     build = args.build_dir or repo / "firmware" / f"build-{args.board}"
-    print(json.dumps(check_layout(repo, args.board, build, args.security_profile), indent=2))
+    print(json.dumps(check_layout(repo, args.board, build, args.security_profile,
+                                  args.app_image), indent=2))
 
 
 if __name__ == "__main__":

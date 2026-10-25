@@ -900,7 +900,11 @@ int main(int argc, char **argv)
     AppState state = {0};
     katmed_i18n_select(KATMED_LANG_DE); /* Existing surface assertions use German source copy. */
     state.alarm_active = true;
+#if KATMED_APPSTORE_MAINTENANCE
+    state.start_reason = START_BOOT; /* Synthetic maintenance boot notice. */
+#else
     state.start_reason = START_SETTINGS; /* Synthetic fixture is a due reminder. */
+#endif
     state.image_id = 0;
     state.round.origin = (EventId){.device = 1, .epoch = 1, .sequence = 1};
     state.round.ordinal = 1;
@@ -909,6 +913,42 @@ int main(int argc, char **argv)
            "UI must supply the German image fallback label");
     report_memory("alarm-start");
     assert(ui_current_view() == ALARM);
+
+#if KATMED_APPSTORE_MAINTENANCE
+    {
+    services.reset_arm = reset_arm;
+    services.reset_cancel = reset_cancel;
+    services.reset_prepare = reset_prepare_warning;
+    services.reset_confirm = reset_confirm;
+    ui_set_services(&services);
+    lv_obj_t *screen = lv_screen_active();
+    assert(!ui_reset_offer_from_web());
+    ui_appmaint_show_status(0);
+    assert(find_label(screen, "C6 AppStore-Wartung"));
+    assert(ui_lvgl_touch_allowed(true, host.width / 2, host.height / 2, true, 100));
+    assert(ui_lvgl_touch_allowed(false, host.width / 2, host.height / 2, true, 101));
+    click_label(screen, "Wartung vorbereiten");
+    assert(host.reset_arms == 1 && host.reset_confirms == 0 && host.reset_marker);
+    assert(find_label_prefix(screen, "Nur App-Testdaten"));
+    ui_reset_close_remote();
+    reset_simulate_hardware_boot(&host, true);
+    assert(host.reset_warning && !host.reset_marker && host.reset_confirms == 0);
+    ui_reset_show_warning();
+    assert(find_label_prefix(screen, "WARNUNG: Nach Ihrer Bestätigung"));
+    lv_obj_t *confirm = lv_obj_get_parent(find_label(screen, "Ja, zurücksetzen"));
+    lv_obj_send_event(confirm, LV_EVENT_PRESSED, NULL);
+    lv_obj_send_event(confirm, LV_EVENT_CLICKED, NULL);
+    assert(host.reset_confirms == 1 && !host.reset_warning);
+    ui_appmaint_show_status(2);
+    assert(find_label_prefix(screen, "Wartung abgeschlossen"));
+    assert(!find_label(screen, "Wartung vorbereiten"));
+    lv_display_delete(display);
+    lv_deinit();
+    free(draw_buffer);
+    free(host.frame);
+    return 0;
+    }
+#endif
 
     /* A boot contact is discarded until release. */
     ui_touch_sample(true, 100, 100, true, 10);
