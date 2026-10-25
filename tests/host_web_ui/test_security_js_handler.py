@@ -75,6 +75,9 @@ static void script_free(void *p) {
     if (r->live) {inflateEnd(&r->stream); --live_streams;}
     --allocations; free(p);
 }
+/* The corruption copy is test data, not an inflater workspace. */
+static void *test_buffer_malloc(size_t size) { return malloc(size); }
+static void test_buffer_free(void *p) { free(p); }
 #define malloc script_malloc
 #define free script_free
 typedef int esp_err_t;
@@ -210,14 +213,15 @@ int main(void) {
         fail_inflate=false;
         const unsigned char *data = language ? _binary_i18n_js_start : _binary_app_js_start;
         size_t n = language ? (size_t)(_binary_i18n_js_end-data) : (size_t)(_binary_app_js_end-data);
-        unsigned char bad[40000]; CHECK(n<sizeof(bad)); memcpy(bad,data,n);
+        CHECK(n>=8);
+        unsigned char *bad=test_buffer_malloc(n); CHECK(bad); memcpy(bad,data,n);
         ScriptInflate *work=malloc(sizeof(*work)); CHECK(work);
         CHECK(script_inflate(work,bad,10,NULL)==ESP_FAIL);
         bad[0]=0; CHECK(script_inflate(work,bad,n,NULL)==ESP_FAIL); bad[0]=data[0];
         bad[n-8]^=1; CHECK(script_inflate(work,bad,n,NULL)==ESP_FAIL); bad[n-8]^=1;
         bad[n-4]^=1; CHECK(script_inflate(work,bad,n,NULL)==ESP_FAIL); bad[n-4]^=1;
         bad[n-1]=0xff; CHECK(script_inflate(work,bad,n,NULL)==ESP_FAIL);
-        free(work); CHECK(allocations==0 && live_streams==0);
+        free(work); test_buffer_free(bad); CHECK(allocations==0 && live_streams==0);
     }
     printf("both production handlers: full gzip/raw bytes, negotiation, headers and failure cleanup PASS (host workspace %zu)\n",peak_allocation);
     return 0;
