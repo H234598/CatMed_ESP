@@ -822,6 +822,9 @@ static void sync_settings_options(void)
 {
     lv_obj_t *matrix = ui.settings_options;
     if (!matrix) return;
+    /* btn_id_sel also belongs to LVGL's live press/release tracking. Publishing
+     * the accepted model while held must not replace the user's pending hit. */
+    if (lv_obj_is_pressed(matrix)) return;
     const unsigned current = ui.settings_menu == SETTINGS_ROTATION ?
         orientation_selection() : (unsigned)ui.state.settings.rotation;
     const unsigned count = ui.settings_menu == SETTINGS_ROTATION ?
@@ -839,8 +842,11 @@ static void sync_settings_options(void)
 
 static void option_selected(lv_event_t *event)
 {
-    lv_obj_t *matrix = lv_event_get_target(event);
-    uint32_t selected = lv_buttonmatrix_get_selected_button(matrix);
+    lv_obj_t *matrix = lv_event_get_current_target(event);
+    /* Native VALUE_CHANGED carries the button chosen for this event. Keep the
+     * existing explicit/programmatic selection path when no parameter exists. */
+    const uint32_t *button_id = lv_event_get_param(event);
+    uint32_t selected = button_id ? *button_id : lv_buttonmatrix_get_selected_button(matrix);
     bool orientation = (intptr_t)lv_event_get_user_data(event) != 0;
     UiRequest request = {0};
     if (orientation) {

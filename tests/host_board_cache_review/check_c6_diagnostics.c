@@ -58,12 +58,12 @@ int main(void) {
  imu_fault=0;imu_writes=0;init_orientation();assert(imu_dev && imu_writes==4);
  Orientation pose=ORIENTATION_270;assert(!board_auto_orientation(&pose));
  for(unsigned i=1;i<=5;++i)poll_orientation(i*100);
- assert(board_auto_orientation(&pose) && pose==ORIENTATION_0);
+ assert(board_auto_orientation(&pose) && pose==ORIENTATION_180);
  imu_x=-8192;imu_y=0;
  for(unsigned i=6;i<=10;++i)poll_orientation(i*100);
- assert(board_auto_orientation(&pose) && pose==ORIENTATION_270);
- imu_fault=1;poll_orientation(1100);assert(board_auto_orientation(&pose) && pose==ORIENTATION_270);
- imu_fault=0;imu_x=0;imu_z=8192;poll_orientation(1200);assert(board_auto_orientation(&pose) && pose==ORIENTATION_270);
+ assert(board_auto_orientation(&pose) && pose==ORIENTATION_90);
+ imu_fault=1;poll_orientation(1100);assert(board_auto_orientation(&pose) && pose==ORIENTATION_90);
+ imu_fault=0;imu_x=0;imu_z=8192;poll_orientation(1200);assert(board_auto_orientation(&pose) && pose==ORIENTATION_90);
 
  BoardTouchDiagnostics s=board_touch_diagnostics();assert(!s.init && !s.probe && !s.sequence && !s.transfer && !s.sample);
  for(init_fault=1;init_fault<=4;++init_fault) {

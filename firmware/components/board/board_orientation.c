@@ -15,11 +15,13 @@ bool board_orientation_update(BoardOrientationPolicy *s, bool ok,
         s->pending=false;
         return false;
     }
-    /* Sensor-to-logical-display basis: +Y => portrait, +X => 90 degrees.
-     * Physical four-pose acceptance remains required; these are LVGL rotations,
-     * not direct panel MADCTL commands or an observed hardware result. */
-    const Orientation pose=ay>ax ? (y>0 ? ORIENTATION_0 : ORIENTATION_180) :
-                                  (x>0 ? ORIENTATION_90 : ORIENTATION_270);
+    /* C6 QMI8658A mounting frame: the complete four-pose acceptance against
+     * manual0 established a 180-degree offset from the former sensor basis.
+     * Classify directly into display angles BEFORE all state comparisons:
+     * candidate and accepted must never mix sensor and display frames.
+     * Manual panel/touch angles and C3 do not use this sensor policy. */
+    const Orientation pose=ay>ax ? (y>0 ? ORIENTATION_180 : ORIENTATION_0) :
+                                  (x>0 ? ORIENTATION_270 : ORIENTATION_90);
     if (s->valid && pose==s->accepted) { s->pending=false; return false; }
     if (!s->pending || pose!=s->candidate || now<s->since_ms) {
         s->candidate=pose; s->since_ms=now; s->pending=true; return false;

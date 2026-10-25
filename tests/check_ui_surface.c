@@ -9,6 +9,7 @@
 #include "lvgl.h"
 #include "src/misc/lv_text_ap.h"
 #include "src/misc/lv_text_private.h"
+#include "src/widgets/buttonmatrix/lv_buttonmatrix_private.h"
 
 #include <assert.h>
 #include <math.h>
@@ -509,7 +510,74 @@ static void assert_option(lv_obj_t *matrix, unsigned selected, unsigned count)
                    LV_BUTTONMATRIX_CTRL_CHECKED) == (i == selected));
 }
 
-static int check_option_sync(int width, int height)
+static void check_rotation_pointer(lv_display_t *display, Host *host)
+{
+    option_local.orientation = ORIENTATION_180;
+    option_auto = false;
+    host->result = UI_SUBMIT_QUEUED;
+    ui_render(&option_model, &option_local, SETTINGS, &option_clock);
+    lv_obj_t *caption=find_control_caption(lv_screen_active(),"Rotation"); assert(caption);
+    lv_obj_scroll_to_view(lv_obj_get_parent(caption),LV_ANIM_OFF);
+    pointer_click(display,lv_obj_get_parent(caption));
+    lv_obj_t *matrix = find_matrix_with_first_button(lv_screen_active(), "0°");
+    assert(matrix);
+    lv_obj_scroll_to_y(lv_obj_get_parent(matrix), 0, LV_ANIM_OFF);
+    lv_obj_update_layout(lv_screen_active());
+    lv_area_t bounds;
+    lv_obj_get_coords(matrix, &bounds);
+    /* Read the real widget's layout, not a second implementation of hit testing. */
+    const lv_area_t row = ((lv_buttonmatrix_t *)matrix)->button_areas[0];
+    const int x0 = bounds.x1 + row.x1 + 2, x1 = bounds.x1 + row.x2 - 2;
+    const int y0 = bounds.y1 + row.y1 + 2, y1 = bounds.y1 + row.y2 - 2;
+    const lv_point_t points[] = {
+        {(x0+x1)/2,(y0+y1)/2}, {x0,(y0+y1)/2}, {x1,(y0+y1)/2},
+        {x0,y0}, {x1,y0}, {x0,y1}, {x1,y1}, {(x0+x1)/2,y0}, {(x0+x1)/2,y1},
+        {(x0+x1)/2,(y0+y1)/2} /* center held across publication too */
+    };
+    lv_indev_t *pointer = lv_indev_create(); assert(pointer);
+    lv_indev_set_type(pointer, LV_INDEV_TYPE_POINTER);
+    lv_indev_set_display(pointer, display);
+    lv_indev_set_read_cb(pointer, pointer_read);
+    for(unsigned i=0;i<sizeof(points)/sizeof(points[0]);++i) {
+        option_local.orientation=ORIENTATION_180;
+        ui_render(&option_model,&option_local,SETTINGS,&option_clock);
+        matrix=find_matrix_with_first_button(lv_screen_active(),"0°"); assert(matrix);
+        const int calls=host->submit_calls;
+        pointer_point=points[i]; pointer_down=true;
+        lv_indev_read(pointer);
+        assert(host->submit_calls==calls);
+        /* Real app-loop publication can occur while the finger is held.
+         * The immediate center tap is the reference; padding holds span renders. */
+        if(i) for(unsigned tick=0;tick<3;++tick) {
+            lv_tick_inc(25);
+            ui_render(&option_model,&option_local,SETTINGS,&option_clock);
+        }
+        pointer_down=false; lv_indev_read(pointer);
+        assert(host->submit_calls==calls+1);
+        assert(host->last_request.kind==UI_REQUEST_SET_ORIENTATION);
+        if(host->last_request.value.orientation!=ORIENTATION_0)
+            fprintf(stderr,"rotation pointer point %u delivered wrong intent %u\n",i,
+                    (unsigned)host->last_request.value.orientation);
+        assert(host->last_request.value.orientation==ORIENTATION_0);
+        assert(option_local.orientation==ORIENTATION_180); /* queued is not committed */
+        const UiRequest queued=host->last_request;
+        option_local.orientation=ORIENTATION_0;
+        ui_deferred_result(&queued,UI_SUBMIT_COMMITTED);
+        ui_render(&option_model,&option_local,SETTINGS,&option_clock);
+        matrix=find_matrix_with_first_button(lv_screen_active(),"0°"); assert(matrix);
+        assert_option(matrix,ORIENTATION_0,host->width==240 ? 4u : 5u);
+    }
+    const int before_cancel=host->submit_calls;
+    pointer_point=points[0];pointer_down=true;lv_indev_read(pointer);
+    pointer_point=(lv_point_t){0,0};lv_indev_read(pointer);
+    lv_tick_inc(25);ui_render(&option_model,&option_local,SETTINGS,&option_clock);
+    pointer_down=false;lv_indev_read(pointer);
+    assert(host->submit_calls==before_cancel); /* leave/drag must not invent a selection */
+    lv_indev_reset(pointer,NULL);lv_indev_delete(pointer);
+    puts("rotation hitarea: native pointer center/padding/corners, held-render, exact single queued intent PASS");
+}
+
+static int check_option_sync(int width, int height, bool hitarea_only)
 {
     Host host = {.width = width, .height = height, .result = UI_SUBMIT_PENDING_SHARED};
     lv_init();
@@ -528,6 +596,13 @@ static int check_option_sync(int width, int height)
     ui_set_services(&services);
     ui_render(&option_model, &option_local, SETTINGS, &option_clock);
     lv_obj_t *screen = lv_screen_active();
+    if(hitarea_only) {
+        services.orientation_auto_available=width!=240;
+        services.orientation_automatic=read_option_auto;
+        ui_set_services(&services);
+        check_rotation_pointer(lv_display_get_default(),&host);
+        return 0;
+    }
     click_label(screen, "Slideshow / playback order");
     lv_obj_t *matrix = find_matrix_with_first_button(screen, "Off"); assert(matrix);
     const unsigned before = option_model.settings.rotation;
@@ -639,6 +714,11 @@ static int check_option_sync(int width, int height)
     (void)ui_lvgl_touch_allowed(false,50,50,true,1001);
     puts("night UI: genuine controls, percent edit, explicit copy and complete wake-contact quarantine PASS");
     puts("option-sync: pending/rejected/accepted/external/orientation/navigation PASS");
+    settings_parent();
+    services.orientation_auto_available=width!=240;
+    services.orientation_automatic=read_option_auto;
+    ui_set_services(&services);
+    check_rotation_pointer(lv_display_get_default(),&host);
     return 0;
 }
 
@@ -706,7 +786,9 @@ static void text_shaping_allocation_failure(void)
 int main(int argc, char **argv)
 {
     if (argc == 4 && strcmp(argv[1], "option-sync") == 0)
-        return check_option_sync(atoi(argv[2]), atoi(argv[3]));
+        return check_option_sync(atoi(argv[2]), atoi(argv[3]), false);
+    if (argc == 4 && strcmp(argv[1], "rotation-hitarea") == 0)
+        return check_option_sync(atoi(argv[2]), atoi(argv[3]), true);
     assert(argc == 6);
     Host host = {.width = atoi(argv[1]), .height = atoi(argv[2]),
                  .result = UI_SUBMIT_COMMITTED, .reset_now_ms = 1000};
