@@ -128,7 +128,6 @@
     "Eingabe nach Drehung verworfen": "轮转后条目被丢弃",
     "Zeit nicht synchronisiert": "时间不同步",
     "Automatisch": "自动",
-    "Helligkeit: 1 bis 100 Prozent": "亮度：1 到 100 百分比",
     "Helligkeit": "亮度",
     "Nachtzeit HH:MM": "夜间时间 HH:MM",
     "Lokal gespeichert; Mesh-Bestätigungen prüfen": "已保存在本机；请检查网状网络确认",
@@ -141,9 +140,13 @@
     "Nachtbeginn HH:MM": "夜间开始 HH:MM",
     "Nachtende HH:MM": "夜间结束 HH:MM",
     "Setze Nachtmodus global auf allen Geräten im Mesh": "将夜间模式应用到网状网络中的所有设备",
-    "Helligkeit ändern": "更改亮度",
     "Nachtmodus einstellen": "设置夜间模式",
-    "Änderung vorgemerkt": "更改已排队"
+    "Änderung vorgemerkt": "更改已排队",
+    "Einrichtung aktiv: Mesh pausiert. Speichern oder Einrichtung verlassen startet den Normalbetrieb neu.": "设置进行中：Mesh 已暂停。保存或退出设置后将重启正常运行。",
+    "Einrichtung verlassen": "退出设置",
+    "Einrichtung verlassen und ein normaler Neustart löschen keine Daten.": "退出设置和正常重启不会删除数据。",
+    "Ersteinrichtung aktiv: Gruppe im Web einrichten oder offline verlassen. Ohne sichere Gruppe bleibt Mesh aus.": "初始设置已开启：在网页中配置群组，或离线退出设置。没有可信群组时 Mesh 保持关闭。",
+    "Einrichtung offline verlassen: Setup-AP aus. Mesh benötigt eine sichere Gruppe.": "已离线退出设置：设置热点已关闭。Mesh 需要可信群组。"
   },
   "web_static": {
     "KatMed · Einstellungen": "KatMed · 设置",
@@ -253,7 +256,10 @@
     "Nachtbeginn HH:MM": "夜间开始 HH:MM",
     "Nachtende HH:MM": "夜间结束 HH:MM",
     "Setze Nachtmodus global auf allen Geräten im Mesh": "将夜间模式应用到网状网络中的所有设备",
-    "Noch keine globale Nachtkopie": "尚未全局复制夜间模式"
+    "Noch keine globale Nachtkopie": "尚未全局复制夜间模式",
+    "Einrichtung aktiv: Mesh pausiert. Speichern oder Einrichtung verlassen startet den Normalbetrieb neu.": "设置进行中：Mesh 已暂停。保存或退出设置后将重启正常运行。",
+    "Einrichtung verlassen": "退出设置",
+    "Einrichtung verlassen und ein normaler Neustart löschen keine Daten.": "退出设置和正常重启不会删除数据。"
   },
   "web_dynamic": {
     "Gerät: {0}": "设备：{0}",
@@ -274,7 +280,6 @@
     "Gespeicherter HH:MM-Termin ist abgelaufen.": "保存的 HH:MM 预约已过期。",
     "Gespeicherter HH:MM-Termin konnte nach Neustart nicht übernommen werden.": "重新启动后无法接管已保存的 HH:MM 约会。",
     "Eingerichtet; Änderungen erfordern ausdrückliches Speichern.": "已配置；更改需要保存。",
-    "Ersteinrichtung; Betriebsart wählen.": "首次设置；请选择运行模式。",
     "Freigegeben: {0}": "已发布：{0}",
     "Freigegeben.": "已获批准。",
     "Kein Clientzertifikat freigegeben.": "没有共享客户端证书。",
@@ -349,6 +354,10 @@
     "Noch keine globale Nachtkopie": "尚未全局复制夜间模式",
     "Mesh-Ergebnis noch unbekannt": "网状网络结果仍未知",
     "Mesh: {0}/{1} bestätigt, {2} abgelehnt, {3} offen": "网状网络：{0}/{1} 已确认，{2} 已拒绝，{3} 待确认",
-    "Lokal gespeichert; Mesh-Bestätigungen prüfen": "已保存在本机；请检查网状网络确认"
+    "Lokal gespeichert; Mesh-Bestätigungen prüfen": "已保存在本机；请检查网状网络确认",
+    "Einrichtung verlassen. Das Gerät startet mit den gespeicherten Profilen neu.": "已退出设置。设备将使用已保存的配置重新启动。",
+    "Einrichtung konnte nicht verlassen werden. Zustand neu laden; Profile bleiben erhalten.": "无法退出设置。请重新加载状态；配置仍已保存。",
+    "Ersteinrichtung; Gruppe wählen oder Einrichtung offline verlassen. Ohne sichere Gruppe bleibt Mesh aus.": "初始设置：选择群组，或离线退出设置。没有可信群组时 Mesh 保持关闭。",
+    "Einrichtung verlassen. Das Gerät startet offline; Mesh benötigt eine sichere Gruppe. Fehlende Uhrzeit lokal einstellen.": "已退出设置。设备将离线启动；Mesh 需要可信群组。如无有效时间，请在本机设置。"
   }
 }

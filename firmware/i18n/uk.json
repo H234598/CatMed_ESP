@@ -128,7 +128,6 @@
     "Eingabe nach Drehung verworfen": "Запис скасовано після ротації",
     "Zeit nicht synchronisiert": "Час не синхронізовано",
     "Automatisch": "Автоматично",
-    "Helligkeit: 1 bis 100 Prozent": "Яскравість: від 1 до 100 відсотків",
     "Helligkeit": "Яскравість",
     "Nachtzeit HH:MM": "Нічний час HH:MM",
     "Lokal gespeichert; Mesh-Bestätigungen prüfen": "Збережено локально; перевірте підтвердження mesh",
@@ -141,9 +140,13 @@
     "Nachtbeginn HH:MM": "Початок ночі HH:MM",
     "Nachtende HH:MM": "Кінець ночі HH:MM",
     "Setze Nachtmodus global auf allen Geräten im Mesh": "Застосувати нічний режим до всіх пристроїв mesh",
-    "Helligkeit ändern": "Змінити яскравість",
     "Nachtmodus einstellen": "Налаштувати нічний режим",
-    "Änderung vorgemerkt": "Зміну поставлено в чергу"
+    "Änderung vorgemerkt": "Зміну поставлено в чергу",
+    "Einrichtung aktiv: Mesh pausiert. Speichern oder Einrichtung verlassen startet den Normalbetrieb neu.": "Налаштування активне: mesh призупинено. Збереження або вихід перезапускає звичайну роботу.",
+    "Einrichtung verlassen": "Вийти з налаштування",
+    "Einrichtung verlassen und ein normaler Neustart löschen keine Daten.": "Вихід із налаштування та звичайний перезапуск не стирають дані.",
+    "Ersteinrichtung aktiv: Gruppe im Web einrichten oder offline verlassen. Ohne sichere Gruppe bleibt Mesh aus.": "Початкове налаштування активне: налаштуйте групу у вебінтерфейсі або вийдіть офлайн. Без захищеної групи Mesh вимкнено.",
+    "Einrichtung offline verlassen: Setup-AP aus. Mesh benötigt eine sichere Gruppe.": "Вихід із налаштування офлайн: точку доступу вимкнено. Для Mesh потрібна захищена група."
   },
   "web_static": {
     "KatMed · Einstellungen": "KatMed · Налаштування",
@@ -253,7 +256,10 @@
     "Nachtbeginn HH:MM": "Початок ночі HH:MM",
     "Nachtende HH:MM": "Кінець ночі HH:MM",
     "Setze Nachtmodus global auf allen Geräten im Mesh": "Застосувати нічний режим до всіх пристроїв mesh",
-    "Noch keine globale Nachtkopie": "Глобальної копії нічного режиму ще немає"
+    "Noch keine globale Nachtkopie": "Глобальної копії нічного режиму ще немає",
+    "Einrichtung aktiv: Mesh pausiert. Speichern oder Einrichtung verlassen startet den Normalbetrieb neu.": "Налаштування активне: mesh призупинено. Збереження або вихід перезапускає звичайну роботу.",
+    "Einrichtung verlassen": "Вийти з налаштування",
+    "Einrichtung verlassen und ein normaler Neustart löschen keine Daten.": "Вихід із налаштування та звичайний перезапуск не стирають дані."
   },
   "web_dynamic": {
     "Gerät: {0}": "Пристрій: {0}",
@@ -274,7 +280,6 @@
     "Gespeicherter HH:MM-Termin ist abgelaufen.": "Термін збереженої зустрічі ГГ:ХХ минув.",
     "Gespeicherter HH:MM-Termin konnte nach Neustart nicht übernommen werden.": "Збережену зустріч ГГ:ХХ не вдалося прийняти після перезапуску.",
     "Eingerichtet; Änderungen erfordern ausdrückliches Speichern.": "Налаштовано; зміни треба зберегти.",
-    "Ersteinrichtung; Betriebsart wählen.": "Перше налаштування; виберіть режим.",
     "Freigegeben: {0}": "Випущено: {0}",
     "Freigegeben.": "Схвалено.",
     "Kein Clientzertifikat freigegeben.": "Немає спільних сертифікатів клієнта.",
@@ -349,6 +354,10 @@
     "Noch keine globale Nachtkopie": "Глобальної копії нічного режиму ще немає",
     "Mesh-Ergebnis noch unbekannt": "Результат mesh ще невідомий",
     "Mesh: {0}/{1} bestätigt, {2} abgelehnt, {3} offen": "Mesh: {0}/{1} підтверджено, {2} відхилено, {3} очікують",
-    "Lokal gespeichert; Mesh-Bestätigungen prüfen": "Збережено локально; перевірте підтвердження mesh"
+    "Lokal gespeichert; Mesh-Bestätigungen prüfen": "Збережено локально; перевірте підтвердження mesh",
+    "Einrichtung verlassen. Das Gerät startet mit den gespeicherten Profilen neu.": "Налаштування завершено. Пристрій перезапускається зі збереженими профілями.",
+    "Einrichtung konnte nicht verlassen werden. Zustand neu laden; Profile bleiben erhalten.": "Не вдалося вийти з налаштування. Оновіть стан; профілі збережені.",
+    "Ersteinrichtung; Gruppe wählen oder Einrichtung offline verlassen. Ohne sichere Gruppe bleibt Mesh aus.": "Початкове налаштування: виберіть групу або вийдіть офлайн. Без захищеної групи Mesh вимкнено.",
+    "Einrichtung verlassen. Das Gerät startet offline; Mesh benötigt eine sichere Gruppe. Fehlende Uhrzeit lokal einstellen.": "Налаштування завершено. Пристрій запускається офлайн; для Mesh потрібна захищена група. За потреби встановіть час локально."
   }
 }

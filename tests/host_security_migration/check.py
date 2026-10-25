@@ -110,7 +110,7 @@ class MigrationContract(unittest.TestCase):
         self.assertEqual(len(self.state), 4096)
         decoded = json.loads(subprocess.run([str(self.store_codec)], input=self.state,
                                             stdout=subprocess.PIPE, check=True).stdout)
-        self.assertEqual(decoded["schema"], 14)
+        self.assertEqual(decoded["schema"], 15)
         self.assertEqual(decoded["language"], 1)  # synthetic German selection
         self.assertEqual(decoded["wifi_profile_count"], 4)
         self.assertEqual(decoded["mesh_name_count"], 64)
@@ -181,7 +181,7 @@ class MigrationContract(unittest.TestCase):
         self.assertEqual(self.run_tool("import-stage", self.package, self.staged).returncode, 0)
         self.assertEqual((self.package / "nvs/katmed/state").read_bytes(), old_state)
         migrated = (self.staged / "nvs/katmed/state").read_bytes()
-        self.assertEqual(migrated[4], 14)
+        self.assertEqual(migrated[4], 15)
         self.assertEqual(len(migrated), 4096)
         self.assertEqual(migrated[12:-32], old_state[12:])
         self.assertEqual(migrated[-31:-28], b"\x00\x00\x00")  # Online, no setup request
@@ -204,7 +204,7 @@ class MigrationContract(unittest.TestCase):
         self.assertEqual(self.run_tool("import-stage", self.package, self.staged).returncode, 0)
         self.assertEqual((self.package / "nvs/katmed/state").read_bytes(), old_state)
         current = (self.staged / "nvs/katmed/state").read_bytes()
-        self.assertEqual(current[4], 14)
+        self.assertEqual(current[4], 15)
         self.assertEqual(current[12:-31], old_state[12:])
         self.assertEqual(current[-32:-28], b"\x01\x00\x00\x00")
         self.assertEqual((self.staged / "nvs/katmed/mesh_history").read_bytes(), self.history)
@@ -219,7 +219,7 @@ class MigrationContract(unittest.TestCase):
         self.assertEqual(self.run_tool("export", self.source, self.package).returncode, 0)
         self.assertEqual(self.run_tool("import-stage", self.package, self.staged).returncode, 0)
         current = (self.staged / "nvs/katmed/state").read_bytes()
-        self.assertEqual(current[4], 14)
+        self.assertEqual(current[4], 15)
         self.assertEqual(len(current), length + 29)
         self.assertEqual(current[12:-29], old_state[12:])
         self.assertEqual(current[-29], 0)
@@ -237,7 +237,7 @@ class MigrationContract(unittest.TestCase):
         self.assertEqual(self.run_tool("import-stage", self.package, self.staged).returncode, 0)
         current = (self.staged / "nvs/katmed/state").read_bytes()
         self.assertEqual(len(current), 4096)
-        self.assertEqual(current[4], 14)
+        self.assertEqual(current[4], 15)
         self.assertEqual(current[12:-28], old_state[12:])
         self.assertEqual(current[-28], 100)  # brightness100, night disabled
         times = int.from_bytes(current[-27:-24], "little")
@@ -261,7 +261,7 @@ class MigrationContract(unittest.TestCase):
         self.assertFalse(self.package.exists())
 
     def test_current_network_fields_rejected_with_valid_crc(self):
-        for name, offset, invalid in (("mode", -31, 3), ("setup", -30, 2), ("manual", -29, 2)):
+        for name, offset, invalid in (("mode", -31, 3), ("setup", -30, 4), ("manual", -29, 2)):
             with self.subTest(field=name):
                 state = bytearray(self.state)
                 state[offset] = invalid
@@ -279,7 +279,7 @@ class MigrationContract(unittest.TestCase):
         self.assertEqual(self.run_tool("import-stage", self.package, self.staged).returncode, 0)
         self.assertEqual((self.package / "nvs/katmed/state").read_bytes(), previous_state)
         canonical = (self.staged / "nvs/katmed/state").read_bytes()
-        self.assertEqual(canonical[4], 14)
+        self.assertEqual(canonical[4], 15)
         decoded = json.loads(subprocess.run([str(self.store_codec)], input=canonical,
                                             stdout=subprocess.PIPE, check=True).stdout)
         self.assertEqual(decoded["mesh_name_count"], 64)
@@ -300,7 +300,7 @@ class MigrationContract(unittest.TestCase):
                 self.assertEqual(self.run_tool("import-stage", package, staged).returncode, 0)
                 self.assertEqual((package / "nvs/katmed/state").read_bytes(), previous_state)
                 canonical = (staged / "nvs/katmed/state").read_bytes()
-                self.assertEqual(canonical[4], 14)
+                self.assertEqual(canonical[4], 15)
                 decoded = json.loads(subprocess.run([str(self.store_codec)], input=canonical,
                                                     stdout=subprocess.PIPE, check=True).stdout)
                 self.assertEqual(decoded["language"], 0)

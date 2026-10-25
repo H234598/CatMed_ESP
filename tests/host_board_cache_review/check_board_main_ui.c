@@ -176,17 +176,6 @@ static lv_obj_t *find_matrix(lv_obj_t *parent, const char *text, uint32_t *butto
     }
     return NULL;
 }
-static lv_obj_t *find_caption(lv_obj_t *parent, const char *text)
-{
-    if (lv_obj_check_type(parent, &lv_label_class) &&
-        lv_obj_check_type(lv_obj_get_parent(parent), &lv_button_class) &&
-        strcmp(lv_label_get_text(parent), text) == 0) return parent;
-    for (uint32_t i = 0; i < lv_obj_get_child_count(parent); ++i) {
-        lv_obj_t *found = find_caption(lv_obj_get_child(parent, i), text);
-        if (found) return found;
-    }
-    return NULL;
-}
 static lv_obj_t *find_slider(lv_obj_t *parent)
 {
     if (lv_obj_check_type(parent, &lv_slider_class)) return parent;
@@ -198,24 +187,17 @@ static lv_obj_t *find_slider(lv_obj_t *parent)
 }
 static void check_brightness_release(uint16_t target)
 {
-    lv_obj_t *caption = find_caption(lv_screen_active(), "Helligkeit ändern");
-    assert(caption);
-    lv_obj_t *button = lv_obj_get_parent(caption);
-    lv_obj_scroll_to_view(button, LV_ANIM_OFF);
-    lv_obj_scroll_by(lv_obj_get_parent(button), 0, -96, LV_ANIM_OFF);
-    lv_obj_update_layout(lv_screen_active());
-    lv_area_t area;
-    lv_obj_get_coords(button, &area);
-    const int bx = (area.x1 + area.x2) / 2, by = (area.y1 + area.y2) / 2;
-    assert(by > 24 && by < LCD_HEIGHT - 24);
-    step(false, bx, by, false, false, true);
-    step(true, bx, by, false, false, true);
-    step(false, bx, by, false, false, true);
     lv_obj_t *slider = find_slider(lv_screen_active());
     assert(slider);
     lv_obj_update_layout(lv_screen_active());
+    lv_area_t area;
     lv_obj_get_coords(slider, &area);
+    lv_obj_scroll_by(lv_obj_get_parent(slider),0,
+        LCD_HEIGHT/2-(area.y1+area.y2)/2,LV_ANIM_OFF);
+    lv_obj_update_layout(lv_screen_active());
+    lv_obj_get_coords(slider,&area);
     const int y = (area.y1 + area.y2) / 2;
+    assert(y > 0 && y < LCD_HEIGHT);
     const int from = area.x1 + 12;
     step(false, from, y, false, false, true);
     step(true, from, y, false, false, true);

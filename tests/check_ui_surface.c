@@ -605,7 +605,11 @@ static void check_rotation_pointer(lv_display_t *display, Host *host)
 static uint16_t drag_brightness(lv_display_t *display,Host *host,bool right)
 {
     lv_obj_t *slider=find_slider(lv_screen_active());assert(slider);
+    lv_obj_scroll_to_view(slider,LV_ANIM_OFF);
     lv_obj_update_layout(lv_screen_active());lv_area_t area;lv_obj_get_coords(slider,&area);
+    lv_obj_scroll_by(lv_obj_get_parent(slider),0,
+        host->height/2-(area.y1+area.y2)/2,LV_ANIM_OFF);
+    lv_obj_update_layout(lv_screen_active());lv_obj_get_coords(slider,&area);
     const int calls=host->submit_calls;const unsigned previews=host->preview_calls;
     const uint8_t stored=host->display_percent;
     const int y=(area.y1+area.y2)/2,span=area.x2-area.x1;
@@ -749,7 +753,8 @@ static int check_option_sync(int width, int height, bool hitarea_only)
     assert(find_label(screen,arabic_name)); // native shaping is required even under English UI
     settings_parent();
     calls=host.submit_calls;host.display_percent=37;host.result=UI_SUBMIT_QUEUED;
-    click_label(screen,"Change brightness");
+    ui_render(&option_model,&option_local,SETTINGS,&option_clock);
+    assert(!find_label(screen,"Change brightness") && !find_label(screen,"Cancel"));
     assert(find_slider(screen) && host.submit_calls==calls);
     assert(lv_slider_get_min_value(find_slider(screen))==1 && lv_slider_get_max_value(find_slider(screen))==100);
     assert(lv_slider_get_value(find_slider(screen))==37 && find_label(screen,"37%"));
@@ -760,8 +765,8 @@ static int check_option_sync(int width, int height, bool hitarea_only)
     host.display_percent=(uint8_t)wanted;ui_deferred_result(&queued,UI_SUBMIT_COMMITTED);
     assert(!lv_obj_has_state(find_slider(screen),LV_STATE_DISABLED));
     assert(lv_slider_get_value(find_slider(screen))==wanted && find_label(screen,"Saved"));
-    click_label(screen,"Cancel");click_label(screen,"Change brightness");
-    assert(lv_slider_get_value(find_slider(screen))==wanted); /* reopen accepted value */
+    assert(lv_obj_get_parent(find_slider(screen))!=screen);
+    assert(lv_slider_get_value(find_slider(screen))==wanted); /* inline accepted value */
     host.result=UI_SUBMIT_UNAVAILABLE;
     (void)drag_brightness(lv_display_get_default(),&host,false);
     assert(lv_slider_get_value(find_slider(screen))==wanted); /* rollback, not saved */
@@ -772,7 +777,6 @@ static int check_option_sync(int width, int height, bool hitarea_only)
     assert(lv_slider_get_value(find_slider(screen))==wanted &&
            !lv_obj_has_state(find_slider(screen),LV_STATE_DISABLED));
     (void)drag_brightness(lv_display_get_default(),&host,false);queued=host.last_request;
-    click_label(screen,"Cancel");
     click_label(screen,"Configure night mode");
     host.result=UI_SUBMIT_COMMITTED;
     calls=host.submit_calls;click_label(screen,"Enable night mode");
@@ -783,7 +787,32 @@ static int check_option_sync(int width, int height, bool hitarea_only)
     host.display_percent=(uint8_t)queued.value.display_value;ui_deferred_result(&queued,UI_SUBMIT_COMMITTED);
     assert(find_label(screen,"Night time HH:MM") && host.submit_calls==calls);
     click_label(screen,"Cancel");
-    puts("brightness slider: native drag both ways, held render, percent, one release intent, queued/deferred/busy rollback/reopen/gesture capture PASS");
+    settings_parent();
+    services.network_status=network_status;ui_set_services(&services);
+    host.network=(UiNetworkStatus){.configured=true,.setup_open=true};
+    strcpy(host.network.setup_ssid,"synthetic-setup");
+    strcpy(host.network.setup_password,"synthetic-code");
+    ui_render(&option_model,&option_local,CLOCK,&option_clock);
+    ui_render(&option_model,&option_local,SETTINGS,&option_clock);
+    assert(find_label(screen,"Setup active: mesh paused. Saving or leaving setup restarts normal operation."));
+    assert(find_label(screen,"Leave setup") && !find_label(screen,"Open setup"));
+    assert(find_label(screen,"Leaving setup and a normal restart do not erase data."));
+    host.result=UI_SUBMIT_COMMITTED;
+    click_label(screen,"Leave setup");
+    assert(host.last_request.kind==UI_REQUEST_EXIT_SETUP);
+    host.network.configured=false;
+    ui_render(&option_model,&option_local,CLOCK,&option_clock);
+    ui_render(&option_model,&option_local,SETTINGS,&option_clock);
+    assert(find_label(screen,"Initial setup active: configure a group on the web page or leave setup offline. Mesh stays off without a trusted group."));
+    assert(find_label(screen,"Leave setup"));
+    click_label(screen,"Leave setup");
+    assert(host.last_request.kind==UI_REQUEST_EXIT_SETUP);
+    host.network.setup_open=false;host.network.offline_setup_exited=true;
+    ui_render(&option_model,&option_local,CLOCK,&option_clock);
+    ui_render(&option_model,&option_local,SETTINGS,&option_clock);
+    assert(find_label(screen,"Setup left offline: setup AP off. Mesh needs a trusted group."));
+    assert(find_label(screen,"Open setup") && !find_label(screen,"Leave setup"));
+    puts("brightness slider: inline scrollable settings, native drag both ways, held render, percent, one release intent, queued/deferred/busy rollback/gesture capture PASS");
     ui_set_display_awake(false);
     assert(!ui_lvgl_touch_allowed(true,50,50,true,1000));
     ui_set_display_awake(true);
@@ -798,6 +827,12 @@ static int check_option_sync(int width, int height, bool hitarea_only)
     services.orientation_automatic=read_option_auto;
     ui_set_services(&services);
     check_rotation_pointer(lv_display_get_default(),&host);
+    host.network.manual_clock_required=false;
+    ui_render(&option_model,&option_local,CLOCK,&option_clock);
+    assert(!find_label(screen,"YYYYMMDDHHMM Berlin"));
+    host.network.manual_clock_required=true;
+    ui_render(&option_model,&option_local,CLOCK,&option_clock);
+    assert(ui_current_view()==SETTINGS && find_label(screen,"YYYYMMDDHHMM Berlin"));
     return 0;
 }
 
@@ -1579,18 +1614,29 @@ int main(int argc, char **argv)
     lv_mem_monitor_t before_cycles, after_cycles;
     swipe(35, 185, 2500);
     cycle_views(screen);
+    size_t minimum_free_before=SIZE_MAX,minimum_free_after=SIZE_MAX;
+    for (int i = 0; i < 50; ++i) {
+        cycle_views(screen);
+        lv_mem_monitor(&before_cycles);
+        if(before_cycles.free_size<minimum_free_before)
+            minimum_free_before=before_cycles.free_size;
+    }
     lv_mem_monitor(&before_cycles);
 #ifdef KATMED_SURFACE_ALLOC_ACCOUNTING
     size_t requested_count_before, requested_bytes_before;
     surface_live_requests(&requested_count_before, &requested_bytes_before);
     assert(requested_count_before == before_cycles.used_cnt);
 #endif
-    for (int i = 0; i < 50; ++i) cycle_views(screen);
+    for (int i = 0; i < 50; ++i) {
+        cycle_views(screen);
+        lv_mem_monitor(&after_cycles);
+        if(after_cycles.free_size<minimum_free_after)
+            minimum_free_after=after_cycles.free_size;
+    }
     lv_mem_monitor(&after_cycles);
-    if (after_cycles.free_size < before_cycles.free_size)
-        fprintf(stderr, "cycle memory before=%zu after=%zu delta=%zu\n",
-                before_cycles.free_size, after_cycles.free_size,
-                before_cycles.free_size - after_cycles.free_size);
+    if (minimum_free_after < minimum_free_before)
+        fprintf(stderr, "cycle minimum free before=%zu after=%zu\n",
+                minimum_free_before,minimum_free_after);
 #ifdef KATMED_SURFACE_ALLOC_ACCOUNTING
     size_t requested_count_after, requested_bytes_after;
     surface_live_requests(&requested_count_after, &requested_bytes_after);
@@ -1598,7 +1644,7 @@ int main(int argc, char **argv)
     assert(requested_count_after <= requested_count_before);
     assert(requested_bytes_after <= requested_bytes_before);
 #else
-    assert(after_cycles.free_size >= before_cycles.free_size);
+    assert(minimum_free_after >= minimum_free_before);
 #endif
 
     /* A direct view switch must free the old menu before creating the clock. */

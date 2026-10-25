@@ -128,7 +128,6 @@
     "Eingabe nach Drehung verworfen": "Entry discarded after rotation",
     "Zeit nicht synchronisiert": "Time not synchronized",
     "Automatisch": "Automatic",
-    "Helligkeit: 1 bis 100 Prozent": "Brightness: 1 to 100 percent",
     "Helligkeit": "Brightness",
     "Nachtzeit HH:MM": "Night time HH:MM",
     "Lokal gespeichert; Mesh-Bestätigungen prüfen": "Saved locally; check mesh acknowledgements",
@@ -141,9 +140,13 @@
     "Nachtbeginn HH:MM": "Night starts HH:MM",
     "Nachtende HH:MM": "Night ends HH:MM",
     "Setze Nachtmodus global auf allen Geräten im Mesh": "Set night mode globally on all devices in the mesh",
-    "Helligkeit ändern": "Change brightness",
     "Nachtmodus einstellen": "Configure night mode",
-    "Änderung vorgemerkt": "Change queued"
+    "Änderung vorgemerkt": "Change queued",
+    "Einrichtung aktiv: Mesh pausiert. Speichern oder Einrichtung verlassen startet den Normalbetrieb neu.": "Setup active: mesh paused. Saving or leaving setup restarts normal operation.",
+    "Einrichtung verlassen": "Leave setup",
+    "Einrichtung verlassen und ein normaler Neustart löschen keine Daten.": "Leaving setup and a normal restart do not erase data.",
+    "Ersteinrichtung aktiv: Gruppe im Web einrichten oder offline verlassen. Ohne sichere Gruppe bleibt Mesh aus.": "Initial setup active: configure a group on the web page or leave setup offline. Mesh stays off without a trusted group.",
+    "Einrichtung offline verlassen: Setup-AP aus. Mesh benötigt eine sichere Gruppe.": "Setup left offline: setup AP off. Mesh needs a trusted group."
   },
   "web_static": {
     "KatMed · Einstellungen": "KatMed · Settings",
@@ -253,7 +256,10 @@
     "Nachtbeginn HH:MM": "Night starts HH:MM",
     "Nachtende HH:MM": "Night ends HH:MM",
     "Setze Nachtmodus global auf allen Geräten im Mesh": "Set night mode globally on all devices in the mesh",
-    "Noch keine globale Nachtkopie": "No global night copy yet"
+    "Noch keine globale Nachtkopie": "No global night copy yet",
+    "Einrichtung aktiv: Mesh pausiert. Speichern oder Einrichtung verlassen startet den Normalbetrieb neu.": "Setup active: mesh paused. Saving or leaving setup restarts normal operation.",
+    "Einrichtung verlassen": "Leave setup",
+    "Einrichtung verlassen und ein normaler Neustart löschen keine Daten.": "Leaving setup and a normal restart do not erase data."
   },
   "web_dynamic": {
     "Gerät: {0}": "Device: {0}",
@@ -274,7 +280,6 @@
     "Gespeicherter HH:MM-Termin ist abgelaufen.": "The saved HH:MM due time has expired.",
     "Gespeicherter HH:MM-Termin konnte nach Neustart nicht übernommen werden.": "The saved HH:MM due time could not be restored after restart.",
     "Eingerichtet; Änderungen erfordern ausdrückliches Speichern.": "Configured; changes require explicit save.",
-    "Ersteinrichtung; Betriebsart wählen.": "Initial setup; choose an operating mode.",
     "Freigegeben: {0}": "Approved: {0}",
     "Freigegeben.": "Approved.",
     "Kein Clientzertifikat freigegeben.": "No client certificate approved.",
@@ -349,6 +354,10 @@
     "Noch keine globale Nachtkopie": "No global night copy yet",
     "Mesh-Ergebnis noch unbekannt": "Mesh result still unknown",
     "Mesh: {0}/{1} bestätigt, {2} abgelehnt, {3} offen": "Mesh: {0}/{1} acknowledged, {2} rejected, {3} pending",
-    "Lokal gespeichert; Mesh-Bestätigungen prüfen": "Saved locally; check mesh acknowledgements"
+    "Lokal gespeichert; Mesh-Bestätigungen prüfen": "Saved locally; check mesh acknowledgements",
+    "Einrichtung verlassen. Das Gerät startet mit den gespeicherten Profilen neu.": "Setup exited. The device restarts with saved profiles.",
+    "Einrichtung konnte nicht verlassen werden. Zustand neu laden; Profile bleiben erhalten.": "Could not leave setup. Reload status; profiles remain saved.",
+    "Ersteinrichtung; Gruppe wählen oder Einrichtung offline verlassen. Ohne sichere Gruppe bleibt Mesh aus.": "Initial setup: choose a group or leave setup offline. Mesh stays off without a trusted group.",
+    "Einrichtung verlassen. Das Gerät startet offline; Mesh benötigt eine sichere Gruppe. Fehlende Uhrzeit lokal einstellen.": "Setup exited. The device starts offline; Mesh needs a trusted group. Set the time locally if it is missing."
   }
 }

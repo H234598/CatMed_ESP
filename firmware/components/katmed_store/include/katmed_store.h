@@ -151,6 +151,7 @@ typedef struct {
     uint8_t wifi_profile_count;
     uint32_t next_wifi_profile_id;
     bool setup_requested; /* Explicit local reopening; never inferred from missing UTC/SSID. */
+    bool setup_dismissed; /* v15: explicit Exit on an unconfigured device; first boot remains onboarding. */
     uint8_t language; /* v11: local presentation preference, English on legacy records. */
     KatmedDisplaySettings display; /* v14 local only, never medical/shared settings. */
     EventId last_night_copy; /* Last explicitly applied protected copy; preserves later local overrides on retry. */
@@ -269,6 +270,7 @@ StoreResult store_usb_handle_line_with_wifi_defaults(
     const uint8_t *default_password, size_t default_password_length,
     char *reply, size_t reply_capacity);
 StoreResult store_request_setup(Store *store);
+StoreResult store_exit_setup(Store *store);
 StoreResult store_save_setup(Store *store, const StoreProvision *wanted);
 StoreResult store_wifi_profiles_load(const Store *store, StoreWifiProfile *out,
                                      size_t capacity, size_t *count);

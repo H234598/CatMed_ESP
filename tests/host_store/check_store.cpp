@@ -47,6 +47,7 @@ void remove_v9_names(Fake &f) {
 }
 void remove_v10_wifi_profiles(Fake &f);
 void remove_v12_mode(Fake &f) {
+    if(f.bytes[4]==15) {f.bytes[4]=14;repair_crc(f);}
     if(f.bytes[4]==14) {f.length-=28;f.bytes[4]=13;repair_crc(f);}
     if(f.bytes[4]==13) {--f.length;f.bytes[4]=12;repair_crc(f);}
     if(f.bytes[4]==12) {f.length-=2;f.bytes[4]=11;repair_crc(f);}
@@ -177,7 +178,7 @@ void test_v8_mesh_name_migration_past_999() {
     assert(std::strcmp(store_mesh_name(&migrated),"KatmedESP-999")==0);
     assert(store_mesh_name_next_index(&migrated)==1000);
     assert(store_mesh_name_assign(&migrated,UINT64_C(0xAC276E46BC2D),1000)==STORE_OK);
-    assert(fixture.bytes[4]==14 && store_mesh_name_next_index(&migrated)==1001);
+    assert(fixture.bytes[4]==15 && store_mesh_name_next_index(&migrated)==1001);
 }
 void test_corrupt_legacy_future() {
     Fake original{}; Store *s=fresh_store(); StoreRecovery r=open(original,s);
@@ -618,7 +619,7 @@ void test_orientation_override_migration() {
     Fake legacy=disk; legacy.length-=29; legacy.bytes[4]=12; repair_crc(legacy);
     Store migrated{};
     assert(store_open(&migrated,backend(legacy),kDevice,catalog,75,&recovery)==STORE_OK);
-    assert(legacy.bytes[4]==14 && !migrated.record.orientation_manual);
+    assert(legacy.bytes[4]==15 && !migrated.record.orientation_manual);
     assert(recovery.local.orientation==ORIENTATION_90 && recovery.local.clock_style==ANALOG);
     assert(migrated.record.shared.image_seconds==8u*3600u);
     assert(migrated.record.has_history==retry.record.has_history);
@@ -635,7 +636,7 @@ void test_language_reboot_and_factory_default() {
     assert(initial.language==KATMED_LANG_EN && first.record.language==KATMED_LANG_EN);
     for (uint8_t language=1; language<KATMED_LANGUAGE_COUNT; ++language) {
         assert(store_set_language(&first,language)==STORE_OK);
-        assert(disk.length>12 && disk.bytes[4]==14 && first.record.language==language);
+        assert(disk.length>12 && disk.bytes[4]==15 && first.record.language==language);
         assert(store_set_language(&first,language)==STORE_DUPLICATE);
         Store reboot{};
         StoreRecovery restored{};
@@ -660,9 +661,17 @@ void test_explicit_network_modes() {
     const unsigned before=disk.writes;
     StoreProvision setup{}; setup.configured=true; setup.network_mode=STORE_NETWORK_OFFLINE;
     assert(store.record.provision.configured==false && disk.writes==before);
+    assert(store_exit_setup(&store)==STORE_OK && disk.writes==before+1);
+    assert(store.record.setup_dismissed && !store.record.setup_requested);
+    Store exited{};
+    assert(store_open(&exited,backend(disk),kDevice,catalog,75,&recovery)==STORE_OK);
+    assert(exited.record.setup_dismissed && !exited.record.provision.configured);
+    assert(store_request_setup(&exited)==STORE_OK && exited.record.setup_requested &&
+           !exited.record.setup_dismissed);
+    assert(store_exit_setup(&exited)==STORE_OK && exited.record.setup_dismissed);
     store.record.shared.image_seconds=8u*3600u;
     assert(store_save_setup(&store,&setup)==STORE_OK);
-    assert(store.record.shared.image_seconds==8u*3600u);
+    assert(store.record.shared.image_seconds==8u*3600u && !store.record.setup_dismissed);
     Store again{};
     assert(store_open(&again,backend(disk),kDevice,catalog,75,&recovery)==STORE_OK);
     assert(again.record.provision.configured && again.record.provision.network_mode==STORE_NETWORK_OFFLINE);
@@ -678,12 +687,60 @@ void test_explicit_network_modes() {
     setup.network_mode=STORE_NETWORK_ONLINE; // absent WLAN is not an online setup
     assert(store_save_setup(&again,&setup)==STORE_INVALID);
     assert(store_request_setup(&again)==STORE_OK && again.record.setup_requested);
-    setup=again.record.provision;
-    assert(store_save_setup(&again,&setup)==STORE_OK && !again.record.setup_requested);
-    setup=again.record.provision; disk.fault=BEFORE;
+    const StoreProvision preserved=again.record.provision;
+    assert(store_exit_setup(&again)==STORE_OK && !again.record.setup_requested && again.record.setup_dismissed);
+    assert(std::memcmp(&again.record.provision,&preserved,sizeof(preserved))==0);
+    assert(store_request_setup(&again)==STORE_OK && again.record.setup_requested);
+    Store rebooted{};
+    assert(store_open(&rebooted,backend(disk),kDevice,catalog,75,&recovery)==STORE_OK);
+    assert(rebooted.record.setup_requested && !rebooted.record.setup_dismissed);
+    assert(store_exit_setup(&rebooted)==STORE_OK && !rebooted.record.setup_requested);
+    assert(std::memcmp(&rebooted.record.provision,&preserved,sizeof(preserved))==0);
+    assert(store_request_setup(&rebooted)==STORE_OK && rebooted.record.setup_requested);
+    setup=rebooted.record.provision;
+    assert(store_save_setup(&rebooted,&setup)==STORE_OK && !rebooted.record.setup_requested && !rebooted.record.setup_dismissed);
+    setup=rebooted.record.provision; disk.fault=BEFORE;
     setup.network_mode=STORE_NETWORK_MESH_ONLY;
-    assert(store_save_setup(&again,&setup)==STORE_IO);
-    assert(again.record.provision.network_mode==STORE_NETWORK_OFFLINE && again.uncertain);
+    assert(store_save_setup(&rebooted,&setup)==STORE_IO);
+    assert(rebooted.record.provision.network_mode==STORE_NETWORK_OFFLINE && rebooted.uncertain);
+}
+
+void test_setup_exit_intent_codec() {
+    Fake disk{};Store store{};StoreRecovery recovery{};
+    assert(store_open(&store,backend(disk),kDevice,catalog,75,&recovery)==STORE_OK);
+    assert(!store.record.setup_requested && !store.record.setup_dismissed);
+    assert(store_request_setup(&store)==STORE_OK && store.record.setup_requested);
+    Fake legacy=disk;legacy.bytes[4]=14;repair_crc(legacy);
+    Store migrated{};
+    assert(store_open(&migrated,backend(legacy),kDevice,catalog,75,&recovery)==STORE_OK);
+    assert(legacy.bytes[4]==15 && migrated.record.setup_requested &&
+           !migrated.record.setup_dismissed && legacy.length==disk.length);
+    assert(store_exit_setup(&store)==STORE_OK && !store.record.setup_requested &&
+           store.record.setup_dismissed);
+    Store reboot{};
+    assert(store_open(&reboot,backend(disk),kDevice,catalog,75,&recovery)==STORE_OK);
+    assert(reboot.record.setup_dismissed && !reboot.record.provision.configured);
+    const uint8_t invalid_flags[]={3,4};
+    for (uint8_t invalid : invalid_flags) {
+        Fake bad=disk;bad.bytes[bad.length-30]=invalid;repair_crc(bad);
+        Store rejected{};
+        assert(store_open(&rejected,backend(bad),kDevice,catalog,75,&recovery)==STORE_CORRUPT);
+    }
+    StoreProvision online{};online.configured=true;online.network_mode=STORE_NETWORK_ONLINE;
+    online.group[0]=1;online.secret[0]=2;
+    const char ssid[]="synthetic";online.ssid_length=sizeof(ssid)-1;
+    std::memcpy(online.ssid,ssid,online.ssid_length);
+    const char password[]="test-only";online.password_length=sizeof(password)-1;
+    std::memcpy(online.password,password,online.password_length);
+    const char time_source[]="time.test";online.time_source_length=sizeof(time_source)-1;
+    std::memcpy(online.time_source,time_source,online.time_source_length);
+    assert(store_save_setup(&store,&online)==STORE_OK && store.record.wifi_profile_count==1);
+    const StoreProvision preserved=store.record.provision;
+    const StoreWifiProfile profile=store.record.wifi_profiles[0];
+    assert(store_request_setup(&store)==STORE_OK);
+    assert(store_exit_setup(&store)==STORE_OK &&
+           std::memcmp(&store.record.provision,&preserved,sizeof(preserved))==0 &&
+           std::memcmp(&store.record.wifi_profiles[0],&profile,sizeof(profile))==0);
 }
 
 void test_night_policy_contacts() {
@@ -740,7 +797,7 @@ void test_display_local_copy_and_v13() {
     Store migrated{};
     assert(store_open(&migrated,backend(old),kDevice,catalog,75,&recovery)==STORE_OK);
     assert(migrated.record.display.brightness==100 && !migrated.record.display.night_enabled);
-    assert(migrated.record.shared.image_seconds==8*3600 && old.bytes[4]==14);
+    assert(migrated.record.shared.image_seconds==8*3600 && old.bytes[4]==15);
     disk.fault=BEFORE;
     settings.brightness=45;
     assert(store_set_display(&reboot,&settings)==STORE_IO);
@@ -753,6 +810,7 @@ int main() {
     test_night_policy_contacts();
     test_display_local_copy_and_v13();
     test_explicit_network_modes();
+    test_setup_exit_intent_codec();
     test_missing_and_local();
     test_orientation_override_migration();
     test_language_reboot_and_factory_default();

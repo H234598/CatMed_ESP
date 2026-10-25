@@ -50,6 +50,7 @@ assert.equal(nodes[1].nodeValue, "My own alarm text");
 assert.equal(window.__formatPreviewDate("20.10.2026 08:30 CEST"), "2026-10-20 08:30 CEST");
 const supported = ["en", "de", "fr", "nl", "uk", "ar", "zh-Hans", "es", "ja", "bar", "eo", "tlh-Latn"];
 assert.deepEqual(Object.keys(window.KATMED_I18N.values), supported);
+assert.strictEqual(window.KATMED_I18N.values.de, window.KATMED_I18N.keys);
 for (const code of supported) {
   window.__applyLocale(code);
   assert.equal(document.documentElement.lang, code);

@@ -62,11 +62,11 @@ def expect(status, result):
 
 def run(info):
     files = {name: (ASSETS / name).read_bytes() for name in ("index.html", "style.css", "app.js", "i18n.js")}
-    # Twelve-language setup plus brightness/night controls and copy progress now
-    # occupy 188714 uncompressed bytes. Keep a tight 185 KiB host-asset bound;
+    # Twelve-language setup, brightness/night controls and copy progress now
+    # include localized setup exit guidance. Keep a tight 195 KiB host-asset bound;
     # this is not a target RAM budget. Native gzip and app-slot bounds remain
     # independently enforced by firmware builds and their existing checks.
-    assert sum(map(len, files.values())) < 185 * 1024
+    assert sum(map(len, files.values())) < 195 * 1024
     links = Links()
     links.feed(files["index.html"].decode())
     assert links.resources == ["/style.css", "/i18n.js", "/app.js"]

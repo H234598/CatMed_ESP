@@ -144,6 +144,15 @@ static bool reset_reason_allows_warning(esp_reset_reason_t reason)
     return reason==ESP_RST_EXT || reason==ESP_RST_POWERON;
 }
 
+static StoreResult setup_exit_after_physical_boot(Store *store,
+    bool store_ready, bool reset_warning, esp_reset_reason_t reason)
+{
+    if (!store_ready || reset_warning || !store->record.setup_requested ||
+        !reset_reason_allows_warning(reason))
+        return STORE_OK;
+    return store_exit_setup(store);
+}
+
 static bool katmed_runtime_reset_arm(void *context,bool from_web)
 {
     Runtime *rt=context;
@@ -798,6 +807,12 @@ static UiSubmitResult submit_ui_with_id(void *context, const UiRequest *request,
         rt->reboot_required=true;rt->reboot_due_ms=monotonic_ms()+1000u;
         return UI_SUBMIT_COMMITTED;
     }
+    if (request->kind==UI_REQUEST_EXIT_SETUP) {
+        if (!rt->setup_ap || store_exit_setup(&rt->store)!=STORE_OK)
+            return UI_SUBMIT_UNAVAILABLE;
+        rt->reboot_required=true;rt->reboot_due_ms=monotonic_ms()+1000u;
+        return UI_SUBMIT_COMMITTED;
+    }
     if (request->kind == UI_REQUEST_CONFIRM) {
         if (rt->state.start_reason == START_BOOT) return UI_SUBMIT_STALE;
         const bool offline = rt->store.record.provision.configured &&
@@ -1120,6 +1135,15 @@ static void config_execute(void *context, const KatmedConfigRequest *request,
         response->setup.clock_required=!clock_sample(rt->boot_domain).utc_valid;
         response->status=KATMED_CONFIG_OK;return;
     }
+    if (request->operation==KATMED_CONFIG_SETUP_EXIT) {
+        char revision[KATMED_CONFIG_REVISION_MAX];config_revision(rt,revision);
+        if (!rt->setup_ap || !memchr(request->revision,0,sizeof(request->revision)) ||
+            strcmp(revision,request->revision)) {response->status=KATMED_CONFIG_STALE;return;}
+        const StoreResult result=store_exit_setup(&rt->store);
+        if(result!=STORE_OK) {response->status=result==STORE_INVALID?KATMED_CONFIG_INVALID:KATMED_CONFIG_COMMIT_UNKNOWN;return;}
+        rt->reboot_required=true;rt->reboot_due_ms=monotonic_ms()+1000u;
+        response->status=KATMED_CONFIG_OK;return;
+    }
     if (request->operation==KATMED_CONFIG_SETUP_SAVE) {
         char revision[KATMED_CONFIG_REVISION_MAX];config_revision(rt,revision);
         if (!memchr(request->revision,0,sizeof(request->revision)) || strcmp(revision,request->revision)) {response->status=KATMED_CONFIG_STALE;return;}
@@ -1377,7 +1401,11 @@ static void network_status(void *context, UiNetworkStatus *out)
     out->configured = rt && rt->store_ready &&
                       rt->store.record.provision.configured;
     out->setup_open=rt && rt->setup_ap;
-    out->manual_clock_required=rt && rt->store_ready && rt->store.record.provision.configured && rt->store.record.provision.network_mode!=STORE_NETWORK_ONLINE && !clock_sample(rt->boot_domain).utc_valid;
+    out->offline_setup_exited=rt && rt->store_ready && !out->configured &&
+        rt->store.record.setup_dismissed && !out->setup_open;
+    out->manual_clock_required=rt && rt->store_ready &&
+        ((out->configured && rt->store.record.provision.network_mode!=STORE_NETWORK_ONLINE) ||
+         out->offline_setup_exited) && !clock_sample(rt->boot_domain).utc_valid;
     if(out->setup_open) {memcpy(out->setup_ssid,rt->setup_ssid,sizeof(out->setup_ssid));memcpy(out->setup_password,rt->setup_password,sizeof(out->setup_password));}
     if (!out->configured || !rt->mesh_started) return;
     out->mesh_active = katmed_mesh_radio_channel(&out->mesh_channel);
@@ -2115,6 +2143,38 @@ static void appmaint_main(void)
 }
 #endif
 
+/* The same startup path is exercised by the Host AppLoop harness. An explicit
+ * offline Exit suppresses only the setup AP; it does not create Mesh trust. */
+static bool start_runtime_network(Runtime *rt)
+{
+    const bool configured=rt->store_ready && rt->store.record.provision.configured;
+    const bool setup_needed=rt->store_ready &&
+        (rt->store.record.setup_requested ||
+         (!configured && !rt->store.record.setup_dismissed));
+    if (setup_needed && !start_setup_ap(rt))
+        ESP_LOGE("katmed","setup access point unavailable");
+    if (configured && !setup_needed &&
+        rt->store.record.provision.network_mode!=STORE_NETWORK_OFFLINE) {
+        katmed_mesh_history_backend(store_idf_history_backend(&rt->nvs));
+        const KatmedMeshServices mesh_services = {
+            .store = &rt->store,
+            .state = &rt->state,
+            .context = rt,
+            .shared_result = mesh_shared_result,
+            .utc_received = mesh_utc_received,
+            .time_shareable = time_shareable,
+        };
+        const KatmedMeshResult result=katmed_mesh_start(
+            &rt->store.record.provision,&mesh_services);
+        rt->mesh_started=result==MESH_ACCEPTED || result==MESH_PENDING;
+        if (!rt->mesh_started) ESP_LOGE("katmed","group service unavailable: %d",result);
+    }
+    const bool management=setup_needed ||
+        (configured && rt->store.record.provision.network_mode==STORE_NETWORK_ONLINE);
+    katmed_web_set_enabled(management);
+    return management;
+}
+
 void app_main(void)
 {
 #if KATMED_APPSTORE_MAINTENANCE
@@ -2228,6 +2288,15 @@ void app_main(void)
     if (!runtime.store_ready) {
         ESP_LOGE(tag, "durable store unavailable: %d; boot alarm remains active", open_result);
     }
+    /* A software reboot after Open setup retains the durable manual intent.
+     * CHIP_PU is reported as EXT or POWERON depending on the board; POWERON
+     * also includes power restoration, which cannot be distinguished here.
+     * Only a manual setup request is eligible. Untouched first boot still has
+     * no request and retains its automatic onboarding AP.
+     * A pending physical-reset warning keeps its own confirmation flow. */
+    if (setup_exit_after_physical_boot(&runtime.store,runtime.store_ready,
+                                       runtime.reset_warning_ready,reset_reason)!=STORE_OK)
+        ESP_LOGE(tag,"manual setup exit could not be stored; setup remains active");
     const NamesResult names_result=katmed_mesh_names_backend(
         names_idf_backend(&runtime.names_nvs,&runtime.nvs),runtime.boot.device,
         runtime.store.record.provision.configured?runtime.store.record.provision.group:
@@ -2321,26 +2390,7 @@ void app_main(void)
     if (!katmed_usb_console_start())
         ESP_LOGE(tag, "USB setup input unavailable");
 
-    const bool setup_needed=runtime.store_ready && (!runtime.store.record.provision.configured || runtime.store.record.setup_requested);
-    if(setup_needed && !start_setup_ap(&runtime)) ESP_LOGE(tag,"setup access point unavailable");
-    if (runtime.store_ready && runtime.store.record.provision.configured && !setup_needed && runtime.store.record.provision.network_mode!=STORE_NETWORK_OFFLINE) {
-        katmed_mesh_history_backend(store_idf_history_backend(&runtime.nvs));
-        const KatmedMeshServices mesh_services = {
-            .store = &runtime.store,
-            .state = &runtime.state,
-            .context = &runtime,
-            .shared_result = mesh_shared_result,
-            .utc_received = mesh_utc_received,
-            .time_shareable = time_shareable,
-        };
-        const KatmedMeshResult mesh_result = katmed_mesh_start(
-            &runtime.store.record.provision, &mesh_services);
-        runtime.mesh_started = mesh_result == MESH_ACCEPTED || mesh_result == MESH_PENDING;
-        if (!runtime.mesh_started) ESP_LOGE(tag, "group service unavailable: %d", mesh_result);
-    }
-
-    const bool management=setup_needed || (runtime.store_ready && runtime.store.record.provision.configured && runtime.store.record.provision.network_mode==STORE_NETWORK_ONLINE);
-    katmed_web_set_enabled(management);
+    const bool management=start_runtime_network(&runtime);
     if (!katmed_config_bridge_start())
         ESP_LOGE(tag,"web configuration bridge unavailable");
     else {

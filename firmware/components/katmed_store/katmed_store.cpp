@@ -15,7 +15,7 @@ namespace {
 constexpr uint8_t kMagic[4] = {'K', 'M', 'S', 'T'};
 /* v11 appends one local language byte after the unchanged v10 payload.
  * Versions 8 and 9 were never an on-device release. */
-constexpr uint16_t kCurrentVersion = 14;
+constexpr uint16_t kCurrentVersion = 15;
 constexpr size_t kHeaderSize = 12;
 
 uint32_t checksum(const uint8_t *data, size_t length) {
@@ -380,7 +380,7 @@ bool valid_provision(const StoreProvision &p) {
 }
 
 bool valid_record(const StoreRecord &v) {
-    if (!katmed_display_valid(v.display)) return false;
+    if (!katmed_display_valid(v.display) || (v.setup_requested && v.setup_dismissed)) return false;
     if ((v.last_night_copy.device || v.last_night_copy.epoch || v.last_night_copy.sequence) &&
         (!v.last_night_copy.device || !v.last_night_copy.epoch || !v.last_night_copy.sequence)) return false;
     if (v.device==0 || v.epoch==0 || v.next_sequence < 2 || !valid_settings(v.shared) ||
@@ -491,7 +491,12 @@ StoreResult encode_record(const StoreRecord &v, uint8_t *bytes, size_t *length, 
         }
     }
     if (version>=11) w.u8(v.language);
-    if (version>=12) {w.u8(v.provision.network_mode);w.boolean(v.setup_requested);}
+    if (version>=12) {
+        w.u8(v.provision.network_mode);
+        /* v15 reuses the existing byte; the bounded 4096-byte blob does not grow. */
+        if (version>=15) w.u8((v.setup_requested ? 1u : 0u) | (v.setup_dismissed ? 2u : 0u));
+        else w.boolean(v.setup_requested);
+    }
     if (version>=13) w.boolean(v.orientation_manual);
     if (version>=14) {
         // Four packed bytes preserve the existing 4096-byte maximum, including
@@ -594,7 +599,15 @@ StoreResult decode_record(const uint8_t *bytes, size_t length, StoreRecord *out)
         p.secured=p.password_length!=0; v.wifi_profile_count=1; v.next_wifi_profile_id=2;
     }
     if (version>=11) v.language=r.u8();
-    if (version>=12) {v.provision.network_mode=r.u8();v.setup_requested=r.boolean();}
+    if (version>=12) {
+        v.provision.network_mode=r.u8();
+        if (version>=15) {
+            const uint8_t setup_flags=r.u8();
+            if (setup_flags & ~3u) return corrupt();
+            v.setup_requested=(setup_flags & 1u)!=0;
+            v.setup_dismissed=(setup_flags & 2u)!=0;
+        } else v.setup_requested=r.boolean();
+    }
     if (version>=13) v.orientation_manual=r.boolean();
     if (version>=14) {
         const uint8_t flags=r.u8();v.display.brightness=flags&127u;
@@ -1304,6 +1317,8 @@ StoreResult store_usb_handle_line_with_wifi_defaults(
         if (!ready(store)) { make_reply(reply,reply_capacity,"KM1 ERR UNAVAILABLE\n"); return STORE_UNAVAILABLE; }
         store->staged=store->record;
         store->staged.provision=StoreProvision{};
+        store->staged.setup_requested=false;
+        store->staged.setup_dismissed=false;
         const StoreResult committed=write_record(store,store->staged);
         if (committed==STORE_OK) make_reply(reply,reply_capacity,"KM1 OK RESET_CONFIG\n");
         else make_reply(reply,reply_capacity,"KM1 ERR COMMIT\n");
@@ -1382,6 +1397,16 @@ StoreResult store_usb_handle_line(Store *store, const char *line, size_t length,
 StoreResult store_request_setup(Store *store) {
     if (!ready(store)) return STORE_UNAVAILABLE;
     store->staged=store->record; store->staged.setup_requested=true;
+    store->staged.setup_dismissed=false;
+    return write_record(store,store->staged);
+}
+
+StoreResult store_exit_setup(Store *store) {
+    if (!ready(store)) return STORE_UNAVAILABLE;
+    if (!store->record.setup_requested && store->record.setup_dismissed) return STORE_OK;
+    store->staged=store->record;
+    store->staged.setup_requested=false;
+    store->staged.setup_dismissed=true;
     return write_record(store,store->staged);
 }
 
@@ -1403,6 +1428,7 @@ StoreResult store_save_setup(Store *store, const StoreProvision *wanted) {
     store->staged=store->record;
     store->staged.provision=p;
     store->staged.setup_requested=false;
+    store->staged.setup_dismissed=false;
     if (store->staged.next_sequence==UINT64_MAX) return STORE_FULL;
     ++store->staged.next_sequence; /* Same-record CAS invalidation for an explicit setup save. */
     if (p.network_mode==STORE_NETWORK_ONLINE && store->staged.wifi_profile_count==0) {

@@ -23,7 +23,7 @@
 #include <time.h>
 #endif
 
-typedef enum { EDIT_NONE, EDIT_MEDICATION, EDIT_IMAGE, EDIT_NEXT_TIME, EDIT_SYSTEM_TIME, EDIT_BRIGHTNESS, EDIT_NIGHT_START, EDIT_NIGHT_END } EditKind;
+typedef enum { EDIT_NONE, EDIT_MEDICATION, EDIT_IMAGE, EDIT_NEXT_TIME, EDIT_SYSTEM_TIME, EDIT_NIGHT_START, EDIT_NIGHT_END } EditKind;
 #define ALARM_STRIPS 6u
 typedef enum {
     SETTINGS_ROOT, SETTINGS_TIMES, SETTINGS_LANGUAGES,
@@ -69,7 +69,7 @@ typedef struct {
     char pairing_code[7];
     lv_obj_t *entry_label, *preview_label;
     lv_obj_t *brightness_slider, *brightness_percent;
-    bool brightness_dragging, brightness_pending, slider_contact, lv_slider_contact;
+    bool brightness_dragging, brightness_pending, brightness_syncing, slider_contact, lv_slider_contact;
     lv_obj_t *style_dialog, *style_title, *style_options[3];
     uint32_t image_id;
     Orientation image_orientation;
@@ -141,7 +141,7 @@ static KatmedDisplaySettings display_values(void)
 }
 static bool brightness_hit(int16_t x,int16_t y)
 {
-    if(!ui.brightness_slider || ui.edit!=EDIT_BRIGHTNESS)return false;
+    if(!ui.brightness_slider || ui.view!=SETTINGS || ui.settings_menu!=SETTINGS_ROOT)return false;
     lv_area_t area;lv_obj_get_coords(ui.brightness_slider,&area);
     return x>=area.x1-16 && x<=area.x2+16 && y>=area.y1-16 && y<=area.y2+16;
 }
@@ -154,7 +154,9 @@ static void sync_brightness_slider(void)
 {
     if(!ui.brightness_slider || ui.brightness_dragging || ui.brightness_pending)return;
     const unsigned value=display_values().brightness;
+    ui.brightness_syncing=true;
     lv_slider_set_value(ui.brightness_slider,(int32_t)value,LV_ANIM_OFF);
+    ui.brightness_syncing=false;
     lv_label_set_text_fmt(ui.brightness_percent,"%u%%",value);
 }
 static bool display_time_edit(void){return ui.edit==EDIT_NIGHT_START || ui.edit==EDIT_NIGHT_END;}
@@ -294,6 +296,8 @@ static void restore_scroll(lv_obj_t *panel, unsigned slot)
 static void destroy_menu(void)
 {
     remember_scroll(ui.settings, ui.settings_menu ? 8u + (unsigned)ui.settings_menu : 5u);
+    if (ui.brightness_slider) cancel_brightness_preview();
+    ui.brightness_slider=ui.brightness_percent=NULL;
     if (ui.settings) lv_obj_delete(ui.settings);
     ui.settings = NULL;
     ui.settings_options = NULL;
@@ -673,8 +677,6 @@ static void key_press(lv_event_t *event)
 static void cancel_edit(lv_event_t *event)
 {
     (void)event;
-    if(ui.brightness_slider)cancel_brightness_preview();
-    ui.brightness_slider=ui.brightness_percent=NULL;
     if (ui.keypad) lv_obj_delete(ui.keypad);
     ui.keypad = NULL;
     ui.entry_label = NULL;
@@ -723,6 +725,7 @@ static void brightness_changed(lv_event_t *event)
     const lv_event_code_t code=lv_event_get_code(event);
     if(code==LV_EVENT_PRESSED){ui.brightness_dragging=true;return;}
     if(code==LV_EVENT_VALUE_CHANGED){
+        if(ui.brightness_syncing)return;
         const uint8_t value=(uint8_t)lv_slider_get_value(slider);
         lv_label_set_text_fmt(ui.brightness_percent,"%u%%",(unsigned)value);
         if(ui.services.brightness_preview &&
@@ -776,25 +779,6 @@ static void open_edit(EditKind edit)
     lv_obj_set_scrollable(ui.keypad, false);
 
     bool round = ui.width == 240 && ui.height == 240;
-    if(edit==EDIT_BRIGHTNESS){
-        lv_obj_t *heading=label(ui.keypad,T("Helligkeit"),ui.width-48);
-        lv_obj_align(heading,LV_ALIGN_TOP_MID,0,round?38:16);
-        ui.brightness_percent=label(ui.keypad,"",ui.width-48);
-        lv_label_set_text_fmt(ui.brightness_percent,"%u%%",(unsigned)display_values().brightness);
-        lv_obj_align(ui.brightness_percent,LV_ALIGN_CENTER,0,-30);
-        ui.brightness_slider=lv_slider_create(ui.keypad);
-        lv_obj_set_size(ui.brightness_slider,round?140:ui.width-64,12);
-        lv_obj_align(ui.brightness_slider,LV_ALIGN_CENTER,0,0);
-        lv_slider_set_range(ui.brightness_slider,1,100);
-        lv_slider_set_value(ui.brightness_slider,display_values().brightness,LV_ANIM_OFF);
-        lv_obj_set_gesture_bubble(ui.brightness_slider,false);
-        lv_obj_add_event_cb(ui.brightness_slider,brightness_changed,LV_EVENT_ALL,NULL);
-        if(ui.brightness_pending)lv_obj_add_state(ui.brightness_slider,LV_STATE_DISABLED);
-        else sync_brightness_slider();
-        lv_obj_t *back=button(ui.keypad,T("Abbrechen"),100,32,cancel_edit,NULL);
-        lv_obj_align(back,LV_ALIGN_BOTTOM_MID,0,round?-38:-16);
-        return;
-    }
     int keys_w = landscape ? ui.width / 2 : round ? 180 : ui.width - 32;
     int x0 = landscape ? 8 : round ? 30 : 16;
     int y0 = landscape ? 8 : round ? 110 : 125;
@@ -824,7 +808,7 @@ static void open_edit(EditKind edit)
     int info_x = landscape ? keys_w + 14 : round ? 50 : 20;
     int info_w = landscape ? ui.width - info_x - 8 :
                  round ? 140 : ui.width - 40;
-    lv_obj_t *heading = label(ui.keypad, edit==EDIT_BRIGHTNESS ? T("Helligkeit") : display_time_edit() ? T("Nachtzeit HH:MM") : edit==EDIT_SYSTEM_TIME ? "YYYYMMDDHHMM Berlin" : round ?
+    lv_obj_t *heading = label(ui.keypad, display_time_edit() ? T("Nachtzeit HH:MM") : edit==EDIT_SYSTEM_TIME ? "YYYYMMDDHHMM Berlin" : round ?
           (edit == EDIT_NEXT_TIME ? "HH:MM" : edit == EDIT_MEDICATION ? T("Medikamente") : T("Bilder")) :
           edit == EDIT_NEXT_TIME ? T("Nächste Zeit HH:MM") :
           edit == EDIT_MEDICATION ? T("Medikamente: Stunden") : T("Bilder: Stunden"),
@@ -1090,6 +1074,9 @@ static void status_button(lv_event_t *event)
 static void open_setup(lv_event_t *event) {
     (void)event;UiRequest request={.kind=UI_REQUEST_OPEN_SETUP};request_action(&request);
 }
+static void exit_setup(lv_event_t *event) {
+    (void)event;UiRequest request={.kind=UI_REQUEST_EXIT_SETUP};request_action(&request);
+}
 static void toggle_night(lv_event_t *event)
 {
     (void)event;KatmedDisplaySettings d=display_values();
@@ -1228,15 +1215,33 @@ static void build_settings(void)
     lv_obj_add_state(import, LV_STATE_DISABLED);
     label(ui.settings,T("Einrichtung"),row_w);
     button(ui.settings,T("Datum und Uhrzeit"),row_w,40,edit_button,(void *)(intptr_t)EDIT_SYSTEM_TIME);
-    button(ui.settings,T("Einrichtung öffnen"),row_w,40,open_setup,NULL);
     UiNetworkStatus setup={0};
     if(ui.services.network_status)ui.services.network_status(ui.services.context,&setup);
+    if(!setup.setup_open)
+        button(ui.settings,T("Einrichtung öffnen"),row_w,40,open_setup,NULL);
     if(setup.setup_open) {
+        label(ui.settings,setup.configured ?
+            T("Einrichtung aktiv: Mesh pausiert. Speichern oder Einrichtung verlassen startet den Normalbetrieb neu.") :
+            T("Ersteinrichtung aktiv: Gruppe im Web einrichten oder offline verlassen. Ohne sichere Gruppe bleibt Mesh aus."),row_w);
         lv_obj_t *access=label(ui.settings,"",row_w);
         lv_label_set_text_fmt(access,"%s\n%s",setup.setup_ssid,setup.setup_password);
-    }
+        button(ui.settings,T("Einrichtung verlassen"),row_w,40,exit_setup,NULL);
+        label(ui.settings,T("Einrichtung verlassen und ein normaler Neustart löschen keine Daten."),row_w);
+    } else if (setup.offline_setup_exited)
+        label(ui.settings,T("Einrichtung offline verlassen: Setup-AP aus. Mesh benötigt eine sichere Gruppe."),row_w);
     label(ui.settings,T("Helligkeit"),row_w);
-    button(ui.settings,T("Helligkeit ändern"),row_w,40,edit_button,(void*)(intptr_t)EDIT_BRIGHTNESS);
+    ui.brightness_percent=label(ui.settings,"",row_w);
+    ui.brightness_slider=lv_slider_create(ui.settings);
+    lv_obj_set_width(ui.brightness_slider,row_w);
+    lv_obj_set_height(ui.brightness_slider,24);
+    lv_obj_set_scrollable(ui.brightness_slider,false);
+    lv_obj_set_gesture_bubble(ui.brightness_slider,false);
+    lv_slider_set_range(ui.brightness_slider,1,100);
+    const uint8_t brightness=display_values().brightness;
+    lv_slider_set_value(ui.brightness_slider,brightness,LV_ANIM_OFF);
+    lv_label_set_text_fmt(ui.brightness_percent,"%u%%",(unsigned)brightness);
+    lv_obj_add_event_cb(ui.brightness_slider,brightness_changed,LV_EVENT_ALL,NULL);
+    if(ui.brightness_pending)lv_obj_add_state(ui.brightness_slider,LV_STATE_DISABLED);
     label(ui.settings,T("Nachtmodus"),row_w);
     button(ui.settings,T("Nachtmodus einstellen"),row_w,40,settings_submenu_button,(void*)(intptr_t)SETTINGS_NIGHT);
     label(ui.settings, T("Reset"), row_w);

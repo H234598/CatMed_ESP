@@ -38,6 +38,7 @@ const location = { hostname: "device.local", protocol: "http:", hash: "", pathna
 const script = fs.readFileSync(path.join(__dirname,
   "../../firmware/components/katmed_web/ui/app.js"), "utf8");
 vm.runInNewContext(script.replace("const state = {", "const state = window.__testState = {")
+  .replace("async function loadRuntimeEinrichtung() {", "window.__loadRuntimeSetup=loadRuntimeEinrichtung; async function loadRuntimeEinrichtung() {")
   .replace("function renderConfig(config) {", "window.__renderConfig=renderConfig; window.__validConfig=validConfig; window.__saveField=saveField; function renderConfig(config) {")
   .replace("function cancelResetOnLeave() {", "window.__testShow = show; function cancelResetOnLeave() {"), {
   document, window, history, location,
@@ -142,6 +143,31 @@ async function submit(id) {
   await invoke("advanced-back");
   assert.equal(element("main-settings").hidden, false);
   assert.equal(window.scrollY, 130);
+
+  // The real setup UI only offers Exit for a configured device in active AP
+  // mode. The POST carries the current revision and leaves profile fields out.
+  window.__testState.bootstrap={csrf_token:"synthetic-csrf"};
+  replies.push({status:200,body:{configured:true,mode:0,setup_open:true,
+    revision:"synthetic-setup-r1"}});
+  await window.__loadRuntimeSetup();
+  assert.equal(element("runtime-setup-exit").hidden,false);
+  assert.equal(element("runtime-setup-active").hidden,false);
+  replies.push({status:200,body:{connection_will_close:true}});
+  await invoke("runtime-setup-exit");
+  assert.equal(calls.at(-1).url,"/api/runtime-setup/exit");
+  assert.equal(calls.at(-1).options.method,"POST");
+  assert.equal(calls.at(-1).options.headers["X-Katmed-CSRF"],"synthetic-csrf");
+  assert.deepEqual(JSON.parse(calls.at(-1).options.body),{revision:"synthetic-setup-r1"});
+  replies.push({status:200,body:{configured:false,mode:2,setup_open:true,
+    revision:"synthetic-fresh-r2"}});
+  await window.__loadRuntimeSetup();
+  assert.equal(element("runtime-setup-exit").hidden,false);
+  assert.equal(element("runtime-setup-active").hidden,false);
+  replies.push({status:200,body:{connection_will_close:true}});
+  await invoke("runtime-setup-exit");
+  assert.equal(calls.at(-1).url,"/api/runtime-setup/exit");
+  assert.deepEqual(JSON.parse(calls.at(-1).options.body),{revision:"synthetic-fresh-r2"});
+  assert.match(element("runtime-setup-state").textContent,/Mesh benötigt eine sichere Gruppe/);
   await invoke("open-advanced");
   element("advanced-view").listeners.touchstart({touches: [{clientX: 8, clientY: 45}]});
   element("advanced-view").listeners.touchend({changedTouches: [{clientX: 100, clientY: 52}]});

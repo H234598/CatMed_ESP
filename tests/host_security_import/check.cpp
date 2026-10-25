@@ -211,7 +211,7 @@ int main(int argc, char **argv) {
     if (mode == "success") {
         ok = katmed_import_apply(&in, &b) &&
             m.values.count("katmed/state") == 1 &&
-            m.values.at("katmed/state")[4] == 14 &&
+            m.values.at("katmed/state")[4] == 15 &&
             m.values.at("katmed/state").at(m.values.at("katmed/state").size() - 32) == 1 &&
             m.values.at("katmed/state").back() == 0 &&
             m.values.count("katmed_imp/journal") == 0 &&
@@ -351,7 +351,7 @@ int main(int argc, char **argv) {
             m.final_files.size() == 2 && m.staged_files.empty() &&
             m.values.count("katmed/state") == 1 &&
             m.values.at("katmed/state").size() == 4096 &&
-            m.values.at("katmed/state")[4] == 14 &&
+            m.values.at("katmed/state")[4] == 15 &&
             m.values.at("katmed/state").at(m.values.at("katmed/state").size() - 32) == 1 &&
             m.values.at("katmed/state").back() == 0 &&
             m.values.count("katmed_web/identity") == 1 &&

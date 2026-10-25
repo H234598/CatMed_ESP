@@ -128,7 +128,6 @@
     "Eingabe nach Drehung verworfen": "تم تجاهل الإدخال بعد التدوير",
     "Zeit nicht synchronisiert": "الوقت غير متزامن",
     "Automatisch": "تلقائي",
-    "Helligkeit: 1 bis 100 Prozent": "السطوع: من 1 إلى 100 بالمئة",
     "Helligkeit": "السطوع",
     "Nachtzeit HH:MM": "وقت الليل HH:MM",
     "Lokal gespeichert; Mesh-Bestätigungen prüfen": "تم الحفظ محليا؛ تحقق من تأكيدات الشبكة",
@@ -141,9 +140,13 @@
     "Nachtbeginn HH:MM": "بداية الليل HH:MM",
     "Nachtende HH:MM": "نهاية الليل HH:MM",
     "Setze Nachtmodus global auf allen Geräten im Mesh": "تطبيق الوضع الليلي على جميع أجهزة الشبكة المتداخلة",
-    "Helligkeit ändern": "تغيير السطوع",
     "Nachtmodus einstellen": "إعداد الوضع الليلي",
-    "Änderung vorgemerkt": "التغيير قيد الانتظار"
+    "Änderung vorgemerkt": "التغيير قيد الانتظار",
+    "Einrichtung aktiv: Mesh pausiert. Speichern oder Einrichtung verlassen startet den Normalbetrieb neu.": "الإعداد نشط: الشبكة المتداخلة متوقفة مؤقتاً. الحفظ أو الخروج يعيد التشغيل العادي.",
+    "Einrichtung verlassen": "الخروج من الإعداد",
+    "Einrichtung verlassen und ein normaler Neustart löschen keine Daten.": "الخروج من الإعداد وإعادة التشغيل العادية لا يمحوان البيانات.",
+    "Ersteinrichtung aktiv: Gruppe im Web einrichten oder offline verlassen. Ohne sichere Gruppe bleibt Mesh aus.": "الإعداد الأولي نشط: اضبط مجموعة عبر صفحة الويب أو اخرج دون اتصال. تبقى الشبكة المتداخلة متوقفة دون مجموعة موثوقة.",
+    "Einrichtung offline verlassen: Setup-AP aus. Mesh benötigt eine sichere Gruppe.": "تم الخروج من الإعداد دون اتصال: نقطة وصول الإعداد متوقفة. تحتاج الشبكة المتداخلة إلى مجموعة موثوقة."
   },
   "web_static": {
     "KatMed · Einstellungen": "KatMed · الإعدادات",
@@ -253,7 +256,10 @@
     "Nachtbeginn HH:MM": "بداية الليل HH:MM",
     "Nachtende HH:MM": "نهاية الليل HH:MM",
     "Setze Nachtmodus global auf allen Geräten im Mesh": "تطبيق الوضع الليلي على جميع أجهزة الشبكة المتداخلة",
-    "Noch keine globale Nachtkopie": "لم يتم نسخ الوضع الليلي عالميا بعد"
+    "Noch keine globale Nachtkopie": "لم يتم نسخ الوضع الليلي عالميا بعد",
+    "Einrichtung aktiv: Mesh pausiert. Speichern oder Einrichtung verlassen startet den Normalbetrieb neu.": "الإعداد نشط: الشبكة المتداخلة متوقفة مؤقتاً. الحفظ أو الخروج يعيد التشغيل العادي.",
+    "Einrichtung verlassen": "الخروج من الإعداد",
+    "Einrichtung verlassen und ein normaler Neustart löschen keine Daten.": "الخروج من الإعداد وإعادة التشغيل العادية لا يمحوان البيانات."
   },
   "web_dynamic": {
     "Gerät: {0}": "الجهاز: {0}",
@@ -274,7 +280,6 @@
     "Gespeicherter HH:MM-Termin ist abgelaufen.": "تم حفظ موعد HH:MM.",
     "Gespeicherter HH:MM-Termin konnte nach Neustart nicht übernommen werden.": "لا يمكن الاستيلاء على موعد HH:MM المحفوظ بعد إعادة التشغيل.",
     "Eingerichtet; Änderungen erfordern ausdrückliches Speichern.": "تم الإعداد؛ يجب حفظ التغييرات.",
-    "Ersteinrichtung; Betriebsart wählen.": "الإعداد الأول؛ اختر وضع التشغيل.",
     "Freigegeben: {0}": "تم الإصدار: {0}",
     "Freigegeben.": "تمت الموافقة.",
     "Kein Clientzertifikat freigegeben.": "لم تتم مشاركة أي شهادة عميل.",
@@ -349,6 +354,10 @@
     "Noch keine globale Nachtkopie": "لم يتم نسخ الوضع الليلي عالميا بعد",
     "Mesh-Ergebnis noch unbekannt": "نتيجة الشبكة غير معروفة بعد",
     "Mesh: {0}/{1} bestätigt, {2} abgelehnt, {3} offen": "الشبكة: {0}/{1} مؤكدة، {2} مرفوضة، {3} معلقة",
-    "Lokal gespeichert; Mesh-Bestätigungen prüfen": "تم الحفظ محليا؛ تحقق من تأكيدات الشبكة"
+    "Lokal gespeichert; Mesh-Bestätigungen prüfen": "تم الحفظ محليا؛ تحقق من تأكيدات الشبكة",
+    "Einrichtung verlassen. Das Gerät startet mit den gespeicherten Profilen neu.": "تم الخروج من الإعداد. يعيد الجهاز التشغيل بالملفات المحفوظة.",
+    "Einrichtung konnte nicht verlassen werden. Zustand neu laden; Profile bleiben erhalten.": "تعذر الخروج من الإعداد. أعد تحميل الحالة؛ تبقى الملفات محفوظة.",
+    "Ersteinrichtung; Gruppe wählen oder Einrichtung offline verlassen. Ohne sichere Gruppe bleibt Mesh aus.": "الإعداد الأولي: اختر مجموعة أو اخرج دون اتصال. تبقى الشبكة المتداخلة متوقفة دون مجموعة موثوقة.",
+    "Einrichtung verlassen. Das Gerät startet offline; Mesh benötigt eine sichere Gruppe. Fehlende Uhrzeit lokal einstellen.": "تم الخروج من الإعداد. يبدأ الجهاز دون اتصال؛ تحتاج الشبكة المتداخلة إلى مجموعة موثوقة. اضبط الوقت محليًا إذا كان مفقودًا."
   }
 }

@@ -128,7 +128,6 @@
     "Eingabe nach Drehung verworfen": "Inzending wordt na rotatie weggegooid",
     "Zeit nicht synchronisiert": "Tijd niet gesynchroniseerd",
     "Automatisch": "Automatisch",
-    "Helligkeit: 1 bis 100 Prozent": "Helderheid: 1 tot 100 procent",
     "Helligkeit": "Helderheid",
     "Nachtzeit HH:MM": "Nachttijd HH:MM",
     "Lokal gespeichert; Mesh-Bestätigungen prüfen": "Lokaal opgeslagen; controleer mesh-bevestigingen",
@@ -141,9 +140,13 @@
     "Nachtbeginn HH:MM": "Nachtbegin HH:MM",
     "Nachtende HH:MM": "Nachteinde HH:MM",
     "Setze Nachtmodus global auf allen Geräten im Mesh": "Nachtmodus op alle apparaten in het mesh instellen",
-    "Helligkeit ändern": "Helderheid wijzigen",
     "Nachtmodus einstellen": "Nachtmodus instellen",
-    "Änderung vorgemerkt": "Wijziging in wachtrij"
+    "Änderung vorgemerkt": "Wijziging in wachtrij",
+    "Einrichtung aktiv: Mesh pausiert. Speichern oder Einrichtung verlassen startet den Normalbetrieb neu.": "Instellen actief: mesh gepauzeerd. Opslaan of afsluiten herstart de normale werking.",
+    "Einrichtung verlassen": "Instellen afsluiten",
+    "Einrichtung verlassen und ein normaler Neustart löschen keine Daten.": "Instellen afsluiten en normaal herstarten wissen geen gegevens.",
+    "Ersteinrichtung aktiv: Gruppe im Web einrichten oder offline verlassen. Ohne sichere Gruppe bleibt Mesh aus.": "Eerste installatie actief: stel een groep in via de webpagina of verlaat de installatie offline. Zonder veilige groep blijft mesh uit.",
+    "Einrichtung offline verlassen: Setup-AP aus. Mesh benötigt eine sichere Gruppe.": "Installatie offline verlaten: installatie-AP uit. Mesh vereist een veilige groep."
   },
   "web_static": {
     "KatMed · Einstellungen": "KatMed · Instellingen",
@@ -253,7 +256,10 @@
     "Nachtbeginn HH:MM": "Nachtbegin HH:MM",
     "Nachtende HH:MM": "Nachteinde HH:MM",
     "Setze Nachtmodus global auf allen Geräten im Mesh": "Nachtmodus op alle apparaten in het mesh instellen",
-    "Noch keine globale Nachtkopie": "Nog geen globale nachtkopie"
+    "Noch keine globale Nachtkopie": "Nog geen globale nachtkopie",
+    "Einrichtung aktiv: Mesh pausiert. Speichern oder Einrichtung verlassen startet den Normalbetrieb neu.": "Instellen actief: mesh gepauzeerd. Opslaan of afsluiten herstart de normale werking.",
+    "Einrichtung verlassen": "Instellen afsluiten",
+    "Einrichtung verlassen und ein normaler Neustart löschen keine Daten.": "Instellen afsluiten en normaal herstarten wissen geen gegevens."
   },
   "web_dynamic": {
     "Gerät: {0}": "Apparaat: {0}",
@@ -274,7 +280,6 @@
     "Gespeicherter HH:MM-Termin ist abgelaufen.": "Opgeslagen HH:MM-afspraak is verlopen.",
     "Gespeicherter HH:MM-Termin konnte nach Neustart nicht übernommen werden.": "Opgeslagen HH:MM-afspraak kon na herstart niet worden overgenomen.",
     "Eingerichtet; Änderungen erfordern ausdrückliches Speichern.": "Ingesteld; wijzigingen opslaan.",
-    "Ersteinrichtung; Betriebsart wählen.": "Eerste instelling; kies een modus.",
     "Freigegeben: {0}": "Uitgebracht: {0}",
     "Freigegeben.": "Goedgekeurd.",
     "Kein Clientzertifikat freigegeben.": "Geen clientcertificaat gedeeld.",
@@ -349,6 +354,10 @@
     "Noch keine globale Nachtkopie": "Nog geen globale nachtkopie",
     "Mesh-Ergebnis noch unbekannt": "Mesh-resultaat nog onbekend",
     "Mesh: {0}/{1} bestätigt, {2} abgelehnt, {3} offen": "Mesh: {0}/{1} bevestigd, {2} afgewezen, {3} open",
-    "Lokal gespeichert; Mesh-Bestätigungen prüfen": "Lokaal opgeslagen; controleer mesh-bevestigingen"
+    "Lokal gespeichert; Mesh-Bestätigungen prüfen": "Lokaal opgeslagen; controleer mesh-bevestigingen",
+    "Einrichtung verlassen. Das Gerät startet mit den gespeicherten Profilen neu.": "Instellen afgesloten. Het apparaat herstart met opgeslagen profielen.",
+    "Einrichtung konnte nicht verlassen werden. Zustand neu laden; Profile bleiben erhalten.": "Instellen afsluiten mislukt. Laad de status opnieuw; profielen blijven bewaard.",
+    "Ersteinrichtung; Gruppe wählen oder Einrichtung offline verlassen. Ohne sichere Gruppe bleibt Mesh aus.": "Eerste installatie: kies een groep of verlaat de installatie offline. Zonder veilige groep blijft mesh uit.",
+    "Einrichtung verlassen. Das Gerät startet offline; Mesh benötigt eine sichere Gruppe. Fehlende Uhrzeit lokal einstellen.": "Installatie verlaten. Het apparaat start offline; mesh vereist een veilige groep. Stel ontbrekende tijd lokaal in."
   }
 }

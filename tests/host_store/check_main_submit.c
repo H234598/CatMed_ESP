@@ -41,6 +41,8 @@ static bool sensed_valid;
 static bool fake_mesh_connected;
 static bool fake_mesh_coordinator;
 static KatmedMeshResult fake_mesh_result = MESH_UNAVAILABLE;
+static unsigned fake_mesh_start_calls, fake_mesh_history_calls, fake_web_policy_calls;
+static bool fake_web_enabled;
 static unsigned fake_shared_calls;
 static unsigned fake_mesh_notifications;
 static AppEvent fake_shared_event;
@@ -134,6 +136,30 @@ KatmedMeshResult katmed_mesh_copy_night(uint64_t now) {(void)now;return MESH_UNA
 void katmed_mesh_night_status(KatmedNightCopyStatus *out) {*out=(KatmedNightCopyStatus){0};}
 bool katmed_mesh_connected(void) { return fake_mesh_connected; }
 bool katmed_mesh_is_coordinator(void) { return fake_mesh_coordinator; }
+StoreBackend store_idf_history_backend(StoreIdfNvs *nvs) {
+    (void)nvs;return (StoreBackend){0};
+}
+void katmed_mesh_history_backend(StoreBackend backend) {
+    (void)backend;++fake_mesh_history_calls;
+}
+KatmedMeshResult katmed_mesh_start(const StoreProvision *provision,
+                                   const KatmedMeshServices *services) {
+    ++fake_mesh_start_calls;
+    assert(provision && services && services->store && services->state);
+    assert(provision->configured && provision->network_mode!=STORE_NETWORK_OFFLINE);
+    assert(memcmp(provision->group,services->store->record.provision.group,16)==0 &&
+           memcmp(provision->secret,services->store->record.provision.secret,32)==0);
+    return fake_mesh_result;
+}
+void katmed_web_set_enabled(bool enabled) {
+    ++fake_web_policy_calls;fake_web_enabled=enabled;
+}
+void katmed_mesh_device_name(char *out,size_t capacity,bool *assigned,bool *uncertain) {
+    (void)out;(void)capacity;*assigned=false;*uncertain=false;
+}
+bool katmed_mesh_radio_channel(uint8_t *channel) {*channel=0;return false;}
+void katmed_mesh_counts(KatmedMeshCounts *out) {*out=(KatmedMeshCounts){0};}
+uint32_t katmed_time_idf_sync_server_ipv4(void) {return 0;}
 void katmed_mesh_notify_local_commit(void) { ++fake_mesh_notifications; }
 KatmedMeshResult katmed_mesh_submit_shared(const AppEvent *event,
                                             const ClockSample *now,
@@ -193,12 +219,47 @@ static void test_runtime_setup_and_emergency(void) {
     initialize_runtime();katmed_time_init(&runtime.time,runtime.boot_domain);
     UiRequest dismiss={.kind=UI_REQUEST_DISMISS_BOOT};
     assert(submit_ui(&runtime,&dismiss)==UI_SUBMIT_DISMISSED);
+    const unsigned first_ap=setup_config_calls, first_mesh=fake_mesh_start_calls;
+    assert(start_runtime_network(&runtime) && runtime.setup_ap &&
+           setup_config_calls==first_ap+1 && fake_mesh_start_calls==first_mesh && fake_web_enabled);
     KatmedConfigRequest request={.operation=KATMED_CONFIG_SETUP_GET};KatmedConfigResponse response={0};
     unsigned before=writes;config_execute(&runtime,&request,&response);
-    assert(response.status==KATMED_CONFIG_OK && !response.setup.configured && writes==before);
+    assert(response.status==KATMED_CONFIG_OK && !response.setup.configured &&
+           response.setup.setup_open && writes==before);
+    assert(setup_exit_after_physical_boot(&runtime.store,true,false,ESP_RST_POWERON)==STORE_OK &&
+           !runtime.store.record.provision.configured && writes==before);
+    request.operation=KATMED_CONFIG_SETUP_EXIT;
+    snprintf(request.revision,sizeof(request.revision),"%s",response.snapshot.revision);
+    config_execute(&runtime,&request,&response);
+    assert(response.status==KATMED_CONFIG_OK && runtime.store.record.setup_dismissed &&
+           !runtime.store.record.setup_requested && runtime.reboot_required && writes==before+1);
+    runtime.setup_ap=false;
+    runtime.reboot_required=false;
+    const unsigned offline_ap=setup_config_calls, offline_mesh=fake_mesh_start_calls;
+    assert(!start_runtime_network(&runtime) && !runtime.setup_ap && !fake_web_enabled &&
+           setup_config_calls==offline_ap && fake_mesh_start_calls==offline_mesh);
+    UiNetworkStatus offline_status={0};network_status(&runtime,&offline_status);
+    assert(offline_status.offline_setup_exited && offline_status.manual_clock_required &&
+           !offline_status.configured && !offline_status.mesh_active);
+    assert(store_request_setup(&runtime.store)==STORE_OK &&
+           runtime.store.record.setup_requested && !runtime.store.record.setup_dismissed);
+    assert(setup_exit_after_physical_boot(&runtime.store,true,false,ESP_RST_SW)==STORE_OK &&
+           runtime.store.record.setup_requested);
+    assert(start_runtime_network(&runtime) && runtime.setup_ap && fake_web_enabled);
+    assert(setup_exit_after_physical_boot(&runtime.store,true,true,ESP_RST_EXT)==STORE_OK &&
+           runtime.store.record.setup_requested); /* physical reset warning has priority */
+    assert(setup_exit_after_physical_boot(&runtime.store,true,false,ESP_RST_EXT)==STORE_OK &&
+           runtime.store.record.setup_dismissed && !runtime.store.record.setup_requested);
+    runtime.setup_ap=false;
+    assert(!start_runtime_network(&runtime) && !runtime.setup_ap);
+    assert(store_request_setup(&runtime.store)==STORE_OK);
+    assert(start_runtime_network(&runtime) && runtime.setup_ap);
+    request=(KatmedConfigRequest){.operation=KATMED_CONFIG_SETUP_GET};
+    config_execute(&runtime,&request,&response);
     request.operation=KATMED_CONFIG_SETUP_SAVE;
     snprintf(request.revision,sizeof(request.revision),"%s",response.snapshot.revision);
     request.setup.mode=STORE_NETWORK_OFFLINE;
+    before=writes;
     snprintf(request.setup.local_datetime,sizeof(request.setup.local_datetime),"2026-03-29T02:30");
     config_execute(&runtime,&request,&response);
     assert(response.status==KATMED_CONFIG_INVALID && writes==before && !runtime.store.record.provision.configured);
@@ -210,6 +271,32 @@ static void test_runtime_setup_and_emergency(void) {
     // Simulate completion of the separately scheduled restart, never a real host reset.
     runtime.reboot_required=false;config_execute(&runtime,&request,&response);
     assert(response.status==KATMED_CONFIG_STALE);
+    const StoreProvision saved_profile=runtime.store.record.provision;
+    UiRequest open_setup={.kind=UI_REQUEST_OPEN_SETUP};
+    assert(submit_ui(&runtime,&open_setup)==UI_SUBMIT_COMMITTED &&
+           runtime.store.record.setup_requested && runtime.reboot_required);
+    assert(setup_exit_after_physical_boot(&runtime.store,true,false,ESP_RST_SW)==STORE_OK &&
+           runtime.store.record.setup_requested); /* scheduled reboot retains setup */
+    runtime.reboot_required=false; /* now running after that software reboot */
+    runtime.setup_ap=true;
+    request=(KatmedConfigRequest){.operation=KATMED_CONFIG_SETUP_GET};
+    config_execute(&runtime,&request,&response);
+    assert(response.status==KATMED_CONFIG_OK && response.setup.setup_open &&
+           response.setup.configured);
+    request.operation=KATMED_CONFIG_SETUP_EXIT;
+    snprintf(request.revision,sizeof(request.revision),"%s",response.snapshot.revision);
+    config_execute(&runtime,&request,&response);
+    assert(response.status==KATMED_CONFIG_OK);
+    assert(!runtime.store.record.setup_requested &&
+           memcmp(&runtime.store.record.provision,&saved_profile,sizeof(saved_profile))==0);
+    assert(store_request_setup(&runtime.store)==STORE_OK);
+    assert(setup_exit_after_physical_boot(&runtime.store,true,true,ESP_RST_EXT)==STORE_OK &&
+           runtime.store.record.setup_requested); /* reset warning remains independent */
+    assert(setup_exit_after_physical_boot(&runtime.store,true,false,ESP_RST_EXT)==STORE_OK &&
+           !runtime.store.record.setup_requested);
+    assert(memcmp(&runtime.store.record.provision,&saved_profile,sizeof(saved_profile))==0);
+    runtime.setup_ap=false;
+    runtime.reboot_required=false;
     AppState state=runtime.state;StoreRecord record=runtime.store.record;before=writes;
     UiRequest emergency={.kind=UI_REQUEST_EMERGENCY};
     assert(submit_ui(&runtime,&emergency)==UI_SUBMIT_COMMITTED && runtime.emergency_button_sequence==1);
@@ -218,6 +305,35 @@ static void test_runtime_setup_and_emergency(void) {
     assert(response.status==KATMED_CONFIG_OK && response.ha.emergency_button_sequence==1 && !response.ha.last_dose_known && !response.ha.alarm_active);
     puts("runtime setup/manual clock/CAS and independent emergency snapshot passed");
     committed_length=0;runtime=(Runtime){0};
+}
+
+static void test_mesh_only_without_station_profile(void) {
+    committed_length=0;fake_microseconds=1000000;
+    initialize_runtime();katmed_time_init(&runtime.time,runtime.boot_domain);
+    StoreProvision mesh={0};mesh.configured=true;mesh.network_mode=STORE_NETWORK_MESH_ONLY;
+    mesh.group[0]=1;mesh.secret[0]=2; /* synthetic trusted group, no WLAN secret */
+    assert(store_save_setup(&runtime.store,&mesh)==STORE_OK &&
+           runtime.store.record.wifi_profile_count==0);
+    const unsigned before_ap=setup_config_calls,before_mesh=fake_mesh_start_calls;
+    fake_mesh_result=MESH_ACCEPTED;
+    assert(!start_runtime_network(&runtime) && !runtime.setup_ap &&
+           runtime.mesh_started && !fake_web_enabled &&
+           setup_config_calls==before_ap && fake_mesh_start_calls==before_mesh+1 &&
+           fake_mesh_history_calls>0);
+    fake_mesh_result=MESH_UNAVAILABLE;
+    puts("mesh-only startup: trusted group starts without station profile; no setup AP");
+}
+
+static void test_offline_exit_clock_policy(void) {
+    committed_length=0;fake_microseconds=1000000;
+    initialize_runtime();katmed_time_init(&runtime.time,runtime.boot_domain);
+    assert(store_exit_setup(&runtime.store)==STORE_OK);
+    UiNetworkStatus status={0};network_status(&runtime,&status);
+    assert(status.offline_setup_exited && status.manual_clock_required);
+    assert(katmed_time_accept_utc(&runtime.time,monotonic_ms(),INT64_C(1792400400000),CLOCK_HOLDOVER));
+    network_status(&runtime,&status);
+    assert(status.offline_setup_exited && !status.manual_clock_required);
+    puts("offline exit clock: missing prompts, valid local time skips");
 }
 
 static void initialize_offline_runtime(void)
@@ -636,6 +752,8 @@ int main(int argc, char **argv)
     Runtime setup={0};
     assert(start_setup_ap(&setup) && setup.setup_ap && setup_config_calls==1);
     test_runtime_setup_and_emergency();
+    test_mesh_only_without_station_profile();
+    test_offline_exit_clock_policy();
     fake_microseconds=1000000;
     initialize_runtime();
     assert(runtime.state.alarm_active && !runtime.state.has_last_confirmation);

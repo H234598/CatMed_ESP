@@ -227,14 +227,17 @@
     resetPreview();
   }
 
-  let setupRevision = null;
+  let setupRevision = null, setupConfigured = false;
   async function loadRuntimeEinrichtung() {
     const value = await api("/api/runtime-setup");
     if (!value || typeof value.configured !== "boolean" || ![0,1,2].includes(value.mode) || typeof value.revision !== "string") throw new Error("Invalid setup state");
     setupRevision = value.revision;
+    setupConfigured = value.configured;
     $("network-mode").value = String(value.mode);
     $("group-action").value = value.configured ? "0" : "1";
-    $("runtime-setup-state").textContent = value.configured ? tr("Eingerichtet; Änderungen erfordern ausdrückliches Speichern.") : tr("Ersteinrichtung; Betriebsart wählen.");
+    $("runtime-setup-state").textContent = value.configured ? tr("Eingerichtet; Änderungen erfordern ausdrückliches Speichern.") : tr("Ersteinrichtung; Gruppe wählen oder Einrichtung offline verlassen. Ohne sichere Gruppe bleibt Mesh aus.");
+    $("runtime-setup-active").hidden = !value.setup_open;
+    $("runtime-setup-exit").hidden = !value.setup_open;
   }
 
   async function loadConfig() {
@@ -737,6 +740,19 @@
       $("setup-secret").value = ""; $("runtime-password").value = "";
       notice(tr("Einrichtung nicht bestätigt. Vor erneutem Speichern aktuellen Zustand laden; kein Rücksetzen annehmen."));
     } finally { body.secret = ""; body.password = ""; }
+  });
+
+  $("runtime-setup-exit").addEventListener("click", async () => {
+    if (!setupRevision) return;
+    try {
+      await api("/api/runtime-setup/exit", "POST", {revision: setupRevision});
+      setupRevision = null;
+      $("runtime-setup-state").textContent = setupConfigured ?
+        tr("Einrichtung verlassen. Das Gerät startet mit den gespeicherten Profilen neu.") :
+        tr("Einrichtung verlassen. Das Gerät startet offline; Mesh benötigt eine sichere Gruppe. Fehlende Uhrzeit lokal einstellen.");
+    } catch (_) {
+      notice(tr("Einrichtung konnte nicht verlassen werden. Zustand neu laden; Profile bleiben erhalten."));
+    }
   });
 
   $("wifi-open").addEventListener("change", () => {

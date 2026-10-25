@@ -279,11 +279,19 @@ static esp_err_t json_reply(httpd_req_t *req, const char *status, cJSON *obj)
 static bool request_host(httpd_req_t *req, char host[INET_ADDRSTRLEN])
 {
     int fd = httpd_req_to_sockfd(req);
-    struct sockaddr_in local = {0};
+    struct sockaddr_storage local = {0};
     socklen_t length = sizeof(local);
     if (fd < 0 || getsockname(fd, (struct sockaddr *)&local, &length) != 0 ||
-        local.sin_family != AF_INET ||
-        !inet_ntop(AF_INET, &local.sin_addr, host, INET_ADDRSTRLEN)) return false;
+        length < sizeof(struct sockaddr_in)) return false;
+    const void *address = NULL;
+    if (local.ss_family == AF_INET) {
+        address = &((struct sockaddr_in *)&local)->sin_addr;
+    } else if (local.ss_family == AF_INET6 &&
+               length >= sizeof(struct sockaddr_in6) &&
+               IN6_IS_ADDR_V4MAPPED(&((struct sockaddr_in6 *)&local)->sin6_addr)) {
+        address = &((struct sockaddr_in6 *)&local)->sin6_addr.s6_addr[12];
+    }
+    if (!address || !inet_ntop(AF_INET, address, host, INET_ADDRSTRLEN)) return false;
     size_t header_length = httpd_req_get_hdr_value_len(req, "Host");
     if (header_length == 0 || header_length > 64) return false;
     char supplied[65];
@@ -1079,6 +1087,24 @@ static esp_err_t runtime_setup_get(httpd_req_t *req) {
     return json_reply(req,"200 OK",obj);
 }
 
+static esp_err_t runtime_setup_exit_post(httpd_req_t *req) {
+    char token[KATMED_WEB_TOKEN_HEX+1];if(!require_session(req,true,token))return ESP_OK;
+    cJSON *obj=read_json(req);
+    const char *const keys[]={"revision"};
+    if(!keys_only(obj,keys,1)){if(obj){wipe_json(obj);cJSON_Delete(obj);}return error_reply(req,"422 Unprocessable Entity","invalid");}
+    const char *revision=json_string(obj,"revision",KATMED_CONFIG_REVISION_MAX-1);
+    const bool valid=revision!=NULL;
+    KatmedConfigRequest request={.operation=KATMED_CONFIG_SETUP_EXIT};
+    if(revision)snprintf(request.revision,sizeof(request.revision),"%s",revision);
+    wipe_json(obj);cJSON_Delete(obj);
+    if(!valid)return error_reply(req,"422 Unprocessable Entity","invalid");
+    KatmedConfigResponse response={0};
+    KatmedConfigStatus status=katmed_config_exchange(&request,&response,BRIDGE_TIMEOUT_MS);
+    if(status!=KATMED_CONFIG_OK)return bridge_error(req,status);
+    cJSON *reply=cJSON_CreateObject();cJSON_AddBoolToObject(reply,"connection_will_close",true);
+    return json_reply(req,"200 OK",reply);
+}
+
 static bool setup_hex(const char *text,uint8_t *out,size_t bytes) {
     if(!text || strlen(text)!=2*bytes)return false;
     for(size_t i=0;i<bytes;++i) {
@@ -1297,6 +1323,7 @@ static bool register_routes(httpd_handle_t server)
         {"/api/logout", HTTP_POST, logout_post},
         {"/api/runtime-setup", HTTP_GET, runtime_setup_get},
         {"/api/runtime-setup", HTTP_PUT, runtime_setup_put},
+        {"/api/runtime-setup/exit", HTTP_POST, runtime_setup_exit_post},
         {"/api/ha/status", HTTP_GET, ha_status_get},
         {"/api/config", HTTP_GET, config_get},
         {"/api/config", HTTP_PUT, config_put},
@@ -1333,7 +1360,8 @@ static bool start_listeners(void)
     }
     httpd_ssl_config_t tls = HTTPD_SSL_CONFIG_DEFAULT();
     tls.httpd.max_open_sockets = 1;
-    tls.httpd.max_uri_handlers = 32;
+    /* 21 local routes plus Wi-Fi(4), reset(3) and media(5). */
+    tls.httpd.max_uri_handlers = 33;
     tls.httpd.backlog_conn = 1;
     tls.httpd.lru_purge_enable = true;
     tls.httpd.recv_wait_timeout = 2;

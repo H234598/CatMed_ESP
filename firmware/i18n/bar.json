@@ -128,7 +128,6 @@
     "Eingabe nach Drehung verworfen": "Eingab nachm Drehn verworfn",
     "Zeit nicht synchronisiert": "Zeit ned abglicha",
     "Automatisch": "Automaddisch",
-    "Helligkeit: 1 bis 100 Prozent": "Helligkeit: 1 bis 100 Prozent",
     "Helligkeit": "Helligkeit",
     "Nachtzeit HH:MM": "Nachtzeit HH:MM",
     "Lokal gespeichert; Mesh-Bestätigungen prüfen": "Lokal gespeichert; Mesh-Bestätigungen prüfen",
@@ -141,9 +140,13 @@
     "Nachtbeginn HH:MM": "Nachtbeginn HH:MM",
     "Nachtende HH:MM": "Nachtende HH:MM",
     "Setze Nachtmodus global auf allen Geräten im Mesh": "Setz den Nachtmodus auf alle Geräte im Mesh",
-    "Helligkeit ändern": "Helligkeit ändern",
     "Nachtmodus einstellen": "Nachtmodus einstellen",
-    "Änderung vorgemerkt": "Änderung vorgemerkt"
+    "Änderung vorgemerkt": "Änderung vorgemerkt",
+    "Einrichtung aktiv: Mesh pausiert. Speichern oder Einrichtung verlassen startet den Normalbetrieb neu.": "Einrichtung aktiv: Mesh pausiert. Speichern oder Verlassen startet den Normalbetrieb neu.",
+    "Einrichtung verlassen": "Einrichtung verlassen",
+    "Einrichtung verlassen und ein normaler Neustart löschen keine Daten.": "Einrichtung verlassen und normal neu starten löscht keine Daten.",
+    "Ersteinrichtung aktiv: Gruppe im Web einrichten oder offline verlassen. Ohne sichere Gruppe bleibt Mesh aus.": "Ersteinrichtung aktiv: Gruppn im Web einrichten oder offline verlassen. Ohne sichere Gruppn bleibt Mesh aus.",
+    "Einrichtung offline verlassen: Setup-AP aus. Mesh benötigt eine sichere Gruppe.": "Einrichtung offline verlassen: Setup-AP aus. Mesh braucht a sichere Gruppn."
   },
   "web_static": {
     "KatMed · Einstellungen": "KatMed · Eistellunga",
@@ -253,7 +256,10 @@
     "Nachtbeginn HH:MM": "Nachtbeginn HH:MM",
     "Nachtende HH:MM": "Nachtende HH:MM",
     "Setze Nachtmodus global auf allen Geräten im Mesh": "Setz den Nachtmodus auf alle Geräte im Mesh",
-    "Noch keine globale Nachtkopie": "Noch ka globale Nachtkopie"
+    "Noch keine globale Nachtkopie": "Noch ka globale Nachtkopie",
+    "Einrichtung aktiv: Mesh pausiert. Speichern oder Einrichtung verlassen startet den Normalbetrieb neu.": "Einrichtung aktiv: Mesh pausiert. Speichern oder Verlassen startet den Normalbetrieb neu.",
+    "Einrichtung verlassen": "Einrichtung verlassen",
+    "Einrichtung verlassen und ein normaler Neustart löschen keine Daten.": "Einrichtung verlassen und normal neu starten löscht keine Daten."
   },
   "web_dynamic": {
     "Gerät: {0}": "Gerät: {0}",
@@ -274,7 +280,6 @@
     "Gespeicherter HH:MM-Termin ist abgelaufen.": "Der gsicherte HH:MM-Termin is abgloffa.",
     "Gespeicherter HH:MM-Termin konnte nach Neustart nicht übernommen werden.": "Der gsicherte HH:MM-Termin konnt nachm Neustart ned übernomma wern.",
     "Eingerichtet; Änderungen erfordern ausdrückliches Speichern.": "Eingerichtet; Änderungen speichern.",
-    "Ersteinrichtung; Betriebsart wählen.": "Ersteinrichtung; Betriebsart wählen.",
     "Freigegeben: {0}": "Freigegebn: {0}",
     "Freigegeben.": "Freigegebn.",
     "Kein Clientzertifikat freigegeben.": "Ka Clientzertifikat freigegebn.",
@@ -349,6 +354,10 @@
     "Noch keine globale Nachtkopie": "Noch ka globale Nachtkopie",
     "Mesh-Ergebnis noch unbekannt": "Mesh-Ergebnis noch unbekannt",
     "Mesh: {0}/{1} bestätigt, {2} abgelehnt, {3} offen": "Mesh: {0}/{1} bestätigt, {2} abgelehnt, {3} offen",
-    "Lokal gespeichert; Mesh-Bestätigungen prüfen": "Lokal gespeichert; Mesh-Bestätigungen prüfen"
+    "Lokal gespeichert; Mesh-Bestätigungen prüfen": "Lokal gespeichert; Mesh-Bestätigungen prüfen",
+    "Einrichtung verlassen. Das Gerät startet mit den gespeicherten Profilen neu.": "Einrichtung verlassen. Das Gerät startet mit den gespeicherten Profilen neu.",
+    "Einrichtung konnte nicht verlassen werden. Zustand neu laden; Profile bleiben erhalten.": "Einrichtung konnte nicht verlassen werden. Status neu laden; Profile bleiben.",
+    "Ersteinrichtung; Gruppe wählen oder Einrichtung offline verlassen. Ohne sichere Gruppe bleibt Mesh aus.": "Ersteinrichtung: Gruppn wählen oder offline verlassen. Ohne sichere Gruppn bleibt Mesh aus.",
+    "Einrichtung verlassen. Das Gerät startet offline; Mesh benötigt eine sichere Gruppe. Fehlende Uhrzeit lokal einstellen.": "Einrichtung verlassen. Gerät startet offline; Mesh braucht a sichere Gruppn. Fehlende Uhrzeit lokal einstellen."
   }
 }

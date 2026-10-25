@@ -128,7 +128,6 @@
     "Eingabe nach Drehung verworfen": "Entrada descartada después de la rotación",
     "Zeit nicht synchronisiert": "Hora no sincronizada",
     "Automatisch": "Automático",
-    "Helligkeit: 1 bis 100 Prozent": "Brillo: del 1 al 100 por ciento",
     "Helligkeit": "Brillo",
     "Nachtzeit HH:MM": "Horario nocturno HH:MM",
     "Lokal gespeichert; Mesh-Bestätigungen prüfen": "Guardado localmente; compruebe las confirmaciones de la malla",
@@ -141,9 +140,13 @@
     "Nachtbeginn HH:MM": "Inicio nocturno HH:MM",
     "Nachtende HH:MM": "Fin nocturno HH:MM",
     "Setze Nachtmodus global auf allen Geräten im Mesh": "Aplicar el modo nocturno a todos los dispositivos de la malla",
-    "Helligkeit ändern": "Cambiar brillo",
     "Nachtmodus einstellen": "Configurar modo nocturno",
-    "Änderung vorgemerkt": "Cambio en cola"
+    "Änderung vorgemerkt": "Cambio en cola",
+    "Einrichtung aktiv: Mesh pausiert. Speichern oder Einrichtung verlassen startet den Normalbetrieb neu.": "Configuración activa: malla en pausa. Guardar o salir reinicia el funcionamiento normal.",
+    "Einrichtung verlassen": "Salir de configuración",
+    "Einrichtung verlassen und ein normaler Neustart löschen keine Daten.": "Salir de configuración y reiniciar normalmente no borra datos.",
+    "Ersteinrichtung aktiv: Gruppe im Web einrichten oder offline verlassen. Ohne sichere Gruppe bleibt Mesh aus.": "Configuración inicial activa: configura un grupo en la web o sal sin conexión. Sin un grupo seguro, Mesh permanece apagado.",
+    "Einrichtung offline verlassen: Setup-AP aus. Mesh benötigt eine sichere Gruppe.": "Configuración abandonada sin conexión: punto de acceso de configuración apagado. Mesh necesita un grupo seguro."
   },
   "web_static": {
     "KatMed · Einstellungen": "KatMed · Configuración",
@@ -253,7 +256,10 @@
     "Nachtbeginn HH:MM": "Inicio nocturno HH:MM",
     "Nachtende HH:MM": "Fin nocturno HH:MM",
     "Setze Nachtmodus global auf allen Geräten im Mesh": "Aplicar el modo nocturno a todos los dispositivos de la malla",
-    "Noch keine globale Nachtkopie": "Sin copia global del modo nocturno"
+    "Noch keine globale Nachtkopie": "Sin copia global del modo nocturno",
+    "Einrichtung aktiv: Mesh pausiert. Speichern oder Einrichtung verlassen startet den Normalbetrieb neu.": "Configuración activa: malla en pausa. Guardar o salir reinicia el funcionamiento normal.",
+    "Einrichtung verlassen": "Salir de configuración",
+    "Einrichtung verlassen und ein normaler Neustart löschen keine Daten.": "Salir de configuración y reiniciar normalmente no borra datos."
   },
   "web_dynamic": {
     "Gerät: {0}": "Dispositivo: {0}",
@@ -274,7 +280,6 @@
     "Gespeicherter HH:MM-Termin ist abgelaufen.": "La cita guardada de HH:MM ha caducado.",
     "Gespeicherter HH:MM-Termin konnte nach Neustart nicht übernommen werden.": "La cita guardada de HH:MM no se pudo retomar después del reinicio.",
     "Eingerichtet; Änderungen erfordern ausdrückliches Speichern.": "Configurado; guarde los cambios.",
-    "Ersteinrichtung; Betriebsart wählen.": "Configuración inicial; elija un modo.",
     "Freigegeben: {0}": "Publicado: {0}",
     "Freigegeben.": "Autorizado.",
     "Kein Clientzertifikat freigegeben.": "No se comparte ningún certificado de cliente.",
@@ -349,6 +354,10 @@
     "Noch keine globale Nachtkopie": "Sin copia global del modo nocturno",
     "Mesh-Ergebnis noch unbekannt": "Resultado de la malla aún desconocido",
     "Mesh: {0}/{1} bestätigt, {2} abgelehnt, {3} offen": "Malla: {0}/{1} confirmados, {2} rechazados, {3} pendientes",
-    "Lokal gespeichert; Mesh-Bestätigungen prüfen": "Guardado localmente; compruebe las confirmaciones de la malla"
+    "Lokal gespeichert; Mesh-Bestätigungen prüfen": "Guardado localmente; compruebe las confirmaciones de la malla",
+    "Einrichtung verlassen. Das Gerät startet mit den gespeicherten Profilen neu.": "Configuración cerrada. El dispositivo se reinicia con los perfiles guardados.",
+    "Einrichtung konnte nicht verlassen werden. Zustand neu laden; Profile bleiben erhalten.": "No se pudo salir de configuración. Recargue el estado; los perfiles se conservan.",
+    "Ersteinrichtung; Gruppe wählen oder Einrichtung offline verlassen. Ohne sichere Gruppe bleibt Mesh aus.": "Configuración inicial: elige un grupo o sal sin conexión. Sin un grupo seguro, Mesh permanece apagado.",
+    "Einrichtung verlassen. Das Gerät startet offline; Mesh benötigt eine sichere Gruppe. Fehlende Uhrzeit lokal einstellen.": "Configuración abandonada. El dispositivo inicia sin conexión; Mesh necesita un grupo seguro. Ajusta la hora localmente si falta."
   }
 }

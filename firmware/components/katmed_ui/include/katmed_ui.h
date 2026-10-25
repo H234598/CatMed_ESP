@@ -25,7 +25,7 @@ typedef enum {
     UI_REQUEST_SET_ROTATION_MODE,
     UI_REQUEST_SET_ORIENTATION,
     UI_REQUEST_SET_CLOCK_STYLE,
-    UI_REQUEST_SET_LANGUAGE, UI_REQUEST_SET_SYSTEM_TIME, UI_REQUEST_OPEN_SETUP, UI_REQUEST_EMERGENCY, UI_REQUEST_SET_ORIENTATION_AUTOMATIC, UI_REQUEST_SET_BRIGHTNESS, UI_REQUEST_SET_NIGHT_ENABLED, UI_REQUEST_SET_NIGHT_START, UI_REQUEST_SET_NIGHT_END, UI_REQUEST_COPY_NIGHT
+    UI_REQUEST_SET_LANGUAGE, UI_REQUEST_SET_SYSTEM_TIME, UI_REQUEST_OPEN_SETUP, UI_REQUEST_EXIT_SETUP, UI_REQUEST_EMERGENCY, UI_REQUEST_SET_ORIENTATION_AUTOMATIC, UI_REQUEST_SET_BRIGHTNESS, UI_REQUEST_SET_NIGHT_ENABLED, UI_REQUEST_SET_NIGHT_START, UI_REQUEST_SET_NIGHT_END, UI_REQUEST_COPY_NIGHT
 } UiRequestKind;
 typedef struct {
     UiRequestKind kind;
@@ -63,6 +63,7 @@ typedef struct {
 typedef struct {
     bool configured;
     bool setup_open;
+    bool offline_setup_exited; /* Explicit unconfigured Exit: AP off; no group trust claimed. */
     bool manual_clock_required;
     char setup_ssid[33], setup_password[17]; /* Display only, never HTTP or logs. */
     bool connected;

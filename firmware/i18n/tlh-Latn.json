@@ -128,7 +128,6 @@
     "Eingabe nach Drehung verworfen": "jIH tlhe'DI', De' DaghItlhpu'bogh Qaw'lu'",
     "Zeit nicht synchronisiert": "poH rapmoHlu'be'",
     "Automatisch": "mIw motlh",
-    "Helligkeit: 1 bis 100 Prozent": "wovqu'ghach: vatlhvI' 1 patlh 100",
     "Helligkeit": "wovqu'ghach",
     "Nachtzeit HH:MM": "ram poH HH:MM",
     "Lokal gespeichert; Mesh-Bestätigungen prüfen": "naDev pol; mesh jangmey yInuD",
@@ -141,9 +140,13 @@
     "Nachtbeginn HH:MM": "ram tagh HH:MM",
     "Nachtende HH:MM": "ram van HH:MM",
     "Setze Nachtmodus global auf allen Geräten im Mesh": "Hoch mesh janmeyvaD ram mIw cher",
-    "Helligkeit ändern": "wovqu'ghach choH",
     "Nachtmodus einstellen": "ram mIw cher",
-    "Änderung vorgemerkt": "choH loSlu'"
+    "Änderung vorgemerkt": "choH loSlu'",
+    "Einrichtung aktiv: Mesh pausiert. Speichern oder Einrichtung verlassen startet den Normalbetrieb neu.": "chermeH mIw QaptaH: mesh mevtaH. pol pagh mejDI' motlh mIw taghqa'.",
+    "Einrichtung verlassen": "chermeH mIw yImej",
+    "Einrichtung verlassen und ein normaler Neustart löschen keine Daten.": "chermeH mIw meJlu'DI' motlh taghqa'DI' je De' Qaw'lu'be'.",
+    "Ersteinrichtung aktiv: Gruppe im Web einrichten oder offline verlassen. Ohne sichere Gruppe bleibt Mesh aus.": "chermeH mIw wa’DIch taH: weSDaq ghom yIcher pagh rarHa’taHvIS mIw yImej. ghom QaD Hutlhchugh mesh Qapbe’.",
+    "Einrichtung offline verlassen: Setup-AP aus. Mesh benötigt eine sichere Gruppe.": "rarHa’taHvIS chermeH mIw mejlu’: Setup-AP Qapbe’. ghom QaD poQ mesh."
   },
   "web_dynamic": {
     "Gerät: {0}": "jan: {0}",
@@ -164,7 +167,6 @@
     "Gespeicherter HH:MM-Termin ist abgelaufen.": "HH:MM Hergh poH pollu'pu'bogh rInpu'.",
     "Gespeicherter HH:MM-Termin konnte nach Neustart nicht übernommen werden.": "jan taghqa'DI', HH:MM Hergh poH pollu'pu'bogh Hevqa'laHbe'.",
     "Eingerichtet; Änderungen erfordern ausdrückliches Speichern.": "cherlu'; choH yIpol.",
-    "Ersteinrichtung; Betriebsart wählen.": "chermeH mIw yIwIv.",
     "Freigegeben: {0}": "chaw'lu'pu': {0}",
     "Freigegeben.": "chaw'lu'pu'.",
     "Kein Clientzertifikat freigegeben.": "lo'wI' Qoyje' chaw'lu'be'.",
@@ -239,7 +241,11 @@
     "Noch keine globale Nachtkopie": "HochvaD ram mIw ghItlhlu'pu'be'",
     "Mesh-Ergebnis noch unbekannt": "mesh ta' Sovbe'lu'",
     "Mesh: {0}/{1} bestätigt, {2} abgelehnt, {3} offen": "mesh: {0}/{1} laj, {2} lajHa', {3} loS",
-    "Lokal gespeichert; Mesh-Bestätigungen prüfen": "naDev pol; mesh jangmey yInuD"
+    "Lokal gespeichert; Mesh-Bestätigungen prüfen": "naDev pol; mesh jangmey yInuD",
+    "Einrichtung verlassen. Das Gerät startet mit den gespeicherten Profilen neu.": "chermeH mIw meJlu'pu'. poltaHbogh De' lo'taHvIS jan taghqa'.",
+    "Einrichtung konnte nicht verlassen werden. Zustand neu laden; Profile bleiben erhalten.": "chermeH mIw meJlaHbe'lu'. Dotlh yIlaDqa'; De' poltaHlu'.",
+    "Ersteinrichtung; Gruppe wählen oder Einrichtung offline verlassen. Ohne sichere Gruppe bleibt Mesh aus.": "chermeH mIw wa’DIch: ghom yIwIv pagh rarHa’taHvIS mIw yImej. ghom QaD Hutlhchugh mesh Qapbe’.",
+    "Einrichtung verlassen. Das Gerät startet offline; Mesh benötigt eine sichere Gruppe. Fehlende Uhrzeit lokal einstellen.": "chermeH mIw mejlu’. rarHa’taHvIS jan tagh; ghom QaD poQ mesh. poH tu’lu’be’chugh janDaq yIcher."
   },
   "web_static": {
     "KatMed · Einstellungen": "KatMed · jan SeHmeH De'",
@@ -349,6 +355,9 @@
     "Nachtbeginn HH:MM": "ram tagh HH:MM",
     "Nachtende HH:MM": "ram van HH:MM",
     "Setze Nachtmodus global auf allen Geräten im Mesh": "Hoch mesh janmeyvaD ram mIw cher",
-    "Noch keine globale Nachtkopie": "HochvaD ram mIw ghItlhlu'pu'be'"
+    "Noch keine globale Nachtkopie": "HochvaD ram mIw ghItlhlu'pu'be'",
+    "Einrichtung aktiv: Mesh pausiert. Speichern oder Einrichtung verlassen startet den Normalbetrieb neu.": "chermeH mIw QaptaH: mesh mevtaH. pol pagh mejDI' motlh mIw taghqa'.",
+    "Einrichtung verlassen": "chermeH mIw yImej",
+    "Einrichtung verlassen und ein normaler Neustart löschen keine Daten.": "chermeH mIw meJlu'DI' motlh taghqa'DI' je De' Qaw'lu'be'."
   }
 }

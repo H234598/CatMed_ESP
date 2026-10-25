@@ -128,7 +128,6 @@
     "Eingabe nach Drehung verworfen": "ローテーション後にエントリが破棄されました",
     "Zeit nicht synchronisiert": "時間が同期されていません",
     "Automatisch": "自動",
-    "Helligkeit: 1 bis 100 Prozent": "明るさ：1から100パーセント",
     "Helligkeit": "明るさ",
     "Nachtzeit HH:MM": "夜間時刻 HH:MM",
     "Lokal gespeichert; Mesh-Bestätigungen prüfen": "本体に保存済み。メッシュの確認応答を確認してください",
@@ -141,9 +140,13 @@
     "Nachtbeginn HH:MM": "夜間開始 HH:MM",
     "Nachtende HH:MM": "夜間終了 HH:MM",
     "Setze Nachtmodus global auf allen Geräten im Mesh": "メッシュ内のすべての機器に夜間モードを適用",
-    "Helligkeit ändern": "明るさを変更",
     "Nachtmodus einstellen": "夜間モードを設定",
-    "Änderung vorgemerkt": "変更を受け付けました"
+    "Änderung vorgemerkt": "変更を受け付けました",
+    "Einrichtung aktiv: Mesh pausiert. Speichern oder Einrichtung verlassen startet den Normalbetrieb neu.": "設定中: メッシュは一時停止しています。保存または終了すると通常動作で再起動します。",
+    "Einrichtung verlassen": "設定を終了",
+    "Einrichtung verlassen und ein normaler Neustart löschen keine Daten.": "設定の終了と通常の再起動ではデータは消去されません。",
+    "Ersteinrichtung aktiv: Gruppe im Web einrichten oder offline verlassen. Ohne sichere Gruppe bleibt Mesh aus.": "初期設定中: Web でグループを設定するか、オフラインで設定を終了してください。安全なグループがない場合、Mesh は停止します。",
+    "Einrichtung offline verlassen: Setup-AP aus. Mesh benötigt eine sichere Gruppe.": "設定をオフラインで終了: 設定用 AP は停止しています。Mesh には安全なグループが必要です。"
   },
   "web_static": {
     "KatMed · Einstellungen": "KatMed · 設定",
@@ -253,7 +256,10 @@
     "Nachtbeginn HH:MM": "夜間開始 HH:MM",
     "Nachtende HH:MM": "夜間終了 HH:MM",
     "Setze Nachtmodus global auf allen Geräten im Mesh": "メッシュ内のすべての機器に夜間モードを適用",
-    "Noch keine globale Nachtkopie": "夜間モードの全体コピーはまだありません"
+    "Noch keine globale Nachtkopie": "夜間モードの全体コピーはまだありません",
+    "Einrichtung aktiv: Mesh pausiert. Speichern oder Einrichtung verlassen startet den Normalbetrieb neu.": "設定中: メッシュは一時停止しています。保存または終了すると通常動作で再起動します。",
+    "Einrichtung verlassen": "設定を終了",
+    "Einrichtung verlassen und ein normaler Neustart löschen keine Daten.": "設定の終了と通常の再起動ではデータは消去されません。"
   },
   "web_dynamic": {
     "Gerät: {0}": "デバイス: {0}",
@@ -274,7 +280,6 @@
     "Gespeicherter HH:MM-Termin ist abgelaufen.": "保存された HH:MM 予定の有効期限が切れました。",
     "Gespeicherter HH:MM-Termin konnte nach Neustart nicht übernommen werden.": "保存された HH:MM 予定は、再起動後に引き継がれませんでした。",
     "Eingerichtet; Änderungen erfordern ausdrückliches Speichern.": "設定済み。変更は保存が必要です。",
-    "Ersteinrichtung; Betriebsart wählen.": "初期設定。動作モードを選択してください。",
     "Freigegeben: {0}": "リリース済み: {0}",
     "Freigegeben.": "承認済み。",
     "Kein Clientzertifikat freigegeben.": "クライアント証明書が共有されていません。",
@@ -349,6 +354,10 @@
     "Noch keine globale Nachtkopie": "夜間モードの全体コピーはまだありません",
     "Mesh-Ergebnis noch unbekannt": "メッシュの結果はまだ不明です",
     "Mesh: {0}/{1} bestätigt, {2} abgelehnt, {3} offen": "メッシュ：{0}/{1} 確認済み、{2} 拒否、{3} 未確認",
-    "Lokal gespeichert; Mesh-Bestätigungen prüfen": "本体に保存済み。メッシュの確認応答を確認してください"
+    "Lokal gespeichert; Mesh-Bestätigungen prüfen": "本体に保存済み。メッシュの確認応答を確認してください",
+    "Einrichtung verlassen. Das Gerät startet mit den gespeicherten Profilen neu.": "設定を終了しました。保存済みプロファイルで再起動します。",
+    "Einrichtung konnte nicht verlassen werden. Zustand neu laden; Profile bleiben erhalten.": "設定を終了できませんでした。状態を再読み込みしてください。プロファイルは保持されます。",
+    "Ersteinrichtung; Gruppe wählen oder Einrichtung offline verlassen. Ohne sichere Gruppe bleibt Mesh aus.": "初期設定: グループを選ぶか、オフラインで設定を終了してください。安全なグループがない場合、Mesh は停止します。",
+    "Einrichtung verlassen. Das Gerät startet offline; Mesh benötigt eine sichere Gruppe. Fehlende Uhrzeit lokal einstellen.": "設定を終了しました。機器はオフラインで起動します。Mesh には安全なグループが必要です。時刻がない場合は本体で設定してください。"
   }
 }

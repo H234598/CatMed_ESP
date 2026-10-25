@@ -68,12 +68,14 @@ def browser():
     data = {"keys": keys, "values": {}}
     for code in ORDER:
         if code == "de":
-            data["values"][code] = keys
+            data["values"][code] = None  # Preserve locale order, alias source keys below.
+            continue
         elif code in LOCALES:
             data["values"][code] = [LOCALES[code]["web_static"].get(key,
                                      LOCALES[code]["web_dynamic"].get(key)) for key in keys]
     return "/* Generated from firmware/i18n JSON. */\nwindow.KATMED_I18N = " + \
-        json.dumps(data, ensure_ascii=False, separators=(",", ":")) + ";\n"
+        json.dumps(data, ensure_ascii=False, separators=(",", ":")) + \
+        ";\nwindow.KATMED_I18N.values.de = window.KATMED_I18N.keys;\n"
 
 
 def main():
