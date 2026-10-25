@@ -11,7 +11,9 @@
 
 /* Product paths stay intact. Only physical I2C, the panel and service sinks
  * are replaced; LVGL reads the product board callback and emits real clicks. */
+static bool boot_input_ready; /* Host-only stand-in for board_deinit's ESP task state. */
 #include "../../firmware/components/board/board.c"
+#undef pdMS_TO_TICKS
 #define KATMED_FULL_STACK 1
 #define KATMED_WITH_CORE 1
 #include "../../firmware/main/main.c"
@@ -23,7 +25,13 @@ static bool lock_failure;
 static bool raw_down;
 static int raw_x, raw_y;
 static unsigned confirms, shared_writes, local_writes;
+static unsigned brightness_submits, brightness_previews;
+static uint16_t submitted_brightness;
+static uint8_t preview_brightness_value;
+static uint8_t stored_brightness = 37;
 static uint16_t draw_buffer[320 * 16];
+size_t heap_caps_get_largest_free_block(uint32_t caps)
+{ (void)caps; return 1u << 20; }
 static AppState state;
 static LocalSettings local;
 
@@ -81,8 +89,8 @@ KatmedImageStatus katmed_images_present(lv_obj_t *image, lv_obj_t *fallback,
     uint32_t id, Orientation orientation)
 {
     (void)id; (void)orientation;
-    lv_obj_add_flag(image, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_remove_flag(fallback, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_hidden(image, true);
+    lv_obj_set_hidden(fallback, false);
     return KATMED_IMAGE_OK;
 }
 static void flush(lv_display_t *display, const lv_area_t *area, uint8_t *pixels)
@@ -95,6 +103,10 @@ static UiSubmitResult submit(void *context, const UiRequest *request)
     (void)context;
     switch (request->kind) {
     case UI_REQUEST_CONFIRM: confirms++; return UI_SUBMIT_PENDING;
+    case UI_REQUEST_SET_BRIGHTNESS:
+        brightness_submits++;
+        submitted_brightness = request->value.display_value;
+        return UI_SUBMIT_QUEUED;
     case UI_REQUEST_SET_ORIENTATION:
     case UI_REQUEST_SET_CLOCK_STYLE:
         local_writes++;
@@ -103,6 +115,19 @@ static UiSubmitResult submit(void *context, const UiRequest *request)
         shared_writes++;
         return UI_SUBMIT_UNAVAILABLE;
     }
+}
+static bool preview_brightness(void *context, uint8_t value)
+{
+    (void)context;
+    brightness_previews++;
+    preview_brightness_value = value;
+    return true;
+}
+static void read_display(void *context, KatmedDisplaySettings *settings)
+{
+    (void)context;
+    *settings = katmed_display_defaults();
+    settings->brightness = stored_brightness;
 }
 
 static void advance_time(void)
@@ -151,6 +176,71 @@ static lv_obj_t *find_matrix(lv_obj_t *parent, const char *text, uint32_t *butto
     }
     return NULL;
 }
+static lv_obj_t *find_caption(lv_obj_t *parent, const char *text)
+{
+    if (lv_obj_check_type(parent, &lv_label_class) &&
+        lv_obj_check_type(lv_obj_get_parent(parent), &lv_button_class) &&
+        strcmp(lv_label_get_text(parent), text) == 0) return parent;
+    for (uint32_t i = 0; i < lv_obj_get_child_count(parent); ++i) {
+        lv_obj_t *found = find_caption(lv_obj_get_child(parent, i), text);
+        if (found) return found;
+    }
+    return NULL;
+}
+static lv_obj_t *find_slider(lv_obj_t *parent)
+{
+    if (lv_obj_check_type(parent, &lv_slider_class)) return parent;
+    for (uint32_t i = 0; i < lv_obj_get_child_count(parent); ++i) {
+        lv_obj_t *found = find_slider(lv_obj_get_child(parent, i));
+        if (found) return found;
+    }
+    return NULL;
+}
+static void check_brightness_release(uint16_t target)
+{
+    lv_obj_t *caption = find_caption(lv_screen_active(), "Helligkeit ändern");
+    assert(caption);
+    lv_obj_t *button = lv_obj_get_parent(caption);
+    lv_obj_scroll_to_view(button, LV_ANIM_OFF);
+    lv_obj_scroll_by(lv_obj_get_parent(button), 0, -96, LV_ANIM_OFF);
+    lv_obj_update_layout(lv_screen_active());
+    lv_area_t area;
+    lv_obj_get_coords(button, &area);
+    const int bx = (area.x1 + area.x2) / 2, by = (area.y1 + area.y2) / 2;
+    assert(by > 24 && by < LCD_HEIGHT - 24);
+    step(false, bx, by, false, false, true);
+    step(true, bx, by, false, false, true);
+    step(false, bx, by, false, false, true);
+    lv_obj_t *slider = find_slider(lv_screen_active());
+    assert(slider);
+    lv_obj_update_layout(lv_screen_active());
+    lv_obj_get_coords(slider, &area);
+    const int y = (area.y1 + area.y2) / 2;
+    const int from = area.x1 + 12;
+    step(false, from, y, false, false, true);
+    step(true, from, y, false, false, true);
+    int x = area.x1;
+    for (; x <= area.x2 + 12; ++x) {
+        step(true, x, y, false, false, true);
+        if (lv_slider_get_value(slider) == target) break;
+    }
+    const uint16_t held = (uint16_t)lv_slider_get_value(slider);
+    assert(x <= area.x2 + 12 && held == target);
+    assert(brightness_submits == 0 && brightness_previews > 0 &&
+           preview_brightness_value == held && shared_writes == 0 && local_writes == 0 &&
+           ui_current_view() == SETTINGS && find_slider(lv_screen_active()) == slider);
+    step(false, x, y, false, false, true);
+    fprintf(stderr, "C6 brightness: held=%u submitted=%u\n", held, submitted_brightness);
+    assert(brightness_submits == 1 && submitted_brightness == held &&
+           preview_brightness_value == 0 && shared_writes == 0 && local_writes == 0 &&
+           ui_current_view() == SETTINGS && find_slider(lv_screen_active()) == slider);
+    assert(latest_base_x == x && latest_base_y == y);
+    step(false, x, y, false, false, true); /* Repeated valid finger-up keeps the point. */
+    assert(latest_base_x == x && latest_base_y == y && brightness_submits == 1);
+    step(false, x, y, true, false, true); /* Invalid read still cancels the contact. */
+    assert(latest_base_x == 0 && latest_base_y == 0 && indev_gate.quarantined &&
+           brightness_submits == 1);
+}
 static void button_center(const char *text, int *x, int *y)
 {
     uint32_t button = 0;
@@ -175,10 +265,11 @@ int main(int argc, char **argv)
     const bool alarm = strcmp(argv[1], "alarm") == 0;
     const bool shared = strcmp(argv[1], "shared") == 0;
     const bool local_setting = strcmp(argv[1], "local") == 0;
+    const bool brightness = strcmp(argv[1], "brightness") == 0;
     const bool delayed_poll = strcmp(argv[2], "delayed_poll") == 0;
     const bool failed_lock = strcmp(argv[2], "failed_lock") == 0;
-    assert(alarm || shared || local_setting);
-    assert(delayed_poll || failed_lock || strcmp(argv[2], "normal") == 0);
+    assert(alarm || shared || local_setting || brightness);
+    assert(brightness || delayed_poll || failed_lock || strcmp(argv[2], "normal") == 0);
     lv_init();
     lv_display = lv_display_create(LCD_WIDTH, LCD_HEIGHT);
     assert(lv_display);
@@ -193,8 +284,11 @@ int main(int argc, char **argv)
     lv_indev_set_display(lv_touch, lv_display);
     lv_indev_set_read_cb(lv_touch, lv_touch_read);
     lv_indev_set_mode(lv_touch, LV_INDEV_MODE_EVENT);
-    UiServices services = {.submit = submit};
+    UiServices services = {.submit = submit, .brightness_preview = preview_brightness,
+                           .display_settings = read_display};
     ui_set_services(&services);
+    if (brightness) board_set_touch_filter(ui_lvgl_touch_allowed);
+    katmed_i18n_select(KATMED_LANG_DE);
     state.alarm_active = alarm;
     state.start_reason = START_SETTINGS;
     state.round.origin = (EventId){1, 1, 1};
@@ -203,6 +297,15 @@ int main(int argc, char **argv)
     ClockSample clock = {.monotonic_ms = fake_ms, .domain = 1};
     ui_render(&state, &local, alarm ? ALARM : SETTINGS, &clock);
     lv_obj_update_layout(lv_screen_active());
+    if (brightness) {
+        const unsigned target = (unsigned)strtoul(argv[2], NULL, 10);
+        assert(target == 1 || target == 40 || target == 50 || target == 100);
+        check_brightness_release((uint16_t)target);
+        lv_indev_delete(lv_touch);
+        lv_display_delete(lv_display);
+        lv_deinit();
+        return 0;
+    }
     int x = 90, y = 100;
     if (shared) button_center("Zufall", &x, &y);
     if (local_setting) button_center("90°", &x, &y);
