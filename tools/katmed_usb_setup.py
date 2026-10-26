@@ -242,6 +242,10 @@ def _read_protocol_line(port: SerialPort,
         payload = raw[:-1]
         if payload.endswith(b"\r"):
             payload = payload[:-1]
+        # Shared console diagnostics can end in CR CR LF. Normalize only the
+        # extra terminal CR of a non-KM1 line; KM1 framing remains strict.
+        if not raw.startswith(b"KM1 ") and payload.endswith(b"\r"):
+            payload = payload[:-1]
         if b"\r" in payload or len(payload) > MAX_DIAG_CHARS:
             raise SetupError("USB-Zeile enthält ein ungültiges Ende oder ist zu lang")
         if not (raw.startswith(b"KM1 OK ") or raw.startswith(b"KM1 ERR ")):

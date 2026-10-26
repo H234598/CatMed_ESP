@@ -152,6 +152,20 @@ class UsbSetupTests(unittest.TestCase):
             FakeSerial([metric, b"KM1 OK PROVISION\n"]),
             b"KM1 PROVISION\n", "KM1 OK PROVISION"))
 
+    def test_double_cr_console_diagnostic_does_not_block_km1_reply(self) -> None:
+        # A real non-KM1 console line ended with two CR bytes before LF.
+        # The host must skip it while keeping KM1 replies strictly framed.
+        diagnostic = b"synthetic public console diagnostic\r\r\n"
+        status = FakeSerial([diagnostic, STATUS])
+        self.assertEqual(DEVICE, setup.read_status(status)["device"])
+        self.assertEqual([b"KM1 STATUS\n"], status.writes)
+        self.assertEqual([], status.replies)
+        provision = FakeSerial([diagnostic, b"KM1 OK PROVISION\n"])
+        self.assertEqual("KM1 OK PROVISION", setup.exchange(
+            provision, b"KM1 PROVISION\n", "KM1 OK PROVISION"))
+        self.assertEqual([b"KM1 PROVISION\n"], provision.writes)
+        self.assertEqual([], provision.replies)
+
     def test_shared_reader_accepts_reply_after_forty_complete_public_logs(self) -> None:
         logs = [b"I (1) harmless public synthetic log\n"] * 40
         status = FakeSerial(logs + [STATUS])
