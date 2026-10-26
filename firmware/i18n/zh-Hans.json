@@ -146,7 +146,15 @@
     "Einrichtung verlassen": "退出设置",
     "Einrichtung verlassen und ein normaler Neustart löschen keine Daten.": "退出设置和正常重启不会删除数据。",
     "Ersteinrichtung aktiv: Gruppe im Web einrichten oder offline verlassen. Ohne sichere Gruppe bleibt Mesh aus.": "初始设置已开启：在网页中配置群组，或离线退出设置。没有可信群组时 Mesh 保持关闭。",
-    "Einrichtung offline verlassen: Setup-AP aus. Mesh benötigt eine sichere Gruppe.": "已离线退出设置：设置热点已关闭。Mesh 需要可信群组。"
+    "Einrichtung offline verlassen: Setup-AP aus. Mesh benötigt eine sichere Gruppe.": "已离线退出设置：设置热点已关闭。Mesh 需要可信群组。",
+    "C6 App-Testdaten-Wartung vorbereiten": "准备维护 C6 应用测试数据",
+    "C6 AppStore-Wartung": "C6 AppStore 维护",
+    "Lokale Vorbereitung möglich. Erst RESET, Warnung und ausdrückliche Bestätigung können die begrenzte Löschung starten.": "可以在本地准备。只有按下 RESET、查看警告并明确确认后，才能开始有限删除。",
+    "Nur App-Testdaten: vier katmed-Schlüssel und zwei Mesh-Namensdateien. Andere Daten bleiben erhalten. RESET drücken, während diese Kachel offen ist.": "仅处理应用测试数据：四个 katmed 键和两个 Mesh 名称文件。其他数据保留。请在此卡片打开时按 RESET。",
+    "WARNUNG: Nach Ihrer Bestätigung werden ausschließlich App-Testdaten gelöscht: katmed/state, mesh_history, names_ctl, names_view und zwei Mesh-Namensdateien. Bilder, Webzugang, Zertifikate und Gerätesicherheit bleiben erhalten. Ohne Bestätigung wird nichts gelöscht.": "警告：确认后仅删除应用测试数据：katmed/state、mesh_history、names_ctl、names_view 和两个 Mesh 名称文件。图片、网页访问、证书和设备安全设置均保留。未经确认不会删除任何内容。",
+    "Wartung abgeschlossen. Gerät angehalten; kein automatischer Neustart.": "维护完成。设备已停止；不会自动重启。",
+    "Wartung angehalten. Keine weitere Löschung und kein normaler Start. Prüfbericht erforderlich.": "维护已停止。不会继续删除或正常启动。需要审查报告。",
+    "Wartung vorbereiten": "准备维护"
   },
   "web_static": {
     "KatMed · Einstellungen": "KatMed · 设置",

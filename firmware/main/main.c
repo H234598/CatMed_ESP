@@ -2109,7 +2109,7 @@ static void appmaint_main(void)
         .reset_confirm = katmed_runtime_reset_confirm,
     };
     ui_set_services(&services);
-    katmed_i18n_select(KATMED_LANG_DE);
+    katmed_i18n_select(KATMED_LANG_EN);
     board_set_touch_filter(ui_lvgl_touch_allowed);
     ui_render(&runtime.state, &runtime.local, ui_current_view(), &now);
     ui_appmaint_show_status(status == KATMED_APPMAINT_ABSENT ? 0 :

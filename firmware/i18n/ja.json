@@ -146,7 +146,15 @@
     "Einrichtung verlassen": "設定を終了",
     "Einrichtung verlassen und ein normaler Neustart löschen keine Daten.": "設定の終了と通常の再起動ではデータは消去されません。",
     "Ersteinrichtung aktiv: Gruppe im Web einrichten oder offline verlassen. Ohne sichere Gruppe bleibt Mesh aus.": "初期設定中: Web でグループを設定するか、オフラインで設定を終了してください。安全なグループがない場合、Mesh は停止します。",
-    "Einrichtung offline verlassen: Setup-AP aus. Mesh benötigt eine sichere Gruppe.": "設定をオフラインで終了: 設定用 AP は停止しています。Mesh には安全なグループが必要です。"
+    "Einrichtung offline verlassen: Setup-AP aus. Mesh benötigt eine sichere Gruppe.": "設定をオフラインで終了: 設定用 AP は停止しています。Mesh には安全なグループが必要です。",
+    "C6 App-Testdaten-Wartung vorbereiten": "C6アプリのテストデータ保守を準備",
+    "C6 AppStore-Wartung": "C6 AppStore保守",
+    "Lokale Vorbereitung möglich. Erst RESET, Warnung und ausdrückliche Bestätigung können die begrenzte Löschung starten.": "ローカルで準備できます。RESET、警告の確認、明示的な承認を経た場合にのみ限定的な削除を開始できます。",
+    "Nur App-Testdaten: vier katmed-Schlüssel und zwei Mesh-Namensdateien. Andere Daten bleiben erhalten. RESET drücken, während diese Kachel offen ist.": "アプリのテストデータのみ対象：katmedのキー4件とMeshの名前ファイル2件です。その他のデータは残ります。この画面を開いたままRESETを押してください。",
+    "WARNUNG: Nach Ihrer Bestätigung werden ausschließlich App-Testdaten gelöscht: katmed/state, mesh_history, names_ctl, names_view und zwei Mesh-Namensdateien. Bilder, Webzugang, Zertifikate und Gerätesicherheit bleiben erhalten. Ohne Bestätigung wird nichts gelöscht.": "警告：承認後、アプリのテストデータ（katmed/state、mesh_history、names_ctl、names_view、Meshの名前ファイル2件）のみを削除します。画像、Webアクセス、証明書、端末のセキュリティは保持します。承認しなければ削除しません。",
+    "Wartung abgeschlossen. Gerät angehalten; kein automatischer Neustart.": "保守が完了しました。端末は停止し、自動再起動しません。",
+    "Wartung angehalten. Keine weitere Löschung und kein normaler Start. Prüfbericht erforderlich.": "保守を中止しました。これ以上削除せず、通常起動もしません。確認報告が必要です。",
+    "Wartung vorbereiten": "保守を準備"
   },
   "web_static": {
     "KatMed · Einstellungen": "KatMed · 設定",

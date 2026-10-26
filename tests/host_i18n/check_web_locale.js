@@ -32,14 +32,21 @@ const document = {
     return { nextNode: () => nodes[index++] || null };
   },
 };
+const setupReplies = [];
 const window = { addEventListener() {}, scrollY: 0, scrollTo() {} };
 const context = { window, document, NodeFilter: { SHOW_TEXT: 4 },
   history: { pushState() {}, replaceState() {} },
   location: { hostname: "localhost", protocol: "https:", hash: "", pathname: "/", search: "" },
-  setTimeout() {}, fetch: () => { throw new Error("unexpected network call"); } };
+  setTimeout() {}, fetch: async (url) => {
+    assert.equal(url, "/api/runtime-setup");
+    const reply = setupReplies.shift();
+    assert.ok(reply, "unexpected request");
+    return {ok: true, headers: {get: () => "application/json"}, json: async () => reply};
+  } };
 vm.runInNewContext(fs.readFileSync(path.join(ui, "i18n.js"), "utf8"), context);
 const app = fs.readFileSync(path.join(ui, "app.js"), "utf8")
   .replace("function applyLocale(language) {", "window.__applyLocale = applyLocale; function applyLocale(language) {")
+  .replace("async function loadRuntimeEinrichtung() {", "window.__loadRuntimeSetup = loadRuntimeEinrichtung; async function loadRuntimeEinrichtung() {")
   .replace("function trf(source, ...values) {", "window.__trf = trf; function trf(source, ...values) {")
   .replace("function formatPreviewDate(value) {", "window.__formatPreviewDate = formatPreviewDate; function formatPreviewDate(value) {")
   .replace("void start();", "");
@@ -78,4 +85,29 @@ assert.notEqual(nodes[0].nodeValue.trim(), "Settings");
 window.__applyLocale("de");
 assert.equal(nodes[0].nodeValue, " Einstellungen ");
 assert.equal(nodes[1].nodeValue, "My own alarm text");
-console.log("All 12 Web locales, RTL, DOM text and user data: OK");
+
+(async () => {
+  /* Exercise the actual runtime Setup status producer, then change language
+   * while the Settings page stays open. Static DOM translation alone passes. */
+  setupReplies.push({configured: false, mode: 2, setup_open: true,
+    revision: "synthetic-setup-r1"});
+  await window.__loadRuntimeSetup();
+  assert.match(element("runtime-setup-state").textContent, /Ersteinrichtung/);
+  window.__applyLocale("fr");
+  assert.equal(element("runtime-setup-state").textContent,
+    "Configuration initiale : choisissez un groupe ou quittez la configuration hors ligne. Sans groupe sûr, le mesh reste désactivé.");
+  assert.equal(element("runtime-setup-exit").hidden, false);
+  const initialKey = "Ersteinrichtung; Gruppe wählen oder Einrichtung offline verlassen. Ohne sichere Gruppe bleibt Mesh aus.";
+  for (const code of supported) {
+    window.__applyLocale(code);
+    assert.equal(element("runtime-setup-state").textContent,
+      window.KATMED_I18N.values[code][window.KATMED_I18N.keys.indexOf(initialKey)], code);
+  }
+  setupReplies.push({configured: true, mode: 0, setup_open: true,
+    revision: "synthetic-setup-r2"});
+  await window.__loadRuntimeSetup();
+  window.__applyLocale("fr");
+  assert.equal(element("runtime-setup-state").textContent,
+    "Configuré ; enregistrer les modifications.");
+  console.log("All 12 Web locales, RTL, DOM text and live Setup state: OK");
+})().catch((error) => { console.error(error); process.exitCode = 1; });

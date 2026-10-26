@@ -146,7 +146,15 @@
     "Einrichtung verlassen": "Salir de configuración",
     "Einrichtung verlassen und ein normaler Neustart löschen keine Daten.": "Salir de configuración y reiniciar normalmente no borra datos.",
     "Ersteinrichtung aktiv: Gruppe im Web einrichten oder offline verlassen. Ohne sichere Gruppe bleibt Mesh aus.": "Configuración inicial activa: configura un grupo en la web o sal sin conexión. Sin un grupo seguro, Mesh permanece apagado.",
-    "Einrichtung offline verlassen: Setup-AP aus. Mesh benötigt eine sichere Gruppe.": "Configuración abandonada sin conexión: punto de acceso de configuración apagado. Mesh necesita un grupo seguro."
+    "Einrichtung offline verlassen: Setup-AP aus. Mesh benötigt eine sichere Gruppe.": "Configuración abandonada sin conexión: punto de acceso de configuración apagado. Mesh necesita un grupo seguro.",
+    "C6 App-Testdaten-Wartung vorbereiten": "Preparar mantenimiento de datos de prueba de la aplicación C6",
+    "C6 AppStore-Wartung": "Mantenimiento de C6 AppStore",
+    "Lokale Vorbereitung möglich. Erst RESET, Warnung und ausdrückliche Bestätigung können die begrenzte Löschung starten.": "La preparación local está disponible. Solo RESET, la advertencia y una confirmación explícita pueden iniciar el borrado limitado.",
+    "Nur App-Testdaten: vier katmed-Schlüssel und zwei Mesh-Namensdateien. Andere Daten bleiben erhalten. RESET drücken, während diese Kachel offen ist.": "Solo datos de prueba de la aplicación: cuatro claves de katmed y dos archivos de nombres de mesh. Los demás datos permanecen. Pulse RESET mientras esta tarjeta esté abierta.",
+    "WARNUNG: Nach Ihrer Bestätigung werden ausschließlich App-Testdaten gelöscht: katmed/state, mesh_history, names_ctl, names_view und zwei Mesh-Namensdateien. Bilder, Webzugang, Zertifikate und Gerätesicherheit bleiben erhalten. Ohne Bestätigung wird nichts gelöscht.": "ADVERTENCIA: Tras su confirmación, solo se borrarán datos de prueba de la aplicación: katmed/state, mesh_history, names_ctl, names_view y dos archivos de nombres de mesh. Se conservan imágenes, acceso web, certificados y seguridad del dispositivo. Sin confirmación no se borra nada.",
+    "Wartung abgeschlossen. Gerät angehalten; kein automatischer Neustart.": "Mantenimiento completado. Dispositivo detenido; sin reinicio automático.",
+    "Wartung angehalten. Keine weitere Löschung und kein normaler Start. Prüfbericht erforderlich.": "Mantenimiento detenido. No habrá más borrados ni arranque normal. Se requiere un informe de revisión.",
+    "Wartung vorbereiten": "Preparar mantenimiento"
   },
   "web_static": {
     "KatMed · Einstellungen": "KatMed · Configuración",

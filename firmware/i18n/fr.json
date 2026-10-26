@@ -146,7 +146,15 @@
     "Einrichtung verlassen": "Quitter la configuration",
     "Einrichtung verlassen und ein normaler Neustart löschen keine Daten.": "Quitter la configuration et redémarrer normalement n’efface aucune donnée.",
     "Ersteinrichtung aktiv: Gruppe im Web einrichten oder offline verlassen. Ohne sichere Gruppe bleibt Mesh aus.": "Configuration initiale active : configurez un groupe sur la page Web ou quittez la configuration hors ligne. Sans groupe sûr, le mesh reste désactivé.",
-    "Einrichtung offline verlassen: Setup-AP aus. Mesh benötigt eine sichere Gruppe.": "Configuration quittée hors ligne : point d’accès de configuration éteint. Le mesh nécessite un groupe sûr."
+    "Einrichtung offline verlassen: Setup-AP aus. Mesh benötigt eine sichere Gruppe.": "Configuration quittée hors ligne : point d’accès de configuration éteint. Le mesh nécessite un groupe sûr.",
+    "C6 App-Testdaten-Wartung vorbereiten": "Préparer la maintenance des données de test de l’application C6",
+    "C6 AppStore-Wartung": "Maintenance AppStore C6",
+    "Lokale Vorbereitung möglich. Erst RESET, Warnung und ausdrückliche Bestätigung können die begrenzte Löschung starten.": "La préparation locale est possible. Seuls RESET, l’avertissement et une confirmation explicite peuvent lancer la suppression limitée.",
+    "Nur App-Testdaten: vier katmed-Schlüssel und zwei Mesh-Namensdateien. Andere Daten bleiben erhalten. RESET drücken, während diese Kachel offen ist.": "Données de test de l’application uniquement : quatre clés katmed et deux fichiers de noms du mesh. Les autres données sont conservées. Appuyez sur RESET tant que cette tuile est ouverte.",
+    "WARNUNG: Nach Ihrer Bestätigung werden ausschließlich App-Testdaten gelöscht: katmed/state, mesh_history, names_ctl, names_view und zwei Mesh-Namensdateien. Bilder, Webzugang, Zertifikate und Gerätesicherheit bleiben erhalten. Ohne Bestätigung wird nichts gelöscht.": "AVERTISSEMENT : Après votre confirmation, seules les données de test de l’application sont supprimées : katmed/state, mesh_history, names_ctl, names_view et deux fichiers de noms du mesh. Images, accès Web, certificats et sécurité de l’appareil sont conservés. Rien n’est supprimé sans confirmation.",
+    "Wartung abgeschlossen. Gerät angehalten; kein automatischer Neustart.": "Maintenance terminée. Appareil arrêté ; aucun redémarrage automatique.",
+    "Wartung angehalten. Keine weitere Löschung und kein normaler Start. Prüfbericht erforderlich.": "Maintenance interrompue. Aucune autre suppression ni démarrage normal. Rapport de vérification requis.",
+    "Wartung vorbereiten": "Préparer la maintenance"
   },
   "web_static": {
     "KatMed · Einstellungen": "KatMed · Paramètres",

@@ -146,7 +146,15 @@
     "Einrichtung verlassen": "Eliri agordon",
     "Einrichtung verlassen und ein normaler Neustart löschen keine Daten.": "Eliri agordon kaj normala restartigo ne forigas datumojn.",
     "Ersteinrichtung aktiv: Gruppe im Web einrichten oder offline verlassen. Ohne sichere Gruppe bleibt Mesh aus.": "Komenca agordo aktivas: agordu grupon en la retejo aŭ eliru senrete. Sen fidinda grupo Mesh restas malŝaltita.",
-    "Einrichtung offline verlassen: Setup-AP aus. Mesh benötigt eine sichere Gruppe.": "Agordo forlasita senrete: agorda alirpunkto malŝaltita. Mesh bezonas fidindan grupon."
+    "Einrichtung offline verlassen: Setup-AP aus. Mesh benötigt eine sichere Gruppe.": "Agordo forlasita senrete: agorda alirpunkto malŝaltita. Mesh bezonas fidindan grupon.",
+    "C6 App-Testdaten-Wartung vorbereiten": "Prepari prizorgadon de testdatumoj de la C6-aplikaĵo",
+    "C6 AppStore-Wartung": "Prizorgado de C6 AppStore",
+    "Lokale Vorbereitung möglich. Erst RESET, Warnung und ausdrückliche Bestätigung können die begrenzte Löschung starten.": "Loka preparado eblas. Nur RESET, la averto kaj eksplicita konfirmo povas komenci la limigitan forigon.",
+    "Nur App-Testdaten: vier katmed-Schlüssel und zwei Mesh-Namensdateien. Andere Daten bleiben erhalten. RESET drücken, während diese Kachel offen ist.": "Nur testdatumoj de la aplikaĵo: kvar katmed-ŝlosiloj kaj du dosieroj de mesh-nomoj. Aliaj datumoj restas. Premu RESET dum ĉi tiu kahelo estas malfermita.",
+    "WARNUNG: Nach Ihrer Bestätigung werden ausschließlich App-Testdaten gelöscht: katmed/state, mesh_history, names_ctl, names_view und zwei Mesh-Namensdateien. Bilder, Webzugang, Zertifikate und Gerätesicherheit bleiben erhalten. Ohne Bestätigung wird nichts gelöscht.": "AVERTO: Post via konfirmo estos forigitaj nur testdatumoj de la aplikaĵo: katmed/state, mesh_history, names_ctl, names_view kaj du dosieroj de mesh-nomoj. Bildoj, reta aliro, atestiloj kaj aparata sekureco restas. Sen konfirmo nenio estas forigita.",
+    "Wartung abgeschlossen. Gerät angehalten; kein automatischer Neustart.": "Prizorgado finiĝis. Aparato haltigita; neniu aŭtomata restartigo.",
+    "Wartung angehalten. Keine weitere Löschung und kein normaler Start. Prüfbericht erforderlich.": "Prizorgado haltigita. Neniu plua forigo aŭ normala ekfunkciigo. Kontrolraporto necesas.",
+    "Wartung vorbereiten": "Prepari prizorgadon"
   },
   "web_static": {
     "KatMed · Einstellungen": "KatMed · Agordoj",

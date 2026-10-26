@@ -146,7 +146,15 @@
     "Einrichtung verlassen": "Instellen afsluiten",
     "Einrichtung verlassen und ein normaler Neustart löschen keine Daten.": "Instellen afsluiten en normaal herstarten wissen geen gegevens.",
     "Ersteinrichtung aktiv: Gruppe im Web einrichten oder offline verlassen. Ohne sichere Gruppe bleibt Mesh aus.": "Eerste installatie actief: stel een groep in via de webpagina of verlaat de installatie offline. Zonder veilige groep blijft mesh uit.",
-    "Einrichtung offline verlassen: Setup-AP aus. Mesh benötigt eine sichere Gruppe.": "Installatie offline verlaten: installatie-AP uit. Mesh vereist een veilige groep."
+    "Einrichtung offline verlassen: Setup-AP aus. Mesh benötigt eine sichere Gruppe.": "Installatie offline verlaten: installatie-AP uit. Mesh vereist een veilige groep.",
+    "C6 App-Testdaten-Wartung vorbereiten": "Onderhoud van C6-app-testgegevens voorbereiden",
+    "C6 AppStore-Wartung": "C6 AppStore-onderhoud",
+    "Lokale Vorbereitung möglich. Erst RESET, Warnung und ausdrückliche Bestätigung können die begrenzte Löschung starten.": "Lokale voorbereiding is mogelijk. Pas na RESET, de waarschuwing en uitdrukkelijke bevestiging kan de beperkte verwijdering beginnen.",
+    "Nur App-Testdaten: vier katmed-Schlüssel und zwei Mesh-Namensdateien. Andere Daten bleiben erhalten. RESET drücken, während diese Kachel offen ist.": "Alleen app-testgegevens: vier katmed-sleutels en twee mesh-naambestanden. Andere gegevens blijven behouden. Druk op RESET terwijl deze tegel open is.",
+    "WARNUNG: Nach Ihrer Bestätigung werden ausschließlich App-Testdaten gelöscht: katmed/state, mesh_history, names_ctl, names_view und zwei Mesh-Namensdateien. Bilder, Webzugang, Zertifikate und Gerätesicherheit bleiben erhalten. Ohne Bestätigung wird nichts gelöscht.": "WAARSCHUWING: Na uw bevestiging worden uitsluitend app-testgegevens verwijderd: katmed/state, mesh_history, names_ctl, names_view en twee mesh-naambestanden. Afbeeldingen, webtoegang, certificaten en apparaatbeveiliging blijven behouden. Zonder bevestiging wordt niets verwijderd.",
+    "Wartung abgeschlossen. Gerät angehalten; kein automatischer Neustart.": "Onderhoud voltooid. Apparaat gestopt; geen automatische herstart.",
+    "Wartung angehalten. Keine weitere Löschung und kein normaler Start. Prüfbericht erforderlich.": "Onderhoud gestopt. Geen verdere verwijdering of normale start. Controleverslag vereist.",
+    "Wartung vorbereiten": "Onderhoud voorbereiden"
   },
   "web_static": {
     "KatMed · Einstellungen": "KatMed · Instellingen",

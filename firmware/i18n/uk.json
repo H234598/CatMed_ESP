@@ -146,7 +146,15 @@
     "Einrichtung verlassen": "Вийти з налаштування",
     "Einrichtung verlassen und ein normaler Neustart löschen keine Daten.": "Вихід із налаштування та звичайний перезапуск не стирають дані.",
     "Ersteinrichtung aktiv: Gruppe im Web einrichten oder offline verlassen. Ohne sichere Gruppe bleibt Mesh aus.": "Початкове налаштування активне: налаштуйте групу у вебінтерфейсі або вийдіть офлайн. Без захищеної групи Mesh вимкнено.",
-    "Einrichtung offline verlassen: Setup-AP aus. Mesh benötigt eine sichere Gruppe.": "Вихід із налаштування офлайн: точку доступу вимкнено. Для Mesh потрібна захищена група."
+    "Einrichtung offline verlassen: Setup-AP aus. Mesh benötigt eine sichere Gruppe.": "Вихід із налаштування офлайн: точку доступу вимкнено. Для Mesh потрібна захищена група.",
+    "C6 App-Testdaten-Wartung vorbereiten": "Підготувати обслуговування тестових даних застосунку C6",
+    "C6 AppStore-Wartung": "Обслуговування C6 AppStore",
+    "Lokale Vorbereitung möglich. Erst RESET, Warnung und ausdrückliche Bestätigung können die begrenzte Löschung starten.": "Локальна підготовка можлива. Лише RESET, попередження та явне підтвердження можуть розпочати обмежене видалення.",
+    "Nur App-Testdaten: vier katmed-Schlüssel und zwei Mesh-Namensdateien. Andere Daten bleiben erhalten. RESET drücken, während diese Kachel offen ist.": "Лише тестові дані застосунку: чотири ключі katmed і два файли назв mesh. Інші дані залишаться. Натисніть RESET, поки ця плитка відкрита.",
+    "WARNUNG: Nach Ihrer Bestätigung werden ausschließlich App-Testdaten gelöscht: katmed/state, mesh_history, names_ctl, names_view und zwei Mesh-Namensdateien. Bilder, Webzugang, Zertifikate und Gerätesicherheit bleiben erhalten. Ohne Bestätigung wird nichts gelöscht.": "ПОПЕРЕДЖЕННЯ: Після вашого підтвердження буде видалено лише тестові дані застосунку: katmed/state, mesh_history, names_ctl, names_view і два файли назв mesh. Зображення, вебдоступ, сертифікати й захист пристрою залишаться. Без підтвердження нічого не видаляється.",
+    "Wartung abgeschlossen. Gerät angehalten; kein automatischer Neustart.": "Обслуговування завершено. Пристрій зупинено; автоматичного перезапуску немає.",
+    "Wartung angehalten. Keine weitere Löschung und kein normaler Start. Prüfbericht erforderlich.": "Обслуговування зупинено. Подальшого видалення й звичайного запуску немає. Потрібен звіт перевірки.",
+    "Wartung vorbereiten": "Підготувати обслуговування"
   },
   "web_static": {
     "KatMed · Einstellungen": "KatMed · Налаштування",

@@ -146,7 +146,15 @@
     "Einrichtung verlassen": "الخروج من الإعداد",
     "Einrichtung verlassen und ein normaler Neustart löschen keine Daten.": "الخروج من الإعداد وإعادة التشغيل العادية لا يمحوان البيانات.",
     "Ersteinrichtung aktiv: Gruppe im Web einrichten oder offline verlassen. Ohne sichere Gruppe bleibt Mesh aus.": "الإعداد الأولي نشط: اضبط مجموعة عبر صفحة الويب أو اخرج دون اتصال. تبقى الشبكة المتداخلة متوقفة دون مجموعة موثوقة.",
-    "Einrichtung offline verlassen: Setup-AP aus. Mesh benötigt eine sichere Gruppe.": "تم الخروج من الإعداد دون اتصال: نقطة وصول الإعداد متوقفة. تحتاج الشبكة المتداخلة إلى مجموعة موثوقة."
+    "Einrichtung offline verlassen: Setup-AP aus. Mesh benötigt eine sichere Gruppe.": "تم الخروج من الإعداد دون اتصال: نقطة وصول الإعداد متوقفة. تحتاج الشبكة المتداخلة إلى مجموعة موثوقة.",
+    "C6 App-Testdaten-Wartung vorbereiten": "التحضير لصيانة بيانات اختبار تطبيق C6",
+    "C6 AppStore-Wartung": "صيانة AppStore في C6",
+    "Lokale Vorbereitung möglich. Erst RESET, Warnung und ausdrückliche Bestätigung können die begrenzte Löschung starten.": "التحضير المحلي متاح. لا يمكن بدء الحذف المحدود إلا بعد RESET والتحذير والتأكيد الصريح.",
+    "Nur App-Testdaten: vier katmed-Schlüssel und zwei Mesh-Namensdateien. Andere Daten bleiben erhalten. RESET drücken, während diese Kachel offen ist.": "بيانات اختبار التطبيق فقط: أربعة مفاتيح katmed وملفا أسماء للشبكة المتداخلة. تبقى البيانات الأخرى. اضغط RESET ما دامت هذه اللوحة مفتوحة.",
+    "WARNUNG: Nach Ihrer Bestätigung werden ausschließlich App-Testdaten gelöscht: katmed/state, mesh_history, names_ctl, names_view und zwei Mesh-Namensdateien. Bilder, Webzugang, Zertifikate und Gerätesicherheit bleiben erhalten. Ohne Bestätigung wird nichts gelöscht.": "تحذير: بعد تأكيدك، تُحذف بيانات اختبار التطبيق فقط: katmed/state وmesh_history وnames_ctl وnames_view وملفا أسماء للشبكة المتداخلة. تبقى الصور والوصول عبر الويب والشهادات وأمان الجهاز. لا يُحذف شيء دون تأكيد.",
+    "Wartung abgeschlossen. Gerät angehalten; kein automatischer Neustart.": "اكتملت الصيانة. الجهاز متوقف؛ لا إعادة تشغيل تلقائية.",
+    "Wartung angehalten. Keine weitere Löschung und kein normaler Start. Prüfbericht erforderlich.": "توقفت الصيانة. لا مزيد من الحذف ولا تشغيل عادي. يلزم تقرير مراجعة.",
+    "Wartung vorbereiten": "التحضير للصيانة"
   },
   "web_static": {
     "KatMed · Einstellungen": "KatMed · الإعدادات",

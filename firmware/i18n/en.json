@@ -146,7 +146,15 @@
     "Einrichtung verlassen": "Leave setup",
     "Einrichtung verlassen und ein normaler Neustart löschen keine Daten.": "Leaving setup and a normal restart do not erase data.",
     "Ersteinrichtung aktiv: Gruppe im Web einrichten oder offline verlassen. Ohne sichere Gruppe bleibt Mesh aus.": "Initial setup active: configure a group on the web page or leave setup offline. Mesh stays off without a trusted group.",
-    "Einrichtung offline verlassen: Setup-AP aus. Mesh benötigt eine sichere Gruppe.": "Setup left offline: setup AP off. Mesh needs a trusted group."
+    "Einrichtung offline verlassen: Setup-AP aus. Mesh benötigt eine sichere Gruppe.": "Setup left offline: setup AP off. Mesh needs a trusted group.",
+    "C6 App-Testdaten-Wartung vorbereiten": "Prepare C6 app test data maintenance",
+    "C6 AppStore-Wartung": "C6 AppStore maintenance",
+    "Lokale Vorbereitung möglich. Erst RESET, Warnung und ausdrückliche Bestätigung können die begrenzte Löschung starten.": "Local preparation is available. Only RESET, the warning and explicit confirmation can start the limited deletion.",
+    "Nur App-Testdaten: vier katmed-Schlüssel und zwei Mesh-Namensdateien. Andere Daten bleiben erhalten. RESET drücken, während diese Kachel offen ist.": "App test data only: four katmed keys and two mesh name files. Other data remains. Press RESET while this tile is open.",
+    "WARNUNG: Nach Ihrer Bestätigung werden ausschließlich App-Testdaten gelöscht: katmed/state, mesh_history, names_ctl, names_view und zwei Mesh-Namensdateien. Bilder, Webzugang, Zertifikate und Gerätesicherheit bleiben erhalten. Ohne Bestätigung wird nichts gelöscht.": "WARNING: After your confirmation, only app test data is deleted: katmed/state, mesh_history, names_ctl, names_view and two mesh name files. Images, web access, certificates and device security remain. Nothing is deleted without confirmation.",
+    "Wartung abgeschlossen. Gerät angehalten; kein automatischer Neustart.": "Maintenance complete. Device halted; no automatic restart.",
+    "Wartung angehalten. Keine weitere Löschung und kein normaler Start. Prüfbericht erforderlich.": "Maintenance halted. No further deletion and no normal start. Review report required.",
+    "Wartung vorbereiten": "Prepare maintenance"
   },
   "web_static": {
     "KatMed · Einstellungen": "KatMed · Settings",

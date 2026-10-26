@@ -146,7 +146,15 @@
     "Einrichtung verlassen": "Einrichtung verlassen",
     "Einrichtung verlassen und ein normaler Neustart löschen keine Daten.": "Einrichtung verlassen und normal neu starten löscht keine Daten.",
     "Ersteinrichtung aktiv: Gruppe im Web einrichten oder offline verlassen. Ohne sichere Gruppe bleibt Mesh aus.": "Ersteinrichtung aktiv: Gruppn im Web einrichten oder offline verlassen. Ohne sichere Gruppn bleibt Mesh aus.",
-    "Einrichtung offline verlassen: Setup-AP aus. Mesh benötigt eine sichere Gruppe.": "Einrichtung offline verlassen: Setup-AP aus. Mesh braucht a sichere Gruppn."
+    "Einrichtung offline verlassen: Setup-AP aus. Mesh benötigt eine sichere Gruppe.": "Einrichtung offline verlassen: Setup-AP aus. Mesh braucht a sichere Gruppn.",
+    "C6 App-Testdaten-Wartung vorbereiten": "C6 App-Testdaten-Wartung herrichtn",
+    "C6 AppStore-Wartung": "C6 AppStore-Wartung",
+    "Lokale Vorbereitung möglich. Erst RESET, Warnung und ausdrückliche Bestätigung können die begrenzte Löschung starten.": "Lokal herrichtn is möglich. Erst mit RESET, Warnung und ausdrücklicher Bestätigung kann des begrenzte Löschn losgehn.",
+    "Nur App-Testdaten: vier katmed-Schlüssel und zwei Mesh-Namensdateien. Andere Daten bleiben erhalten. RESET drücken, während diese Kachel offen ist.": "Bloß App-Testdaten: vier katmed-Schlüssel und zwoa Mesh-Namensdatein. Alles andre bleibt. Drück RESET, solang des Kachla offn is.",
+    "WARNUNG: Nach Ihrer Bestätigung werden ausschließlich App-Testdaten gelöscht: katmed/state, mesh_history, names_ctl, names_view und zwei Mesh-Namensdateien. Bilder, Webzugang, Zertifikate und Gerätesicherheit bleiben erhalten. Ohne Bestätigung wird nichts gelöscht.": "WARNUNG: Nach deiner Bestätigung werdn bloß App-Testdaten gelöscht: katmed/state, mesh_history, names_ctl, names_view und zwoa Mesh-Namensdatein. Bilder, Webzugang, Zertifikate und Gerätesicherheit bleibn. Ohne Bestätigung wird nix gelöscht.",
+    "Wartung abgeschlossen. Gerät angehalten; kein automatischer Neustart.": "Wartung fertig. Gerät angehaltn; ka automatischer Neustart.",
+    "Wartung angehalten. Keine weitere Löschung und kein normaler Start. Prüfbericht erforderlich.": "Wartung angehaltn. Ka weiteres Löschn und ka normaler Start. Prüfbericht nötig.",
+    "Wartung vorbereiten": "Wartung herrichtn"
   },
   "web_static": {
     "KatMed · Einstellungen": "KatMed · Eistellunga",

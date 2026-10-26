@@ -58,6 +58,10 @@
       element.setAttribute(attr, tr(key));
     document.title = tr(originalTitle);
     if ($("language-select")) $("language-select").value = language;
+    if (setupRevision !== null)
+      $("runtime-setup-state").textContent = setupConfigured ?
+        tr("Eingerichtet; Änderungen erfordern ausdrückliches Speichern.") :
+        tr("Ersteinrichtung; Gruppe wählen oder Einrichtung offline verlassen. Ohne sichere Gruppe bleibt Mesh aus.");
     document.body?.classList?.remove("i18n-loading");
   }
 
