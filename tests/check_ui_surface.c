@@ -420,6 +420,143 @@ static void pointer_click(lv_display_t *display, lv_obj_t *target)
     lv_indev_delete(pointer);
 }
 
+/* The product touch gate runs before LVGL dispatches a real button click. */
+static bool gated_pointer_click(lv_display_t *display, lv_obj_t *target)
+{
+    static uint64_t tick = 1000000;
+    tick += 1000;
+    lv_obj_update_layout(lv_screen_active());
+    lv_area_t area;
+    lv_obj_get_coords(target, &area);
+    pointer_point = (lv_point_t){(area.x1 + area.x2) / 2, (area.y1 + area.y2) / 2};
+    assert(pointer_point.x >= 0 && pointer_point.x < lv_display_get_horizontal_resolution(display));
+    assert(pointer_point.y >= 0 && pointer_point.y < lv_display_get_vertical_resolution(display));
+    lv_indev_t *pointer = lv_indev_create();
+    assert(pointer);
+    lv_indev_set_type(pointer, LV_INDEV_TYPE_POINTER);
+    lv_indev_set_display(pointer, display);
+    lv_indev_set_read_cb(pointer, pointer_read);
+    lv_indev_set_mode(pointer, LV_INDEV_MODE_EVENT);
+    ui_touch_sample(false, 0, 0, true, tick);
+    pointer_down = true;
+    ui_touch_sample(true, pointer_point.x, pointer_point.y, true, tick + 30);
+    const bool down_allowed = ui_lvgl_touch_allowed(true, pointer_point.x, pointer_point.y,
+                                                     true, tick + 30);
+    if (down_allowed) lv_indev_read(pointer);
+    lv_tick_inc(60);
+    pointer_down = false;
+    ui_touch_sample(false, pointer_point.x, pointer_point.y, true, tick + 90);
+    const bool up_allowed = ui_lvgl_touch_allowed(false, pointer_point.x, pointer_point.y,
+                                                   true, tick + 90);
+    if (up_allowed) lv_indev_read(pointer);
+    fprintf(stderr, "gated tap %dx%d at %d,%d down=%u up=%u\n",
+            lv_display_get_horizontal_resolution(display),
+            lv_display_get_vertical_resolution(display),
+            pointer_point.x, pointer_point.y, down_allowed, up_allowed);
+    lv_indev_reset(pointer, NULL);
+    lv_indev_delete(pointer);
+    return down_allowed && up_allowed;
+}
+
+static void assert_control_clears_edge(lv_obj_t *control)
+{
+    lv_obj_update_layout(lv_screen_active());
+    lv_area_t area;
+    lv_obj_get_coords(control, &area);
+    const int x = (area.x1 + area.x2) / 2;
+    for (int y = area.y1 + 2; y <= area.y2 - 2; y += area.y2 - area.y1 - 4) {
+        assert(ui_lvgl_touch_allowed(true, x, y, true, 2000000));
+        assert(ui_lvgl_touch_allowed(false, x, y, true, 2000001));
+    }
+}
+
+static int check_uat_controls(int width, int height, bool clock_mode)
+{
+    Host host = {.width = width, .height = height, .result = UI_SUBMIT_COMMITTED,
+                 .reset_now_ms = 1000};
+    host.frame = calloc((size_t)width * height, 2);
+    uint16_t *buffer = malloc((size_t)width * 16 * 2);
+    assert(host.frame && buffer);
+    lv_init();
+    lv_display_t *display = lv_display_create(width, height);
+    assert(display);
+    lv_display_set_color_format(display, LV_COLOR_FORMAT_RGB565);
+    lv_display_set_buffers(display, buffer, NULL, (uint32_t)width * 16 * 2,
+                           LV_DISPLAY_RENDER_MODE_PARTIAL);
+    lv_display_set_flush_cb(display, flush);
+    lv_display_set_user_data(display, &host);
+    katmed_i18n_select(KATMED_LANG_DE);
+    UiServices services = {.context = &host, .submit = submit,
+        .network_status = network_status, .reset_arm = reset_arm,
+        .reset_cancel = reset_cancel, .reset_prepare = reset_prepare_warning,
+        .reset_confirm = reset_confirm};
+    ui_set_services(&services);
+    AppState state = {0};
+    LocalSettings local = {.clock_style = DIGITAL_LARGE};
+    ClockSample clock = {.monotonic_ms = 1000, .domain = 1};
+    host.network.manual_clock_required = clock_mode;
+    ui_render(&state, &local, SETTINGS, &clock);
+    lv_obj_t *screen = lv_screen_active();
+    if (clock_mode) {
+        assert(find_label(screen, "YYYYMMDDHHMM Berlin"));
+        lv_obj_t *cancel = lv_obj_get_parent(find_label(screen, "Abbrechen"));
+        assert_control_clears_edge(cancel);
+        assert(gated_pointer_click(display, cancel));
+        assert(!find_label(screen, "YYYYMMDDHHMM Berlin"));
+        lv_obj_t *date = lv_obj_get_parent(find_label(screen, "Datum und Uhrzeit"));
+        lv_obj_scroll_to_view(date, LV_ANIM_OFF);
+        pointer_click(display, date);
+        assert(find_label(screen, "YYYYMMDDHHMM Berlin"));
+        lv_obj_t *save = lv_obj_get_parent(find_label(screen, "Speichern"));
+        assert_control_clears_edge(save);
+        assert(gated_pointer_click(display, save));
+        assert(host.submit_calls == 0 && find_label(screen, "Eingabe ungültig; bitte prüfen"));
+        const char *digits = "202610231425";
+        for (const char *d = digits; *d; ++d) {
+            char key[2] = {*d, '\0'};
+            assert(click_matrix_button(screen, key));
+        }
+        assert(find_label(screen, "2026-10-23T14:25"));
+        save = lv_obj_get_parent(find_label(screen, "Speichern"));
+        assert(gated_pointer_click(display, save));
+        assert(host.submit_calls == 1 && host.last_request.kind == UI_REQUEST_SET_SYSTEM_TIME);
+        assert(strcmp(host.last_request.value.local_datetime, "2026-10-23T14:25") == 0);
+        assert(!find_label(screen, "YYYYMMDDHHMM Berlin"));
+    } else {
+        lv_obj_t *reset = lv_obj_get_parent(find_label(screen, "Werkseinstellungen zurücksetzen"));
+        lv_obj_t *settings = lv_obj_get_parent(reset);
+        lv_obj_scroll_to_y(settings, 100000, LV_ANIM_OFF);
+        lv_obj_update_layout(screen);
+        assert_control_clears_edge(reset);
+        assert(gated_pointer_click(display, reset));
+        assert(host.reset_arms == 1 && host.reset_confirms == 0 && host.reset_marker);
+        lv_obj_t *instruction = find_label_prefix(screen, "Um den Factory Reset durchzuführen");
+        assert(instruction && lv_obj_is_scrollable(lv_obj_get_parent(instruction)));
+        assert(lv_obj_get_style_text_font(instruction, 0) == &katmed_font_14);
+        lv_obj_t *cancel = lv_obj_get_parent(find_label(screen, "Abbrechen"));
+        lv_area_t instruction_area, cancel_area;
+        lv_obj_update_layout(screen);
+        lv_obj_get_coords(lv_obj_get_parent(instruction), &instruction_area);
+        lv_obj_get_coords(cancel, &cancel_area);
+        assert(instruction_area.y2 < cancel_area.y1);
+        reset_simulate_hardware_boot(&host, true);
+        ui_reset_close_remote();
+        ui_reset_show_warning();
+        lv_obj_t *warning = find_label_prefix(screen, "WARNUNG: Löscht");
+        assert(warning && lv_obj_is_scrollable(lv_obj_get_parent(warning)));
+        assert(lv_obj_get_style_text_font(warning, 0) == &katmed_font_14);
+        assert(host.reset_confirms == 0);
+        lv_obj_t *no = lv_obj_get_parent(find_label(screen, "Nein"));
+        assert(gated_pointer_click(display, no));
+        assert(host.reset_confirms == 0 && !host.reset_warning);
+    }
+    lv_display_delete(display);
+    lv_deinit();
+    free(buffer);
+    free(host.frame);
+    return 0;
+}
+
 static lv_obj_t *find_control_caption(lv_obj_t *node, const char *text)
 {
     if (lv_obj_check_type(node, &lv_label_class) &&
@@ -899,6 +1036,10 @@ static void text_shaping_allocation_failure(void)
 
 int main(int argc, char **argv)
 {
+    if (argc == 4 && strcmp(argv[1], "uat-clock") == 0)
+        return check_uat_controls(atoi(argv[2]), atoi(argv[3]), true);
+    if (argc == 4 && strcmp(argv[1], "uat-reset") == 0)
+        return check_uat_controls(atoi(argv[2]), atoi(argv[3]), false);
     if (argc == 4 && strcmp(argv[1], "option-sync") == 0)
         return check_option_sync(atoi(argv[2]), atoi(argv[3]), false);
     if (argc == 4 && strcmp(argv[1], "rotation-hitarea") == 0)

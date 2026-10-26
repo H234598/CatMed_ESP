@@ -308,6 +308,14 @@ foreach(format "240;240" "172;320" "320;172")
     add_test(NAME ui_option_sync_${width}x${height}
         COMMAND check_ui_surface option-sync ${width} ${height})
 endforeach()
+foreach(format "240;240" "172;320" "320;172")
+    list(GET format 0 width)
+    list(GET format 1 height)
+    add_test(NAME ui_uat_clock_${width}x${height}
+        COMMAND check_ui_surface uat-clock ${width} ${height})
+    add_test(NAME ui_uat_reset_${width}x${height}
+        COMMAND check_ui_surface uat-reset ${width} ${height})
+endforeach()
 
 # Startup cache work uses the target's unmodified LittleFS core on a RAM device.
 set(ALARM_LFS "${ROOT}/firmware/managed_components/joltwallet__littlefs/src/littlefs")

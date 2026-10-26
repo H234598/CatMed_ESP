@@ -781,7 +781,9 @@ static void open_edit(EditKind edit)
     bool round = ui.width == 240 && ui.height == 240;
     int keys_w = landscape ? ui.width / 2 : round ? 180 : ui.width - 32;
     int x0 = landscape ? 8 : round ? 30 : 16;
-    int y0 = landscape ? 8 : round ? 110 : 125;
+    /* On the narrow portrait panel the bottom action row must stay above
+     * the reserved edge-gesture band; move the keys with it. */
+    int y0 = landscape ? 8 : round ? 110 : 94;
     int key_h = landscape ? (ui.height - 16) / 4 - 2 :
                 round ? 17 : (ui.height - 170) / 4 - 2;
     if (key_h < 17) key_h = 17;
@@ -836,7 +838,7 @@ static void open_edit(EditKind edit)
             lv_obj_set_pos(ui.preview_label,info_x,70);
         }
     }
-    int action_y = landscape ? ui.height - 40 : round ? 188 : ui.height - 35;
+    int action_y = landscape ? ui.height - 49 : round ? 188 : ui.height - 62;
     int action_w = landscape || round ? (info_w - 4) / 2 : (ui.width - 44) / 2;
     lv_obj_t *save = button(ui.keypad, T("Speichern"), action_w, 30, save_edit, NULL);
     lv_obj_set_pos(save, info_x, action_y);
@@ -1126,7 +1128,9 @@ static void build_settings(void)
     lv_obj_set_style_pad_left(ui.settings, ui.width == 240 ? 50 : 9, 0);
     lv_obj_set_style_pad_right(ui.settings, ui.width == 240 ? 50 : 9, 0);
     lv_obj_set_style_pad_top(ui.settings, ui.width == 240 ? 38 : 8, 0);
-    lv_obj_set_style_pad_bottom(ui.settings, ui.width == 240 ? 38 : 8, 0);
+    /* The final reset row needs room to scroll clear of the touch edge band. */
+    lv_obj_set_style_pad_bottom(ui.settings, ui.width == 240 ? 38 :
+                                ui.height < 200 ? 28 : 44, 0);
     lv_obj_set_flex_flow(ui.settings, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_style_pad_row(ui.settings, 5, 0);
     lv_obj_set_style_text_font(ui.settings,&katmed_font_14,0);
@@ -1344,9 +1348,20 @@ static void reset_open(lv_event_t *event)
     label(ui.reset_dialog, T("Nur App-Testdaten: vier katmed-Schlüssel und zwei Mesh-Namensdateien. Andere Daten bleiben erhalten. RESET drücken, während diese Kachel offen ist."), ui.width - 32);
 #else
     label(ui.reset_dialog, T("Factory Reset vorbereiten"), ui.width - 32);
-    label(ui.reset_dialog,
+    lv_obj_t *instruction_view = lv_obj_create(ui.reset_dialog);
+    lv_obj_set_width(instruction_view, ui.width - 32);
+    lv_obj_set_height(instruction_view, 1);
+    lv_obj_set_flex_grow(instruction_view, 1);
+    lv_obj_set_style_bg_opa(instruction_view, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(instruction_view, 0, 0);
+    lv_obj_set_style_pad_all(instruction_view, 0, 0);
+    lv_obj_set_scrollable(instruction_view, true);
+    lv_obj_set_scroll_dir(instruction_view, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(instruction_view, LV_SCROLLBAR_MODE_ACTIVE);
+    lv_obj_t *instruction = label(instruction_view,
           T("Um den Factory Reset durchzuführen, bitte die RESET-Taste links oben auf der Rückseite des Displays drücken, während diese Kachel offen ist."),
           ui.width - 32);
+    lv_obj_set_style_text_font(instruction, &katmed_font_14, 0);
 #endif
     lv_obj_t *cancel = button(ui.reset_dialog, T("Abbrechen"), ui.width - 36,
                               42, reset_cancel, NULL);
@@ -1422,7 +1437,7 @@ void ui_reset_show_warning(void)
 #endif
         ui.width - 40);
     lv_obj_set_style_text_color(warning, lv_color_white(), 0);
-    lv_obj_set_style_text_font(warning, &katmed_font_12, 0);
+    lv_obj_set_style_text_font(warning, &katmed_font_14, 0);
     /* Keep both pixel dimensions on an exact 7:10 grid. */
     const int action_width = ((ui.width - 40) / 10) * 10;
     /* Leave enough warning text visible for a real swipe on the short

@@ -571,17 +571,12 @@ BoardResult board_read_touch(BoardTouch *touch)
 #endif
     latest_touch = *touch;
     latest_valid = result == BOARD_OK;
-#if CONFIG_IDF_TARGET_ESP32C6
     /* LVGL's slider recalculates on RELEASED before the UI callback. A valid
      * finger-up has no controller coordinates, so keep the last press point. */
     if (touch->down || result != BOARD_OK) {
         latest_base_x = base_x;
         latest_base_y = base_y;
     }
-#else
-    latest_base_x = base_x;
-    latest_base_y = base_y;
-#endif
     if (result != BOARD_OK) board_indev_gate_invalidate(&indev_gate);
     portEXIT_CRITICAL(&touch_lock);
     return result;

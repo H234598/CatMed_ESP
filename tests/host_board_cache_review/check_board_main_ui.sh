@@ -77,5 +77,6 @@ for target in 3 6; do
     fi
 done
 for target in 1 40 50 100; do
+    timeout 20s "${build}/review_c3" brightness "${target}"
     timeout 20s "${build}/review_c6" brightness "${target}"
 done

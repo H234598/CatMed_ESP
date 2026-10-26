@@ -212,7 +212,13 @@ static void check_brightness_release(uint16_t target)
            preview_brightness_value == held && shared_writes == 0 && local_writes == 0 &&
            ui_current_view() == SETTINGS && find_slider(lv_screen_active()) == slider);
     step(false, x, y, false, false, true);
-    fprintf(stderr, "C6 brightness: held=%u submitted=%u\n", held, submitted_brightness);
+    fprintf(stderr, "C%d brightness: held=%u submitted=%u\n",
+#if CONFIG_IDF_TARGET_ESP32C3
+            3,
+#else
+            6,
+#endif
+            held, submitted_brightness);
     assert(brightness_submits == 1 && submitted_brightness == held &&
            preview_brightness_value == 0 && shared_writes == 0 && local_writes == 0 &&
            ui_current_view() == SETTINGS && find_slider(lv_screen_active()) == slider);
