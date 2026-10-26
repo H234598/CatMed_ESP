@@ -152,19 +152,45 @@ class UsbSetupTests(unittest.TestCase):
             FakeSerial([metric, b"KM1 OK PROVISION\n"]),
             b"KM1 PROVISION\n", "KM1 OK PROVISION"))
 
+    def test_shared_reader_accepts_reply_after_forty_complete_public_logs(self) -> None:
+        logs = [b"I (1) harmless public synthetic log\n"] * 40
+        status = FakeSerial(logs + [STATUS])
+        self.assertEqual(DEVICE, setup.read_status(status)["device"])
+        self.assertEqual([b"KM1 STATUS\n"], status.writes)
+        self.assertEqual([], status.replies)
+        provision = FakeSerial(logs + [b"KM1 OK PROVISION\n"])
+        self.assertEqual("KM1 OK PROVISION", setup.exchange(
+            provision, b"KM1 PROVISION\n", "KM1 OK PROVISION"))
+        self.assertEqual([b"KM1 PROVISION\n"], provision.writes)
+        self.assertEqual([], provision.replies)
+
     def test_mixed_stream_keeps_protocol_diagnostic_and_line_bounds(self) -> None:
         metric = firmware_metric_line()
         for replies in ([b"x" * setup.MAX_DIAG_CHARS + b"\r\n", STATUS],
-                        [metric] * 15 + [STATUS]):
+                        [metric] * 16 + [STATUS]):
             self.assertEqual(DEVICE, setup.read_status(FakeSerial(replies))["device"])
         for replies in ([metric, b"KM1 OK STATUS " + b"x" * 300 + b"\n"],
                         [b"x" * (setup.MAX_DIAG_CHARS + 1) + b"\n", STATUS],
-                        [metric] * 16 + [STATUS],
                         [metric, STATUS[:-1]],
                         [metric, STATUS.replace(b"durable=0", b"durable=2")],
                         [metric, STATUS.replace(b"clock=0", b"clock=3")]):
             with self.subTest(), self.assertRaises(setup.SetupError):
                 setup.read_status(FakeSerial(replies))
+
+    def test_shared_reply_observation_stops_at_time_or_actual_byte_budget(self) -> None:
+        no_answer = FakeSerial([])
+        with self.assertRaisesRegex(setup.SetupError, "Zeitgrenze"):
+            setup.read_status(no_answer, lambda port: setup._read_protocol_line(
+                port, FakeClock(0.1)))
+        self.assertEqual([b"KM1 STATUS\n"], no_answer.writes)
+
+        complete_log = b"L" + b"x" * 766 + b"\n"
+        byte_bound = FakeSerial([complete_log] * 342 + [STATUS])
+        with self.assertRaisesRegex(setup.SetupError, "Byte-Grenze"):
+            setup.read_status(byte_bound, lambda port: setup._read_protocol_line(
+                port, FakeClock(0.001)))
+        self.assertEqual([b"KM1 STATUS\n"], byte_bound.writes)
+        self.assertEqual([STATUS], byte_bound.replies)
 
     def test_mixed_stream_commit_witness_keeps_nonce_and_identity_guards(self) -> None:
         nonce = "0" * 32

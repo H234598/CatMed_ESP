@@ -23,6 +23,8 @@ MAX_CONFIG_BYTES = 4096
 MAX_REQUEST_BYTES = 512
 MAX_RESPONSE_BYTES = 256
 MAX_DIAG_CHARS = 767
+MAX_REPLY_OBSERVATION_BYTES = 256 * 1024
+REPLY_OBSERVATION_SECONDS = 180.0
 MAX_SESSION_SECONDS = 1800
 MAX_SESSION_INPUT_BYTES = 512 * 1024
 MAX_SESSION_LINES = 4096
@@ -212,13 +214,30 @@ def build_provision_request(config_bytes: bytes) -> bytes:
     return line
 
 
-def _read_protocol_line(port: SerialPort) -> str:
-    # Use the existing diagnostic framing bound for the shared console stream;
-    # only KM1 replies have the smaller protocol bound. Keep the 16-line budget.
+def _read_protocol_line(port: SerialPort,
+                        clock: Callable[[], float] = time.monotonic) -> str:
+    # The shared console can emit more than sixteen log lines before Main
+    # replies. Bound the whole response observation instead: the final read
+    # starts with one unchanged 3-second serial timeout still available.
     # Never print raw lines: a faulty target could echo a provisioning request.
-    for _ in range(16):
-        raw = port.read_until(b"\n", MAX_DIAG_CHARS + 2)
-        if not raw or len(raw) > MAX_DIAG_CHARS + 2 or not raw.endswith(b"\n"):
+    deadline = clock() + REPLY_OBSERVATION_SECONDS
+    received = 0
+    while True:
+        if clock() > deadline - 3.0:
+            raise SetupError("USB-Antwortbeobachtung erreichte sichere Zeitgrenze")
+        remaining = MAX_REPLY_OBSERVATION_BYTES - received
+        if remaining <= 0:
+            raise SetupError("USB-Antwortbeobachtung erreichte sichere Byte-Grenze")
+        size = min(MAX_DIAG_CHARS + 2, remaining)
+        raw = port.read_until(b"\n", size)
+        if not isinstance(raw, bytes) or len(raw) > size:
+            raise SetupError("USB-Antwort fehlt, ist zu lang oder unvollständig")
+        received += len(raw)
+        if not raw:
+            continue
+        if not raw.endswith(b"\n"):
+            if received == MAX_REPLY_OBSERVATION_BYTES:
+                raise SetupError("USB-Antwortbeobachtung erreichte sichere Byte-Grenze")
             raise SetupError("USB-Antwort fehlt, ist zu lang oder unvollständig")
         payload = raw[:-1]
         if payload.endswith(b"\r"):
@@ -233,7 +252,6 @@ def _read_protocol_line(port: SerialPort) -> str:
             return payload.decode("ascii")
         except UnicodeError:
             raise SetupError("USB-Antwort ist kein ASCII") from None
-    raise SetupError("Keine KM1-Antwort innerhalb der begrenzten Ausgabe")
 
 
 def _drain_startup(port: SerialPort, clock: Callable[[], float] = time.monotonic,
