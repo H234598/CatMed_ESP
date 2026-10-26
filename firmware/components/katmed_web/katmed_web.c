@@ -13,6 +13,7 @@
 #include "cJSON.h"
 #include "esp_heap_caps.h"
 #include "esp_https_server.h"
+#include "esp_key_config.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
 #include "esp_netif.h"
@@ -66,6 +67,8 @@ extern const unsigned char _binary_i18n_js_end[];
 typedef struct {
     nvs_handle_t nvs;
     KatmedWebIdentity identity;
+    psa_key_id_t tls_key_id;
+    esp_key_config_t tls_key_config;
     KatmedWebAuth auth;
     httpd_handle_t https;
     httpd_handle_t redirect;
@@ -319,20 +322,38 @@ static bool certificate_on_request(httpd_req_t *req, uint8_t out[32])
     return true;
 }
 
-static void stop_listeners(void)
+static bool stop_listeners(void)
 {
     if (web.redirect) {
-        httpd_stop(web.redirect);
+        if (httpd_stop(web.redirect) != ESP_OK) {
+            ESP_LOGE(WEB_TAG, "HTTP redirect stop failed");
+            return false;
+        }
         web.redirect = NULL;
     }
     if (web.https) {
-        httpd_ssl_stop(web.https);
+        if (httpd_ssl_stop(web.https) != ESP_OK) {
+            ESP_LOGE(WEB_TAG, "HTTPS server stop failed");
+            return false;
+        }
         web.https = NULL;
+    }
+    /* The HTTPS server borrows this PSA key for every TLS session. Release it
+     * only after httpd_ssl_stop has closed those sessions. */
+    if (web.tls_key_id != PSA_KEY_ID_NULL) {
+        if (psa_destroy_key(web.tls_key_id) == PSA_SUCCESS) {
+            web.tls_key_id = PSA_KEY_ID_NULL;
+            wipe(&web.tls_key_config, sizeof(web.tls_key_config));
+        } else {
+            ESP_LOGE(WEB_TAG, "HTTPS server key release failed");
+            return false;
+        }
     }
     web.started = false;
     web.certificate_fd = -1;
     web.certificate_verified = false;
     wipe(web.certificate_fingerprint, sizeof(web.certificate_fingerprint));
+    return true;
 }
 
 /* URI handler registration and request logic follow below. */
@@ -1448,6 +1469,10 @@ static bool start_listeners(void)
         ESP_LOGW(WEB_TAG, "HTTPS resource admission rejected");
         return false;
     }
+    if (web.https || web.redirect || web.tls_key_id != PSA_KEY_ID_NULL) {
+        ESP_LOGE(WEB_TAG, "HTTPS listener from prior lifecycle remains active");
+        return false;
+    }
     httpd_ssl_config_t tls = HTTPD_SSL_CONFIG_DEFAULT();
     tls.httpd.max_open_sockets = 1;
     /* 21 local routes plus Wi-Fi(4), reset(3) and media(5). */
@@ -1459,8 +1484,6 @@ static bool start_listeners(void)
     tls.tls_handshake_timeout_ms = 4000;
     tls.servercert = web.identity.cert;
     tls.servercert_len = web.identity.cert_len;
-    tls.prvtkey_pem = web.identity.key;
-    tls.prvtkey_len = web.identity.key_len;
     tls.user_cb = tls_session_callback;
     if (web.auth.record.cert_len) {
         tls.cacert_pem = web.auth.record.client_cert;
@@ -1472,8 +1495,35 @@ static bool start_listeners(void)
         return false;
 #endif
     }
+    if (web.identity.key_len == 32) {
+        /* New identities store a raw P-256 scalar. prvtkey_pem is parsed as
+         * PEM/DER by esp-tls, so provide its supported PSA key reference. */
+        psa_key_attributes_t attributes = PSA_KEY_ATTRIBUTES_INIT;
+        psa_set_key_type(&attributes, PSA_KEY_TYPE_ECC_KEY_PAIR(PSA_ECC_FAMILY_SECP_R1));
+        psa_set_key_bits(&attributes, 256);
+        psa_set_key_usage_flags(&attributes, PSA_KEY_USAGE_SIGN_HASH);
+        psa_set_key_algorithm(&attributes, PSA_ALG_ECDSA(PSA_ALG_SHA_256));
+        psa_status_t status = psa_crypto_init();
+        psa_key_id_t imported_key = PSA_KEY_ID_NULL;
+        if (status == PSA_SUCCESS)
+            status = psa_import_key(&attributes, web.identity.key, web.identity.key_len,
+                                    &imported_key);
+        psa_reset_key_attributes(&attributes);
+        if (status != PSA_SUCCESS) {
+            ESP_LOGE(WEB_TAG, "HTTPS server key import failed");
+            return false;
+        }
+        web.tls_key_id = imported_key;
+        web.tls_key_config.source = ESP_KEY_SOURCE_PSA;
+        web.tls_key_config.psa.key_id = web.tls_key_id;
+        tls.server_key = &web.tls_key_config;
+    } else {
+        /* Existing DER identities retain their original parse path. */
+        tls.prvtkey_pem = web.identity.key;
+        tls.prvtkey_len = web.identity.key_len;
+    }
     if (httpd_ssl_start(&web.https, &tls) != ESP_OK || !web.https) {
-        web.https = NULL;
+        stop_listeners();
         ESP_LOGE(WEB_TAG, "HTTPS server start failed");
         return false;
     }
@@ -1557,7 +1607,8 @@ void katmed_web_poll(uint64_t now_ms)
 {
     web_socket_diag_sample(now_ms, false);
     if (!management_enabled) return;
-    if (!web.started && now_ms >= web.retry_due_ms) {
+    if (!web.started && !web.https && !web.redirect &&
+        web.tls_key_id == PSA_KEY_ID_NULL && now_ms >= web.retry_due_ms) {
         bool ready = web.nvs_open ? start_listeners() : katmed_web_start(&web.services);
         if (!ready) web.retry_due_ms = now_ms + 30000;
     }
@@ -1569,8 +1620,12 @@ void katmed_web_poll(uint64_t now_ms)
     if (!web.restart_pending || now_ms < web.restart_due_ms) return;
     if (web.services.prepare_listener_stop &&
         !web.services.prepare_listener_stop(web.services.context)) return;
+    if (!stop_listeners()) {
+        web.restart_pending = false;
+        ESP_LOGE(WEB_TAG, "HTTPS listener restart blocked by failed stop");
+        return;
+    }
     web.restart_pending = false;
-    stop_listeners();
     if (!start_listeners()) {
         web.retry_due_ms = now_ms + 30000;
         ESP_LOGE(WEB_TAG, "HTTPS listener restart failed");
@@ -1593,7 +1648,7 @@ void katmed_web_stop(void)
 {
     if (web.services.prepare_listener_stop &&
         !web.services.prepare_listener_stop(web.services.context)) return;
-    stop_listeners();
+    if (!stop_listeners()) return;
     if (web.auth_mutex) {
         vSemaphoreDelete(web.auth_mutex);
         web.auth_mutex = NULL;
