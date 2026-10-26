@@ -58,6 +58,7 @@ elif [[ "$mode" == host ]]; then
     mkdir -p "$host_bootstrap/bootstrap/bin"
     ln -sf "$(command -v cmake)" "$host_bootstrap/bootstrap/bin/cmake"
     ln -sf "$(command -v ninja)" "$host_bootstrap/bootstrap/bin/ninja"
+    KATMED_TOOLS_DIR="$host_bootstrap" bash tests/host_c3_alarm_render/check_alarm_panel_transfer.sh "$repo/build-ci-c3-alarm-panel-transfer"
     KATMED_TOOLS_DIR="$host_bootstrap" KATMED_BOARD_CACHE_BUILD_DIR="$repo/build-ci-board-cache" KATMED_BOARD_CACHE_ONLY_BRIGHTNESS=1 bash tests/host_board_cache_review/check_board_main_ui.sh
     bash tests/host_reset_physical/check.sh
     KATMED_TOOLS_DIR="$host_bootstrap" bash tests/host_reset_physical/check_ui.sh

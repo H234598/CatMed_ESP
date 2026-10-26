@@ -2424,6 +2424,8 @@ static void update_alarm_bar(const AppState *state, const ClockSample *clock)
     set_bar_visible(ui.alarm_bar, state->alarm_active && !timed);
     const int top = lv_obj_get_y(ui.alarm_bar);
     const int height = lv_obj_get_height(ui.alarm_bar);
+    const bool c3_panel = lv_obj_get_width(ui.screen) == 240 &&
+                          lv_obj_get_height(ui.screen) == 240;
     unsigned fill = 0, erased = 0;
     if (timed) {
         if (animation.phase_permyriad < 5000u)
@@ -2451,6 +2453,11 @@ static void update_alarm_bar(const AppState *state, const ClockSample *clock)
             lv_obj_set_height(strip, (int)(end - start));
         }
         set_bar_visible(strip, visible);
+        /* The C3's 16-line partial SPI path can leave an interior band stale
+         * after a missed panel transfer. Edge motion alone invalidates only
+         * the moving strip, so repaint each visible part on the next tick.
+         * Keep the six objects, phase, margins and other displays unchanged. */
+        if (c3_panel && visible) lv_obj_invalidate(strip);
     }
     lv_obj_set_hidden(ui.alarm_text, !state->alarm_active);
 }
