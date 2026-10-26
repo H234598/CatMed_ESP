@@ -7,6 +7,8 @@ listener. No Wi-Fi profiles, real sockets, private keys or devices are used.
 import subprocess
 import tempfile
 import unittest
+import os
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -29,6 +31,7 @@ PREFIX = r'''
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #define ESP_OK 0
 #define ESP_FAIL -1
@@ -60,6 +63,9 @@ static struct {
 } web;
 static bool tcpip_ready,init_fails;
 static int listener_attempts,uninitialized_listener_attempts,nvs_opens;
+static httpd_config_t https_httpd_config, redirect_httpd_config;
+static uint64_t monotonic_ms(void){return 0;}
+static void web_socket_diag_sample(uint64_t now_ms,bool force){(void)now_ms;(void)force;}
 static int esp_netif_init(void) {
  if(init_fails)return ESP_FAIL;
  tcpip_ready=true;return ESP_OK;
@@ -70,12 +76,12 @@ static bool load_auth(void *state){(void)state;return true;}
 static bool katmed_web_identity_load_or_create(int nvs,void *out){(void)nvs;(void)out;return true;}
 static void *xSemaphoreCreateMutex(void){return (void*)1;}
 static int httpd_ssl_start(void **handle,const httpd_ssl_config_t *cfg){
- (void)cfg;++listener_attempts;
+ https_httpd_config=cfg->httpd;++listener_attempts;
  if(!tcpip_ready){++uninitialized_listener_attempts;return ESP_FAIL;}
  *handle=(void*)2;return ESP_OK;
 }
 static int httpd_start(void **handle,const httpd_config_t *cfg){
- (void)cfg;++listener_attempts;
+ redirect_httpd_config=*cfg;++listener_attempts;
  if(!tcpip_ready){++uninitialized_listener_attempts;return ESP_FAIL;}
  *handle=(void*)3;return ESP_OK;
 }
@@ -92,7 +98,7 @@ static void *tls_session_callback,*katmed_web_plain_uri_match,*redirect_get;
 '''
 SUFFIX = r'''
 int main(int argc,char **argv){
- CHECK(argc==2);
+ CHECK(argc>=2);
  if(!strcmp(argv[1],"fresh_without_wifi")){
   /* Fresh Store: no provisioned Mesh, no network/interface/IP or Wi-Fi profile. */
   tcpip_ready=false;
@@ -118,6 +124,18 @@ int main(int argc,char **argv){
   CHECK(!katmed_web_start(NULL));CHECK(listener_attempts==before);
   katmed_web_set_enabled(true);katmed_web_poll(UINT64_C(900001));
   CHECK(web.started && listener_attempts>before);
+ }else if(!strcmp(argv[1],"c6_socket_capacity")){
+  CHECK(argc==4);
+  CHECK(katmed_web_start(NULL));
+  CHECK(web.started && listener_attempts==2);
+  CHECK(https_httpd_config.max_open_sockets>=1);
+  CHECK(redirect_httpd_config.max_open_sockets>=1);
+  CHECK(redirect_httpd_config.server_port==80);
+  CHECK(https_httpd_config.ctrl_port!=redirect_httpd_config.ctrl_port);
+  /* Four active slots were measured before both listeners on normal C6. */
+  int demand=4+2*atoi(argv[3])+https_httpd_config.max_open_sockets+
+             redirect_httpd_config.max_open_sockets;
+  CHECK(atoi(argv[2])>=demand);
  }else return 2;
  puts("production Web startup prerequisite PASS");return 0;
 }
@@ -140,8 +158,8 @@ class NetworkStartup(unittest.TestCase):
     def tearDownClass(cls):
         cls.directory.cleanup()
 
-    def run_case(self, name):
-        result = subprocess.run([str(self.exe), name], capture_output=True, text=True)
+    def run_case(self, name, *arguments):
+        result = subprocess.run([str(self.exe), name, *arguments], capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_fresh_unprovisioned_without_wifi_starts_both_listeners(self):
@@ -155,6 +173,25 @@ class NetworkStartup(unittest.TestCase):
 
     def test_failed_platform_initialization_opens_no_listener_or_store(self):
         self.run_case("initialization_failure")
+
+    def test_c6_profile_can_accept_one_client_on_each_web_listener(self):
+        config_path = os.environ.get("KATMED_C6_SDKCONFIG")
+        if not config_path:
+            self.skipTest("requires a freshly generated normal C6 Development001 sdkconfig")
+        config = Path(config_path).read_text()
+        self.assertIn('CONFIG_IDF_TARGET="esp32c6"', config)
+        capacity = re.search(r"^CONFIG_LWIP_MAX_SOCKETS=(\d+)$", config, re.M)
+        self.assertIsNotNone(capacity)
+        idf_path = Path(os.environ["IDF_PATH"])
+        httpd_main = (idf_path / "components/esp_http_server/src/httpd_main.c").read_text()
+        internal = re.search(
+            r"HTTPD_MAX_SOCKETS\s*<\s*config->max_open_sockets\s*\+\s*(\d+)",
+            httpd_main,
+        )
+        self.assertIsNotNone(internal)
+        self.assertIn("cs_create_ctrl_sock", httpd_main)
+        self.assertIn("msg_fd = socket", httpd_main)
+        self.run_case("c6_socket_capacity", capacity.group(1), internal.group(1))
 
 
 if __name__ == "__main__":

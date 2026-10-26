@@ -32,6 +32,11 @@
 #include "nvs.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
+#if CONFIG_IDF_TARGET_ESP32C6
+#include "lwip/opt.h"
+#include "lwip/priv/sockets_priv.h"
+#include "lwip/sys.h"
+#endif
 #ifdef KATMED_WEB_SECURITY_JS_GZIP
 #include "miniz.h"
 #include "esp_rom_crc.h"
@@ -78,6 +83,90 @@ typedef struct {
 } WebContext;
 
 static WebContext web = {.certificate_fd = -1};
+
+#if CONFIG_IDF_TARGET_ESP32C6
+/* Diagnostic only: the SDK's debug accessor exposes its actual socket slots.
+ * Copy slot state under the same protection used by lwIP's allocator. A later
+ * getsockname() may race a close, so port buckets are best-effort, not owners. */
+static struct {
+    uint64_t next_sample_ms;
+    uint64_t next_report_ms;
+    unsigned reports;
+    unsigned occupied;
+    unsigned retained;
+    unsigned available;
+    bool sampled;
+} socket_diag;
+
+static void web_socket_diag_sample(uint64_t now_ms, bool force)
+{
+    if (!force && now_ms < socket_diag.next_sample_ms) return;
+    socket_diag.next_sample_ms = now_ms + (now_ms < 120000u ? 250u : 5000u);
+
+    int fds[CONFIG_LWIP_MAX_SOCKETS];
+    unsigned count = 0, retained = 0, available = 0;
+    SYS_ARCH_DECL_PROTECT(level);
+    SYS_ARCH_PROTECT(level);
+    for (unsigned i = 0; i < CONFIG_LWIP_MAX_SOCKETS; ++i) {
+        int fd = LWIP_SOCKET_OFFSET + (int)i;
+        struct lwip_sock *slot = lwip_socket_dbg_get_socket(fd);
+        if (slot && slot->conn) fds[count++] = fd;
+        else if (slot && slot->fd_used) ++retained;
+        else ++available;
+    }
+    SYS_ARCH_UNPROTECT(level);
+
+    bool changed = !socket_diag.sampled || count != socket_diag.occupied ||
+                   retained != socket_diag.retained || available != socket_diag.available;
+    socket_diag.occupied = count;
+    socket_diag.retained = retained;
+    socket_diag.available = available;
+    socket_diag.sampled = true;
+    if (!force && !changed && now_ms < socket_diag.next_report_ms) return;
+    if (socket_diag.reports >= 128u) {
+        if (socket_diag.reports == 128u) {
+            ++socket_diag.reports;
+            ESP_LOGI(WEB_TAG, "socket slot diagnostic report limit reached");
+        }
+        return;
+    }
+    socket_diag.next_report_ms = now_ms + 30000u;
+
+    unsigned web80 = 0, web443 = 0, other = 0, unclassified = 0;
+    for (unsigned i = 0; i < count; ++i) {
+        struct sockaddr_storage local = {0};
+        socklen_t len = sizeof(local);
+        if (getsockname(fds[i], (struct sockaddr *)&local, &len) != 0) {
+            ++unclassified;
+            continue;
+        }
+        uint16_t port = 0;
+        if (local.ss_family == AF_INET)
+            port = ntohs(((struct sockaddr_in *)&local)->sin_port);
+        else if (local.ss_family == AF_INET6)
+            port = ntohs(((struct sockaddr_in6 *)&local)->sin6_port);
+        else {
+            ++unclassified;
+            continue;
+        }
+        if (port == 80u) ++web80;
+        else if (port == 443u) ++web443;
+        else ++other;
+    }
+    ++socket_diag.reports;
+    ESP_LOGI(WEB_TAG,
+             "socket slots sample=%u up_ms=%llu total=%u active=%u retained=%u free=%u local80=%u local443=%u other=%u unknown=%u",
+             socket_diag.reports, (unsigned long long)now_ms,
+             (unsigned)CONFIG_LWIP_MAX_SOCKETS, count, retained, available,
+             web80, web443, other, unclassified);
+}
+#else
+static void web_socket_diag_sample(uint64_t now_ms, bool force)
+{
+    (void)now_ms;
+    (void)force;
+}
+#endif
 
 static uint64_t monotonic_ms(void)
 {
@@ -1354,6 +1443,7 @@ static bool register_routes(httpd_handle_t server)
 
 static bool start_listeners(void)
 {
+    web_socket_diag_sample(monotonic_ms(), true);
     if (!resources_allow(false)) {
         ESP_LOGW(WEB_TAG, "HTTPS resource admission rejected");
         return false;
@@ -1418,6 +1508,7 @@ static bool start_listeners(void)
         return false;
     }
     web.started = true;
+    web_socket_diag_sample(monotonic_ms(), true);
     return true;
 }
 
@@ -1464,6 +1555,7 @@ bool katmed_web_start(const KatmedWebServices *services)
 
 void katmed_web_poll(uint64_t now_ms)
 {
+    web_socket_diag_sample(now_ms, false);
     if (!management_enabled) return;
     if (!web.started && now_ms >= web.retry_due_ms) {
         bool ready = web.nvs_open ? start_listeners() : katmed_web_start(&web.services);
