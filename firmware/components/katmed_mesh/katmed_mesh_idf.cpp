@@ -951,7 +951,9 @@ extern "C" KatmedMeshResult katmed_mesh_start(const StoreProvision *provision,
     if(esp_netif_init()!=ESP_OK)return MESH_UNAVAILABLE;
     const esp_err_t loop=esp_event_loop_create_default();
     if(loop!=ESP_OK&&loop!=ESP_ERR_INVALID_STATE)return MESH_UNAVAILABLE;
+    if(services->startup_heap_sample)services->startup_heap_sample("mesh_after_platform");
     esp_bridge_create_all_netif();
+    if(services->startup_heap_sample)services->startup_heap_sample("mesh_after_bridge");
     apply_hostname();
     katmed_dhcp_diag_bind_sta();
     esp_mesh_lite_config_t config=ESP_MESH_LITE_DEFAULT_INIT();
@@ -965,6 +967,7 @@ extern "C" KatmedMeshResult katmed_mesh_start(const StoreProvision *provision,
     hex(ctx.ap_password,provision->secret,31);
     config.softap_ssid=ctx.ap_ssid;config.softap_password=ctx.ap_password;
     esp_mesh_lite_init(&config);
+    if(services->startup_heap_sample)services->startup_heap_sample("mesh_after_init");
     (void)esp_mesh_lite_set_argot((uint32_t(provision->group[3])<<24)|
         (uint32_t(provision->group[4])<<16)|(uint32_t(provision->group[5])<<8)|
         provision->group[6]);

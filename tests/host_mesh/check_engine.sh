@@ -4,7 +4,7 @@ repo=$(cd "$(dirname "$0")/../.." && pwd)
 out=$(mktemp)
 fixture=$(mktemp)
 trap 'rm -f "$out" "$fixture"' EXIT
-adapter="$repo/firmware/components/katmed_mesh/katmed_mesh_idf.cpp"
+adapter="${KATMED_MESH_ADAPTER:-$repo/firmware/components/katmed_mesh/katmed_mesh_idf.cpp}"
 sanitizers=()
 if [[ "${KATMED_HOST_SANITIZE:-0}" == 1 ]]; then sanitizers=(-fsanitize=address,undefined -fno-omit-frame-pointer); fi
 g++ -pthread "${sanitizers[@]}" -std=c++17 -Wall -Wextra -Werror -DKATMED_MESH_HOST \
@@ -35,6 +35,9 @@ fi
 "$out" night_leaf
 "$out" mesh_only
 "$out" offline
+"$out" startup_checkpoints
+"$out" startup_queue_failure
+"$out" startup_netif_failure
 "$out" manual_source
 "$out" solo_settings
 "$out" fanout

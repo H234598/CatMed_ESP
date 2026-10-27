@@ -21,6 +21,7 @@
 #include "esp_netif.h"
 #include "esp_wifi.h"
 #include "esp_wifi_default.h"
+#include "c3_resource_policy.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
@@ -2177,6 +2178,7 @@ static bool start_runtime_network(Runtime *rt)
             .shared_result = mesh_shared_result,
             .utc_received = mesh_utc_received,
             .time_shareable = time_shareable,
+            .startup_heap_sample = startup_heap_sample,
         };
         const KatmedMeshResult result=katmed_mesh_start(
             &rt->store.record.provision,&mesh_services);
