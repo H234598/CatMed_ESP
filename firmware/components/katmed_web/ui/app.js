@@ -247,6 +247,41 @@
   async function loadConfig() {
     renderConfig(await api("/api/config"));
   }
+  let acmeIdentifier = null;
+  async function loadAcmeIdentifier() {
+    const value = await api("/api/acme-identifier");
+    if (!value || typeof value.identifier !== "string" || value.identifier.length > 253)
+      throw new Error("Invalid identifier response");
+    acmeIdentifier = value.identifier;
+    $("acme-identifier").value = acmeIdentifier;
+  }
+  $("acme-identifier-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    setBusy(form, true);
+    try {
+      if (acmeIdentifier === null) {
+        await loadAcmeIdentifier();
+        notice(tr("Aktuelle Werte geladen."));
+        return;
+      }
+      const value = await api("/api/acme-identifier", "PUT", {
+        identifier: $("acme-identifier").value.trim(), previous: acmeIdentifier
+      });
+      if (!value || typeof value.identifier !== "string") throw new Error("Invalid identifier response");
+      acmeIdentifier = value.identifier;
+      $("acme-identifier").value = acmeIdentifier;
+      notice(tr("Einstellung gespeichert."));
+    } catch (error) {
+      if (error.status === 409) {
+        acmeIdentifier = null;
+        try { await loadAcmeIdentifier(); }
+        catch (reloadError) { await handleFailure(reloadError); return; }
+      }
+      await handleFailure(error);
+    }
+    finally { setBusy(form, false); }
+  });
 
   function renderCertificate(certificate) {
     const enrolled = certificate && certificate.enrolled === true;
@@ -444,7 +479,7 @@
     }
     show("private-view");
     $("save-status").textContent = tr("Aktuelle Werte werden geladen.");
-    await Promise.all([loadConfig(), loadRuntimeEinrichtung(), loadCertificate(), loadWifi(), loadImages(), loadCatalog()]);
+    await Promise.all([loadConfig(), loadAcmeIdentifier(), loadRuntimeEinrichtung(), loadCertificate(), loadWifi(), loadImages(), loadCatalog()]);
     $("save-status").textContent = tr("Aktuelle Werte geladen.");
   }
 

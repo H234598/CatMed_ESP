@@ -157,6 +157,8 @@
     "Wartung vorbereiten": "التحضير للصيانة"
   },
   "web_static": {
+    "Eigener DNS-Name (FQDN, optional)": "اسم DNS خاص (FQDN، اختياري)",
+    "Leer deaktiviert den DNS-Namen. Änderungen sind weiterhin über die Geräte-IP möglich.": "اتركه فارغًا لتعطيل اسم DNS. تبقى الإعدادات متاحة عبر عنوان IP للجهاز.",
     "KatMed · Einstellungen": "KatMed · الإعدادات",
     "Einstellungen": "الإعدادات",
     "Verbindung wird geprüft": "يتم فحص الاتصال",

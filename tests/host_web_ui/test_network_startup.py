@@ -99,6 +99,7 @@ static int esp_netif_init(void) {
 static bool resources_allow(bool post){(void)post;return true;}
 static int nvs_open(const char *name,int mode,int *out){(void)name;(void)mode;*out=1;++nvs_opens;return ESP_OK;}
 static bool load_auth(void *state){(void)state;return true;}
+static bool load_identifier(void *state){(void)state;return true;}
 static bool katmed_web_identity_load_or_create(int nvs,void *out){(void)nvs;(void)out;return true;}
 static void *xSemaphoreCreateMutex(void){return (void*)1;}
 static int httpd_ssl_start(void **handle,const httpd_ssl_config_t *cfg){

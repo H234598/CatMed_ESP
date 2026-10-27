@@ -39,6 +39,7 @@ const script = fs.readFileSync(path.join(__dirname,
   "../../firmware/components/katmed_web/ui/app.js"), "utf8");
 vm.runInNewContext(script.replace("const state = {", "const state = window.__testState = {")
   .replace("async function loadRuntimeEinrichtung() {", "window.__loadRuntimeSetup=loadRuntimeEinrichtung; async function loadRuntimeEinrichtung() {")
+  .replace("async function loadAcmeIdentifier() {", "window.__loadAcmeIdentifier=loadAcmeIdentifier; async function loadAcmeIdentifier() {")
   .replace("function renderConfig(config) {", "window.__renderConfig=renderConfig; window.__validConfig=validConfig; window.__saveField=saveField; function renderConfig(config) {")
   .replace("function cancelResetOnLeave() {", "window.__testShow = show; function cancelResetOnLeave() {"), {
   document, window, history, location,
@@ -76,6 +77,46 @@ async function submit(id) {
 }
 
 (async () => {
+  window.__testState.bootstrap={csrf_token:"synthetic-csrf"};
+  replies.push({status:200,body:{identifier:""}});
+  await window.__loadAcmeIdentifier();
+  assert.equal(element("acme-identifier").value,"");
+  element("acme-identifier").value="device.example.invalid";
+  replies.push({status:200,body:{identifier:"device.example.invalid"}});
+  await submit("acme-identifier-form");
+  assert.equal(calls.at(-1).url,"/api/acme-identifier");
+  assert.equal(calls.at(-1).options.method,"PUT");
+  assert.equal(calls.at(-1).options.headers["X-Katmed-CSRF"],"synthetic-csrf");
+  assert.deepEqual(JSON.parse(calls.at(-1).options.body),{identifier:"device.example.invalid",previous:""});
+  element("acme-identifier").value="";
+  replies.push({status:200,body:{identifier:""}});
+  await submit("acme-identifier-form");
+  assert.deepEqual(JSON.parse(calls.at(-1).options.body),{identifier:"",previous:"device.example.invalid"});
+  // A different authenticated client changed the token after this form loaded.
+  let identifierCalls=calls.length;
+  element("acme-identifier").value="wanted.example.invalid";
+  replies.push({status:409,body:{error:"stale"}},
+    {status:200,body:{identifier:"other.example.invalid"}});
+  await submit("acme-identifier-form");
+  assert.equal(calls.length,identifierCalls+2,"409 must GET the identifier endpoint");
+  assert.equal(calls.at(-1).url,"/api/acme-identifier");
+  assert.equal(calls.at(-1).options.method,"GET");
+  assert.equal(element("acme-identifier").value,"other.example.invalid");
+  element("acme-identifier").value="wanted.example.invalid";
+  replies.push({status:200,body:{identifier:"wanted.example.invalid"}});
+  await submit("acme-identifier-form");
+  assert.deepEqual(JSON.parse(calls.at(-1).options.body),{
+    identifier:"wanted.example.invalid",previous:"other.example.invalid"});
+  element("acme-identifier").value="new.example.invalid";
+  replies.push({status:409,body:{error:"stale"}},{network:true});
+  await submit("acme-identifier-form");
+  assert.doesNotMatch(element("notice").textContent,/Aktuelle Werte wurden neu geladen/);
+  identifierCalls=calls.length;
+  replies.push({status:200,body:{identifier:"latest.example.invalid"}});
+  await submit("acme-identifier-form");
+  assert.equal(calls.length,identifierCalls+1,"failed reload invalidates the previous token; recover with GET only");
+  assert.equal(calls.at(-1).options.method,"GET");
+  assert.equal(element("acme-identifier").value,"latest.example.invalid");
   const config={revision:"synthetic-r1",medication_hours:"6",image_hours:"8",
     next_due_hhmm:null,next_due_state:"none",restore_status:"none",
     clock_style:"digital_large",orientation:0,rotation:"off",

@@ -2,6 +2,65 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <strings.h>
+
+bool katmed_web_identifier_valid(const char *name)
+{
+    if (!name) return false;
+    size_t n = strnlen(name, KATMED_WEB_IDENTIFIER_MAX);
+    if (!n) return true; /* Optional, neutral default. */
+    if (n >= KATMED_WEB_IDENTIFIER_MAX) return false;
+    size_t label = 0; bool dot = false, letter = false;
+    for (size_t i = 0; i < n; ++i) {
+        unsigned char c = (unsigned char)name[i];
+        bool alpha = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
+        if (c == '.') {
+            if (!label || name[i-1] == '-') return false;
+            label = 0; dot = true;
+        } else {
+            if (!alpha && !(c >= '0' && c <= '9') && c != '-') return false;
+            if ((!label && c == '-') || ++label > 63) return false;
+            letter |= alpha;
+        }
+    }
+    return dot && letter && label && name[n-1] != '-';
+}
+
+bool katmed_web_resolve_authority(const char *ip, const char *identifier,
+                                  const char *host, unsigned port,
+                                  char out[KATMED_WEB_IDENTIFIER_MAX])
+{
+    if (!ip || !identifier || !host || !out || (port != 80 && port != 443) ||
+        !katmed_web_identifier_valid(identifier)) return false;
+    size_t len = strnlen(host, KATMED_WEB_IDENTIFIER_MAX + 6u);
+    if (!len || len >= KATMED_WEB_IDENTIFIER_MAX + 6u) return false;
+    const char *colon = strchr(host, ':');
+    size_t n = colon ? (size_t)(colon-host) : len;
+    if (!n || n >= KATMED_WEB_IDENTIFIER_MAX) return false;
+    if (colon && strcmp(colon, port == 80 ? ":80" : ":443")) return false;
+    bool local = strlen(ip) == n && !strncmp(host, ip, n);
+    bool named = identifier[0] && strlen(identifier) == n && !strncasecmp(host, identifier, n);
+    if (!local && !named) return false;
+    const char *selected = local ? ip : identifier;
+    for (size_t i=0; i<n; ++i) {
+        char c=selected[i]; out[i]=(c>='A' && c<='Z') ? (char)(c+'a'-'A') : c;
+    }
+    out[n]=0;
+    return true;
+}
+
+bool katmed_web_same_origin(const char *authority, const char *origin)
+{
+    if (!authority || !origin || strncmp(origin,"https://",8)) return false;
+    /* authority was already selected from trusted local IP/configured name.
+     * Require that same authority, never another independently allowed alias. */
+    size_t n=strnlen(authority,KATMED_WEB_IDENTIFIER_MAX);
+    if (!n || n>=KATMED_WEB_IDENTIFIER_MAX) return false;
+    const char *value=origin+8;
+    if (strncasecmp(value,authority,n)) return false;
+    if (value[n] && strcmp(value+n,":443")) return false;
+    return true;
+}
 
 bool katmed_web_authority_matches(const char *local_ip, const char *host, unsigned port)
 {

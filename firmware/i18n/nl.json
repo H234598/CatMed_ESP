@@ -157,6 +157,8 @@
     "Wartung vorbereiten": "Onderhoud voorbereiden"
   },
   "web_static": {
+    "Eigener DNS-Name (FQDN, optional)": "Eigen DNS-naam (FQDN, optioneel)",
+    "Leer deaktiviert den DNS-Namen. Änderungen sind weiterhin über die Geräte-IP möglich.": "Leeg laten schakelt de DNS-naam uit. Instellingen blijven via het IP-adres van het apparaat bereikbaar.",
     "KatMed · Einstellungen": "KatMed · Instellingen",
     "Einstellungen": "Instellingen",
     "Verbindung wird geprüft": "Verbinding wordt gecontroleerd",
