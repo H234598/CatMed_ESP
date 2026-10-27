@@ -204,11 +204,14 @@ async function submit(id) {
   await timers.shift()();
   assert.match(element("reset-status").textContent, /neu Ja/);
   assert.ok(timers.length && timers[0].delay >= 3000);
+  replies.push({status: 200, body: {display: "reset_stop_pending"}});
+  await timers.shift()();
+  assert.match(element("reset-status").textContent, /bislang keine Daten gelöscht/);
+  assert.ok(timers.length && timers[0].delay >= 3000);
   replies.push({status: 409, body: {error: "reset_already_confirmed"}});
   await invoke("factory-reset-no");
   assert.equal(element("factory-reset-dialog").open, true);
-  assert.match(element("reset-status").textContent, /Löschung/);
-  assert.doesNotMatch(element("reset-status").textContent, /Keine Daten gelöscht/);
+  assert.match(element("reset-status").textContent, /Abbrechen ist nicht mehr möglich/);
   replies.push({status: 200, body: {display: "reset_committed"}});
   await timers.shift()();
   assert.match(element("reset-status").textContent, /Löschung/);

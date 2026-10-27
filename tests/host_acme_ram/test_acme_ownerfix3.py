@@ -109,27 +109,51 @@ bool katmed_acme_quiescent();void katmed_acme_resource_probe_observe();
         observer=ac[ac.index('static unsigned probe_cycle;'):ac.index('\n#else\nbool katmed_acme_resource_probe_launch')]
         prepare=method(ac,'bool katmed_acme_prepare_listener_stop(')
         caller_stubs=r'''
-struct Runtime {bool reset_requested=true,reset_active=false,store_ready=true;int nvs=0;uint64_t reset_retry_due_ms=0;};
+struct Runtime {bool reset_requested=true,reset_active=false,store_ready=true;int nvs=0,names_nvs=0;uint64_t reset_retry_due_ms=0;};
 static int reset_mutex=1;
 int xSemaphoreTake(int,int){return 1;}void xSemaphoreGive(int){}
 using KatmedResetJournalBackend=int;
-int reset_backend(){return 1;}bool katmed_reset_begin(int){return true;}
-void katmed_mesh_stop(){assert(leases()==0);}void store_idf_close_backend(int*){assert(leases()==0);}
-bool katmed_reset_resume(int,bool*){return false;}void esp_restart(){assert(false);}
+static int journal_saves,mesh_stops,store_closes,names_closes,reset_resumes;
+int reset_backend(){return 1;}
+bool katmed_reset_begin(int);
+void katmed_mesh_stop(){assert(leases()==0 && journal_saves==1);++mesh_stops;}
+void store_idf_close_backend(int*){assert(leases()==0 && journal_saves==1);++store_closes;}
+void names_idf_close(int*){assert(leases()==0 && journal_saves==1);++names_closes;}
+bool katmed_reset_resume(int,bool*){assert(journal_saves==1);++reset_resumes;return false;}
+void esp_restart(){assert(false);}
 static int listener_stops=0;
-void httpd_stop(int){assert(leases()==0 && client_owner.load()==nullptr && probe_worker==nullptr);server_alive=false;++listener_stops;}
-void httpd_ssl_stop(int){}void nvs_close(int){}void vSemaphoreDelete(void*){}
+static bool redirect_stop_fails=true,https_stop_fails=true;
+static int https_stop_calls,key_destroys,nvs_closes;
+#define ESP_OK 0
+#define ESP_FAIL -1
+#define PSA_KEY_ID_NULL 0
+#define PSA_SUCCESS 0
+int httpd_stop(int){
+ assert(leases()==0 && client_owner.load()==nullptr && probe_worker==nullptr);
+ if(redirect_stop_fails)return ESP_FAIL;
+ server_alive=false;++listener_stops;return ESP_OK;
+}
+int httpd_ssl_stop(int){++https_stop_calls;return https_stop_fails?ESP_FAIL:ESP_OK;}
+int psa_destroy_key(int){++key_destroys;return PSA_SUCCESS;}
+void nvs_close(int){++nvs_closes;}void vSemaphoreDelete(void*){}
 void wipe(void*p,size_t n){memset(p,0,n);}
 struct Services {void*context;bool(*prepare_listener_stop)(void*);};
-struct Web {bool started=true,nvs_open=true,restart_pending=false,certificate_verified=false;uint64_t retry_due_ms=0,restart_due_ms=0;SemaphoreHandle_t auth_mutex=nullptr;Services services{};int redirect=1,https=0,nvs=0,certificate_fd=0,auth=0,identity=0;unsigned char certificate_fingerprint[32]{};}web;
+struct Web {bool started=true,nvs_open=true,restart_pending=false,certificate_verified=false;uint64_t retry_due_ms=0,restart_due_ms=0;SemaphoreHandle_t auth_mutex=nullptr;Services services{};int redirect=1,https=2,nvs=0,certificate_fd=0,auth=17,identity=42,tls_key_id=7,tls_key_config=7;unsigned char certificate_fingerprint[32]{};}web;
+bool katmed_reset_begin(int){
+ assert(leases()==0 && !web.redirect && !web.https && web.tls_key_id==PSA_KEY_ID_NULL);
+ assert(!web.nvs_open && web.auth==0 && web.identity==0);
+ ++journal_saves;return true;
+}
 bool start_listeners(){web.started=true;web.redirect=1;server_alive=true;return true;}
 bool katmed_web_start(Services*){return start_listeners();}
 void katmed_web_auth_tick(int*,uint64_t){}
+static bool management_enabled=true;
+void web_socket_diag_sample(uint64_t,bool){}
 '''
         callers='\n'.join(method(main_source,x) for x in ('static bool web_prepare_listener_stop(', 'static bool reset_runtime_step('))
-        web_bodies='\n'.join(method(web,x) for x in ('static void stop_listeners(', 'void katmed_web_stop(', 'void katmed_web_poll('))
+        web_bodies='\n'.join(method(web,x) for x in ('static bool stop_listeners(', 'bool katmed_web_stop(', 'void katmed_web_poll('))
         # reset references the existing public stop before its implementation.
-        caller_stubs+='\nvoid katmed_web_stop();\n'
+        caller_stubs+='\nbool katmed_web_stop();\n'
         main=r'''
 int main(int argc,char**){
 web.services.prepare_listener_stop=web_prepare_listener_stop;
@@ -144,11 +168,37 @@ for(int n=0;n<5000 && queue_failures.load()==0;++n)std::this_thread::sleep_for(s
 assert(queue_failures>0 && server_alive && leases()==1 && !suspended && !deleted);
 for(int i=0;i<4;++i){if(argc>1)assert(reset_runtime_step(&rt,2+i));else katmed_web_poll(2+i);}
 assert(server_alive && leases()==1 && !katmed_acme_quiescent());
+assert(journal_saves==0 && reset_resumes==0 && mesh_stops==0 && store_closes==0 && names_closes==0);
+assert(rt.reset_requested && !rt.reset_active && rt.store_ready);
 fail_queue=false;
 for(int n=0;n<5000 && !suspended.load();++n)std::this_thread::sleep_for(std::chrono::milliseconds(1));
 assert(suspended && leases()==0 && response_finished==1 && owned()==0);
 if(argc>1)assert(reset_runtime_step(&rt,20));else katmed_web_poll(20);
-assert(deleted==1 && listener_stops==1 && leases()==0 && katmed_acme_quiescent());
+assert(deleted==1 && listener_stops==0 && https_stop_calls==0 && leases()==0 && katmed_acme_quiescent());
+assert(web.redirect && web.https && web.tls_key_id==7 && key_destroys==0);
+assert(web.nvs_open && web.auth==17 && web.identity==42 && nvs_closes==0);
+assert(journal_saves==0 && reset_resumes==0 && rt.reset_requested && !rt.reset_active);
+/* Listener restart stops after a failed stop; only Reset retries automatically.
+ * Issue another explicit restart request to test recovery in the other context. */
+if(argc==1){assert(!web.restart_pending);web.restart_pending=true;}
+redirect_stop_fails=false;
+if(argc>1)assert(reset_runtime_step(&rt,6020));else katmed_web_poll(6020);
+assert(listener_stops==1 && !web.redirect && web.https && https_stop_calls==1);
+assert(web.tls_key_id==7 && key_destroys==0 && web.nvs_open && web.identity==42);
+assert(journal_saves==0 && reset_resumes==0 && mesh_stops==0 && store_closes==0 && names_closes==0);
+assert(rt.reset_requested && !rt.reset_active && rt.store_ready);
+if(argc==1){assert(!web.restart_pending);web.restart_pending=true;}
+https_stop_fails=false;
+if(argc>1)assert(reset_runtime_step(&rt,12020));else katmed_web_poll(12020);
+assert(deleted==1 && listener_stops==1 && https_stop_calls==2 && key_destroys==1);
+if(argc>1){
+ assert(!rt.reset_requested && rt.reset_active && !rt.store_ready);
+ assert(journal_saves==1 && reset_resumes==1 && mesh_stops==1 && store_closes==1 && names_closes==1);
+ assert(!web.https && !web.nvs_open && web.auth==0 && web.identity==0 && nvs_closes==1);
+}else{
+ assert(!web.restart_pending && web.started);
+ assert(journal_saves==0 && reset_resumes==0 && mesh_stops==0 && store_closes==0 && names_closes==0);
+}
 std::thread second([]{current=(void*)3;assert(katmed_source_writer_enter());assert(owned()==1);katmed_source_writer_leave();assert(owned()==0);});second.join();
 assert(leases()==0 && owned()==0);
 puts("actual_owner_retry_two_contexts_pending_response_reset_restart_lease_and_server=passed");

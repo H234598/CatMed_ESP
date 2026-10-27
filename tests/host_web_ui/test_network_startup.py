@@ -118,7 +118,7 @@ static int httpd_ssl_stop(void *server){(void)server;++https_stops;return https_
 static void wipe(void *ptr,size_t len){memset(ptr,0,len);}
 static void nvs_close(int nvs){(void)nvs;++storage_closes;}
 static void vSemaphoreDelete(void *mutex){(void)mutex;++mutex_deletes;}
-void katmed_web_stop(void);
+bool katmed_web_stop(void);
 #define pdTRUE 1
 #define portMAX_DELAY 1
 static int xSemaphoreTake(void *lock,int wait){(void)lock;(void)wait;return pdTRUE;}
@@ -181,18 +181,18 @@ int main(int argc,char **argv){
   CHECK(listener_attempts==before && storage_closes==0 && mutex_deletes==0);
   katmed_web_poll(UINT64_C(2000));
   CHECK(https_stops==1 && listener_attempts==before);
-  katmed_web_stop();
+  CHECK(!katmed_web_stop());
   CHECK(https_stops==2 && web.https && web.tls_key_id==7);
   CHECK(web.nvs_open && web.auth_mutex && web.identity.key[0]==42);
   CHECK(key_destroys==0 && storage_closes==0 && mutex_deletes==0);
   https_stop_fails=false;
-  katmed_web_stop();
+  CHECK(katmed_web_stop());
   CHECK(https_stops==3 && !web.https && !web.redirect);
   CHECK(web.tls_key_id==PSA_KEY_ID_NULL && key_destroys==1);
   CHECK(!web.nvs_open && !web.auth_mutex && storage_closes==1 && mutex_deletes==1);
   CHECK(web.identity.key[0]==0 && web.auth.record.cert_len==0);
   CHECK(!web.restart_pending);
-  katmed_web_stop();CHECK(key_destroys==1);
+  CHECK(katmed_web_stop());CHECK(key_destroys==1);
  }else return 2;
  puts("production Web startup prerequisite PASS");return 0;
 }
@@ -206,7 +206,7 @@ class NetworkStartup(unittest.TestCase):
         text = SOURCE.read_text()
         c = Path(cls.directory.name) / "startup.c"
         c.write_text(PREFIX + "\nstatic bool management_enabled=true;\n" + function(text, "static bool stop_listeners(void)" if "static bool stop_listeners(void)" in text else "static void stop_listeners(void)") + "\n" + function(text, "static bool start_listeners(void)") +
-                     "\n" + function(text, "void katmed_web_set_enabled(") + "\n" + function(text, "bool katmed_web_start(") + "\n" + function(text, "void katmed_web_poll(") + "\n" + function(text, "void katmed_web_stop(void)") + SUFFIX)
+                     "\n" + function(text, "void katmed_web_set_enabled(") + "\n" + function(text, "bool katmed_web_start(") + "\n" + function(text, "void katmed_web_poll(") + "\n" + function(text, "bool katmed_web_stop(void)") + SUFFIX)
         cls.exe = Path(cls.directory.name) / "startup"
         subprocess.run(["cc", "-std=c11", "-Wall", "-Wextra", "-Werror",
                         "-Wno-unused-function", str(c), "-o", str(cls.exe)], check=True)
