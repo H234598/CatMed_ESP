@@ -53,6 +53,21 @@ bool katmed_acme_start(const KatmedAcmeConfig *config)
     if (client_owner.load() != NULL) return client_owner.load() == xTaskGetCurrentTaskHandle();
     if (acme_abort.load()) return false;
     certificate_changed = false;
+    char desired_identifier[254]={0};
+    KatmedAcmeConfig desired={};
+#if !KATMED_ACME_RESOURCE_CLIENT
+    /* Production uses the single persisted Web-configured desired identifier.
+     * Supplying another name cannot widen this authority. The optional source
+     * stays empty until explicitly configured; no network starts by default. */
+    if (!config || !katmed_web_acme_identifier(desired_identifier,sizeof(desired_identifier)) ||
+        !desired_identifier[0] || (config->identifier &&
+        strcasecmp(config->identifier,desired_identifier)!=0)) return false;
+    desired=*config;
+    desired.identifier=desired_identifier;
+    config=&desired;
+#else
+    (void)desired_identifier; (void)desired;
+#endif
     if (config == NULL || config->identifier == NULL || config->email == NULL ||
         config->server == NULL || config->state_prefix == NULL ||
         config->identifier[0] == '\0' || config->email[0] == '\0' ||
@@ -81,7 +96,9 @@ bool katmed_acme_start(const KatmedAcmeConfig *config)
     if (client == NULL) { katmed_source_writer_leave(); return false; }
     client_owner.store(xTaskGetCurrentTaskHandle());
     strlcpy(challenge_host, config->identifier, sizeof(challenge_host));
-    client->setUrl(config->identifier);
+    /* Acme retains this pointer; the owner-lifetime challenge snapshot must
+     * outlive the local desired-config copy above. */
+    client->setUrl(challenge_host);
     client->setEmail(config->email);
     client->setAcmeServer(config->server);
     client->setFilenamePrefix(config->state_prefix);

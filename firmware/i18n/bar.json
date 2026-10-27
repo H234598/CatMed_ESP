@@ -157,6 +157,8 @@
     "Wartung vorbereiten": "Wartung herrichtn"
   },
   "web_static": {
+    "Eigener DNS-Name (FQDN, optional)": "Oagner DNS-Name (FQDN, freiwillig)",
+    "Leer deaktiviert den DNS-Namen. Änderungen sind weiterhin über die Geräte-IP möglich.": "Leer lossn schoit den DNS-Nam aus. Einstellungen san weida über d’IP-Adress vom Gerät erreichbar.",
     "KatMed · Einstellungen": "KatMed · Eistellunga",
     "Einstellungen": "Eistellunga",
     "Verbindung wird geprüft": "Verbindung wird grad prüft",

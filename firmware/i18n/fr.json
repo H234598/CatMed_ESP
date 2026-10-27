@@ -157,6 +157,8 @@
     "Wartung vorbereiten": "Préparer la maintenance"
   },
   "web_static": {
+    "Eigener DNS-Name (FQDN, optional)": "Nom DNS propre (FQDN, facultatif)",
+    "Leer deaktiviert den DNS-Namen. Änderungen sind weiterhin über die Geräte-IP möglich.": "Laissez vide pour désactiver le nom DNS. Les réglages restent accessibles par l’adresse IP de l’appareil.",
     "KatMed · Einstellungen": "KatMed · Paramètres",
     "Einstellungen": "Paramètres",
     "Verbindung wird geprüft": "La connexion est en cours de vérification",

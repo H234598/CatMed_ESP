@@ -157,6 +157,8 @@
     "Wartung vorbereiten": "Prepari prizorgadon"
   },
   "web_static": {
+    "Eigener DNS-Name (FQDN, optional)": "Propra DNS-nomo (FQDN, nedeviga)",
+    "Leer deaktiviert den DNS-Namen. Änderungen sind weiterhin über die Geräte-IP möglich.": "Lasu malplena por malŝalti la DNS-nomon. Agordoj restas atingeblaj per la IP-adreso de la aparato.",
     "KatMed · Einstellungen": "KatMed · Agordoj",
     "Einstellungen": "Agordoj",
     "Verbindung wird geprüft": "Konekto estas kontrolata",

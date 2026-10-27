@@ -28,6 +28,7 @@ PREFIX = r'''
 #include <sys/types.h>
 #include <zlib.h>
 #define INET_ADDRSTRLEN 16
+#define KATMED_WEB_IDENTIFIER_MAX 254
 #define HTTPD_RESP_USE_STRLEN -1
 #define ESP_OK 0
 #define ESP_FAIL -1

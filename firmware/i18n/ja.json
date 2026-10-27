@@ -157,6 +157,8 @@
     "Wartung vorbereiten": "保守を準備"
   },
   "web_static": {
+    "Eigener DNS-Name (FQDN, optional)": "独自の DNS 名（FQDN、任意）",
+    "Leer deaktiviert den DNS-Namen. Änderungen sind weiterhin über die Geräte-IP möglich.": "空欄にすると DNS 名が無効になります。設定には引き続き機器の IP アドレスでアクセスできます。",
     "KatMed · Einstellungen": "KatMed · 設定",
     "Einstellungen": "設定",
     "Verbindung wird geprüft": "接続確認中です",

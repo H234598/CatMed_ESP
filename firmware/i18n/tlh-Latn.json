@@ -257,6 +257,8 @@
     "Einrichtung verlassen. Das Gerät startet offline; Mesh benötigt eine sichere Gruppe. Fehlende Uhrzeit lokal einstellen.": "chermeH mIw mejlu’. rarHa’taHvIS jan tagh; ghom QaD poQ mesh. poH tu’lu’be’chugh janDaq yIcher."
   },
   "web_static": {
+    "Eigener DNS-Name (FQDN, optional)": "jan DNS pong (FQDN, wIvlaH)",
+    "Leer deaktiviert den DNS-Namen. Änderungen sind weiterhin über die Geräte-IP möglich.": "DNS pong chu'Ha'meH, yItebQo'. jan IP Daq lo'taHvIS, jan SeHmeH De' choHlaHtaH.",
     "KatMed · Einstellungen": "KatMed · jan SeHmeH De'",
     "Einstellungen": "jan SeHmeH De'",
     "Verbindung wird geprüft": "rarmeH He nuDlu'taH",

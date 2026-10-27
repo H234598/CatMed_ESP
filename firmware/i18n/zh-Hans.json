@@ -157,6 +157,8 @@
     "Wartung vorbereiten": "准备维护"
   },
   "web_static": {
+    "Eigener DNS-Name (FQDN, optional)": "自定义 DNS 名称（FQDN，可选）",
+    "Leer deaktiviert den DNS-Namen. Änderungen sind weiterhin über die Geräte-IP möglich.": "留空可停用 DNS 名称。仍可通过设备 IP 地址访问设置。",
     "KatMed · Einstellungen": "KatMed · 设置",
     "Einstellungen": "设置",
     "Verbindung wird geprüft": "正在检查连接",
