@@ -12,6 +12,7 @@
 
 #if KATMED_FULL_STACK && KATMED_WITH_CORE
 #include "esp_app_desc.h"
+#include "esp_heap_caps.h"
 #include "esp_mac.h"
 #include "esp_random.h"
 #include "esp_timer.h"
@@ -2138,6 +2139,24 @@ static void appmaint_main(void)
 }
 #endif
 
+/* Fixed boot checkpoints only: no retained samples, heap tracing or admission
+ * changes. Concurrent tasks can allocate between these sequential API reads;
+ * differences locate a startup interval, not an exclusive allocation owner. */
+static void startup_heap_sample(const char *stage)
+{
+    (void)stage; /* Also valid when informational logging is compiled out. */
+    const uint32_t internal = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
+    const uint32_t dma = internal | MALLOC_CAP_DMA;
+    const size_t internal_free = heap_caps_get_free_size(internal);
+    const size_t internal_largest = heap_caps_get_largest_free_block(internal);
+    const size_t dma_free = heap_caps_get_free_size(dma);
+    const size_t dma_largest = heap_caps_get_largest_free_block(dma);
+    ESP_LOGI("katmed_heap",
+             "startup stage=%s internal_free=%zu internal_largest=%zu "
+             "dma_free=%zu dma_largest=%zu",
+             stage, internal_free, internal_largest, dma_free, dma_largest);
+}
+
 /* The same startup path is exercised by the Host AppLoop harness. An explicit
  * offline Exit suppresses only the setup AP; it does not create Mesh trust. */
 static bool start_runtime_network(Runtime *rt)
@@ -2178,6 +2197,7 @@ void app_main(void)
 #endif
 #if KATMED_FULL_STACK && KATMED_WITH_CORE
     static const char *tag = "katmed";
+    startup_heap_sample("entry");
 #if CONFIG_NVS_ENCRYPTION
     /* Hold normal startup until encrypted NVS and any import journal are
      * verified. The IDF replay adapter reads the local Factory-MAC itself. */
@@ -2190,6 +2210,7 @@ void app_main(void)
         return;
     }
 #endif
+    startup_heap_sample("nvs_import_ready");
     ESP_LOGI(tag, "Board/UI runtime with durable store and bounded group services");
     ESP_LOGI(tag, "free heap at entry: %" PRIu32, esp_get_free_heap_size());
 
@@ -2224,6 +2245,7 @@ void app_main(void)
         board_deinit();
         return;
     }
+    startup_heap_sample("board_ready");
 
     if (!lvgl_port_lock(1000)) {
         ESP_LOGE(tag, "LVGL lock unavailable during startup");
@@ -2257,6 +2279,7 @@ void app_main(void)
                                                        source_snapshot_writers_idle))
         ESP_LOGE(tag, "source snapshot refused or incomplete");
     katmed_source_snapshot_boot_window_close();
+    startup_heap_sample("images_reset_ready");
     SharedSettings settings = app_default_settings();
     const uint32_t image_count = image_status == KATMED_IMAGE_OK ? katmed_images_count() : 0;
     runtime.local = (LocalSettings){
@@ -2310,6 +2333,7 @@ void app_main(void)
         return;
     }
     runtime.state.divergent = store_durable_divergent(&runtime.store);
+    startup_heap_sample("store_app_ready");
     if(esp_reset_reason()==ESP_RST_POWERON) manual_clock_marker=0;
     else if(manual_clock_marker==MANUAL_CLOCK_MARKER && runtime.store_ready && runtime.store.record.provision.network_mode!=STORE_NETWORK_ONLINE) {
         struct timeval wall;
@@ -2366,6 +2390,7 @@ void app_main(void)
     ui_render(&runtime.state, &runtime.local, ui_current_view(), &now);
     if (runtime.reset_warning_ready) ui_reset_show_warning();
     lvgl_port_unlock();
+    startup_heap_sample("ui_ready");
 
     if (board_touch_sampler_start() != BOARD_OK) {
         ESP_LOGE(tag, "touch sampler unavailable");
@@ -2385,10 +2410,13 @@ void app_main(void)
     if (!katmed_usb_console_start())
         ESP_LOGE(tag, "USB setup input unavailable");
 
+    startup_heap_sample("inputs_ready");
     const bool management=start_runtime_network(&runtime);
+    startup_heap_sample("network_ready");
     if (!katmed_config_bridge_start())
         ESP_LOGE(tag,"web configuration bridge unavailable");
     else {
+        startup_heap_sample("config_bridge_ready");
         const KatmedWebServices web_services = {
             .context = &runtime,
             .prepare_listener_stop = web_prepare_listener_stop,
