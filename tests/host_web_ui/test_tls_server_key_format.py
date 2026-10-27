@@ -208,7 +208,7 @@ def main():
         program.write_text(c)
         includes = [
             idf / "components/mbedtls/port/include",
-            build / "host-include",
+            Path(os.environ.get("KATMED_MBEDTLS_HOST_CONFIG", build / "host-include")),
             mbedtls / "include",
             mbedtls / "tf-psa-crypto/include",
             mbedtls / "tf-psa-crypto/drivers/builtin/include",
