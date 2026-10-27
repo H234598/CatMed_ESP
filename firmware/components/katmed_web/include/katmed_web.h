@@ -42,7 +42,8 @@ void katmed_web_poll(uint64_t monotonic_ms);
 /* Main loop copies this outside the LVGL lock and displays it under that lock.
  * The six digits must never be included in HTTP replies or logs. */
 bool katmed_web_pairing_code(char out[7]);
-void katmed_web_stop(void);
+/* False leaves retained HTTPS/key/identity state intact for a later retry. */
+bool katmed_web_stop(void);
 
 /* ACME-only hand-off to the existing plain HTTP listener. The caller never
  * starts a second server; NULL means the listener is not ready. */

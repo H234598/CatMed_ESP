@@ -1644,11 +1644,11 @@ bool katmed_web_pairing_code(char out[7])
     return visible;
 }
 
-void katmed_web_stop(void)
+bool katmed_web_stop(void)
 {
     if (web.services.prepare_listener_stop &&
-        !web.services.prepare_listener_stop(web.services.context)) return;
-    if (!stop_listeners()) return;
+        !web.services.prepare_listener_stop(web.services.context)) return false;
+    if (!stop_listeners()) return false;
     if (web.auth_mutex) {
         vSemaphoreDelete(web.auth_mutex);
         web.auth_mutex = NULL;
@@ -1660,6 +1660,7 @@ void katmed_web_stop(void)
     wipe(&web.auth, sizeof(web.auth));
     wipe(&web.identity, sizeof(web.identity));
     web.restart_pending = false;
+    return true;
 }
 
 httpd_handle_t katmed_web_acme_http_server(void)

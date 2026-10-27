@@ -1213,7 +1213,7 @@ int main(int argc, char **argv)
     assert(katmed_runtime_reset_confirm(&runtime,reset_token,reset_length)==0 &&
            runtime.reset_requested && !runtime.reset_warning_ready);
     assert(katmed_runtime_reset_confirm(&runtime,reset_token,reset_length)==1);
-    assert(web_reset_status(&runtime)==KATMED_WEB_RESET_COMMITTED);
+    assert(web_reset_status(&runtime)==KATMED_WEB_RESET_STOP_PENDING);
     assert(web_reset_cancel(&runtime)==KATMED_WEB_RESET_CANCEL_TOO_LATE);
     assert(runtime.reset_requested && !runtime.reset_web_close);
     runtime.reset_requested=false;runtime.reset_active=true;

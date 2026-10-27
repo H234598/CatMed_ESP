@@ -889,11 +889,12 @@
       $("reset-status").textContent = display === "press_reset" ?
         tr("Kachel offen: Physische RESET-Taste drücken.") :
         display === "confirm_on_display" ? tr("Warnfrage: Am Display Nein oder neu Ja wählen.") :
+        display === "reset_stop_pending" ? tr("Reset am Display bestätigt. Der Webdienst muss vor der Löschung schließen; bislang keine Daten gelöscht.") :
         display === "reset_committed" ? tr("Reset bestätigt; Löschung läuft oder steht an.") :
         display === "preparing" ? tr("Displaykachel öffnet.") :
         display === "idle" ? tr("Keine aktive Resetvorbereitung.") :
         tr("Kachel nicht geöffnet. Display prüfen.");
-      if (["preparing", "press_reset", "confirm_on_display"].includes(display) && $("factory-reset-dialog").open)
+      if (["preparing", "press_reset", "confirm_on_display", "reset_stop_pending"].includes(display) && $("factory-reset-dialog").open)
         setTimeout(() => refreshResetStatus(poll), display === "preparing" ? 500 : 5000);
     } catch (error) {
       if (poll === resetPoll) $("reset-status").textContent = errorText(error);
@@ -908,7 +909,7 @@
       $("reset-status").textContent = tr("Vorbereitung abgebrochen.");
     } catch (error) {
       $("reset-status").textContent = error.code === "reset_already_confirmed" ?
-        tr("Reset bereits bestätigt; Löschung steht an oder läuft.") :
+        tr("Reset am Display bestätigt; Abbrechen ist nicht mehr möglich.") :
         error.code === "reset_not_prepared" ? tr("Keine aktive Resetvorbereitung.") : errorText(error);
     }
   });

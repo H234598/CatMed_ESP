@@ -300,35 +300,29 @@ static bool web_prepare_listener_stop(void *context)
 
 static bool reset_runtime_step(Runtime *rt,uint64_t now_ms)
 {
-    static bool shutdown_pending;
     if (!rt || !reset_mutex) return false;
     if (xSemaphoreTake(reset_mutex,pdMS_TO_TICKS(100))!=pdTRUE) return rt->reset_active;
     const bool requested=rt->reset_requested;
-    rt->reset_requested=false;
     const bool active=rt->reset_active;
-    if (requested && !active) rt->reset_active=true;
     xSemaphoreGive(reset_mutex);
     if (requested && !active) {
+        /* A persisted intent resumes before Web on the next boot. Stop the
+         * HTTPS listener and its borrowed PSA key before writing that intent. */
+        if (!web_prepare_listener_stop(rt) || !katmed_web_stop()) return true;
         KatmedResetJournalBackend backend=reset_backend();
         if (!katmed_reset_begin(backend)) {
             ESP_LOGE("katmed_reset","could not commit reset intent; user data is unchanged");
-            if (xSemaphoreTake(reset_mutex,pdMS_TO_TICKS(100))==pdTRUE) {
-                rt->reset_active=false;
-                xSemaphoreGive(reset_mutex);
-            }
-            return false;
+            return true;
         }
-        shutdown_pending=true;
-    }
-    if (shutdown_pending) {
-        if (!web_prepare_listener_stop(rt)) return true;
-        katmed_web_stop();
+        if (xSemaphoreTake(reset_mutex,pdMS_TO_TICKS(100))!=pdTRUE) return true;
+        rt->reset_requested=false;
+        rt->reset_active=true;
+        xSemaphoreGive(reset_mutex);
         katmed_mesh_stop();
         names_idf_close(&rt->names_nvs);
         store_idf_close_backend(&rt->nvs);
         rt->store_ready=false;
         rt->reset_retry_due_ms=0;
-        shutdown_pending=false;
     }
     if (!rt->reset_active) return false;
     if (now_ms<rt->reset_retry_due_ms) return true;
@@ -1600,8 +1594,9 @@ static KatmedWebResetStatus web_reset_status(void *context)
     Runtime *rt=context;
     if (!rt || !reset_mutex || xSemaphoreTake(reset_mutex,pdMS_TO_TICKS(1000))!=pdTRUE)
         return KATMED_WEB_RESET_UNAVAILABLE;
-    const KatmedWebResetStatus status=rt->reset_requested || rt->reset_active ?
-        KATMED_WEB_RESET_COMMITTED : rt->reset_warning_ready ? KATMED_WEB_RESET_WARNING :
+    const KatmedWebResetStatus status=rt->reset_active ?
+        KATMED_WEB_RESET_COMMITTED : rt->reset_requested ? KATMED_WEB_RESET_STOP_PENDING :
+        rt->reset_warning_ready ? KATMED_WEB_RESET_WARNING :
         rt->reset_prepared ? KATMED_WEB_RESET_PREPARED :
         rt->reset_web_offer ? KATMED_WEB_RESET_PREPARING :
         rt->reset_web_rejected ? KATMED_WEB_RESET_UNAVAILABLE : KATMED_WEB_RESET_IDLE;

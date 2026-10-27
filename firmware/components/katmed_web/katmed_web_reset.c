@@ -37,6 +37,8 @@ static esp_err_t reset_status(httpd_req_t *req)
         return reply(req, "200 OK", "{\"display\":\"confirm_on_display\"}");
     case KATMED_WEB_RESET_UNAVAILABLE:
         return reply(req, "200 OK", "{\"display\":\"unavailable\"}");
+    case KATMED_WEB_RESET_STOP_PENDING:
+        return reply(req, "200 OK", "{\"display\":\"reset_stop_pending\"}");
     case KATMED_WEB_RESET_COMMITTED:
         return reply(req, "200 OK", "{\"display\":\"reset_committed\"}");
     default:
