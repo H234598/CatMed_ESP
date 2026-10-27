@@ -79,6 +79,19 @@ elif [[ "$mode" == host ]]; then
     python3 -m unittest discover -s tests/host_web_ui -p 'test_security_js_gzip.py'
     python3 -m unittest discover -s tests/host_web_ui -p 'test_security_js_handler.py'
     python3 -m unittest discover -s tests/host_web_ui -p 'test_network_startup.py'
+    # This standalone main performs a real synthetic TLS handshake; discovery
+    # only imports it. Build the pinned public SDK library and run it explicitly.
+    native_tls_build="$repo/build-ci-native-tls"
+    native_tls_config="$repo/tests/host_web_ui/native_config"
+    cmake -S "$mbedtls_source" -B "$native_tls_build" -G Ninja \
+        -DENABLE_PROGRAMS=OFF -DENABLE_TESTING=OFF -DMBEDTLS_FATAL_WARNINGS=OFF \
+        -DMBEDTLS_FRAMEWORK_DIR="$mbedtls_source/framework" \
+        -DCMAKE_PROJECT_INCLUDE="$native_tls_config/port.cmake" \
+        -DCMAKE_C_FLAGS="-I$native_tls_config"
+    cmake --build "$native_tls_build" -j 4
+    KATMED_MBEDTLS_HOST_BUILD="$native_tls_build" \
+        KATMED_MBEDTLS_HOST_CONFIG="$native_tls_config" \
+        python3 tests/host_web_ui/test_tls_server_signature_policy.py
     # Lightweight adapter contracts only; the real HA Core fixture remains separate.
     python3 -m unittest discover -s tests/ha_integration -p 'test_adapter.py'
     bash tests/host_runtime_metrics/check_runtime_metrics.sh
