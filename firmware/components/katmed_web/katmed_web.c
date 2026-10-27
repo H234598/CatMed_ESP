@@ -281,7 +281,7 @@ static bool save_identifier(WebContext *w, const char *value)
     return ok;
 }
 
-static bool resources_allow(bool after_start)
+static bool resources_allow(bool after_start, const char *site)
 {
     const uint32_t internal = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
     const uint32_t dma = MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
@@ -292,9 +292,17 @@ static bool resources_allow(bool after_start)
     if (after_start)
         return internal_free >= POST_FREE_INTERNAL && dma_free >= POST_FREE_DMA &&
                internal_largest >= 12u * 1024u && dma_largest >= 1024u;
-    return internal_free >= PRE_FREE_INTERNAL &&
-           internal_largest >= PRE_LARGEST_INTERNAL &&
-           dma_free >= PRE_FREE_DMA && dma_largest >= PRE_LARGEST_DMA;
+    const bool allowed = internal_free >= PRE_FREE_INTERNAL &&
+                         internal_largest >= PRE_LARGEST_INTERNAL &&
+                         dma_free >= PRE_FREE_DMA && dma_largest >= PRE_LARGEST_DMA;
+    if (!allowed)
+        ESP_LOGW(WEB_TAG,
+                 "HTTPS resource admission rejected site=%s internal_free=%zu/%u "
+                 "internal_largest=%zu/%u dma_free=%zu/%u dma_largest=%zu/%u",
+                 site, internal_free, PRE_FREE_INTERNAL,
+                 internal_largest, PRE_LARGEST_INTERNAL,
+                 dma_free, PRE_FREE_DMA, dma_largest, PRE_LARGEST_DMA);
+    return allowed;
 }
 
 static bool certificate_time_valid(const mbedtls_x509_crt *cert)
@@ -1550,8 +1558,7 @@ static bool register_routes(httpd_handle_t server)
 static bool start_listeners(void)
 {
     web_socket_diag_sample(monotonic_ms(), true);
-    if (!resources_allow(false)) {
-        ESP_LOGW(WEB_TAG, "HTTPS resource admission rejected");
+    if (!resources_allow(false, "start_listeners")) {
         return false;
     }
     if (web.https || web.redirect || web.tls_key_id != PSA_KEY_ID_NULL) {
@@ -1615,7 +1622,7 @@ static bool start_listeners(void)
         ESP_LOGE(WEB_TAG, "HTTPS server start failed");
         return false;
     }
-    if (!resources_allow(true) || !register_routes(web.https)) {
+    if (!resources_allow(true, NULL) || !register_routes(web.https)) {
         ESP_LOGW(WEB_TAG, "HTTPS post-start admission or route registration failed");
         stop_listeners();
         return false;
@@ -1641,7 +1648,7 @@ static bool start_listeners(void)
         stop_listeners();
         return false;
     }
-    if (!resources_allow(true)) {
+    if (!resources_allow(true, NULL)) {
         stop_listeners();
         return false;
     }
@@ -1661,8 +1668,7 @@ bool katmed_web_start(const KatmedWebServices *services)
     if (!management_enabled) return false;
     if (services) web.services = *services;
     if (web.started || web.nvs_open) return web.started;
-    if (!resources_allow(false)) {
-        ESP_LOGW(WEB_TAG, "HTTPS resource admission rejected");
+    if (!resources_allow(false, "katmed_web_start")) {
         return false;
     }
     /* Fresh devices reach Web before any provisioned Mesh/Wi-Fi startup. */
