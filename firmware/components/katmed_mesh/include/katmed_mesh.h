@@ -33,6 +33,9 @@ typedef struct {
     void (*utc_received)(void *context, uint64_t observed_mono_ms,
                          int64_t utc_ms, ClockQuality source_quality);
     bool (*time_shareable)(void *context); /* False for a merely manual local anchor. */
+    /* Optional three startup-only checkpoints on the calling App loop.
+     * Main supplies its existing numeric heap sampler; no readiness implied. */
+    void (*startup_heap_sample)(const char *stage);
 } KatmedMeshServices;
 
 KatmedMeshResult katmed_mesh_start(const StoreProvision *provision,

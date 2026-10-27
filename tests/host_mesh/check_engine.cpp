@@ -12,6 +12,7 @@
 #include "mesh_sdk_stubs.h"
 #include <cassert>
 #include <cstring>
+#include <string>
 #include <deque>
 #include <vector>
 #include <fstream>
@@ -26,6 +27,22 @@ unsigned dropped=0,boot_random=0,failed_sends=0;
 bool fail_send=false;
 void (*night_interleave_hook)()=nullptr;
 unsigned router_configs=0, mesh_starts=0;
+bool startup_queue_failure=false, startup_netif_failure=false;
+bool startup_platform_done=false, startup_bridge_done=false, startup_mesh_init_done=false;
+std::vector<std::string> startup_samples;
+void startup_heap_sample(const char *stage) {
+    assert(startup_platform_done);
+    if (!std::strcmp(stage,"mesh_after_platform"))
+        assert(!startup_bridge_done && !startup_mesh_init_done && startup_samples.empty());
+    else if (!std::strcmp(stage,"mesh_after_bridge"))
+        assert(startup_bridge_done && !startup_mesh_init_done && startup_samples.size()==1);
+    else {
+        assert(!std::strcmp(stage,"mesh_after_init"));
+        assert(startup_bridge_done && startup_mesh_init_done && startup_samples.size()==2);
+    }
+    assert(mesh_starts==0); /* The final existing Main checkpoint follows start. */
+    startup_samples.emplace_back(stage);
+}
 bool share_time=true;
 bool time_shareable(void *) {return share_time;}
 uint8_t current_local_nonce[16]{};
@@ -141,15 +158,15 @@ KatmedMeshFrame latest_kind(KatmedMeshKind kind){
 }
 }
 
-esp_err_t esp_event_loop_create_default(){return ESP_OK;}
+esp_err_t esp_event_loop_create_default(){startup_platform_done=true;return ESP_OK;}
 esp_err_t esp_event_handler_register(esp_event_base_t,int32_t,esp_event_handler_t,void *){return ESP_OK;}
-esp_err_t esp_netif_init(){return ESP_OK;}
-void esp_bridge_create_all_netif(){}
+esp_err_t esp_netif_init(){return startup_netif_failure?ESP_FAIL:ESP_OK;}
+void esp_bridge_create_all_netif(){startup_bridge_done=true;}
 /* Standalone Mesh harness does not link the separate diagnostic component. */
 extern "C" void katmed_dhcp_diag_bind_sta(){}
 void esp_fill_random(void *out,size_t n){auto *p=static_cast<uint8_t *>(out);for(size_t i=0;i<n;++i)p[i]=uint8_t(1+boot_random+i);++boot_random;}
 const esp_app_desc_t *esp_app_get_description(){static esp_app_desc_t app{{'d','9','4','1','f','a','e',0}};return &app;}
-void esp_mesh_lite_init(esp_mesh_lite_config_t *){}
+void esp_mesh_lite_init(esp_mesh_lite_config_t *){startup_mesh_init_done=true;}
 void esp_mesh_lite_start(){++mesh_starts;}
 esp_err_t esp_mesh_lite_connect(){return ESP_OK;}
 uint8_t esp_mesh_lite_get_level(){return level;}
@@ -166,7 +183,7 @@ esp_err_t esp_mesh_lite_send_msg(int,esp_mesh_lite_msg_config_t *request){
 }
 esp_err_t esp_mesh_lite_send_broadcast_raw_msg_to_child(const uint8_t *,size_t){return ESP_OK;}
 esp_err_t esp_mesh_lite_send_raw_msg_to_root(const uint8_t *,size_t){return ESP_OK;}
-QueueHandle_t xQueueCreate(unsigned capacity,size_t size){return new HostQueue{capacity,size,{}};}
+QueueHandle_t xQueueCreate(unsigned capacity,size_t size){return startup_queue_failure?nullptr:new HostQueue{capacity,size,{}};}
 int xQueueSend(QueueHandle_t q,const void *data,unsigned){
     auto &queue=*static_cast<HostQueue *>(q);
     if(queue.values.size()>=queue.capacity){++dropped;return 0;}
@@ -221,9 +238,27 @@ int main(int argc,char **argv){
         std::memset(provision.time_source,0,sizeof(provision.time_source));provision.time_source_length=0;
         assert(store_save_setup(&store,&provision)==STORE_OK && store.record.wifi_profile_count==1);
     }
-    KatmedMeshServices services{&store,&state,nullptr,shared_result,utc_received,time_shareable};
+    KatmedMeshServices services{&store,&state,nullptr,shared_result,utc_received,time_shareable,nullptr};
+    const bool startup_case=argc==2 && !std::strncmp(argv[1],"startup_",8);
+    if(startup_case) {
+        services.startup_heap_sample=startup_heap_sample;
+        startup_queue_failure=!std::strcmp(argv[1],"startup_queue_failure");
+        startup_netif_failure=!std::strcmp(argv[1],"startup_netif_failure");
+        if(startup_queue_failure || startup_netif_failure) {
+            assert(katmed_mesh_start(&provision,&services)==MESH_UNAVAILABLE);
+            assert(startup_samples.empty() && !startup_platform_done && !startup_bridge_done && !startup_mesh_init_done);
+            assert(mesh_starts==0);return 0;
+        }
+    }
     if(offline) {assert(katmed_mesh_start(&provision,&services)==MESH_UNAVAILABLE && !mesh_starts && !router_configs);return 0;}
     assert(katmed_mesh_start(&provision,&services)==MESH_ACCEPTED);
+    if(startup_case) {
+        assert(startup_samples==std::vector<std::string>({"mesh_after_platform","mesh_after_bridge","mesh_after_init"}));
+        assert(mesh_starts==1);
+        assert(katmed_mesh_start(&provision,&services)==MESH_UNAVAILABLE);
+        assert(startup_samples.size()==3 && mesh_starts==1);return 0;
+    }
+    assert(startup_samples.empty()); /* Optional callback absent on existing paths. */
     if(mesh_only) {assert(mesh_starts==1 && router_configs==0);return 0;}
     if(argc==2&&!std::strcmp(argv[1],"names_hostname_retry_netif")){
         NamesMemory bytes;

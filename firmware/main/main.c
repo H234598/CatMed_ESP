@@ -2177,6 +2177,7 @@ static bool start_runtime_network(Runtime *rt)
             .shared_result = mesh_shared_result,
             .utc_received = mesh_utc_received,
             .time_shareable = time_shareable,
+            .startup_heap_sample = startup_heap_sample,
         };
         const KatmedMeshResult result=katmed_mesh_start(
             &rt->store.record.provision,&mesh_services);

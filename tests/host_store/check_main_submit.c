@@ -142,10 +142,23 @@ StoreBackend store_idf_history_backend(StoreIdfNvs *nvs) {
 void katmed_mesh_history_backend(StoreBackend backend) {
     (void)backend;++fake_mesh_history_calls;
 }
+/* Synthetic capability views for Main's linked startup sampler, not device
+ * measurements. Free totals remain at least the largest block. */
+size_t heap_caps_get_free_size(uint32_t caps) {
+    assert(caps==(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT) ||
+           caps==(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT|MALLOC_CAP_DMA));
+    return (caps&MALLOC_CAP_DMA)?65536u:131072u;
+}
+size_t heap_caps_get_largest_free_block(uint32_t caps) {
+    assert(caps==(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT) ||
+           caps==(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT|MALLOC_CAP_DMA));
+    return 32768u;
+}
 KatmedMeshResult katmed_mesh_start(const StoreProvision *provision,
                                    const KatmedMeshServices *services) {
     ++fake_mesh_start_calls;
     assert(provision && services && services->store && services->state);
+    assert(services->startup_heap_sample != NULL);
     assert(provision->configured && provision->network_mode!=STORE_NETWORK_OFFLINE);
     assert(memcmp(provision->group,services->store->record.provision.group,16)==0 &&
            memcmp(provision->secret,services->store->record.provision.secret,32)==0);
