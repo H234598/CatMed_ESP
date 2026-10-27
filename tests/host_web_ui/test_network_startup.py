@@ -100,7 +100,7 @@ static int esp_netif_init(void) {
  if(init_fails)return ESP_FAIL;
  tcpip_ready=true;return ESP_OK;
 }
-static bool resources_allow(bool post){(void)post;return true;}
+static bool resources_allow(bool post,const char *site){(void)post;(void)site;return true;}
 static int nvs_open(const char *name,int mode,int *out){(void)name;(void)mode;*out=1;++nvs_opens;return ESP_OK;}
 static bool load_auth(void *state){(void)state;return true;}
 static bool load_identifier(void *state){(void)state;return true;}
