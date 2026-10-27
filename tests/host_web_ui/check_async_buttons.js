@@ -24,6 +24,7 @@ function element(id) {
 const replies = [];
 const calls = [];
 const timers = [];
+let scenario = null;
 const document = {
   documentElement: { lang: "en", dir: "ltr" }, title: "Fixture",
   getElementById: element,
@@ -35,17 +36,35 @@ const window = { scrollY: 130, scrollTo(_x, y) { this.scrollY = y; },
   addEventListener(type, callback) { windowEvents[type] = callback; } };
 const history = { pushState(state) { this.state = state; }, replaceState(state) { this.state = state; } };
 const location = { hostname: "device.local", protocol: "http:", hash: "", pathname: "/", search: "" };
-const script = fs.readFileSync(path.join(__dirname,
+const script = fs.readFileSync(process.env.KATMED_UI_SCRIPT || path.join(__dirname,
   "../../firmware/components/katmed_web/ui/app.js"), "utf8");
+replies.push({status:200,body:{language:"en"}});
 vm.runInNewContext(script.replace("const state = {", "const state = window.__testState = {")
+  .replace("void start();", "window.__testStartup=start();")
   .replace("async function loadRuntimeEinrichtung() {", "window.__loadRuntimeSetup=loadRuntimeEinrichtung; async function loadRuntimeEinrichtung() {")
   .replace("async function loadAcmeIdentifier() {", "window.__loadAcmeIdentifier=loadAcmeIdentifier; async function loadAcmeIdentifier() {")
   .replace("function renderConfig(config) {", "window.__renderConfig=renderConfig; window.__validConfig=validConfig; window.__saveField=saveField; function renderConfig(config) {")
+  .replace("async function applyBootstrap(bootstrap) {", "window.__testApplyBootstrap=applyBootstrap; window.__testApi=api; async function applyBootstrap(bootstrap) {")
   .replace("function cancelResetOnLeave() {", "window.__testShow = show; function cancelResetOnLeave() {"), {
   document, window, history, location,
   setTimeout: (callback, delay) => { callback.delay = delay; timers.push(callback); },
   fetch: async (url, options) => {
     calls.push({url, options});
+    if (scenario) {
+      const test = scenario;
+      test.active++; test.peak = Math.max(test.peak, test.active);
+      try {
+        await new Promise(resolve => setImmediate(resolve));
+        if (url === test.reject) throw new TypeError("synthetic network rejection");
+        assert.ok(Object.hasOwn(test.bodies, url), "unexpected initial loader " + url);
+        return {ok:true, status:200, headers:{get:()=>"application/json"},
+          json:async()=>{
+            await new Promise(resolve => setImmediate(resolve));
+            test.active--; test.completed.push(url);
+            return test.bodies[url];
+          }};
+      } catch (error) { test.active--; test.completed.push(url); throw error; }
+    }
     const reply = replies.shift();
     assert.ok(reply, "unexpected request");
     await Promise.resolve();
@@ -77,6 +96,7 @@ async function submit(id) {
 }
 
 (async () => {
+  await window.__testStartup;
   window.__testState.bootstrap={csrf_token:"synthetic-csrf"};
   replies.push({status:200,body:{identifier:""}});
   await window.__loadAcmeIdentifier();
@@ -350,5 +370,48 @@ async function submit(id) {
   element("factory-reset-dialog").close();
   assert.equal(calls.some((call) => call.url === "/api/factory-reset/confirm"), false);
   assert.equal(replies.length, 0);
+  // Execute the real authenticated initial loader path, not scheduler internals.
+  const bodies = {
+    "/api/config": config, "/api/acme-identifier": {identifier:""},
+    "/api/runtime-setup": {configured:true,mode:0,revision:"setup-r1",setup_open:false},
+    "/api/client-cert": {enrolled:false},
+    "/api/wifi": {configured:true,recovery_available:true,profile_limit:8,profiles:[]},
+    "/api/images?offset=0": {images:[],used_bytes:0,free_bytes:1024,image_count:0,next_offset:false},
+    "/api/catalog/images?offset=0": {images:[],catalog_count:0,offset:0},
+    "/api/probe-after-failure": {ok:true}
+  };
+  const initialPaths = Object.keys(bodies).filter(url=>url!=="/api/probe-after-failure").sort();
+  scenario = {bodies,active:0,peak:0,completed:[]};
+  await window.__testApplyBootstrap({setup_required:false,authenticated:true,device_name:"Synthetic"});
+  assert.equal(scenario.peak,1,"authenticated initial API burst must be bounded");
+  assert.deepEqual([...scenario.completed].sort(),initialPaths,"all intended loaders complete");
+  assert.equal(element("clock-style").value,config.clock_style);
+  assert.equal(element("brightness").value,config.brightness);
+  assert.equal(element("network-mode").value,"0");
+  scenario = {bodies,active:0,peak:0,completed:[],reject:"/api/config"};
+  await assert.rejects(window.__testApplyBootstrap({setup_required:false,authenticated:true}),
+    error=>error.name==="TypeError");
+  await window.__testApi("/api/probe-after-failure");
+  assert.equal(scenario.peak,1);
+  assert.deepEqual(scenario.completed.filter(url=>url!=="/api/probe-after-failure").sort(),initialPaths,
+    "one failed loader must not poison or discard the independent queued loaders");
+  assert.equal(scenario.completed.at(-1),"/api/probe-after-failure");
+  scenario=null;
+  // A confirmed logout invalidates the private view even if its follow-up
+  // bootstrap request fails. Execute the real logout click handler.
+  window.__testState.bootstrap={csrf_token:"synthetic-csrf"};
+  window.__testState.config=config;
+  window.__testShow("private-view");
+  const beforeLogout=calls.length;
+  replies.push({status:200,body:{authenticated:false}},{network:true});
+  await click("logout");
+  assert.deepEqual(calls.slice(beforeLogout).map(call=>call.url),["/api/logout","/api/bootstrap"]);
+  assert.equal(window.__testState.bootstrap,null);
+  assert.equal(window.__testState.config,null);
+  assert.equal(element("private-view").hidden,true,"confirmed logout must hide private data before bootstrap retry-free failure");
+  assert.equal(element("login-view").hidden,false);
+  assert.equal(replies.length,0);
+  console.log("confirmed logout hides private view despite follow-up bootstrap failure: OK");
+  console.log("bounded real initial loaders, completion and rejection recovery: OK");
   console.log("async buttons, Advanced scroll restore and physical reset web flow: OK");
 })().catch((error) => { console.error(error); process.exitCode = 1; });
