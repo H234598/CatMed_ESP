@@ -2210,7 +2210,7 @@ void app_main(void)
         return;
     }
 #endif
-    startup_heap_sample("nvs_import_ready");
+    startup_heap_sample("after_nvs_import");
     ESP_LOGI(tag, "Board/UI runtime with durable store and bounded group services");
     ESP_LOGI(tag, "free heap at entry: %" PRIu32, esp_get_free_heap_size());
 
@@ -2245,7 +2245,7 @@ void app_main(void)
         board_deinit();
         return;
     }
-    startup_heap_sample("board_ready");
+    startup_heap_sample("after_board");
 
     if (!lvgl_port_lock(1000)) {
         ESP_LOGE(tag, "LVGL lock unavailable during startup");
@@ -2279,7 +2279,7 @@ void app_main(void)
                                                        source_snapshot_writers_idle))
         ESP_LOGE(tag, "source snapshot refused or incomplete");
     katmed_source_snapshot_boot_window_close();
-    startup_heap_sample("images_reset_ready");
+    startup_heap_sample("after_images_reset");
     SharedSettings settings = app_default_settings();
     const uint32_t image_count = image_status == KATMED_IMAGE_OK ? katmed_images_count() : 0;
     runtime.local = (LocalSettings){
@@ -2333,7 +2333,7 @@ void app_main(void)
         return;
     }
     runtime.state.divergent = store_durable_divergent(&runtime.store);
-    startup_heap_sample("store_app_ready");
+    startup_heap_sample("after_store_app");
     if(esp_reset_reason()==ESP_RST_POWERON) manual_clock_marker=0;
     else if(manual_clock_marker==MANUAL_CLOCK_MARKER && runtime.store_ready && runtime.store.record.provision.network_mode!=STORE_NETWORK_ONLINE) {
         struct timeval wall;
@@ -2390,7 +2390,7 @@ void app_main(void)
     ui_render(&runtime.state, &runtime.local, ui_current_view(), &now);
     if (runtime.reset_warning_ready) ui_reset_show_warning();
     lvgl_port_unlock();
-    startup_heap_sample("ui_ready");
+    startup_heap_sample("after_ui");
 
     if (board_touch_sampler_start() != BOARD_OK) {
         ESP_LOGE(tag, "touch sampler unavailable");
@@ -2410,13 +2410,13 @@ void app_main(void)
     if (!katmed_usb_console_start())
         ESP_LOGE(tag, "USB setup input unavailable");
 
-    startup_heap_sample("inputs_ready");
+    startup_heap_sample("after_inputs");
     const bool management=start_runtime_network(&runtime);
-    startup_heap_sample("network_ready");
+    startup_heap_sample("after_network");
     if (!katmed_config_bridge_start())
         ESP_LOGE(tag,"web configuration bridge unavailable");
     else {
-        startup_heap_sample("config_bridge_ready");
+        startup_heap_sample("after_config_bridge");
         const KatmedWebServices web_services = {
             .context = &runtime,
             .prepare_listener_stop = web_prepare_listener_stop,

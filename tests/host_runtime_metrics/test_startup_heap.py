@@ -38,9 +38,9 @@ size_t heap_caps_get_largest_free_block(uint32_t caps) { return sample(caps, 1);
 '''
         suffix = r'''
 int main(void) {
-    startup_heap_sample("ui_ready"); assert(reads == 4);
+    startup_heap_sample("after_ui"); assert(reads == 4);
     puts(""); ++stage; reads = 0;
-    startup_heap_sample("network_ready"); assert(reads == 4);
+    startup_heap_sample("after_network"); assert(reads == 4);
     puts("");
     return 0;
 }
@@ -57,9 +57,9 @@ int main(void) {
             result = subprocess.run([str(executable)], check=True,
                                     capture_output=True, text=True)
         self.assertEqual(result.stdout.splitlines(), [
-            "startup stage=ui_ready internal_free=22820 internal_largest=14848 "
+            "startup stage=after_ui internal_free=22820 internal_largest=14848 "
             "dma_free=15180 dma_largest=14848",
-            "startup stage=network_ready internal_free=20244 internal_largest=11776 "
+            "startup stage=after_network internal_free=20244 internal_largest=11776 "
             "dma_free=12604 dma_largest=11776",
         ])
 
