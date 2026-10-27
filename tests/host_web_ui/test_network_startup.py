@@ -56,6 +56,10 @@ typedef struct { int source; struct { unsigned key_id; } psa; } esp_key_config_t
 #define PSA_KEY_USAGE_SIGN_HASH 1
 #define PSA_ALG_SHA_256 1
 #define PSA_ALG_ECDSA(x) (x)
+/* Lifecycle doubles only; actual policy and handshake use the installed
+ * library in test_tls_server_signature_policy.py. */
+#define PSA_ALG_DETERMINISTIC_ECDSA(x) (0x100 | (x))
+#define MBEDTLS_PK_ALG_ECDSA(x) PSA_ALG_DETERMINISTIC_ECDSA(x)
 #define ESP_KEY_SOURCE_PSA 2
 static void psa_set_key_type(psa_key_attributes_t *a,int v){(void)a;(void)v;}
 static void psa_set_key_bits(psa_key_attributes_t *a,int v){(void)a;(void)v;}

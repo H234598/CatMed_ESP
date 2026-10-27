@@ -1502,7 +1502,10 @@ static bool start_listeners(void)
         psa_set_key_type(&attributes, PSA_KEY_TYPE_ECC_KEY_PAIR(PSA_ECC_FAMILY_SECP_R1));
         psa_set_key_bits(&attributes, 256);
         psa_set_key_usage_flags(&attributes, PSA_KEY_USAGE_SIGN_HASH);
-        psa_set_key_algorithm(&attributes, PSA_ALG_ECDSA(PSA_ALG_SHA_256));
+        /* Match the installed PK/TLS layer's native ECDSA variant. With
+         * deterministic ECDSA enabled, randomized-only policy makes the
+         * opaque key unusable during server certificate selection. */
+        psa_set_key_algorithm(&attributes, MBEDTLS_PK_ALG_ECDSA(PSA_ALG_SHA_256));
         psa_status_t status = psa_crypto_init();
         psa_key_id_t imported_key = PSA_KEY_ID_NULL;
         if (status == PSA_SUCCESS)
