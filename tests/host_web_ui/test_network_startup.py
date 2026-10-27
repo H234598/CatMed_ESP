@@ -159,7 +159,7 @@ int main(int argc,char **argv){
   CHECK(!katmed_web_start(NULL));CHECK(listener_attempts==before);
   katmed_web_set_enabled(true);katmed_web_poll(UINT64_C(900001));
   CHECK(web.started && listener_attempts>before);
- }else if(!strcmp(argv[1],"c6_socket_capacity")){
+ }else if(!strcmp(argv[1],"fullstack_socket_capacity")){
   CHECK(argc==4);
   CHECK(katmed_web_start(NULL));
   CHECK(web.started && listener_attempts==2);
@@ -167,7 +167,8 @@ int main(int argc,char **argv){
   CHECK(redirect_httpd_config.max_open_sockets>=1);
   CHECK(redirect_httpd_config.server_port==80);
   CHECK(https_httpd_config.ctrl_port!=redirect_httpd_config.ctrl_port);
-  /* Four active slots were measured before both listeners on normal C6. */
+  /* Four background slots were measured on normal C6. The ten-slot C3
+   * build also failed an accept with ENFILE in the full-stack runtime. */
   int demand=4+2*atoi(argv[3])+https_httpd_config.max_open_sockets+
              redirect_httpd_config.max_open_sockets;
   CHECK(atoi(argv[2])>=demand);
@@ -236,12 +237,9 @@ class NetworkStartup(unittest.TestCase):
     def test_failed_platform_initialization_opens_no_listener_or_store(self):
         self.run_case("initialization_failure")
 
-    def test_c6_profile_can_accept_one_client_on_each_web_listener(self):
-        config_path = os.environ.get("KATMED_C6_SDKCONFIG")
-        if not config_path:
-            self.skipTest("requires a freshly generated normal C6 Development001 sdkconfig")
+    def check_resolved_fullstack_socket_capacity(self, config_path, target):
         config = Path(config_path).read_text()
-        self.assertIn('CONFIG_IDF_TARGET="esp32c6"', config)
+        self.assertIn(f'CONFIG_IDF_TARGET="{target}"', config)
         capacity = re.search(r"^CONFIG_LWIP_MAX_SOCKETS=(\d+)$", config, re.M)
         self.assertIsNotNone(capacity)
         idf_path = Path(os.environ["IDF_PATH"])
@@ -253,7 +251,17 @@ class NetworkStartup(unittest.TestCase):
         self.assertIsNotNone(internal)
         self.assertIn("cs_create_ctrl_sock", httpd_main)
         self.assertIn("msg_fd = socket", httpd_main)
-        self.run_case("c6_socket_capacity", capacity.group(1), internal.group(1))
+        self.run_case("fullstack_socket_capacity", capacity.group(1), internal.group(1))
+
+    def test_resolved_c3_profile_can_accept_one_client_on_each_web_listener(self):
+        self.check_resolved_fullstack_socket_capacity(
+            ROOT / "firmware/build-c3/sdkconfig", "esp32c3")
+
+    def test_c6_profile_can_accept_one_client_on_each_web_listener(self):
+        config_path = os.environ.get("KATMED_C6_SDKCONFIG")
+        if not config_path:
+            self.skipTest("requires a freshly generated normal C6 Development001 sdkconfig")
+        self.check_resolved_fullstack_socket_capacity(config_path, "esp32c6")
 
     def test_https_stop_failure_keeps_key_and_callers_until_success(self):
         self.run_case("https_stop_failure_retains_state")

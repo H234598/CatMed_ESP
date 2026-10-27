@@ -8,3 +8,6 @@ CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="boards/c3.partitions.csv"
 # CONFIG_ESP_WIFI_RX_IRAM_OPT is not set
 CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=2
 CONFIG_ESP_WIFI_RX_BA_WIN=2
+# Two HTTP servers need six persistent SDK sockets; retain room for their
+# concurrent client slots and the normal network services.
+CONFIG_LWIP_MAX_SOCKETS=12
