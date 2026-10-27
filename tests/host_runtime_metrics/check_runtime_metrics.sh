@@ -59,6 +59,7 @@ cc -std=c11 -Wall -Wextra -Werror -Wno-unused-variable \
    -Wl,--gc-sections -o "${out}/check_c6_diagnostics"
 "${out}/check_c6_diagnostics"
 python3 "${repo_root}/tests/host_runtime_metrics/test_native_diagnostics.py"
+python3 "${repo_root}/tests/host_runtime_metrics/test_startup_heap.py"
 # Native PWM prerequisite, omitted by the ESP_PLATFORM-free board SDK doubles.
 python3 "${repo_root}/tests/host_board_cache_review/check_pwm_startup.py"
 # Keep LVGL's matching TJpgD implementation under C6's absolute ROM aliases.

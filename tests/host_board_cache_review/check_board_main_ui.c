@@ -30,6 +30,17 @@ static uint16_t submitted_brightness;
 static uint8_t preview_brightness_value;
 static uint8_t stored_brightness = 37;
 static uint16_t draw_buffer[320 * 16];
+static unsigned internal_free_reads, dma_free_reads;
+size_t heap_caps_get_free_size(uint32_t caps)
+{
+    const uint32_t internal = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
+    assert(caps == internal || caps == (internal | MALLOC_CAP_DMA));
+    /* Synthetic total free sizes, each at least the unchanged largest block.
+     * They model separate capability views, not device memory measurements. */
+    if (caps & MALLOC_CAP_DMA) { ++dma_free_reads; return 1u << 20; }
+    ++internal_free_reads;
+    return 2u << 20;
+}
 size_t heap_caps_get_largest_free_block(uint32_t caps)
 { (void)caps; return 1u << 20; }
 static AppState state;
@@ -249,6 +260,11 @@ static void check_counters(unsigned c, unsigned s, unsigned l)
 }
 int main(int argc, char **argv)
 {
+    /* Exercise Main's sampler through this harness's first-priority SDK
+     * header and linked doubles, before unchanged board/UI scenarios. */
+    startup_heap_sample("host_board_main");
+    assert(internal_free_reads == 1 && dma_free_reads == 1);
+    assert(heap_caps_get_largest_free_block(MALLOC_CAP_DMA) == (1u << 20));
     assert(argc == 3);
     const bool alarm = strcmp(argv[1], "alarm") == 0;
     const bool shared = strcmp(argv[1], "shared") == 0;
