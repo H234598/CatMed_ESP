@@ -66,9 +66,27 @@ class C3ResourcePolicy(unittest.TestCase):
     def test_c6_does_not_inherit_the_c3_policy(self):
         result = self.compile_policy("#undef CONFIG_IDF_TARGET_ESP32C3\n"
                                      "#define CONFIG_IDF_TARGET_ESP32C3 0\n"
+                                     "#undef CONFIG_LWIP_MAX_SOCKETS\n"
+                                     "#define CONFIG_LWIP_MAX_SOCKETS 12\n"
                                      "#undef CONFIG_ESP_WIFI_IRAM_OPT\n"
                                      "#define CONFIG_ESP_WIFI_IRAM_OPT 1\n")
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_stale_resolved_c3_socket_limit_is_rejected(self):
+        result = self.compile_policy("#undef CONFIG_LWIP_MAX_SOCKETS\n"
+                                     "#define CONFIG_LWIP_MAX_SOCKETS 10\n")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("FULLSTACK_SOCKET_POLICY", result.stderr)
+
+    def test_stale_resolved_c6_socket_limit_is_rejected(self):
+        result = self.compile_policy("#undef CONFIG_IDF_TARGET_ESP32C3\n"
+                                     "#define CONFIG_IDF_TARGET_ESP32C3 0\n"
+                                     "#undef CONFIG_IDF_TARGET_ESP32C6\n"
+                                     "#define CONFIG_IDF_TARGET_ESP32C6 1\n"
+                                     "#undef CONFIG_LWIP_MAX_SOCKETS\n"
+                                     "#define CONFIG_LWIP_MAX_SOCKETS 10\n")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("FULLSTACK_SOCKET_POLICY", result.stderr)
 
 
 if __name__ == "__main__":
