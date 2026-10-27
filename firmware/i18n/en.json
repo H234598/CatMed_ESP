@@ -157,6 +157,8 @@
     "Wartung vorbereiten": "Prepare maintenance"
   },
   "web_static": {
+    "Eigener DNS-Name (FQDN, optional)": "Own DNS name (FQDN, optional)",
+    "Leer deaktiviert den DNS-Namen. Änderungen sind weiterhin über die Geräte-IP möglich.": "Leave empty to disable the DNS name. Settings remain accessible through the device IP.",
     "KatMed · Einstellungen": "KatMed · Settings",
     "Einstellungen": "Settings",
     "Verbindung wird geprüft": "Connection is being checked",

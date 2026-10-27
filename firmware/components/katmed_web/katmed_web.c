@@ -83,6 +83,8 @@ typedef struct {
     KatmedWebServices services;
     char request_body[BODY_MAX + 1];
     SemaphoreHandle_t auth_mutex;
+    char acme_identifier[KATMED_WEB_IDENTIFIER_MAX];
+    bool identifier_ready;
 } WebContext;
 
 static WebContext web = {.certificate_fd = -1};
@@ -244,6 +246,41 @@ static bool load_auth(WebContext *w)
     return ok;
 }
 
+static bool load_identifier(WebContext *w)
+{
+    size_t size=sizeof(w->acme_identifier);
+    memset(w->acme_identifier,0,size);
+    esp_err_t err=nvs_get_str(w->nvs,"acme_id",w->acme_identifier,&size);
+    w->identifier_ready=(err==ESP_ERR_NVS_NOT_FOUND ||
+        (err==ESP_OK && size && size<=sizeof(w->acme_identifier) &&
+         w->acme_identifier[size-1]==0 && katmed_web_identifier_valid(w->acme_identifier)));
+    return w->identifier_ready;
+}
+
+bool katmed_web_acme_identifier(char *out, size_t capacity)
+{
+    if (!out || !capacity || !web.auth_mutex) return false;
+    xSemaphoreTake(web.auth_mutex,portMAX_DELAY);
+    size_t n=strnlen(web.acme_identifier,sizeof(web.acme_identifier));
+    bool ok=web.nvs_open && web.identifier_ready && n<capacity;
+    if (ok) memcpy(out,web.acme_identifier,n+1);
+    xSemaphoreGive(web.auth_mutex);
+    return ok;
+}
+
+/* Only called by the authenticated HTTP task under auth_mutex. No other Web
+ * NVS key is replaced; commit failure quarantines name trust until reload. */
+static bool save_identifier(WebContext *w, const char *value)
+{
+    if (!w->nvs_open || !w->identifier_ready ||
+        !katmed_web_identifier_valid(value) || !katmed_source_writer_enter()) return false;
+    bool ok=nvs_set_str(w->nvs,"acme_id",value)==ESP_OK && nvs_commit(w->nvs)==ESP_OK;
+    katmed_source_writer_leave();
+    if (ok) memcpy(w->acme_identifier,value,strlen(value)+1);
+    else w->identifier_ready=false;
+    return ok;
+}
+
 static bool resources_allow(bool after_start)
 {
     const uint32_t internal = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
@@ -386,7 +423,7 @@ static esp_err_t json_reply(httpd_req_t *req, const char *status, cJSON *obj)
     return result;
 }
 
-static bool request_host(httpd_req_t *req, char host[INET_ADDRSTRLEN])
+static bool request_host(httpd_req_t *req, char host[KATMED_WEB_IDENTIFIER_MAX])
 {
     int fd = httpd_req_to_sockfd(req);
     struct sockaddr_storage local = {0};
@@ -401,26 +438,31 @@ static bool request_host(httpd_req_t *req, char host[INET_ADDRSTRLEN])
                IN6_IS_ADDR_V4MAPPED(&((struct sockaddr_in6 *)&local)->sin6_addr)) {
         address = &((struct sockaddr_in6 *)&local)->sin6_addr.s6_addr[12];
     }
-    if (!address || !inet_ntop(AF_INET, address, host, INET_ADDRSTRLEN)) return false;
+    char local_ip[INET_ADDRSTRLEN];
+    if (!address || !inet_ntop(AF_INET, address, local_ip, sizeof(local_ip))) return false;
     size_t header_length = httpd_req_get_hdr_value_len(req, "Host");
-    if (header_length == 0 || header_length > 64) return false;
-    char supplied[65];
+    if (header_length == 0 || header_length >= KATMED_WEB_IDENTIFIER_MAX+6u) return false;
+    char supplied[KATMED_WEB_IDENTIFIER_MAX+6u];
     if (httpd_req_get_hdr_value_str(req, "Host", supplied, sizeof(supplied)) != ESP_OK)
         return false;
-    return katmed_web_authority_matches(host, supplied,
-                                         req->handle == web.redirect ? 80 : 443);
+    char identifier[KATMED_WEB_IDENTIFIER_MAX]={0};
+    /* If a commit became uncertain, numeric local access remains available
+     * for recovery; no configured name is trusted from stale RAM. */
+    (void)katmed_web_acme_identifier(identifier,sizeof(identifier));
+    return katmed_web_resolve_authority(local_ip,identifier,supplied,
+                                        req->handle==web.redirect ? 80 : 443,host);
 }
 
 static bool same_origin(httpd_req_t *req)
 {
-    char host[INET_ADDRSTRLEN];
+    char host[KATMED_WEB_IDENTIFIER_MAX];
     if (!request_host(req, host)) return false;
     size_t length = httpd_req_get_hdr_value_len(req, "Origin");
-    if (length == 0 || length > 64) return false;
-    char supplied[65];
+    if (length == 0 || length >= KATMED_WEB_IDENTIFIER_MAX+14u) return false;
+    char supplied[KATMED_WEB_IDENTIFIER_MAX+14u];
     if (httpd_req_get_hdr_value_str(req, "Origin", supplied, sizeof(supplied)) != ESP_OK)
         return false;
-    return katmed_web_origin_matches(host, supplied);
+    return katmed_web_same_origin(host,supplied);
 }
 
 static bool get_cookie(httpd_req_t *req, char value[KATMED_WEB_TOKEN_HEX + 1])
@@ -443,7 +485,7 @@ static KatmedWebSession *session_from_request(httpd_req_t *req,
 static KatmedWebSession *require_session(httpd_req_t *req, bool mutate,
                                          char token_out[KATMED_WEB_TOKEN_HEX + 1])
 {
-    if (!request_host(req, (char[INET_ADDRSTRLEN]){0})) {
+    if (!request_host(req, (char[KATMED_WEB_IDENTIFIER_MAX]){0})) {
         error_reply(req, "403 Forbidden", "host");
         return NULL;
     }
@@ -658,7 +700,7 @@ static esp_err_t asset_reply(httpd_req_t *req, const unsigned char *start,
                               const unsigned char *end, const char *type,
                               bool gzip_encoded)
 {
-    char host[INET_ADDRSTRLEN];
+    char host[KATMED_WEB_IDENTIFIER_MAX];
     if (!request_host(req, host)) return error_reply(req, "403 Forbidden", "host");
 #ifdef KATMED_WEB_SECURITY_JS_GZIP
     if (gzip_encoded) {
@@ -868,7 +910,7 @@ static esp_err_t auth_result_reply(httpd_req_t *req, KatmedWebAuthResult result)
 
 static esp_err_t bootstrap_get(httpd_req_t *req)
 {
-    char host[INET_ADDRSTRLEN];
+    char host[KATMED_WEB_IDENTIFIER_MAX];
     if (!request_host(req, host)) return error_reply(req, "403 Forbidden", "host");
     char token[KATMED_WEB_TOKEN_HEX + 1];
     KatmedWebSession *session = session_from_request(req, token);
@@ -1402,15 +1444,56 @@ static esp_err_t preview_post(httpd_req_t *req)
 
 static esp_err_t redirect_get(httpd_req_t *req)
 {
-    char host[INET_ADDRSTRLEN];
+    char host[KATMED_WEB_IDENTIFIER_MAX];
     if (!web.https || !request_host(req, host))
         return error_reply(req, "403 Forbidden", "host");
-    char location[64];
+    char location[KATMED_WEB_IDENTIFIER_MAX+10u];
     snprintf(location, sizeof(location), "https://%s/", host);
     httpd_resp_set_status(req, "308 Permanent Redirect");
     httpd_resp_set_hdr(req, "Location", location);
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
     return httpd_resp_send(req, NULL, 0);
+}
+
+static esp_err_t identifier_reply(httpd_req_t *req)
+{
+    char identifier[KATMED_WEB_IDENTIFIER_MAX];
+    if (!katmed_web_acme_identifier(identifier,sizeof(identifier)))
+        return error_reply(req,"503 Service Unavailable","unavailable");
+    cJSON *obj=cJSON_CreateObject();
+    if (!obj) return error_reply(req,"503 Service Unavailable","memory");
+    cJSON_AddStringToObject(obj,"identifier",identifier);
+    return json_reply(req,"200 OK",obj);
+}
+
+static esp_err_t identifier_get(httpd_req_t *req)
+{
+    char token[KATMED_WEB_TOKEN_HEX+1];
+    if (!require_session(req,false,token)) return ESP_OK;
+    return identifier_reply(req);
+}
+
+static esp_err_t identifier_put(httpd_req_t *req)
+{
+    char token[KATMED_WEB_TOKEN_HEX+1];
+    if (!require_session(req,true,token)) return ESP_OK;
+    cJSON *obj=read_json(req);
+    const char *const keys[]={"identifier","previous"};
+    const char *value=json_string(obj,"identifier",KATMED_WEB_IDENTIFIER_MAX-1);
+    const char *previous=json_string(obj,"previous",KATMED_WEB_IDENTIFIER_MAX-1);
+    if (!keys_only(obj,keys,2) || !value || !previous || !katmed_web_identifier_valid(value)) {
+        if (obj) {wipe_json(obj);cJSON_Delete(obj);}
+        return error_reply(req,"422 Unprocessable Entity","invalid");
+    }
+    xSemaphoreTake(web.auth_mutex,portMAX_DELAY);
+    bool ready=web.identifier_ready;
+    bool stale=strcmp(previous,web.acme_identifier)!=0;
+    bool ok=ready && !stale && save_identifier(&web,value);
+    xSemaphoreGive(web.auth_mutex);
+    wipe_json(obj);cJSON_Delete(obj);
+    if (!ready || (!stale && !ok)) return error_reply(req,"503 Service Unavailable","commit_unknown");
+    if (stale) return error_reply(req,"409 Conflict","stale");
+    return identifier_reply(req);
 }
 
 static bool register_routes(httpd_handle_t server)
@@ -1437,6 +1520,8 @@ static bool register_routes(httpd_handle_t server)
         {"/api/ha/status", HTTP_GET, ha_status_get},
         {"/api/config", HTTP_GET, config_get},
         {"/api/config", HTTP_PUT, config_put},
+        {"/api/acme-identifier", HTTP_GET, identifier_get},
+        {"/api/acme-identifier", HTTP_PUT, identifier_put},
         {"/api/config/preview-time", HTTP_POST, preview_post},
         {"/api/client-cert", HTTP_GET, client_cert_get},
         {"/api/client-cert", HTTP_POST, client_cert_post},
@@ -1476,7 +1561,7 @@ static bool start_listeners(void)
     httpd_ssl_config_t tls = HTTPD_SSL_CONFIG_DEFAULT();
     tls.httpd.max_open_sockets = 1;
     /* 21 local routes plus Wi-Fi(4), reset(3) and media(5). */
-    tls.httpd.max_uri_handlers = 33;
+    tls.httpd.max_uri_handlers = 35;
     tls.httpd.backlog_conn = 1;
     tls.httpd.lru_purge_enable = true;
     tls.httpd.recv_wait_timeout = 2;
@@ -1591,7 +1676,7 @@ bool katmed_web_start(const KatmedWebServices *services)
         return false;
     }
     web.nvs_open = true;
-    if (!load_auth(&web) ||
+    if (!load_auth(&web) || !load_identifier(&web) ||
         !katmed_web_identity_load_or_create(web.nvs, &web.identity)) {
         ESP_LOGE(WEB_TAG, "web security identity unavailable");
         katmed_web_stop();

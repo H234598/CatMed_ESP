@@ -7,6 +7,7 @@
 #include "katmed_web_wifi.h"
 #include "katmed_web_reset.h"
 #include "katmed_language.h"
+#include <stddef.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -48,6 +49,9 @@ bool katmed_web_stop(void);
 /* ACME-only hand-off to the existing plain HTTP listener. The caller never
  * starts a second server; NULL means the listener is not ready. */
 httpd_handle_t katmed_web_acme_http_server(void);
+/* Desired optional KatmedAcmeConfig.identifier, copied from the sole persisted
+ * Web configuration owner. Empty disables production ACME naming. */
+bool katmed_web_acme_identifier(char *out, size_t capacity);
 
 #ifdef __cplusplus
 }

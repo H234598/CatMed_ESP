@@ -112,6 +112,9 @@
 
 <section class="panel" aria-labelledby="display-night-title" data-main-panel>
 <h2 id="display-night-title">Helligkeit und Nachtmodus</h2>
+<form id="acme-identifier-form" class="setting-row"><label for="acme-identifier">Eigener DNS-Name (FQDN, optional)</label>
+<input id="acme-identifier" name="identifier" maxlength="253" autocomplete="off" autocapitalize="none" spellcheck="false"><button>Speichern</button>
+<p>Leer deaktiviert den DNS-Namen. Änderungen sind weiterhin über die Geräte-IP möglich.</p></form>
 <form class="setting-row" data-field="brightness"><label for="brightness">Helligkeit in Prozent</label>
 <input id="brightness" name="value" type="number" min="1" max="100" step="1" required><button>Speichern</button></form>
 <form class="setting-row" data-field="night_enabled"><label for="night-enabled">Nachtmodus</label>

@@ -37,6 +37,7 @@ typedef int esp_err_t;
 typedef struct { void *handle; } httpd_req_t;
 static struct { void *https, *redirect; } web = {(void *)1, (void *)2};
 static const char *supplied_host;
+static bool katmed_web_acme_identifier(char *out,size_t size) {(void)size;out[0]=0;return true;}
 static int local_family;
 static char response_status[40], response_location[64], response_error[32];
 static int httpd_req_to_sockfd(httpd_req_t *req) { (void)req; return 17; }

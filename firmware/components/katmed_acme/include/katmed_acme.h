@@ -8,8 +8,10 @@
 extern "C" {
 #endif
 
-/* No URL, email, CA, EAB material or filesystem prefix is compiled in. A
- * caller must obtain all values from a reviewed secure configuration owner. */
+/* No personal URL, email, CA, EAB material or filesystem prefix is compiled
+ * in. Production resolves optional identifier from the sole persisted Web
+ * owner; a non-NULL caller identifier must match that desired name. Remaining
+ * values still come from a reviewed secure configuration owner. */
 typedef struct {
     const char *identifier;
     const char *email;
