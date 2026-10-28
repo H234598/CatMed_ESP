@@ -39,7 +39,9 @@ def describe(path: Path, board: str, variant: str) -> dict:
     }
     cache = path.joinpath("CMakeCache.txt").read_text()
     for key, value in expected.items():
-        if f"{key}={value}" not in cache:
+        resolved = [line.split("=", 1)[1] for line in cache.splitlines()
+                    if line.startswith(f"{key}=")]
+        if resolved != [value]:
             raise ValueError(f"{board}/{variant}: CMake contract differs: {key}")
     artifacts = {ext: path / f"katmed_foundation.{ext}" for ext in ("bin", "elf", "map")}
     if any(not item.is_file() or item.stat().st_size == 0 for item in artifacts.values()):

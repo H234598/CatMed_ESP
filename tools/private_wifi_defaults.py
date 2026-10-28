@@ -165,9 +165,12 @@ def _write_private(output: pathlib.Path, content: bytes) -> None:
 def generate(config_path: pathlib.Path | None, output_path: pathlib.Path,
              ui_profile_path: pathlib.Path | None = None) -> None:
     config_bytes = None if config_path is None else _private_regular_file(config_path)
-    _write_private(output_path, _render_wifi(config_bytes))
+    # Validate every requested representation before publishing either header.
+    wifi = _render_wifi(config_bytes)
+    ui_profile = _render_ui_profile(config_bytes) if ui_profile_path is not None else b""
+    _write_private(output_path, wifi)
     if ui_profile_path is not None:
-        _write_private(ui_profile_path, _render_ui_profile(config_bytes))
+        _write_private(ui_profile_path, ui_profile)
 
 
 def main() -> int:
