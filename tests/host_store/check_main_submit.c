@@ -85,11 +85,11 @@ __attribute__((weak)) void ui_deferred_result(const UiRequest *request,UiSubmitR
     assert(request->kind==UI_REQUEST_SET_ROTATION_MODE && result==UI_SUBMIT_PENDING_SHARED);
     assert(ui_completion_order==0);ui_completion_order=1;++deferred_calls;
 }
-void ui_shared_result(bool accepted){assert(!accepted && ui_completion_order==1);ui_completion_order=2;++final_shared_calls;}
-void ui_shared_timeout(void){assert(ui_completion_order==1);ui_completion_order=2;++final_shared_calls;}
+__attribute__((weak)) void ui_shared_result(bool accepted){assert(!accepted && ui_completion_order==1);ui_completion_order=2;++final_shared_calls;}
+__attribute__((weak)) void ui_shared_timeout(void){assert(ui_completion_order==1);ui_completion_order=2;++final_shared_calls;}
 __attribute__((weak)) void ui_touch_sample(bool down,int16_t x,int16_t y,bool valid,uint64_t now){(void)down;(void)x;(void)y;(void)valid;(void)now;}
-UiView ui_current_view(void){return CLOCK;}
-void ui_render(const AppState *state,const LocalSettings *local,UiView view,const ClockSample *clock){(void)state;(void)local;(void)view;(void)clock;}
+__attribute__((weak)) UiView ui_current_view(void){return CLOCK;}
+__attribute__((weak)) void ui_render(const AppState *state,const LocalSettings *local,UiView view,const ClockSample *clock){(void)state;(void)local;(void)view;(void)clock;}
 
 
 static bool boot_mac_error,boot_mac_zero,boot_zero_epoch;
