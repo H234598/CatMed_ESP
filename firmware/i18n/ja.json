@@ -154,7 +154,8 @@
     "WARNUNG: Nach Ihrer Bestätigung werden ausschließlich App-Testdaten gelöscht: katmed/state, mesh_history, names_ctl, names_view und zwei Mesh-Namensdateien. Bilder, Webzugang, Zertifikate und Gerätesicherheit bleiben erhalten. Ohne Bestätigung wird nichts gelöscht.": "警告：承認後、アプリのテストデータ（katmed/state、mesh_history、names_ctl、names_view、Meshの名前ファイル2件）のみを削除します。画像、Webアクセス、証明書、端末のセキュリティは保持します。承認しなければ削除しません。",
     "Wartung abgeschlossen. Gerät angehalten; kein automatischer Neustart.": "保守が完了しました。端末は停止し、自動再起動しません。",
     "Wartung angehalten. Keine weitere Löschung und kein normaler Start. Prüfbericht erforderlich.": "保守を中止しました。これ以上削除せず、通常起動もしません。確認報告が必要です。",
-    "Wartung vorbereiten": "保守を準備"
+    "Wartung vorbereiten": "保守を準備",
+    "Signal erfasst": "信号を記録しました"
   },
   "web_static": {
     "Eigener DNS-Name (FQDN, optional)": "独自の DNS 名（FQDN、任意）",

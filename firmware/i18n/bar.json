@@ -154,7 +154,8 @@
     "WARNUNG: Nach Ihrer Bestätigung werden ausschließlich App-Testdaten gelöscht: katmed/state, mesh_history, names_ctl, names_view und zwei Mesh-Namensdateien. Bilder, Webzugang, Zertifikate und Gerätesicherheit bleiben erhalten. Ohne Bestätigung wird nichts gelöscht.": "WARNUNG: Nach deiner Bestätigung werdn bloß App-Testdaten gelöscht: katmed/state, mesh_history, names_ctl, names_view und zwoa Mesh-Namensdatein. Bilder, Webzugang, Zertifikate und Gerätesicherheit bleibn. Ohne Bestätigung wird nix gelöscht.",
     "Wartung abgeschlossen. Gerät angehalten; kein automatischer Neustart.": "Wartung fertig. Gerät angehaltn; ka automatischer Neustart.",
     "Wartung angehalten. Keine weitere Löschung und kein normaler Start. Prüfbericht erforderlich.": "Wartung angehaltn. Ka weiteres Löschn und ka normaler Start. Prüfbericht nötig.",
-    "Wartung vorbereiten": "Wartung herrichtn"
+    "Wartung vorbereiten": "Wartung herrichtn",
+    "Signal erfasst": "Signal erfasst"
   },
   "web_static": {
     "Eigener DNS-Name (FQDN, optional)": "Oagner DNS-Name (FQDN, freiwillig)",

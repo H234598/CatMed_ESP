@@ -857,17 +857,25 @@ static const char *const language_codes[KATMED_LANGUAGE_COUNT] = {
     "en", "de", "fr", "nl", "uk", "ar", "zh-Hans", "es", "ja", "bar", "eo", "tlh-Latn"
 };
 
-static esp_err_t language_get(httpd_req_t *req)
+static esp_err_t bridge_error(httpd_req_t *req, KatmedConfigStatus status);
+
+static esp_err_t language_reply(httpd_req_t *req, uint8_t language)
 {
-    uint8_t language = KATMED_LANG_EN;
-    if (web.services.language_get &&
-        !web.services.language_get(web.services.context, &language))
-        return error_reply(req, "503 Service Unavailable", "unavailable");
     if (language >= KATMED_LANGUAGE_COUNT) language = KATMED_LANG_EN;
     cJSON *obj = cJSON_CreateObject();
     if (!obj) return error_reply(req, "503 Service Unavailable", "unavailable");
     cJSON_AddStringToObject(obj, "language", language_codes[language]);
     return json_reply(req, "200 OK", obj);
+}
+
+static esp_err_t language_get(httpd_req_t *req)
+{
+    uint8_t language = KATMED_LANG_EN;
+    if (web.services.language_get) {
+        const KatmedConfigStatus status=web.services.language_get(web.services.context,&language);
+        if (status!=KATMED_CONFIG_OK) return bridge_error(req,status);
+    }
+    return language_reply(req,language);
 }
 
 static esp_err_t language_put(httpd_req_t *req)
@@ -883,10 +891,13 @@ static esp_err_t language_put(httpd_req_t *req)
             if (strcmp(code, language_codes[i]) == 0) selected = (int)i;
     if (obj) { wipe_json(obj); cJSON_Delete(obj); }
     if (selected < 0) return error_reply(req, "422 Unprocessable Entity", "invalid");
-    if (!web.services.language_set ||
-        !web.services.language_set(web.services.context, (uint8_t)selected))
+    if (!web.services.language_set)
         return error_reply(req, "503 Service Unavailable", "unavailable");
-    return language_get(req);
+    uint8_t committed=KATMED_LANG_EN;
+    const KatmedConfigStatus status=web.services.language_set(web.services.context,
+                                                               (uint8_t)selected,&committed);
+    if (status!=KATMED_CONFIG_OK) return bridge_error(req,status);
+    return language_reply(req,committed);
 }
 
 static cJSON *bootstrap_object(httpd_req_t *req, KatmedWebSession *session)

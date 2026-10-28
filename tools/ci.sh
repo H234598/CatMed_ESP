@@ -127,6 +127,8 @@ elif [[ "$mode" == host ]]; then
     python3 -m unittest discover -s tests/host_web_ui -p 'test_security_js_gzip.py'
     python3 -m unittest discover -s tests/host_web_ui -p 'test_security_js_handler.py'
     python3 -m unittest discover -s tests/host_web_ui -p 'test_network_startup.py'
+    python3 -m unittest discover -s tests/host_web_ui -p 'test_language_owner.py'
+    python3 -m unittest discover -s tests/host_web_ui -p 'test_emergency_owner.py'
     python3 tests/host_runtime_metrics/test_c3_resource_policy.py
     # This standalone main performs a real synthetic TLS handshake; discovery
     # only imports it. Build the pinned public SDK library and run it explicitly.

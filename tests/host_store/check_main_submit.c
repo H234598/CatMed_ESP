@@ -4,6 +4,9 @@
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
+#include <pthread.h>
+#include <stdatomic.h>
+#include <time.h>
 
 #include <sys/time.h>
 static unsigned fake_wall_sets;
@@ -14,7 +17,15 @@ static int fake_settimeofday(const struct timeval *value, const struct timezone 
 #define KATMED_TEST_WIFI_CONFIG 1
 #define KATMED_FULL_STACK 1
 #define KATMED_WITH_CORE 1
-#include "../../firmware/main/main.c"
+#ifndef KATMED_TEST_MAIN_SOURCE
+#define KATMED_TEST_MAIN_SOURCE "../../firmware/main/main.c"
+#endif
+#include KATMED_TEST_MAIN_SOURCE
+#ifdef KATMED_TEST_PRE_COHERENCE
+/* Baseline Main has no published snapshot. This no-op only lets the NEW
+ * fixture invoke its old real readers; it supplies no policy or data. */
+static void publish_ui_owner(Runtime *rt){(void)rt;}
+#endif
 
 static unsigned setup_config_calls;
 int katmed_test_wifi_config(int iface, wifi_config_t *config)
@@ -33,6 +44,11 @@ static size_t committed_length;
 static unsigned writes;
 static bool fail_commit;
 static bool probe_display_write;
+static bool language_owner_probe;
+static bool probe_physical_clock;
+static bool probe_physical_intent;
+static UiRequest interleaved_intent;
+static pthread_t language_owner_thread;
 static unsigned display_write_probes;
 static int64_t fake_microseconds;
 static Orientation board_orientation;
@@ -45,6 +61,8 @@ static unsigned fake_mesh_start_calls, fake_mesh_history_calls, fake_web_policy_
 static bool fake_web_enabled;
 static unsigned fake_shared_calls;
 static unsigned fake_mesh_notifications;
+static unsigned fake_reconnect_calls;
+bool katmed_mesh_schedule_reconnect(void){++fake_reconnect_calls;return true;}
 static AppEvent fake_shared_event;
 static uint32_t fake_random_counter=UINT32_C(0x12345678);
 static bool reset_marker;
@@ -57,10 +75,22 @@ BoardResult board_set_brightness(uint8_t value){
     applied_brightness=value;return BOARD_OK;
 }
 BoardResult board_set_backlight(bool awake){(void)awake;return BOARD_OK;}
-bool lvgl_port_lock(uint32_t timeout){(void)timeout;return true;}
+static bool fail_ui_lock;
+bool lvgl_port_lock(uint32_t timeout){(void)timeout;return !fail_ui_lock;}
 void lvgl_port_unlock(void){}
 /* Standalone Main bridge only: native UI integration links its strong implementation. */
 __attribute__((weak)) void ui_set_display_awake(bool awake){(void)awake;}
+static unsigned deferred_calls,final_shared_calls,ui_completion_order;
+__attribute__((weak)) void ui_deferred_result(const UiRequest *request,UiSubmitResult result){
+    assert(request->kind==UI_REQUEST_SET_ROTATION_MODE && result==UI_SUBMIT_PENDING_SHARED);
+    assert(ui_completion_order==0);ui_completion_order=1;++deferred_calls;
+}
+void ui_shared_result(bool accepted){assert(!accepted && ui_completion_order==1);ui_completion_order=2;++final_shared_calls;}
+void ui_shared_timeout(void){assert(ui_completion_order==1);ui_completion_order=2;++final_shared_calls;}
+__attribute__((weak)) void ui_touch_sample(bool down,int16_t x,int16_t y,bool valid,uint64_t now){(void)down;(void)x;(void)y;(void)valid;(void)now;}
+UiView ui_current_view(void){return CLOCK;}
+void ui_render(const AppState *state,const LocalSettings *local,UiView view,const ClockSample *clock){(void)state;(void)local;(void)view;(void)clock;}
+
 
 static bool boot_mac_error,boot_mac_zero,boot_zero_epoch;
 static unsigned boot_legacy_calls;
@@ -112,6 +142,10 @@ static StoreResult test_read(void *context, uint8_t *out, size_t *length)
     *length = committed_length;
     return STORE_OK;
 }
+#ifdef KATMED_TEST_EMERGENCY_UI
+extern void host_emergency_press(void);
+static bool emergency_processing_probe;
+#endif
 static StoreResult test_write(void *context, const uint8_t *data, size_t length)
 {
     (void)context;
@@ -123,10 +157,35 @@ static StoreResult test_write(void *context, const uint8_t *data, size_t length)
         assert(submit_ui_dispatch(&runtime,&other)==UI_SUBMIT_UNAVAILABLE);
         ++display_write_probes;
     }
+#ifdef KATMED_TEST_EMERGENCY_UI
+    if(emergency_processing_probe){
+        emergency_processing_probe=false;assert(display_mailbox.state==2);
+        for(unsigned i=0;i<3;++i)host_emergency_press();
+        const UiRequest busy={.kind=UI_REQUEST_SET_CLOCK_STYLE,.value.clock_style=ANALOG};
+        assert(submit_ui_dispatch(&runtime,&busy)==UI_SUBMIT_UNAVAILABLE);
+        assert(display_mailbox.state==2 && runtime.emergency_button_sequence==0);
+    }
+#endif
     ++writes;
     if (fail_commit) return STORE_COMMIT_UNKNOWN;
     memcpy(committed, data, length);
     committed_length = length;
+    if(probe_physical_intent){
+        probe_physical_intent=false;
+        assert(submit_ui_dispatch(&runtime,&interleaved_intent)==UI_SUBMIT_QUEUED);
+    }
+    if(probe_physical_clock){
+        probe_physical_clock=false;
+        const UiRequest clock={.kind=UI_REQUEST_SET_CLOCK_STYLE,.value.clock_style=ANALOG};
+        UiSubmitResult result=submit_ui_dispatch(&runtime,&clock);
+        assert(result==UI_SUBMIT_COMMITTED || result==UI_SUBMIT_QUEUED);
+    }
+    if(language_owner_probe){
+        assert(pthread_equal(pthread_self(),language_owner_thread));
+        language_owner_probe=false;
+        const UiRequest display={.kind=UI_REQUEST_SET_BRIGHTNESS,.value.display_value=37};
+        assert(submit_ui_dispatch(&runtime,&display)==UI_SUBMIT_QUEUED);
+    }
     return STORE_OK;
 }
 int64_t esp_timer_get_time(void) { return fake_microseconds; }
@@ -251,7 +310,7 @@ static void test_runtime_setup_and_emergency(void) {
     const unsigned offline_ap=setup_config_calls, offline_mesh=fake_mesh_start_calls;
     assert(!start_runtime_network(&runtime) && !runtime.setup_ap && !fake_web_enabled &&
            setup_config_calls==offline_ap && fake_mesh_start_calls==offline_mesh);
-    UiNetworkStatus offline_status={0};network_status(&runtime,&offline_status);
+    publish_ui_owner(&runtime);UiNetworkStatus offline_status={0};network_status(&runtime,&offline_status);
     assert(offline_status.offline_setup_exited && offline_status.manual_clock_required &&
            !offline_status.configured && !offline_status.mesh_active);
     assert(store_request_setup(&runtime.store)==STORE_OK &&
@@ -312,7 +371,7 @@ static void test_runtime_setup_and_emergency(void) {
     runtime.reboot_required=false;
     AppState state=runtime.state;StoreRecord record=runtime.store.record;before=writes;
     UiRequest emergency={.kind=UI_REQUEST_EMERGENCY};
-    assert(submit_ui(&runtime,&emergency)==UI_SUBMIT_COMMITTED && runtime.emergency_button_sequence==1);
+    assert(submit_ui(&runtime,&emergency)==UI_SUBMIT_OBSERVED && runtime.emergency_button_sequence==1);
     assert(!memcmp(&state,&runtime.state,sizeof(state)) && !memcmp(&record,&runtime.store.record,sizeof(record)) && writes==before);
     request=(KatmedConfigRequest){.operation=KATMED_CONFIG_HA_GET};config_execute(&runtime,&request,&response);
     assert(response.status==KATMED_CONFIG_OK && response.ha.emergency_button_sequence==1 && !response.ha.last_dose_known && !response.ha.alarm_active);
@@ -341,10 +400,10 @@ static void test_offline_exit_clock_policy(void) {
     committed_length=0;fake_microseconds=1000000;
     initialize_runtime();katmed_time_init(&runtime.time,runtime.boot_domain);
     assert(store_exit_setup(&runtime.store)==STORE_OK);
-    UiNetworkStatus status={0};network_status(&runtime,&status);
+    publish_ui_owner(&runtime);UiNetworkStatus status={0};network_status(&runtime,&status);
     assert(status.offline_setup_exited && status.manual_clock_required);
     assert(katmed_time_accept_utc(&runtime.time,monotonic_ms(),INT64_C(1792400400000),CLOCK_HOLDOVER));
-    network_status(&runtime,&status);
+    publish_ui_owner(&runtime);network_status(&runtime,&status);
     assert(status.offline_setup_exited && !status.manual_clock_required);
     puts("offline exit clock: missing prompts, valid local time skips");
 }
@@ -743,8 +802,435 @@ static void test_local_display_settings(void) {
     puts("night Main/UI/Web: local offline save, CAS, no medication/wake mutation and unavailable Mesh gate PASS");
 }
 
+typedef struct {uint8_t wanted,out;bool get;KatmedConfigStatus status;atomic_bool done;} LanguageClient;
+static void *language_client(void *ctx){
+    LanguageClient *c=ctx;
+#ifdef KATMED_TEST_LEGACY_LANGUAGE_API
+    bool ok=c->get ? web_language_get(&runtime,&c->out) : web_language_set(&runtime,c->wanted);
+    c->status=ok?KATMED_CONFIG_OK:KATMED_CONFIG_UNAVAILABLE;
+#else
+    c->status=c->get ? web_language_get(&runtime,&c->out) : web_language_set(&runtime,c->wanted,&c->out);
+#endif
+    atomic_store(&c->done,true);return NULL;
+}
+static void owner_call(LanguageClient *client){
+    pthread_t thread;assert(pthread_create(&thread,NULL,language_client,client)==0);
+    while(!atomic_load(&client->done)){
+        katmed_config_poll(config_execute,&runtime);
+        const struct timespec pause={0,1000000};nanosleep(&pause,NULL);
+    }
+    pthread_join(thread,NULL);
+}
+typedef struct {KatmedConfigRequest request;KatmedConfigResponse response;KatmedConfigStatus status;atomic_bool done;} TimedLanguageClient;
+static bool timed_language_started;
+static unsigned timed_gate_rejections;
+static void *timed_language_client(void *ctx){
+    TimedLanguageClient *c=ctx;c->status=katmed_config_exchange(&c->request,&c->response,100);
+    atomic_store(&c->done,true);return NULL;
+}
+static void slow_language_execute(void *ctx,const KatmedConfigRequest *request,KatmedConfigResponse *response){
+    timed_language_started=true;
+    KatmedConfigRequest blocked={.operation=KATMED_CONFIG_LANGUAGE_SAVE,.language=2};KatmedConfigResponse ignored={0};
+    assert(katmed_config_exchange(&blocked,&ignored,10)==KATMED_CONFIG_UNAVAILABLE);++timed_gate_rejections;
+    config_execute(ctx,request,response);
+    const struct timespec pause={0,200000000};nanosleep(&pause,NULL);
+}
+static void test_language_timeout_contract(void){
+    initialize_runtime();const unsigned before=writes;uint8_t old=runtime.store.record.language,wanted=old==0?1:0;
+    KatmedConfigRequest queued={.operation=KATMED_CONFIG_LANGUAGE_SAVE,.language=wanted};KatmedConfigResponse response={0};
+    assert(katmed_config_exchange(&queued,&response,20)==KATMED_CONFIG_UNAVAILABLE);
+    katmed_config_poll(config_execute,&runtime);assert(writes==before && runtime.store.record.language==old);
+    TimedLanguageClient running={.request={.operation=KATMED_CONFIG_LANGUAGE_SAVE,.language=wanted}};
+    pthread_t thread;assert(pthread_create(&thread,NULL,timed_language_client,&running)==0);
+    while(!atomic_load(&running.done) && !timed_language_started){katmed_config_poll(slow_language_execute,&runtime);const struct timespec pause={0,1000000};nanosleep(&pause,NULL);}
+    pthread_join(thread,NULL);
+    assert(timed_language_started && timed_gate_rejections==1 && running.status==KATMED_CONFIG_COMMIT_UNKNOWN);
+    assert(runtime.store.record.language==wanted && writes==before+1);
+    LanguageClient get={.get=true,.out=255};owner_call(&get);assert(get.status==KATMED_CONFIG_OK && get.out==wanted);
+    puts("Real language bridge: gate wait unavailable; queued cancellation no sideeffect; processing timeout unknown after actual commit; subsequent owner GET PASS");
+}
+
+static void test_language_http_owner(void){
+    committed_length=0;initialize_runtime();display_ui_publish(&runtime);
+    assert(katmed_config_bridge_start());language_owner_thread=pthread_self();
+    const uint8_t original=runtime.store.record.language,wanted=original==0?1:0;
+    language_owner_probe=true;
+    LanguageClient save={.wanted=wanted,.out=255};owner_call(&save);
+    assert(save.status==KATMED_CONFIG_OK);
+#ifndef KATMED_TEST_LEGACY_LANGUAGE_API
+    assert(save.out==wanted);
+#endif
+    assert(!language_owner_probe);display_ui_poll(&runtime);
+    UiRequest done;UiSubmitResult result;assert(display_mb_result(&display_mailbox,&done,&result) && result==UI_SUBMIT_COMMITTED);
+    Store reopened;StoreRecovery recovery;uint8_t catalog[KATMED_CATALOG_BYTES]={3};
+    assert(store_open(&reopened,(StoreBackend){NULL,test_read,test_write},UINT64_C(0xAC276E46BC2C),catalog,75,&recovery)==STORE_OK);
+    assert(reopened.record.language==wanted && reopened.record.display.brightness==37);
+    LanguageClient get={.get=true,.out=255};owner_call(&get);assert(get.status==KATMED_CONFIG_OK && get.out==wanted);
+#ifndef KATMED_TEST_LEGACY_LANGUAGE_API
+    uint8_t unchanged=254;
+    assert(web_language_get(NULL,&unchanged)==KATMED_CONFIG_UNAVAILABLE && unchanged==254);
+    assert(web_language_set(NULL,1,&unchanged)==KATMED_CONFIG_UNAVAILABLE && unchanged==254);
+    assert(web_language_get(&runtime,NULL)==KATMED_CONFIG_UNAVAILABLE);
+    for(uint8_t locale=0;locale<KATMED_LANGUAGE_COUNT;++locale){
+        LanguageClient each={.wanted=locale,.out=255};owner_call(&each);
+        assert(each.status==KATMED_CONFIG_OK && each.out==locale && katmed_i18n_selected()==locale);
+    }
+    LanguageClient restore={.wanted=wanted,.out=255};owner_call(&restore);assert(restore.status==KATMED_CONFIG_OK);
+#endif
+    unsigned before=writes;LanguageClient noop={.wanted=wanted,.out=255};owner_call(&noop);assert(noop.status==KATMED_CONFIG_OK && writes==before);
+    LanguageClient invalid={.wanted=255,.out=254};owner_call(&invalid);assert(invalid.status==KATMED_CONFIG_INVALID && invalid.out==254 && writes==before);
+    fail_commit=true;LanguageClient failed={.wanted=original,.out=254};owner_call(&failed);fail_commit=false;
+    assert(failed.status==KATMED_CONFIG_COMMIT_UNKNOWN && failed.out==254 && runtime.store.record.language==wanted && katmed_i18n_selected()==wanted);
+    LanguageClient unavailable={.get=true,.out=254};owner_call(&unavailable);assert(unavailable.status==KATMED_CONFIG_UNAVAILABLE && unavailable.out==254);
+    test_language_timeout_contract();
+    puts("Real HTTP service -> real bridge -> Main -> real Store/Core: owner-thread backend, queued physical display, reopen retains both, GET/invalid/noop/uncertain commit PASS");
+}
+
+static int test_language_physical_clock(void){
+    committed_length=0;initialize_runtime();display_ui_publish(&runtime);assert(katmed_config_bridge_start());
+    const uint8_t wanted=runtime.store.record.language==0?1:0;probe_physical_clock=true;
+    LanguageClient save={.wanted=wanted,.out=255};owner_call(&save);assert(save.status==KATMED_CONFIG_OK);
+    display_ui_poll(&runtime);
+    Store reopened;StoreRecovery recovery;uint8_t catalog[KATMED_CATALOG_BYTES]={3};
+    assert(store_open(&reopened,(StoreBackend){NULL,test_read,test_write},UINT64_C(0xAC276E46BC2C),catalog,75,&recovery)==STORE_OK);
+    bool retained=reopened.record.language==wanted && reopened.record.local.clock_style==ANALOG;
+    printf("Actual owner language + physical clock boundary: both_retained=%d\n",retained);
+    return retained?0:3;
+}
+
+static void test_language_app_owner(void) {
+    committed_length=0;initialize_runtime();display_ui_publish(&runtime);
+    const uint8_t old=runtime.store.record.language,wanted=old==0?1:0;
+    const unsigned before=writes;
+    UiRequest language={.kind=UI_REQUEST_SET_LANGUAGE,.value.language=wanted};
+    assert(submit_ui_dispatch(&runtime,&language)==UI_SUBMIT_QUEUED);
+    assert(writes==before && runtime.store.record.language==old);
+    assert(submit_ui_dispatch(&runtime,&language)==UI_SUBMIT_UNAVAILABLE);
+    display_ui_poll(&runtime);
+    UiRequest done;UiSubmitResult result;
+    assert(display_mb_result(&display_mailbox,&done,&result));
+    assert(done.kind==UI_REQUEST_SET_LANGUAGE && result==UI_SUBMIT_COMMITTED);
+    assert(runtime.store.record.language==wanted && katmed_i18n_selected()==wanted);
+    UiRequest display={.kind=UI_REQUEST_SET_BRIGHTNESS,.value.display_value=37};
+    assert(submit_ui_dispatch(&runtime,&display)==UI_SUBMIT_QUEUED);display_ui_poll(&runtime);
+    assert(display_mb_result(&display_mailbox,&done,&result) && result==UI_SUBMIT_COMMITTED);
+    Store reopened;StoreRecovery recovery;uint8_t catalog[KATMED_CATALOG_BYTES]={3};
+    assert(store_open(&reopened,(StoreBackend){NULL,test_read,test_write},UINT64_C(0xAC276E46BC2C),catalog,75,&recovery)==STORE_OK);
+    assert(reopened.record.language==wanted && reopened.record.display.brightness==37);
+    unsigned duplicate=writes;
+    assert(submit_ui_dispatch(&runtime,&language)==UI_SUBMIT_QUEUED);display_ui_poll(&runtime);
+    assert(display_mb_result(&display_mailbox,&done,&result) && result==UI_SUBMIT_COMMITTED && writes==duplicate);
+    language.value.language=255;assert(submit_ui_dispatch(&runtime,&language)==UI_SUBMIT_QUEUED);display_ui_poll(&runtime);
+    assert(display_mb_result(&display_mailbox,&done,&result) && result==UI_SUBMIT_REJECTED && writes==duplicate);
+    language.value.language=old;fail_commit=true;
+    assert(submit_ui_dispatch(&runtime,&language)==UI_SUBMIT_QUEUED);display_ui_poll(&runtime);fail_commit=false;
+    assert(display_mb_result(&display_mailbox,&done,&result) && result==UI_SUBMIT_UNAVAILABLE);
+    assert(runtime.store.record.language==wanted && katmed_i18n_selected()==wanted);
+    puts("Real Main language dispatch: queued/notcommitted, busy failure, owner Store transaction, persisted language+display, duplicate/invalid/commitfailure PASS");
+}
+
+static UiSubmitResult take_owner_result(UiRequest *done)
+{
+    UiSubmitResult result;assert(display_mb_result(&display_mailbox,done,&result));return result;
+}
+static UiSubmitResult execute_physical(UiRequest request)
+{
+    const unsigned before=writes;
+    assert(submit_ui_dispatch(&runtime,&request)==UI_SUBMIT_QUEUED && writes==before);
+    assert(submit_ui_dispatch(&runtime,&request)==UI_SUBMIT_UNAVAILABLE);
+    request.value.seconds=0; /* caller stack can change after the POD copy */
+    display_ui_poll(&runtime);UiRequest done;return take_owner_result(&done);
+}
+static void test_one_physical_category(unsigned category)
+{
+    committed_length=0;initialize_offline_runtime();display_ui_publish(&runtime);assert(katmed_config_bridge_start());
+    UiRequest intents[]={
+        {.kind=UI_REQUEST_SET_ROTATION_MODE,.value.rotation=ROTATION_RANDOM},
+        {.kind=UI_REQUEST_SET_IMAGE_SECONDS,.value.seconds=43200},
+        {.kind=UI_REQUEST_SET_MEDICATION_SECONDS,.value.seconds=86400},
+        {.kind=UI_REQUEST_SET_NEXT_LOCAL_TIME}
+    };
+    assert(category<4);interleaved_intent=intents[category];
+    if(category==3){ClockSample now=clock_sample(runtime.boot_domain);ManualTimePreview preview;
+        assert(app_preview_local_time(&now,14,30,&preview)==APP_OK);
+        interleaved_intent.value.local_time.hour=14;interleaved_intent.value.local_time.minute=30;interleaved_intent.value.local_time.preview=preview;}
+    uint8_t wanted=runtime.store.record.language==0?1:0;probe_physical_intent=true;
+    LanguageClient save={.wanted=wanted,.out=255};owner_call(&save);assert(save.status==KATMED_CONFIG_OK && !probe_physical_intent);
+    display_ui_poll(&runtime);UiRequest done;assert(take_owner_result(&done)==UI_SUBMIT_COMMITTED && done.kind==interleaved_intent.kind);
+    Store reopened;StoreRecovery recovery;uint8_t catalog[KATMED_CATALOG_BYTES]={1,2,3};
+    assert(store_open(&reopened,(StoreBackend){NULL,test_read,test_write},runtime.boot.device,catalog,75,&recovery)==STORE_OK && reopened.record.language==wanted);
+    if(category==0)assert(reopened.record.shared.rotation==ROTATION_RANDOM);
+    if(category==1)assert(reopened.record.shared.image_seconds==43200);
+    if(category==2)assert(reopened.record.shared.medication_seconds==86400);
+    if(category==3)assert(reopened.record.manual_intent.pending && reopened.record.manual_intent.regular_utc.ms==interleaved_intent.value.local_time.preview.regular_utc.ms);
+    printf("Actual language/physical category %u backend interleave and reopen PASS\n",category);
+}
+static void test_all_physical_owners(void)
+{
+    /* This process has one real bridge; each backend interleave uses the real
+     * producer and real owner transaction, not a second Store policy. */
+    assert(katmed_config_bridge_start());
+    UiRequest intents[]={
+        {.kind=UI_REQUEST_SET_ROTATION_MODE,.value.rotation=ROTATION_RANDOM},
+        {.kind=UI_REQUEST_SET_IMAGE_SECONDS,.value.seconds=43200},
+        {.kind=UI_REQUEST_SET_MEDICATION_SECONDS,.value.seconds=86400},
+        {.kind=UI_REQUEST_SET_NEXT_LOCAL_TIME}
+    };
+    for(size_t i=0;i<sizeof(intents)/sizeof(intents[0]);++i){
+        committed_length=0;initialize_offline_runtime();display_ui_publish(&runtime);
+        if(intents[i].kind==UI_REQUEST_SET_NEXT_LOCAL_TIME){
+            ClockSample now=clock_sample(runtime.boot_domain);ManualTimePreview preview;
+            assert(app_preview_local_time(&now,14,30,&preview)==APP_OK);
+            intents[i].value.local_time.hour=14;intents[i].value.local_time.minute=30;intents[i].value.local_time.preview=preview;
+        }
+        const uint8_t wanted=runtime.store.record.language==0?1:0;
+        interleaved_intent=intents[i];probe_physical_intent=true;
+        LanguageClient save={.wanted=wanted,.out=255};owner_call(&save);assert(save.status==KATMED_CONFIG_OK && !probe_physical_intent);
+        display_ui_poll(&runtime);UiRequest done;assert(take_owner_result(&done)==UI_SUBMIT_COMMITTED && done.kind==intents[i].kind);
+        Store reopened;StoreRecovery recovery;uint8_t catalog[KATMED_CATALOG_BYTES]={1,2,3};
+        assert(store_open(&reopened,(StoreBackend){NULL,test_read,test_write},runtime.boot.device,catalog,75,&recovery)==STORE_OK);
+        assert(reopened.record.language==wanted);
+        if(i==0)assert(reopened.record.shared.rotation==ROTATION_RANDOM);
+        if(i==1)assert(reopened.record.shared.image_seconds==43200);
+        if(i==2)assert(reopened.record.shared.medication_seconds==86400);
+        if(i==3)assert(reopened.record.manual_intent.pending && reopened.record.manual_intent.regular_utc.ms==intents[i].value.local_time.preview.regular_utc.ms);
+    }
+    committed_length=0;initialize_runtime();display_ui_publish(&runtime);
+    assert(execute_physical((UiRequest){.kind=UI_REQUEST_DISMISS_BOOT})==UI_SUBMIT_DISMISSED);
+    const unsigned before=writes;
+    assert(submit_ui(&runtime,&(UiRequest){.kind=UI_REQUEST_EMERGENCY})==UI_SUBMIT_OBSERVED && runtime.emergency_button_sequence==1 && writes==before);
+    katmed_time_init(&runtime.time,runtime.boot_domain);
+    assert(execute_physical((UiRequest){.kind=UI_REQUEST_SET_SYSTEM_TIME,.value.local_datetime="2026-10-23T14:25"})==UI_SUBMIT_COMMITTED);
+    assert(execute_physical((UiRequest){.kind=UI_REQUEST_OPEN_SETUP})==UI_SUBMIT_COMMITTED && runtime.store.record.setup_requested);
+    runtime.reboot_required=false;runtime.setup_ap=true;
+    assert(execute_physical((UiRequest){.kind=UI_REQUEST_EXIT_SETUP})==UI_SUBMIT_COMMITTED && runtime.store.record.setup_dismissed);
+    runtime.reboot_required=false;
+    UiRequest invalid={.kind=UI_REQUEST_SET_ROTATION_MODE,.value.rotation=(RotationMode)255};
+    assert(execute_physical(invalid)!=UI_SUBMIT_COMMITTED);
+    committed_length=0;initialize_offline_runtime();display_ui_publish(&runtime);
+    UiRequest guarded={.kind=UI_REQUEST_CONFIRM,.guard_model=true,.expected_round=runtime.state.round,.expected_revision=runtime.state.revision};
+    assert(submit_ui_dispatch(&runtime,&guarded)==UI_SUBMIT_QUEUED);
+    ++runtime.state.round.ordinal;
+    unsigned count=writes;display_ui_poll(&runtime);UiRequest done;
+    assert(take_owner_result(&done)==UI_SUBMIT_STALE && writes==count);
+    /* Actual domain authority/PENDING_SHARED/event ID path is still executed
+     * by submit_ui_with_id, just on its owner rather than on taskLVGL. */
+    committed_length=0;initialize_runtime();runtime.mesh_started=true;fake_mesh_connected=true;fake_mesh_coordinator=false;fake_mesh_result=MESH_PENDING;
+    UiRequest rotate={.kind=UI_REQUEST_SET_ROTATION_MODE,.value.rotation=ROTATION_RANDOM};
+    assert(execute_physical(rotate)==UI_SUBMIT_PENDING_SHARED && runtime.shared_pending);
+    EventId pending=runtime.shared_id;
+    assert(execute_physical(rotate)==UI_SUBMIT_UNAVAILABLE && same_id(pending,runtime.shared_id));
+    mesh_shared_result(&runtime,pending,MESH_SHARED_REJECTED);assert(!runtime.shared_pending && runtime.shared_feedback==-1);
+    fake_mesh_result=MESH_UNAVAILABLE;
+    assert(execute_physical(rotate)==UI_SUBMIT_UNAVAILABLE && !runtime.shared_pending);
+    puts("All physical owner categories: actual producer/backend interleave, copied intent, busy/stale/domain/PENDING_SHARED/result ownership PASS");
+}
+
+typedef struct {unsigned action;bool ok,value;atomic_bool done;size_t count;KatmedWebWifiProfileUpdate update;KatmedWebWifiProfileView views[KATMED_CONFIG_WIFI_MAX];} WifiClient;
+static void *wifi_client(void *context)
+{
+    WifiClient *c=context;
+    switch(c->action){
+    case 0:c->ok=web_wifi_save_profiles(&runtime,&c->update,1);break;
+    case 1:c->ok=web_wifi_list_profiles(&runtime,c->views,KATMED_CONFIG_WIFI_MAX,&c->count);break;
+    case 2:c->ok=web_wifi_delete_profile(&runtime,c->update.id);break;
+    case 3:c->ok=web_wifi_configured(&runtime,&c->value);break;
+    case 5:c->ok=web_wifi_recovery_available(&runtime,&c->value);break;
+    case 6:c->ok=web_wifi_profile_limit(&runtime,&c->count);break;
+    case 4:c->ok=web_wifi_schedule_reconnect(&runtime);break;
+    }
+    atomic_store(&c->done,true);return NULL;
+}
+static void wifi_owner_call(WifiClient *c)
+{
+    pthread_t thread;assert(pthread_create(&thread,NULL,wifi_client,c)==0);
+    while(!atomic_load(&c->done)){katmed_config_poll(config_execute,&runtime);const struct timespec pause={0,1000000};nanosleep(&pause,NULL);}
+    pthread_join(thread,NULL);
+}
+static void test_wifi_owner(void)
+{
+    committed_length=0;initialize_runtime();display_ui_publish(&runtime);assert(katmed_config_bridge_start());language_owner_thread=pthread_self();
+    WifiClient status={.action=3};wifi_owner_call(&status);assert(status.ok && !status.value);
+    status=(WifiClient){.action=5};wifi_owner_call(&status);assert(status.ok && status.value);
+    status=(WifiClient){.action=6};wifi_owner_call(&status);assert(status.ok && status.count==KATMED_STORE_WIFI_PROFILE_MAX);
+    LanguageClient language={.wanted=1,.out=255};owner_call(&language);assert(language.status==KATMED_CONFIG_OK);
+    WifiClient save={.update={.priority=1,.credential_action=KATMED_WEB_WIFI_CREDENTIAL_REPLACE,.ssid="synthetic-network",.password="synthetic-only"}};
+    language_owner_probe=true;wifi_owner_call(&save);assert(save.ok && !language_owner_probe);
+    display_ui_poll(&runtime);UiRequest done;assert(take_owner_result(&done)==UI_SUBMIT_COMMITTED);
+    assert(runtime.store.record.language==1 && runtime.store.record.display.brightness==37 && runtime.store.record.wifi_profile_count==1);
+    WifiClient list={.action=1};wifi_owner_call(&list);assert(list.ok && list.count==1 && list.views[0].secured && !strcmp(list.views[0].ssid,"synthetic-network"));
+    save=(WifiClient){.update={.id=list.views[0].id,.priority=1,.credential_action=KATMED_WEB_WIFI_CREDENTIAL_KEEP,.ssid="synthetic-renamed"}};
+    wifi_owner_call(&save);assert(save.ok && runtime.store.record.wifi_profiles[0].password_length==14);
+    WifiClient invalid={.update={.id=list.views[0].id,.priority=0,.credential_action=KATMED_WEB_WIFI_CREDENTIAL_KEEP,.ssid="synthetic-renamed"}};
+    unsigned before=writes;wifi_owner_call(&invalid);assert(!invalid.ok && writes==before);
+    invalid=(WifiClient){.update={.priority=1,.credential_action=KATMED_WEB_WIFI_CREDENTIAL_REPLACE}};memset(invalid.update.ssid,'x',sizeof(invalid.update.ssid));
+    wifi_owner_call(&invalid);assert(!invalid.ok && writes==before);
+    invalid=(WifiClient){.update={.id=list.views[0].id,.priority=1,.credential_action=(KatmedWebWifiCredentialAction)256,.ssid="synthetic-renamed"}};
+    wifi_owner_call(&invalid);assert(!invalid.ok && writes==before);
+    runtime.mesh_started=true;WifiClient reconnect={.action=4};unsigned calls=fake_reconnect_calls;wifi_owner_call(&reconnect);assert(reconnect.ok && fake_reconnect_calls==calls+1);
+    WifiClient remove={.action=2,.update.id=list.views[0].id};wifi_owner_call(&remove);assert(remove.ok && runtime.store.record.wifi_profile_count==0 && runtime.store.record.language==1);
+    KatmedConfigRequest queued={.operation=KATMED_CONFIG_WIFI_SAVE,.wifi.count=0};KatmedConfigResponse response={0};
+    before=writes;assert(katmed_config_exchange(&queued,&response,20)==KATMED_CONFIG_UNAVAILABLE);katmed_config_poll(config_execute,&runtime);assert(writes==before);
+    save=(WifiClient){.update={.priority=1,.credential_action=KATMED_WEB_WIFI_CREDENTIAL_OPEN,.ssid="synthetic-open"}};
+    fail_commit=true;wifi_owner_call(&save);fail_commit=false;assert(!save.ok && runtime.store.uncertain);
+    KatmedConfigResponse unknown={0};config_execute(&runtime,&queued,&unknown);assert(unknown.status==KATMED_CONFIG_COMMIT_UNKNOWN);
+    status=(WifiClient){.action=5};wifi_owner_call(&status);assert(status.ok && !status.value);
+    status=(WifiClient){.action=3};wifi_owner_call(&status);assert(!status.ok);
+    puts("Real HTTP WiFi callbacks -> copied bridge -> owner -> real Store: list/KEEP/save/delete/reconnect/invalid/cancel/commitfailure/physical interleave PASS");
+}
+
+static void test_owner_domain_completion(void)
+{
+    committed_length=0;start_offline_due_test();advance_to_real_due();
+    UiRequest confirm={.kind=UI_REQUEST_CONFIRM,.guard_model=true,.expected_round=runtime.state.round,.expected_revision=runtime.state.revision};
+    assert(execute_physical(confirm)==UI_SUBMIT_COMMITTED && !runtime.state.alarm_active && runtime.store.record.last_confirmation.valid && runtime.store.record.pending_count==0);
+    assert(execute_physical(confirm)==UI_SUBMIT_STALE);
+    committed_length=0;initialize_offline_runtime();
+    StoreProvision mesh={.configured=true,.network_mode=STORE_NETWORK_MESH_ONLY};
+    memset(mesh.group,1,sizeof(mesh.group));memset(mesh.secret,2,sizeof(mesh.secret));
+    assert(store_save_setup(&runtime.store,&mesh)==STORE_OK);
+    StoreProvision offline={.configured=true,.network_mode=STORE_NETWORK_OFFLINE};
+    assert(store_save_setup(&runtime.store,&offline)==STORE_OK);schedule_manual_due_test();
+    assert(store_save_setup(&runtime.store,&mesh)==STORE_OK);advance_to_real_due();
+    runtime.mesh_started=true;fake_mesh_coordinator=false;fake_mesh_connected=true;
+    assert(execute_physical((UiRequest){.kind=UI_REQUEST_CONFIRM})==UI_SUBMIT_PENDING && runtime.store.record.pending_count==1 && runtime.state.confirmation_pending_sync);
+    committed_length=0;initialize_offline_runtime();
+    UiRequest revision={.kind=UI_REQUEST_SET_ROTATION_MODE,.guard_model=true,.expected_round=runtime.state.round,.expected_revision=runtime.state.revision,.value.rotation=ROTATION_RANDOM};
+    ++revision.expected_revision.number;unsigned before=writes;
+    assert(execute_physical(revision)==UI_SUBMIT_STALE && writes==before);
+    fail_commit=true;
+    assert(execute_physical((UiRequest){.kind=UI_REQUEST_SET_IMAGE_SECONDS,.value.seconds=43200})==UI_SUBMIT_UNAVAILABLE);
+    fail_commit=false;assert(runtime.store.uncertain);
+    committed_length=0;initialize_runtime();runtime.mesh_started=true;fake_mesh_coordinator=false;fake_mesh_connected=true;fake_mesh_result=MESH_PENDING;
+    UiRequest rotation={.kind=UI_REQUEST_SET_ROTATION_MODE,.value.rotation=ROTATION_RANDOM};
+    assert(submit_ui_dispatch(&runtime,&rotation)==UI_SUBMIT_QUEUED);display_ui_poll(&runtime);
+    assert(runtime.shared_pending);mesh_shared_result(&runtime,runtime.shared_id,MESH_SHARED_REJECTED);
+    ClockSample now=clock_sample(runtime.boot_domain);fail_ui_lock=true;
+    assert(!render_ui(&runtime.state,&runtime.local,&now,NULL,false,false) && runtime.shared_feedback==-1 && deferred_calls==0 && final_shared_calls==0);
+    fail_ui_lock=false;publish_ui_owner(&runtime);
+    assert(render_ui(&runtime.state,&runtime.local,&now,NULL,false,false) && runtime.shared_feedback==0 && deferred_calls==1 && final_shared_calls==1 && ui_completion_order==2);
+    UiRequest done;UiSubmitResult result;assert(!display_mb_result(&display_mailbox,&done,&result));
+    assert(submit_ui_dispatch(&runtime,&rotation)==UI_SUBMIT_QUEUED);display_ui_poll(&runtime);(void)take_owner_result(&done);
+    puts("Real queued confirm/domain/uncertain Store result and render lock miss -> deferred pending before final Mesh result -> no stuck slot PASS");
+}
+
+static void test_owner_snapshot(void)
+{
+    committed_length=0;initialize_runtime();publish_ui_owner(&runtime);
+    AppState state;LocalSettings local;ClockSample clock;
+    assert(read_ui_model(&runtime,&state,&local,&clock) && storage_ready(&runtime));
+    const ClockStyle old=local.clock_style;
+    LocalSettings wanted=runtime.local;wanted.clock_style=ANALOG;
+    assert(store_set_local(&runtime.store,&runtime.local,&wanted)==STORE_OK);
+    assert(read_ui_model(&runtime,&state,&local,&clock) && local.clock_style==old);
+    publish_ui_owner(&runtime);assert(read_ui_model(&runtime,&state,&local,&clock) && local.clock_style==ANALOG);
+    runtime.store.uncertain=true;
+    assert(storage_ready(&runtime));publish_ui_owner(&runtime);assert(!storage_ready(&runtime));
+#ifndef KATMED_TEST_PRE_COHERENCE
+    printf("Published owner POD snapshots PASS; sizeof UI snapshot=%zu request=%zu response=%zu intent=%zu\n",sizeof(ui_owner_snapshot),sizeof(KatmedConfigRequest),sizeof(KatmedConfigResponse),sizeof(UiRequest));
+#endif
+}
+
+#ifdef KATMED_TEST_EMERGENCY_UI
+extern void host_emergency_attach(const UiServices *services);
+extern void host_emergency_press(void);
+extern void host_emergency_duplicate_release(void);
+extern void host_emergency_invalid_press(void);
+extern const char *host_emergency_feedback(void);
+extern unsigned host_emergency_feedback_calls(void);
+extern unsigned host_emergency_observed_feedback(void);
+extern unsigned host_emergency_failed_feedback(void);
+extern unsigned host_emergency_ordinary_feedback(void);
+static void render_emergency_results(void)
+{
+    publish_ui_owner(&runtime);ClockSample now=clock_sample(runtime.boot_domain);
+    assert(render_ui(&runtime.state,&runtime.local,&now,NULL,false,false));
+}
+static void test_emergency_owner(void)
+{
+    const UiServices services={.context=&runtime,.submit=submit_ui_dispatch,.read_model=read_ui_model};
+    for(unsigned phase=0;phase<4;++phase){
+        committed_length=0;initialize_runtime();display_ui_publish(&runtime);
+        host_emergency_attach(&services);
+        assert(display_mailbox.state==0 && display_mailbox.emergency_pending==0 && display_mailbox.emergency_observed==0 && display_mailbox.emergency_failed==0);
+        const StoreRecord before=runtime.store.record;const AppState state=runtime.state;const unsigned before_writes=writes;
+        const UiRequest ordinary={.kind=UI_REQUEST_SET_CLOCK_STYLE,.value.clock_style=ANALOG};
+        if(phase){assert(services.submit(services.context,&ordinary)==UI_SUBMIT_QUEUED);}
+        if(phase==2){
+            emergency_processing_probe=true;display_ui_poll(&runtime);assert(!emergency_processing_probe);
+        }else{
+            if(phase==3)display_ui_poll(&runtime); /* completed but UI has not drained it */
+            assert(display_mailbox.state==(phase==0 ? 0u : phase==1 ? 1u : 3u));
+            for(unsigned i=0;i<3;++i)host_emergency_press();
+            assert(runtime.emergency_button_sequence==0 && display_mailbox.emergency_pending==3);
+            assert(!strcmp(host_emergency_feedback(),"Änderung vorgemerkt"));
+            host_emergency_duplicate_release();host_emergency_invalid_press();
+            assert(display_mailbox.emergency_pending==3); /* actual touch guard, no double release */
+            if(!phase)assert(services.submit(services.context,&ordinary)==UI_SUBMIT_QUEUED);
+            else assert(services.submit(services.context,&ordinary)==UI_SUBMIT_UNAVAILABLE);
+            display_ui_poll(&runtime);
+        }
+        assert(runtime.emergency_button_sequence==3 && display_mailbox.state==3 && display_mailbox.emergency_observed==3 && !display_mailbox.emergency_failed);
+        StoreRecord expected=before;expected.local.clock_style=ANALOG;
+        assert(writes==before_writes+1 && !memcmp(&expected,&runtime.store.record,sizeof(expected)) && !memcmp(&state,&runtime.state,sizeof(state)));
+        KatmedConfigRequest get={.operation=KATMED_CONFIG_HA_GET};KatmedConfigResponse response={0};config_execute(&runtime,&get,&response);
+        assert(response.status==KATMED_CONFIG_OK && response.ha.emergency_button_sequence==3);
+        unsigned feedbacks=host_emergency_feedback_calls();
+        if(phase==3){
+            fail_ui_lock=true;ClockSample now=clock_sample(runtime.boot_domain);
+            assert(!render_ui(&runtime.state,&runtime.local,&now,NULL,false,false));
+            assert(display_mailbox.state==3 && display_mailbox.emergency_observed==3 && host_emergency_feedback_calls()==feedbacks);
+            fail_ui_lock=false;
+        }
+        render_emergency_results();
+        assert(display_mailbox.state==0 && display_mailbox.emergency_observed==0 && display_mailbox.emergency_failed==0);
+        assert(host_emergency_observed_feedback()==1 && host_emergency_ordinary_feedback()==1 && host_emergency_failed_feedback()==0);
+        assert(host_emergency_feedback_calls()==feedbacks+2 && !strcmp(host_emergency_feedback(),"Gespeichert"));
+        /* Ordinary result remains the final feedback; the emergency completion
+         * cannot steal its slot or falsely report an ordinary commit. */
+        display_ui_poll(&runtime);render_emergency_results();
+        assert(runtime.emergency_button_sequence==3 && writes==before_writes+1 && host_emergency_feedback_calls()==feedbacks+2);
+        printf("Actual touch/registered dispatch phase %u: 3 presses/HA sequence3; ordinary retained; typed UI completions consumed once\n",phase);
+    }
+    committed_length=0;initialize_runtime();display_ui_publish(&runtime);host_emergency_attach(&services);
+    const StoreRecord original=runtime.store.record;unsigned before=writes;
+    host_emergency_press();emergency_ui_poll(&runtime);assert(runtime.emergency_button_sequence==1);
+    runtime.reboot_required=true;host_emergency_press();emergency_ui_poll(&runtime);
+    assert(display_mailbox.emergency_observed==1 && display_mailbox.emergency_failed==1 && runtime.emergency_button_sequence==1 && writes==before);
+    render_emergency_results();assert(host_emergency_observed_feedback()==1 && host_emergency_failed_feedback()==1 && !strcmp(host_emergency_feedback(),"Speichern derzeit nicht verfügbar"));
+    runtime.reboot_required=false;runtime.store.uncertain=true;host_emergency_press();emergency_ui_poll(&runtime);
+    assert(runtime.emergency_button_sequence==2 && writes==before);render_emergency_results();
+    assert(!memcmp(&original,&runtime.store.record,sizeof(original)));
+    /* Synthetic arithmetic boundaries, not billions of physical presses.
+     * Preserve the original UINT32 sequence saturation without wrapping. A
+     * separate completion counter must not silently overflow or lose presses. */
+    runtime.emergency_button_sequence=UINT32_MAX-1;host_emergency_press();host_emergency_press();emergency_ui_poll(&runtime);
+    assert(runtime.emergency_button_sequence==UINT32_MAX);render_emergency_results();
+    DISPLAY_MB_LOCK(&display_mailbox);display_mailbox.emergency_pending=UINT64_MAX-1;DISPLAY_MB_UNLOCK(&display_mailbox);
+    host_emergency_press();assert(display_mailbox.emergency_pending==UINT64_MAX && !strcmp(host_emergency_feedback(),"Änderung vorgemerkt"));
+    host_emergency_press();assert(display_mailbox.emergency_pending==UINT64_MAX && !strcmp(host_emergency_feedback(),"Speichern derzeit nicht verfügbar"));
+    emergency_ui_poll(&runtime);assert(runtime.emergency_button_sequence==UINT32_MAX && display_mailbox.emergency_observed==UINT64_MAX);
+    host_emergency_press();assert(!display_mailbox.emergency_pending); /* capacity includes unconsumed completions */
+    render_emergency_results();host_emergency_press();emergency_ui_poll(&runtime);render_emergency_results();
+    assert(runtime.emergency_button_sequence==UINT32_MAX && !display_mailbox.emergency_pending && !display_mailbox.emergency_observed && !display_mailbox.emergency_failed && writes==before);
+    puts("Emergency owner: exact HA sequence, original uint32 limit, explicit counter-capacity failure, queued vs RAM-observed, reboot failure and unknown-Store independence PASS");
+}
+
+#endif
+
 int main(int argc, char **argv)
 {
+#ifdef KATMED_TEST_EMERGENCY_UI
+    if(argc==2 && !strcmp(argv[1],"emergency_owner")){test_emergency_owner();return 0;}
+#endif
+    if(argc==2 && !strcmp(argv[1],"owner_completion")){test_owner_domain_completion();return 0;}
+    if(argc==2 && !strncmp(argv[1],"physical_category_",18)){test_one_physical_category((unsigned)(argv[1][18]-'0'));return 0;}
+    if(argc==2 && !strcmp(argv[1],"physical_owners")){test_all_physical_owners();return 0;}
+    if(argc==2 && !strcmp(argv[1],"wifi_owner")){test_wifi_owner();return 0;}
+    if(argc==2 && !strcmp(argv[1],"owner_snapshot")){test_owner_snapshot();return 0;}
+    if(argc==2 && !strcmp(argv[1],"language_clock_owner")){return test_language_physical_clock();}
+    if(argc==2 && !strcmp(argv[1],"language_http_owner")){test_language_http_owner();return 0;}
+    if(argc==2 && !strcmp(argv[1],"language_owner")){test_language_app_owner();return 0;}
     if(argc==2 && !strcmp(argv[1],"boot_identity")){test_boot_factory_identity();return 0;}
     if(argc==2 && !strcmp(argv[1],"night_bridge")){test_display_app_loop_bridge();test_brightness_preview_bridge();test_boot_factory_identity();return 0;}
     if(argc==2 && !strcmp(argv[1],"night")){test_local_display_settings();return 0;}
@@ -816,6 +1302,7 @@ int main(int argc, char **argv)
     initialize_runtime(); // Actual decode and fresh boot identity, no reused timer.
     assert(runtime.state.alarm_active && runtime.state.start_reason==START_BOOT);
     assert(runtime.local.orientation==ORIENTATION_270 && runtime.local.clock_style==ANALOG);
+    publish_ui_owner(&runtime);
     assert(pending_confirmations(&runtime)==1 && storage_ready(&runtime));
     ClockSample historical={0};
     assert(historical_confirmation(&runtime,&historical));
@@ -853,6 +1340,7 @@ int main(int argc, char **argv)
     const AppState before_state=runtime.state;
     fake_microseconds+=1000000;
     assert(submit_due_confirm()==UI_SUBMIT_UNAVAILABLE);
+    publish_ui_owner(&runtime);
     assert(runtime.state.alarm_active==before_state.alarm_active &&
            runtime.state.round.ordinal==before_state.round.ordinal && !storage_ready(&runtime));
     /* Real board callback + Core + durable Store, with no authenticated peer.
