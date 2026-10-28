@@ -6,7 +6,7 @@ import json
 import os
 from pathlib import Path
 import stat
-import subprocess
+import subprocess  # nosec B404: synthetic subprocess contract checks require this module.
 import sys
 import tempfile
 import unittest
@@ -192,7 +192,7 @@ out.chmod(0o700)
         env = dict(os.environ, PATH=str(fake_bin) + ":/usr/bin:/bin",
                    SYNTHETIC_REPO=str(root), SYNTHETIC_ARGV_LOG=str(log),
                    SYNTHETIC_COMPILER_EXIT=str(compiler_exit))
-        result = subprocess.run(["/bin/bash", str(script)], env=env, capture_output=True, text=True)
+        result = subprocess.run(["/bin/bash", str(script)], env=env, capture_output=True, text=True)  # nosec B603: own copied public script and fake gcc only.
         calls = [json.loads(line) for line in log.read_text().splitlines()]
         return result, calls
 

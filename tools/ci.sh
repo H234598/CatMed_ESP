@@ -3,10 +3,57 @@
 set -euo pipefail
 repo=$(cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$repo"
-mode=${1:?Usage: tools/ci.sh dependencies|host|firmware [c3|c6]}
+mode=${1:?Usage: tools/ci.sh dependencies|host|firmware|qlty [c3|c6]}
 board=${2:-c3}
 case "$board" in c3) target=esp32c3;; c6) target=esp32c6;; *) exit 2;; esac
-if [[ "$mode" == dependencies || "$mode" == firmware ]]; then
+if [[ "$mode" == qlty ]]; then
+    umask 077
+    qlty_work=$(mktemp -d "${TMPDIR:-/tmp}/katmed-qlty.XXXXXXXX")
+    trap 'rm -rf -- "$qlty_work"' EXIT
+    qlty_bin=${QLTY_BIN:-}
+    if [[ -z "$qlty_bin" ]]; then
+        curl --fail --silent --show-error --location \
+            https://github.com/qltysh/qlty/releases/download/v0.662.0/qlty-x86_64-unknown-linux-musl.tar.xz \
+            --output "$qlty_work/qlty.tar.xz"
+        printf '%s  %s\n' 49eb3539abe3d78f77a57f0e78b0d638cd76d880ddd807be9a1a7bad396fd1a7 \
+            "$qlty_work/qlty.tar.xz" | sha256sum --check --status
+        tar -xJf "$qlty_work/qlty.tar.xz" -C "$qlty_work"
+        qlty_bin="$qlty_work/qlty-x86_64-unknown-linux-musl/qlty"
+    fi
+    [[ $("$qlty_bin" --version) == 'qlty 0.662.0 '* ]]
+    QLTY_BIN="$qlty_bin" python3 tests/host_tooling_qlty58/test_qlty_gate.py
+    : "${QLTY_BASE_REF:?Exact public baseline commit required}"
+    mkdir "$qlty_work/baseline" "$qlty_work/candidate"
+    git archive "$QLTY_BASE_REF" | tar -x -C "$qlty_work/baseline"
+    mkdir -p "$qlty_work/baseline/.qlty"
+    cp .qlty/qlty.toml "$qlty_work/baseline/.qlty/qlty.toml"
+    (cd "$qlty_work/baseline" && git init --quiet && git add -- .)
+    # Disposable metadata only: native --upstream needs two public trees.
+    # No repository history, credentials or dirty/untracked files are copied.
+    git archive "$QLTY_BASE_REF" | tar -x -C "$qlty_work/candidate"
+    mkdir -p "$qlty_work/candidate/.qlty"
+    cp .qlty/qlty.toml "$qlty_work/candidate/.qlty/qlty.toml"
+    (cd "$qlty_work/candidate" && git init --quiet && git add -- . &&
+        git -c user.name=Public-CI -c user.email=ci@example.invalid commit --quiet -m baseline)
+    comparison_base=$(git -C "$qlty_work/candidate" rev-parse HEAD)
+    git -C "$qlty_work/candidate" rm --quiet -r -- .
+    git archive HEAD | tar -x -C "$qlty_work/candidate"
+    (cd "$qlty_work/candidate" && git add -- . &&
+        git -c user.name=Public-CI -c user.email=ci@example.invalid commit --quiet -m candidate)
+    for scope in baseline candidate; do
+        selection=(--all)
+        [[ "$scope" != candidate ]] || selection=(--upstream "$comparison_base")
+        code=0
+        (cd "$qlty_work/$scope" && QLTY_TELEMETRY=off "$qlty_bin" check "${selection[@]}" \
+            --no-fix --no-formatters --no-cache --no-progress --print-errors \
+            --sarif --jobs 2 --skip-source-fetch --no-upgrade-check) \
+            >"$qlty_work/$scope.sarif" 2>"$qlty_work/$scope.stderr" || code=$?
+        printf '%s\n' "$code" >"$qlty_work/$scope.exit"
+    done
+    python3 tools/check_qlty.py "$qlty_work/baseline.sarif" \
+        "$(cat "$qlty_work/baseline.exit")" "$qlty_work/candidate.sarif" \
+        "$(cat "$qlty_work/candidate.exit")"
+elif [[ "$mode" == dependencies || "$mode" == firmware ]]; then
     : "${IDF_PATH:?Use the ESP-IDF 6.1 environment}"
     # The SDK lives in the disposable CI container, never a developer's SDK.
     if [[ ${CI:-} != true ]]; then
@@ -40,6 +87,7 @@ elif [[ "$mode" == host ]]; then
     fi
     python3 tests/check_crop_geometry.py
     python3 tests/host_private_wifi_defaults/check.py
+    python3 tests/host_tooling_qlty58/test_tooling_contracts.py
     cmake -S . -B build-ci-host -G Ninja \
         -DKATMED_MBEDTLS_SOURCE="${mbedtls_source}"
     cmake --build build-ci-host -j 4

@@ -1,0 +1,97 @@
+# Pinned Qlty 0.662.0 embedded official catalog; no source fetch or autofix.
+# Existing findings remain open; CI compares complete base/candidate SARIF.
+# No external secret verification; Gitleaks scans the public export locally.
+config_version = "0"
+
+exclude_patterns = [
+  "*_min.*",
+  "*-min.*",
+  "*.min.*",
+  "**/.yarn/**",
+  "**/*.d.ts",
+  "**/assets/**",
+  "**/bower_components/**",
+  "**/build/**",
+  "**/cache/**",
+  "**/config/**",
+  "**/db/**",
+  "**/deps/**",
+  "**/dist/**",
+  "**/extern/**",
+  "**/external/**",
+  "**/generated/**",
+  "**/Godeps/**",
+  "**/gradlew/**",
+  "**/mvnw/**",
+  "**/node_modules/**",
+  "**/protos/**",
+  "**/seed/**",
+  "**/target/**",
+  "**/templates/**",
+  "**/testdata/**",
+  "**/vendor/**",
+]
+
+test_patterns = [
+  "**/test/**",
+  "**/spec/**",
+  "**/*.test.*",
+  "**/*.spec.*",
+  "**/*_test.*",
+  "**/*_spec.*",
+  "**/test_*.*",
+  "**/spec_*.*",
+]
+
+[smells]
+mode = "comment"
+
+[[source]]
+name = "default"
+default = true
+
+
+[[plugin]]
+name = "actionlint"
+version = "1.7.9"
+drivers = ["lint"]
+
+[[plugin]]
+name = "bandit"
+version = "1.9.2"
+drivers = ["lint"]
+
+[[plugin]]
+name = "radarlint-python"
+version = "2.0.0"
+drivers = ["lint"]
+
+[[plugin]]
+name = "ripgrep"
+version = "14.1.1"
+drivers = ["lint-fixme"]
+
+[[plugin]]
+name = "ruff"
+version = "0.14.6"
+drivers = ["lint"]
+
+[[plugin]]
+name = "shellcheck"
+version = "0.11.0"
+drivers = ["lint"]
+
+[[plugin]]
+name = "zizmor"
+version = "1.16.3"
+drivers = ["lint"]
+
+[[plugin]]
+name = "gitleaks"
+version = "8.29.1"
+drivers = ["lint"]
+
+[[plugin]]
+name = "biome"
+version = "2.5.6"
+drivers = ["lint"]
