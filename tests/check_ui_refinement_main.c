@@ -19,8 +19,17 @@ void refinement_init(const uint8_t *catalog, uint32_t count)
     runtime.mesh_started=true; fake_mesh_coordinator=true; fake_mesh_connected=false;
     fake_mesh_result=MESH_ACCEPTED;
     assert(submit_due_confirm()==UI_SUBMIT_PENDING);
+    publish_ui_owner(&runtime);
 }
-UiServices refinement_services(void) { return (UiServices){.context=&runtime,.submit=submit_ui,.read_model=read_ui_model}; }
+/* This single-threaded fixture executes the owner synchronously. Publish its
+ * committed model before the real UI callback consumes read_ui_model. */
+static UiSubmitResult refinement_submit(void *context,const UiRequest *request)
+{
+    UiSubmitResult result=submit_ui(context,request);
+    publish_ui_owner(context);
+    return result;
+}
+UiServices refinement_services(void) { return (UiServices){.context=&runtime,.submit=refinement_submit,.read_model=read_ui_model}; }
 const AppState *refinement_state(void) { return &runtime.state; }
 const LocalSettings *refinement_local(void) { return &runtime.local; }
 ClockSample refinement_clock(void) { return clock_sample(runtime.boot_domain); }
