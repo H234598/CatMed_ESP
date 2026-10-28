@@ -326,9 +326,19 @@ static bool certificate_time_valid(const mbedtls_x509_crt *cert)
 
 static void tls_session_callback(esp_https_server_user_cb_arg_t *arg)
 {
-    if (!arg || !arg->tls) return;
+    if (!arg) return;
+    const char *event = arg->user_cb_state == HTTPD_SSL_USER_CB_SESS_CREATE ? "CREATE" :
+                        arg->user_cb_state == HTTPD_SSL_USER_CB_SESS_CLOSE ? "CLOSE" :
+                        arg->user_cb_state == HTTPD_SSL_USER_CB_SESS_ERROR ? "ERROR" : "UNKNOWN";
+    if (!arg->tls) {
+        ESP_LOGI(WEB_TAG, "TLS hook event=%s fd=-1 fd_state=NO_TLS", event);
+        return;
+    }
     int fd = -1;
-    if (esp_tls_get_conn_sockfd(arg->tls, &fd) != ESP_OK) return;
+    esp_err_t fd_result = esp_tls_get_conn_sockfd(arg->tls, &fd);
+    if (fd_result != ESP_OK) fd = -1;
+    ESP_LOGI(WEB_TAG, "TLS hook event=%s fd=%d fd_result=%d", event, fd, (int)fd_result);
+    if (fd_result != ESP_OK) return;
     if (arg->user_cb_state == HTTPD_SSL_USER_CB_SESS_CLOSE) {
         if (web.certificate_fd == fd) {
             web.certificate_fd = -1;
@@ -342,10 +352,38 @@ static void tls_session_callback(esp_https_server_user_cb_arg_t *arg)
     wipe(web.certificate_fingerprint, sizeof(web.certificate_fingerprint));
     const uint32_t internal = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
     const uint32_t dma = MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
-    if (heap_caps_get_free_size(internal) < LIVE_FREE_INTERNAL ||
-        heap_caps_get_free_size(dma) < LIVE_FREE_DMA ||
-        heap_caps_get_largest_free_block(dma) < 1024u) {
-        if (web.https) httpd_sess_trigger_close(web.https, fd);
+    const size_t internal_free = heap_caps_get_free_size(internal);
+    size_t dma_free = 0, dma_largest = 0;
+    bool decision_dma_free = false, decision_dma_largest = false;
+    bool reject = internal_free < LIVE_FREE_INTERNAL;
+    if (!reject) {
+        decision_dma_free = true;
+        dma_free = heap_caps_get_free_size(dma);
+        reject = dma_free < LIVE_FREE_DMA;
+    }
+    if (!reject) {
+        decision_dma_largest = true;
+        dma_largest = heap_caps_get_largest_free_block(dma);
+        reject = dma_largest < 1024u;
+    }
+    if (reject) {
+        const char *reason = !decision_dma_free ? "INTERNAL_FREE" :
+                             !decision_dma_largest ? "DMA_FREE" : "DMA_LARGEST";
+        /* Preserve the original short-circuit decision. Missing operands are
+         * later sequential diagnostics, never re-read to decide admission. */
+        if (!decision_dma_free) dma_free = heap_caps_get_free_size(dma);
+        if (!decision_dma_largest) dma_largest = heap_caps_get_largest_free_block(dma);
+        ESP_LOGW(WEB_TAG, "TLS resource reject fd=%d reason=%s internal_free=%zu/%u "
+                 "dma_free=%zu/%u dma_largest=%zu/1024 decision_dma_free=%d "
+                 "decision_dma_largest=%d samples_sequential=1",
+                 fd, reason, internal_free, LIVE_FREE_INTERNAL, dma_free,
+                 LIVE_FREE_DMA, dma_largest, decision_dma_free, decision_dma_largest);
+        if (web.https) {
+            esp_err_t result = httpd_sess_trigger_close(web.https, fd);
+            ESP_LOGW(WEB_TAG, "TLS close request fd=%d result=%d", fd, (int)result);
+        } else {
+            ESP_LOGW(WEB_TAG, "TLS close request fd=%d state=NO_SERVER", fd);
+        }
         return;
     }
     if (web.auth.record.cert_len == 0) return;

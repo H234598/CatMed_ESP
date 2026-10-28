@@ -4,6 +4,9 @@ Regression: fresh unprovisioned boot reaches Web without Mesh. Removing the
 platform initialization, or accepting its failure, must prevent a ready Web
 listener. No Wi-Fi profiles, real sockets, private keys or devices are used.
 """
+import datetime
+import json
+import time
 import subprocess
 import tempfile
 import unittest
@@ -265,6 +268,166 @@ class NetworkStartup(unittest.TestCase):
 
     def test_https_stop_failure_keeps_key_and_callers_until_success(self):
         self.run_case("https_stop_failure_retains_state")
+
+
+# Synthetic execution of the actual TLS callback, not a model of its policy.
+TLS_BEHAVIOR_ONLY = os.environ.get("KATMED_TLS_DIAGNOSTICS_BEHAVIOR_ONLY") == "1"
+
+TLS_DIAGNOSTIC_HOST = r'''
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdarg.h>
+#define ESP_OK 0
+#define ESP_FAIL -1
+#define ESP_ERR_INVALID_ARG 258
+#define ESP_ERR_INVALID_STATE 259
+#define MALLOC_CAP_INTERNAL 1u
+#define MALLOC_CAP_8BIT 2u
+#define MALLOC_CAP_DMA 4u
+#define WEB_TAG "synthetic"
+typedef int esp_err_t;
+typedef struct {int unused;} esp_tls_t;
+typedef struct {int unused;} mbedtls_ssl_context;
+typedef struct cert {struct cert *next;struct {unsigned char *p;size_t len;} raw;} mbedtls_x509_crt;
+enum {HTTPD_SSL_USER_CB_SESS_CREATE,HTTPD_SSL_USER_CB_SESS_CLOSE,HTTPD_SSL_USER_CB_SESS_ERROR};
+typedef struct {int user_cb_state;esp_tls_t *tls;} esp_https_server_user_cb_arg_t;
+static struct {int certificate_fd;bool certificate_verified;unsigned char certificate_fingerprint[32];void *https;struct {struct {size_t cert_len;unsigned char client_fingerprint[32];} record;} auth;} web;
+static size_t internal_free,dma_free,dma_largest;
+static int fd_result,close_result,closes,last_close_fd,cert_checks,fd_calls;
+static int samples[3];
+void diagnostic(const char *tag,const char *format,...){
+    (void)tag;va_list args;va_start(args,format);fputs("LOG ",stdout);vprintf(format,args);putchar('\n');va_end(args);
+}
+#define ESP_LOGI(...) diagnostic(__VA_ARGS__)
+#define ESP_LOGW(...) diagnostic(__VA_ARGS__)
+static int esp_tls_get_conn_sockfd(esp_tls_t *tls,int *fd){(void)tls;++fd_calls;if(fd_result==ESP_OK)*fd=17;return fd_result;}
+static void wipe(void *p,size_t n){memset(p,0,n);}
+static size_t heap_caps_get_free_size(uint32_t caps){
+    if(caps==(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT)){++samples[0];return internal_free;}
+    if(caps==(MALLOC_CAP_DMA|MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT)){++samples[1];return dma_free;}
+    abort();
+}
+static size_t heap_caps_get_largest_free_block(uint32_t caps){if(caps!=7u)abort();++samples[2];return dma_largest;}
+static int httpd_sess_trigger_close(void *server,int fd){if(server!=(void*)1)abort();++closes;last_close_fd=fd;return close_result;}
+static mbedtls_ssl_context *esp_tls_get_ssl_context(esp_tls_t *tls){(void)tls;++cert_checks;return NULL;}
+static unsigned mbedtls_ssl_get_verify_result(mbedtls_ssl_context *s){(void)s;return 0;}
+static const mbedtls_x509_crt *mbedtls_ssl_get_peer_cert(mbedtls_ssl_context *s){(void)s;return NULL;}
+static bool certificate_time_valid(const mbedtls_x509_crt *c){(void)c;return true;}
+static int sha256_bytes(const unsigned char *p,size_t n,unsigned char *o){(void)p;(void)n;(void)o;return 0;}
+static bool katmed_web_auth_equal(const void *a,const void *b,size_t n){return memcmp(a,b,n)==0;}
+'''
+TLS_DIAGNOSTIC_MAIN = r'''
+int main(int argc,char **argv){
+    if(argc!=9)return 2;
+    int event=atoi(argv[1]);internal_free=strtoul(argv[2],NULL,10);dma_free=strtoul(argv[3],NULL,10);dma_largest=strtoul(argv[4],NULL,10);
+    web.https=atoi(argv[5])?(void*)1:NULL;close_result=atoi(argv[6]);fd_result=atoi(argv[7]);
+    web.certificate_fd=17;web.certificate_verified=true;memset(web.certificate_fingerprint,0xa5,32);web.auth.record.cert_len=1;
+    esp_tls_t tls={0};esp_https_server_user_cb_arg_t arg={.user_cb_state=event,.tls=atoi(argv[8])?&tls:NULL};
+    tls_session_callback(event==9?NULL:&arg);
+    unsigned remaining=0;for(size_t i=0;i<32;++i)remaining|=web.certificate_fingerprint[i];
+    printf("STATE %d %d %d %d %d %u %d %d %d %d\n",closes,last_close_fd,cert_checks,web.certificate_fd,web.certificate_verified,remaining,fd_calls,samples[0],samples[1],samples[2]);
+    return 0;
+}
+'''
+
+
+def execute_tls_callback(argv):
+    start = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    mono = time.monotonic_ns()
+    child = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    out, err = child.communicate()
+    print(json.dumps({"PID": child.pid, "startUTC": start,
+                      "endUTC": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                      "start_monotonic_ns": mono, "end_monotonic_ns": time.monotonic_ns(),
+                      "Exit": child.returncode, "ChildEnd": True,
+                      "streams_closed": child.stdout.closed and child.stderr.closed}))
+    if child.returncode:
+        raise AssertionError(err.decode() or out.decode())
+    return out.decode()
+
+
+class TlsSessionDiagnostics(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.temp = tempfile.TemporaryDirectory()
+        cls.addClassCleanup(cls.temp.cleanup)
+        cls.binary = str(Path(cls.temp.name) / "callback")
+        source = Path(cls.temp.name) / "callback.c"
+        text = SOURCE.read_text()
+        floors = re.findall(r"^#define LIVE_FREE_(?:INTERNAL|DMA)\b.*$", text, re.M)
+        if len(floors) != 2:
+            raise AssertionError("Both production TLS admission floors are required")
+        source.write_text(TLS_DIAGNOSTIC_HOST + "\n".join(floors) + "\n" +
+                          function(text, "static void tls_session_callback(") + TLS_DIAGNOSTIC_MAIN)
+        execute_tls_callback(["gcc", "-std=c11", "-Wall", "-Wextra", "-Werror", str(source), "-o", cls.binary])
+
+    def case(self, event=0, internal=12288, dma=4096, largest=1024,
+             server=1, close_return=0, fd_return=0, tls=1):
+        out = execute_tls_callback([self.binary, *map(str, [event, internal, dma, largest,
+                                             server, close_return, fd_return, tls])])
+        state = next(line for line in out.splitlines() if line.startswith("STATE "))
+        return list(map(int, state.split()[1:])), [line[4:] for line in out.splitlines() if line.startswith("LOG ")]
+
+    def test_equality_and_above_floors_keep_certificate_path(self):
+        for values in [(12288, 4096, 1024), (12289, 4097, 1025)]:
+            with self.subTest(values=values):
+                state, logs = self.case(internal=values[0], dma=values[1], largest=values[2])
+                self.assertEqual(state[:7], [0, 0, 1, 17, 0, 0, 1])
+                self.assertEqual(state[7:], [1, 1, 1])
+                if not TLS_BEHAVIOR_ONLY:
+                    self.assertEqual(logs, ["TLS hook event=CREATE fd=17 fd_result=0"])
+
+    def test_each_rejection_and_decision_vs_later_samples(self):
+        cases = [(12287, 4096, 1024, "INTERNAL_FREE", 0, 0),
+                 (12288, 4095, 1024, "DMA_FREE", 1, 0),
+                 (12288, 4096, 1023, "DMA_LARGEST", 1, 1)]
+        for internal, dma, largest, reason, decision_dma, decision_largest in cases:
+            with self.subTest(reason=reason):
+                state, logs = self.case(internal=internal, dma=dma, largest=largest)
+                self.assertEqual(state[:7], [1, 17, 0, 17, 0, 0, 1])
+                if not TLS_BEHAVIOR_ONLY:
+                    self.assertEqual(state[7:], [1, 1, 1], "Each operand sampled once, no predicate re-read")
+                    self.assertEqual(logs, ["TLS hook event=CREATE fd=17 fd_result=0",
+                        f"TLS resource reject fd=17 reason={reason} internal_free={internal}/12288 dma_free={dma}/4096 dma_largest={largest}/1024 decision_dma_free={decision_dma} decision_dma_largest={decision_largest} samples_sequential=1",
+                        "TLS close request fd=17 result=0"])
+
+    def test_close_result_is_not_observed_close_and_no_server_is_distinct(self):
+        state, logs = self.case(internal=1, close_return=-1)
+        self.assertEqual(state[:3], [1, 17, 0])
+        if not TLS_BEHAVIOR_ONLY:
+            self.assertEqual(logs[-1:], ["TLS close request fd=17 result=-1"])
+            self.assertFalse(any("event=CLOSE" in line for line in logs))
+        state, logs = self.case(internal=1, server=0)
+        self.assertEqual(state[:3], [0, 0, 0])
+        if not TLS_BEHAVIOR_ONLY:
+            self.assertEqual(logs[-1:], ["TLS close request fd=17 state=NO_SERVER"])
+
+    def test_close_preserves_certificate_cleanup_without_heap_or_new_close(self):
+        state, logs = self.case(event=1, internal=0, dma=0, largest=0)
+        self.assertEqual(state, [0, 0, 0, -1, 0, 0, 1, 0, 0, 0])
+        if not TLS_BEHAVIOR_ONLY:
+            self.assertEqual(logs, ["TLS hook event=CLOSE fd=17 fd_result=0"])
+
+    def test_error_is_error_and_retains_existing_nonclose_branch(self):
+        state, logs = self.case(event=2)
+        self.assertEqual(state[:7], [0, 0, 1, 17, 0, 0, 1])
+        if not TLS_BEHAVIOR_ONLY:
+            self.assertEqual(logs, ["TLS hook event=ERROR fd=17 fd_result=0"])
+
+    def test_invalid_inputs_do_not_touch_auth_heap_or_close(self):
+        for event, fd_return, tls, fd_calls in [(9, 0, 1, 0), (2, 0, 0, 0), (0, -1, 1, 1)]:
+            with self.subTest(event=event, tls=tls, fd_return=fd_return):
+                state, logs = self.case(event=event, fd_return=fd_return, tls=tls)
+                self.assertEqual(state, [0, 0, 0, 17, 1, 165, fd_calls, 0, 0, 0])
+                if not TLS_BEHAVIOR_ONLY:
+                    expected = [] if event == 9 else [
+                        "TLS hook event=ERROR fd=-1 fd_state=NO_TLS" if not tls else
+                        "TLS hook event=CREATE fd=-1 fd_result=-1"]
+                    self.assertEqual(logs, expected)
 
 
 if __name__ == "__main__":
