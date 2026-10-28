@@ -56,7 +56,7 @@ vm.runInNewContext(script.replace("const state = {", "const state = window.__tes
       try {
         await new Promise(resolve => setImmediate(resolve));
         if (url === test.reject) throw new TypeError("synthetic network rejection");
-        assert.ok(Object.hasOwn(test.bodies, url), "unexpected initial loader " + url);
+        assert.ok(Object.hasOwn(test.bodies, url), `unexpected initial loader ${url}`);
         return {ok:true, status:200, headers:{get:()=>"application/json"},
           json:async()=>{
             await new Promise(resolve => setImmediate(resolve));

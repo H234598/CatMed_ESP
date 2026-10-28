@@ -338,7 +338,8 @@ int main(int argc,char **argv){
 def execute_tls_callback(argv):
     start = datetime.datetime.now(datetime.timezone.utc).isoformat()
     mono = time.monotonic_ns()
-    child = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    # Callers supply only the fixed compiler argv or this test's fresh synthetic binary.
+    child = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE)  # nosec B603 - no shell or external input.
     out, err = child.communicate()
     print(json.dumps({"PID": child.pid, "startUTC": start,
                       "endUTC": datetime.datetime.now(datetime.timezone.utc).isoformat(),
@@ -424,9 +425,12 @@ class TlsSessionDiagnostics(unittest.TestCase):
                 state, logs = self.case(event=event, fd_return=fd_return, tls=tls)
                 self.assertEqual(state, [0, 0, 0, 17, 1, 165, fd_calls, 0, 0, 0])
                 if not TLS_BEHAVIOR_ONLY:
-                    expected = [] if event == 9 else [
-                        "TLS hook event=ERROR fd=-1 fd_state=NO_TLS" if not tls else
-                        "TLS hook event=CREATE fd=-1 fd_result=-1"]
+                    if event == 9:
+                        expected = []
+                    elif not tls:
+                        expected = ["TLS hook event=ERROR fd=-1 fd_state=NO_TLS"]
+                    else:
+                        expected = ["TLS hook event=CREATE fd=-1 fd_result=-1"]
                     self.assertEqual(logs, expected)
 
 
