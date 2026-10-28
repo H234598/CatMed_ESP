@@ -12,7 +12,7 @@ for target in 3 6; do
         -I"${repo}/firmware/components/katmed_core/include" \
         -I"${repo}/firmware/managed_components/lvgl__lvgl" \
         -DLV_KCONFIG_IGNORE -DLV_LVGL_H_INCLUDE_SIMPLE \
-        -DLV_CONF_PATH=\"${repo}/firmware/components/katmed_images/host/lv_conf.h\" \
+        "-DLV_CONF_PATH=\"${repo}/firmware/components/katmed_images/host/lv_conf.h\"" \
         "${repo}/tests/host_c3_display_touch/color_profile.c" -Wl,--gc-sections \
         -o "${out}/color_profile_c${target}"
     "${out}/color_profile_c${target}"
