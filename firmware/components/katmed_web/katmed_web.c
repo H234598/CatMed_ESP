@@ -339,6 +339,86 @@ static void free_certificate_session(void *ctx)
 }
 #endif
 
+/* Private endpoint correlation: only qualified Main may retain raw serial tuples.
+ * Stack-only snapshots; no network API, persistent registry or socket policy change. */
+#if CONFIG_IDF_TARGET_ESP32C6
+typedef struct {
+    uint8_t family;
+    uint16_t port;
+    uint8_t address[16];
+} TlsEndpoint;
+
+static bool tls_endpoint_canonical(const struct sockaddr_storage *storage,
+                                   socklen_t length, TlsEndpoint *out)
+{
+    *out = (TlsEndpoint){0};
+    if (length < sizeof(storage->ss_family) || length > sizeof(*storage)) return false;
+    if (storage->ss_family == AF_INET && length >= sizeof(struct sockaddr_in)) {
+        struct sockaddr_in value;
+        memcpy(&value, storage, sizeof(value));
+        out->family = 4;
+        out->port = ntohs(value.sin_port);
+        memcpy(out->address, &value.sin_addr, 4);
+    } else if (storage->ss_family == AF_INET6 && length >= sizeof(struct sockaddr_in6)) {
+        struct sockaddr_in6 value;
+        memcpy(&value, storage, sizeof(value));
+        /* Scope IDs are interface-local and cannot safely be compared across hosts. */
+        if (value.sin6_scope_id != 0) return false;
+        out->port = ntohs(value.sin6_port);
+        bool mapped = IN6_IS_ADDR_V4MAPPED(&value.sin6_addr);
+        out->family = mapped ? 4 : 6;
+        memcpy(out->address, value.sin6_addr.s6_addr + (mapped ? 12 : 0), mapped ? 4 : 16);
+    } else {
+        return false;
+    }
+    uint8_t any = 0;
+    for (size_t i = 0; i < sizeof(out->address); ++i) any |= out->address[i];
+    return out->port != 0 && any != 0;
+}
+
+static bool tls_endpoint_pair(int fd, TlsEndpoint out[2])
+{
+    for (unsigned i = 0; i < 2; ++i) {
+        struct sockaddr_storage storage = {0};
+        socklen_t length = sizeof(storage);
+        int result = i ? getpeername(fd, (struct sockaddr *)&storage, &length) :
+                         getsockname(fd, (struct sockaddr *)&storage, &length);
+        if (result != 0 || !tls_endpoint_canonical(&storage, length, &out[i])) return false;
+    }
+    return true;
+}
+
+static void tls_endpoint_diagnostic(esp_tls_t *tls, int fd)
+{
+    TlsEndpoint first[2], second[2];
+    bool valid = fd >= 0 && tls_endpoint_pair(fd, first) && tls_endpoint_pair(fd, second);
+    int current_fd = -1;
+    valid = valid && esp_tls_get_conn_sockfd(tls, &current_fd) == ESP_OK && current_fd == fd;
+    for (unsigned i = 0; valid && i < 2; ++i) {
+        valid = first[i].family == second[i].family && first[i].port == second[i].port &&
+                memcmp(first[i].address, second[i].address, sizeof(first[i].address)) == 0;
+    }
+    if (!valid) {
+        ESP_LOGI(WEB_TAG, "TLS endpoint schema=1 valid=0 fd=%d boot_ms=%" PRIu64,
+                 fd, monotonic_ms());
+        return;
+    }
+    char address[2][33];
+    static const char hex[] = "0123456789abcdef";
+    for (unsigned i = 0; i < 2; ++i) {
+        for (unsigned j = 0; j < 16; ++j) {
+            address[i][2*j] = hex[first[i].address[j] >> 4];
+            address[i][2*j+1] = hex[first[i].address[j] & 15];
+        }
+        address[i][32] = 0;
+    }
+    ESP_LOGI(WEB_TAG, "TLS endpoint schema=1 valid=1 fd=%d boot_ms=%" PRIu64
+             " local_family=%u local_addr=%s local_port=%u peer_family=%u peer_addr=%s peer_port=%u",
+             fd, monotonic_ms(), (unsigned)first[0].family, address[0], (unsigned)first[0].port,
+             (unsigned)first[1].family, address[1], (unsigned)first[1].port);
+}
+#endif /* C6 endpoint correlation */
+
 static void tls_session_callback(esp_https_server_user_cb_arg_t *arg)
 {
     if (!arg) return;
@@ -354,6 +434,9 @@ static void tls_session_callback(esp_https_server_user_cb_arg_t *arg)
     if (fd_result != ESP_OK) fd = -1;
     ESP_LOGI(WEB_TAG, "TLS hook event=%s fd=%d fd_result=%d", event, fd, (int)fd_result);
     if (fd_result != ESP_OK) return;
+#if CONFIG_IDF_TARGET_ESP32C6
+    if (arg->user_cb_state == HTTPD_SSL_USER_CB_SESS_CREATE) tls_endpoint_diagnostic(arg->tls, fd);
+#endif
     if (arg->user_cb_state == HTTPD_SSL_USER_CB_SESS_CLOSE) {
         if (web.certificate_fd == fd) {
             web.certificate_fd = -1;

@@ -574,6 +574,7 @@ class C6CertificateSessionIsolation(unittest.TestCase):
             optional = text[start:end] + "\n" + function(text, "static void free_certificate_session(")
         floors = re.findall(r"^#define LIVE_FREE_(?:INTERNAL|DMA)\b.*$", text, re.M)
         source = before + fixture + "\n" + marker + after + "\n" + optional + "\n" + "\n".join(floors)
+        source += "\n#include <inttypes.h>\n" + ENDPOINT_SOCKET_HOST + endpoint_source(text)
         source += "\n" + function(text, "static void tls_session_callback(")
         source += "\n" + function(text, "static bool certificate_on_request(") + CERTIFICATE_SESSION_MAIN
         path = Path(cls.temp.name) / "certificate-session.c"
@@ -591,6 +592,115 @@ class C6CertificateSessionIsolation(unittest.TestCase):
 
     def test_allocation_failure_denies_certificate_login(self):
         execute_tls_callback([self.binary, "allocation_failure"])
+
+
+# Private endpoint diagnostics: actual production callback/helper with synthetic sockets.
+ENDPOINT_SOCKET_HOST = r"""
+#include <arpa/inet.h>
+#include <sys/socket.h>
+static int endpoint_mode,endpoint_queries;
+static uint64_t monotonic_ms(void){return 5000;}
+static int endpoint_query(int fd,struct sockaddr *out,socklen_t *length,bool peer){
+    ++endpoint_queries;
+    if(endpoint_mode==10 && endpoint_queries==4)fd_result=-1;
+    if(fd<0 || endpoint_mode==1)return -1;
+    struct sockaddr_storage storage;memset(&storage,0xa5,sizeof(storage));
+    if(endpoint_mode==2){storage.ss_family=AF_UNIX;memcpy(out,&storage,sizeof(storage));return 0;}
+    if(endpoint_mode==3){*length=1;return 0;}
+    if(endpoint_mode==11){*length=sizeof(storage)+1;return 0;}
+    if(endpoint_mode==5 || endpoint_mode==6){
+        struct sockaddr_in6 value={.sin6_family=AF_INET6,.sin6_port=htons(peer?45000:443)};
+        inet_pton(AF_INET6,endpoint_mode==5?(peer?"::ffff:192.0.2.8":"::ffff:192.0.2.9"):(peer?"2001:db8::8":"2001:db8::9"),&value.sin6_addr);
+        memcpy(&storage,&value,sizeof(value));*length=sizeof(value);
+    }else if(endpoint_mode==7){
+        struct sockaddr_in6 value={.sin6_family=AF_INET6,.sin6_scope_id=2,.sin6_port=htons(443)};
+        inet_pton(AF_INET6,"fe80::1",&value.sin6_addr);memcpy(&storage,&value,sizeof(value));*length=sizeof(value);
+    }else{
+        struct sockaddr_in value={.sin_family=AF_INET,.sin_port=htons(peer?45000:443)};
+        inet_pton(AF_INET,peer?"192.0.2.8":"192.0.2.9",&value.sin_addr);
+        if(endpoint_mode==4 && endpoint_queries>2)value.sin_port=htons(45001);
+        if(endpoint_mode==8)value.sin_port=0;
+        memcpy(&storage,&value,sizeof(value));*length=sizeof(value);
+    }
+    memcpy(out,&storage,sizeof(storage));return 0;
+}
+static int endpoint_peer(int fd,struct sockaddr *out,socklen_t *len){return endpoint_query(fd,out,len,true);}
+static int endpoint_local(int fd,struct sockaddr *out,socklen_t *len){return endpoint_query(fd,out,len,false);}
+#define getpeername endpoint_peer
+#define getsockname endpoint_local
+"""
+
+
+def endpoint_source(text):
+    marker = "/* Private endpoint correlation:"
+    if marker not in text:
+        return ""
+    start = text.index(marker)
+    end = text.index("#endif /* C6 endpoint correlation */", start)
+    return text[start:end] + "#endif\n"
+
+
+ENDPOINT_MAIN = r"""
+int main(int argc,char **argv){
+    if(argc!=2)return 2;
+    endpoint_mode=atoi(argv[1]);
+    internal_free=32768;dma_free=16384;dma_largest=8192;
+    web.auth.record.cert_len=0;fd_result=endpoint_mode==9?-1:0;
+    esp_tls_t tls={0};esp_https_server_user_cb_arg_t arg={HTTPD_SSL_USER_CB_SESS_CREATE,&tls};
+    tls_session_callback(&arg);
+    if(closes || cert_checks)return 3;
+    printf("QUERIES %d\n",endpoint_queries);return 0;
+}
+"""
+
+
+class TlsEndpointCorrelation(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.temp = tempfile.TemporaryDirectory()
+        cls.addClassCleanup(cls.temp.cleanup)
+        cls.binary = str(Path(cls.temp.name) / "endpoint")
+        text = SOURCE.read_text()
+        floors = re.findall(r"^#define LIVE_FREE_(?:INTERNAL|DMA)\b.*$", text, re.M)
+        # A no-certificate path exercises the real CREATE producer, not auth doubles.
+        host = TLS_DIAGNOSTIC_HOST + "\n#define CONFIG_IDF_TARGET_ESP32C6 1\n#include <inttypes.h>\n" + ENDPOINT_SOCKET_HOST
+        if "} CertificateSession;" in text:
+            start = text.index("typedef struct {\n    uint8_t fingerprint[32];")
+            end = text.index("} CertificateSession;", start) + len("} CertificateSession;")
+            host += text[start:end] + "\n" + function(text, "static void free_certificate_session(")
+            host += "\nstatic void httpd_sess_set_ctx(void *s,int fd,void *v,void (*f)(void *)){(void)s;(void)fd;(void)v;(void)f;}\n"
+        path = Path(cls.temp.name) / "endpoint.c"
+        path.write_text(host + "\n" + "\n".join(floors) + "\n" + endpoint_source(text) + "\n" +
+                        function(text, "static void tls_session_callback(") + ENDPOINT_MAIN)
+        execute_tls_callback(["cc", "-std=c11", "-Wall", "-Wextra", "-Werror", "-Wno-unused-function", str(path), "-o", cls.binary])
+
+    def case(self, mode):
+        return execute_tls_callback([self.binary, str(mode)])
+
+    def test_actual_create_emits_canonical_ipv4_without_padding(self):
+        out = self.case(0)
+        self.assertIn("TLS endpoint schema=1 valid=1 fd=17 boot_ms=5000 local_family=4 local_addr=c0000209000000000000000000000000 local_port=443 peer_family=4 peer_addr=c0000208000000000000000000000000 peer_port=45000", out)
+        self.assertIn("QUERIES 4", out)
+        self.assertNotIn("a5a5", out)
+
+    def test_mapped_ipv6_is_same_canonical_ipv4(self):
+        self.assertIn("local_family=4 local_addr=c0000209000000000000000000000000", self.case(5))
+
+    def test_native_ipv6_is_explicit_bytes_not_sockaddr_padding(self):
+        self.assertIn("local_family=6 local_addr=20010db8000000000000000000000009", self.case(6))
+
+    def test_query_family_partial_mutation_scope_zero_port_are_unknown(self):
+        for mode in [1,2,3,4,7,8,10,11]:
+            with self.subTest(mode=mode):
+                out=self.case(mode)
+                self.assertIn("TLS endpoint schema=1 valid=0",out)
+                self.assertNotIn("local_addr=",out)
+                self.assertNotIn("peer_addr=",out)
+
+    def test_failed_tls_fd_lookup_does_not_query_or_emit_endpoints(self):
+        out=self.case(9)
+        self.assertIn("QUERIES 0",out)
+        self.assertNotIn("TLS endpoint",out)
 
 if __name__ == "__main__":
     unittest.main()
