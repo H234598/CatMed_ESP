@@ -15,6 +15,8 @@
 #include "esp_app_desc.h"
 #include "esp_bridge.h"
 #include "esp_event.h"
+#include "esp_log.h"
+#include "esp_timer.h"
 #include "esp_mesh_lite.h"
 #include "esp_mesh_lite_espnow.h"
 #include "esp_netif.h"
@@ -139,11 +141,19 @@ bool reconnect_router_profile(uint32_t priority, bool disconnect_first) {
     /* Mesh-Lite's connect API owns STA reconnect and parent selection. */
     if (disconnect_first) {
         ctx.wifi_switch_disconnect.store(true,std::memory_order_release);
-        if (esp_mesh_lite_disconnect()!=ESP_OK)
+        const esp_err_t result=esp_mesh_lite_disconnect();
+        if (result!=ESP_OK)
             ctx.wifi_switch_disconnect.store(false,std::memory_order_release);
+        ESP_LOGI("katmed_net_event","schema=1 event=DISCONNECT_RESULT uptime_ms=%llu result=%d",
+                 static_cast<unsigned long long>(esp_timer_get_time()/1000),static_cast<int>(result));
     }
-    if (!set_router_profile(priority)) return false;
+    const bool setup=set_router_profile(priority);
+    ESP_LOGI("katmed_net_event","schema=1 event=PROFILE_SETUP uptime_ms=%llu ok=%d",
+             static_cast<unsigned long long>(esp_timer_get_time()/1000),setup);
+    if (!setup) return false;
     esp_mesh_lite_connect();
+    ESP_LOGI("katmed_net_event","schema=1 event=CONNECT_CALLED uptime_ms=%llu",
+             static_cast<unsigned long long>(esp_timer_get_time()/1000));
     return true;
 }
 void bind_interaction(uint64_t now){
@@ -860,17 +870,27 @@ void ip_event(void *,esp_event_base_t base,int32_t id,void *){
             if(!ctx.has_ip)
                 saturating_increment(ctx.diagnostics.ip_got_transitions);
             ctx.has_ip=true;
+            ESP_LOGI("katmed_net_event","schema=1 event=GOT_IP uptime_ms=%llu",
+                     static_cast<unsigned long long>(esp_timer_get_time()/1000));
         }
         if(id==IP_EVENT_STA_LOST_IP){
             if(ctx.has_ip)
                 saturating_increment(ctx.diagnostics.ip_lost_transitions);
             ctx.has_ip=false;
+            ESP_LOGI("katmed_net_event","schema=1 event=LOST_IP uptime_ms=%llu",
+                     static_cast<unsigned long long>(esp_timer_get_time()/1000));
         }
     }
 }
-void wifi_event(void *,esp_event_base_t,int32_t id,void *) {
+void wifi_event(void *,esp_event_base_t,int32_t id,void *data) {
     if (id==WIFI_EVENT_STA_DISCONNECTED && ctx.started) {
-        if (ctx.wifi_switch_disconnect.exchange(false,std::memory_order_acq_rel)) return;
+        const bool explicit_disconnect=ctx.wifi_switch_disconnect.exchange(false,std::memory_order_acq_rel);
+        const auto *event=static_cast<const wifi_event_sta_disconnected_t *>(data);
+        ESP_LOGI("katmed_net_event","schema=1 event=DISCONNECTED uptime_ms=%llu "
+                 "reason_valid=%d reason=%u explicit_disconnect=%d",
+                 static_cast<unsigned long long>(esp_timer_get_time()/1000),event!=nullptr,
+                 event?static_cast<unsigned>(event->reason):0u,explicit_disconnect);
+        if (explicit_disconnect) return;
         ctx.wifi_retry_pending.store(true,std::memory_order_release);
     }
 }
@@ -1112,6 +1132,11 @@ extern "C" void katmed_mesh_poll(const ClockSample *now){
     const uint8_t next_priority=katmed_wifi_profile_reselect(
         disconnected,explicit_reconnect,static_cast<uint8_t>(ctx.wifi_profile_index+1u),
         profile_count);
+    if (disconnected || explicit_reconnect)
+        ESP_LOGI("katmed_net_event","schema=1 event=RECONNECT_SELECT uptime_ms=%llu "
+                 "explicit_reconnect=%d disconnect_trigger=%d selected=%d",
+                 static_cast<unsigned long long>(esp_timer_get_time()/1000),
+                 explicit_reconnect,disconnected,next_priority!=0);
     if (ctx.provision.network_mode==STORE_NETWORK_ONLINE && next_priority)
         (void)reconnect_router_profile(next_priority,explicit_reconnect);
     if(!ctx.status.clock_valid){ctx.status.clock_valid=true;ctx.status.started_ms=now->monotonic_ms;}
