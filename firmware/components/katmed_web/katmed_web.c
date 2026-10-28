@@ -324,6 +324,21 @@ static bool certificate_time_valid(const mbedtls_x509_crt *cert)
     return value >= first && value <= last;
 }
 
+#if CONFIG_IDF_TARGET_ESP32C6
+/* HTTPD owns this optional verified identity for exactly one TLS session.
+ * A second connection must not replace the first client's certificate login. */
+typedef struct {
+    uint8_t fingerprint[32];
+} CertificateSession;
+
+static void free_certificate_session(void *ctx)
+{
+    if (!ctx) return;
+    wipe(ctx, sizeof(CertificateSession));
+    free(ctx);
+}
+#endif
+
 static void tls_session_callback(esp_https_server_user_cb_arg_t *arg)
 {
     if (!arg) return;
@@ -395,13 +410,30 @@ static void tls_session_callback(esp_https_server_user_cb_arg_t *arg)
                      web.certificate_fingerprint) != 0) return;
     web.certificate_verified = katmed_web_auth_equal(
         web.certificate_fingerprint, web.auth.record.client_fingerprint, 32);
+#if CONFIG_IDF_TARGET_ESP32C6
+    if (web.certificate_verified && web.https) {
+        CertificateSession *session = calloc(1, sizeof(*session));
+        if (!session) return; /* Missing session identity fails closed. */
+        memcpy(session->fingerprint, web.certificate_fingerprint, 32);
+        httpd_sess_set_ctx(web.https, fd, session, free_certificate_session);
+    }
+#endif
 }
 
 static bool certificate_on_request(httpd_req_t *req, uint8_t out[32])
 {
     int fd = httpd_req_to_sockfd(req);
+#if CONFIG_IDF_TARGET_ESP32C6
+    if (fd < 0 || !web.https) return false;
+    const CertificateSession *session = httpd_sess_get_ctx(web.https, fd);
+    if (!session || !web.auth.record.cert_len ||
+        !katmed_web_auth_equal(session->fingerprint,
+                              web.auth.record.client_fingerprint, 32)) return false;
+    memcpy(out, session->fingerprint, 32);
+#else
     if (!web.certificate_verified || fd < 0 || fd != web.certificate_fd) return false;
     memcpy(out, web.certificate_fingerprint, 32);
+#endif
     return true;
 }
 
@@ -620,7 +652,7 @@ static const char *json_string(const cJSON *obj, const char *key, size_t max_len
 #ifdef KATMED_WEB_SECURITY_JS_GZIP
 /* Only the two build-generated gzip members reach this path. Never allocate
  * their full decoded size: one ROM inflater and one 32 KiB history ring suffice.
- * The synchronous HTTPS server has one socket and runs handlers serially. */
+ * The synchronous HTTPS server still runs handlers serially across its sockets. */
 typedef struct {
     tinfl_decompressor inflater;
     unsigned char dictionary[TINFL_LZ_DICT_SIZE];
@@ -1604,7 +1636,13 @@ static bool start_listeners(void)
         return false;
     }
     httpd_ssl_config_t tls = HTTPD_SSL_CONFIG_DEFAULT();
+#if CONFIG_IDF_TARGET_ESP32C6
+    /* Keep a completed client connection while another browser connection
+     * arrives; a single LRU slot can discard the first request after TLS. */
+    tls.httpd.max_open_sockets = 2;
+#else
     tls.httpd.max_open_sockets = 1;
+#endif
     /* 21 local routes plus Wi-Fi(4), reset(3) and media(5). */
     tls.httpd.max_uri_handlers = 35;
     tls.httpd.backlog_conn = 1;

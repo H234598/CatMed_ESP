@@ -94,6 +94,7 @@ static struct {
  void *auth_mutex,*https,*redirect;
 } web;
 static bool tcpip_ready,init_fails,https_stop_fails;
+static bool https_start_fails,redirect_start_fails,route_fails,post_admission_fails;
 static int https_stops,storage_closes,mutex_deletes;
 static int listener_attempts,uninitialized_listener_attempts,nvs_opens;
 static httpd_config_t https_httpd_config, redirect_httpd_config;
@@ -103,7 +104,7 @@ static int esp_netif_init(void) {
  if(init_fails)return ESP_FAIL;
  tcpip_ready=true;return ESP_OK;
 }
-static bool resources_allow(bool post,const char *site){(void)post;(void)site;return true;}
+static bool resources_allow(bool post,const char *site){(void)site;return !post || !post_admission_fails;}
 static int nvs_open(const char *name,int mode,int *out){(void)name;(void)mode;*out=1;++nvs_opens;return ESP_OK;}
 static bool load_auth(void *state){(void)state;return true;}
 static bool load_identifier(void *state){(void)state;return true;}
@@ -112,14 +113,16 @@ static void *xSemaphoreCreateMutex(void){return (void*)1;}
 static int httpd_ssl_start(void **handle,const httpd_ssl_config_t *cfg){
  https_httpd_config=cfg->httpd;++listener_attempts;
  if(!tcpip_ready){++uninitialized_listener_attempts;return ESP_FAIL;}
+ if(https_start_fails)return ESP_FAIL;
  *handle=(void*)2;return ESP_OK;
 }
 static int httpd_start(void **handle,const httpd_config_t *cfg){
  redirect_httpd_config=*cfg;++listener_attempts;
  if(!tcpip_ready){++uninitialized_listener_attempts;return ESP_FAIL;}
+ if(redirect_start_fails)return ESP_FAIL;
  *handle=(void*)3;return ESP_OK;
 }
-static bool register_routes(void *server){return server!=NULL;}
+static bool register_routes(void *server){return server!=NULL && !route_fails;}
 static int httpd_register_uri_handler(void *server,const httpd_uri_t *uri){(void)uri;return server?ESP_OK:ESP_FAIL;}
 static int httpd_stop(void *server){(void)server;return ESP_OK;}
 static int httpd_ssl_stop(void *server){(void)server;++https_stops;return https_stop_fails?ESP_FAIL:ESP_OK;}
@@ -162,6 +165,22 @@ int main(int argc,char **argv){
   CHECK(!katmed_web_start(NULL));CHECK(listener_attempts==before);
   katmed_web_set_enabled(true);katmed_web_poll(UINT64_C(900001));
   CHECK(web.started && listener_attempts>before);
+ }else if(!strcmp(argv[1],"target_listener_capacity")){
+  CHECK(argc==3);CHECK(katmed_web_start(NULL));
+  printf("ACTUAL_POLICY https=%d http=%d\n",https_httpd_config.max_open_sockets,redirect_httpd_config.max_open_sockets);
+  CHECK(https_httpd_config.max_open_sockets==atoi(argv[2]));
+  CHECK(redirect_httpd_config.max_open_sockets==1);
+  CHECK(https_httpd_config.lru_purge_enable && https_httpd_config.backlog_conn==1);
+  CHECK(https_httpd_config.recv_wait_timeout==2 && https_httpd_config.send_wait_timeout==2);
+  CHECK(https_httpd_config.max_uri_handlers==35);
+  CHECK(redirect_httpd_config.server_port==80 && redirect_httpd_config.ctrl_port!=https_httpd_config.ctrl_port);
+ }else if(!strcmp(argv[1],"start_failure_cleanup")){
+  CHECK(argc==3);web.identity.key_len=32;
+  https_start_fails=!strcmp(argv[2],"https");redirect_start_fails=!strcmp(argv[2],"redirect");
+  route_fails=!strcmp(argv[2],"routes");post_admission_fails=!strcmp(argv[2],"admission");
+  CHECK(!katmed_web_start(NULL));
+  CHECK(!web.https && !web.redirect && web.tls_key_id==PSA_KEY_ID_NULL);
+  CHECK(key_destroys==1 && !web.nvs_open && !web.auth_mutex);
  }else if(!strcmp(argv[1],"fullstack_socket_capacity")){
   CHECK(argc==4);
   CHECK(katmed_web_start(NULL));
@@ -170,8 +189,8 @@ int main(int argc,char **argv){
   CHECK(redirect_httpd_config.max_open_sockets>=1);
   CHECK(redirect_httpd_config.server_port==80);
   CHECK(https_httpd_config.ctrl_port!=redirect_httpd_config.ctrl_port);
-  /* Four background slots were measured on normal C6. The ten-slot C3
-   * build also failed an accept with ENFILE in the full-stack runtime. */
+  /* Four background slots are a Host-supported allowance, not an owner census.
+   * Keep both complete SDK listener internals and the actual client policy. */
   int demand=4+2*atoi(argv[3])+https_httpd_config.max_open_sockets+
              redirect_httpd_config.max_open_sockets;
   CHECK(atoi(argv[2])>=demand);
@@ -216,17 +235,36 @@ class NetworkStartup(unittest.TestCase):
         c = Path(cls.directory.name) / "startup.c"
         c.write_text(PREFIX + "\nstatic bool management_enabled=true;\n" + function(text, "static bool stop_listeners(void)" if "static bool stop_listeners(void)" in text else "static void stop_listeners(void)") + "\n" + function(text, "static bool start_listeners(void)") +
                      "\n" + function(text, "void katmed_web_set_enabled(") + "\n" + function(text, "bool katmed_web_start(") + "\n" + function(text, "void katmed_web_poll(") + "\n" + function(text, "bool katmed_web_stop(void)") + SUFFIX)
-        cls.exe = Path(cls.directory.name) / "startup"
-        subprocess.run(["cc", "-std=c11", "-Wall", "-Wextra", "-Werror",
-                        "-Wno-unused-function", str(c), "-o", str(cls.exe)], check=True)
+        cls.executables = {}
+        for target in ("esp32c3", "esp32c6"):
+            binary = Path(cls.directory.name) / target
+            execute_tls_callback(["cc", "-std=c11", "-Wall", "-Wextra", "-Werror",
+                                  "-Wno-unused-function",
+                                  "-DCONFIG_IDF_TARGET_ESP32C6=" + str(int(target == "esp32c6")),
+                                  "-DCONFIG_IDF_TARGET_ESP32C3=" + str(int(target == "esp32c3")),
+                                  str(c), "-o", str(binary)])
+            cls.executables[target] = binary
 
     @classmethod
     def tearDownClass(cls):
         cls.directory.cleanup()
 
-    def run_case(self, name, *arguments):
-        result = subprocess.run([str(self.exe), name, *arguments], capture_output=True, text=True)
-        self.assertEqual(result.returncode, 0, result.stderr)
+    def run_case(self, name, *arguments, target="esp32c3"):
+        execute_tls_callback([str(self.executables[target]), name, *arguments])
+
+    def test_c6_preserves_first_connection_with_two_client_slots(self):
+        self.run_case("target_listener_capacity", "2", target="esp32c6")
+
+    def test_c3_listener_capacity_remains_one(self):
+        self.run_case("target_listener_capacity", "1", target="esp32c3")
+
+    def test_c6_thirteen_slot_fullstack_envelope(self):
+        self.run_case("fullstack_socket_capacity", "13", "3", target="esp32c6")
+
+    def test_c6_start_failures_release_key_and_both_listeners(self):
+        for failure in ("https", "redirect", "routes", "admission"):
+            with self.subTest(failure=failure):
+                self.run_case("start_failure_cleanup", failure, target="esp32c6")
 
     def test_fresh_unprovisioned_without_wifi_starts_both_listeners(self):
         self.run_case("fresh_without_wifi")
@@ -254,7 +292,7 @@ class NetworkStartup(unittest.TestCase):
         self.assertIsNotNone(internal)
         self.assertIn("cs_create_ctrl_sock", httpd_main)
         self.assertIn("msg_fd = socket", httpd_main)
-        self.run_case("fullstack_socket_capacity", capacity.group(1), internal.group(1))
+        self.run_case("fullstack_socket_capacity", capacity.group(1), internal.group(1), target=target)
 
     def test_resolved_c3_profile_can_accept_one_client_on_each_web_listener(self):
         self.check_resolved_fullstack_socket_capacity(
@@ -433,6 +471,126 @@ class TlsSessionDiagnostics(unittest.TestCase):
                         expected = ["TLS hook event=CREATE fd=-1 fd_result=-1"]
                     self.assertEqual(logs, expected)
 
+
+
+# Real callback/request authorization path under the newly concurrent C6 policy.
+# Only SDK transport, certificate primitives and session-context storage are doubles.
+CERTIFICATE_SESSION_HOST = r"""
+#define CONFIG_IDF_TARGET_ESP32C6 1
+#include <assert.h>
+typedef struct {int fd;} httpd_req_t;
+static void *session_contexts[2];
+static void (*context_free[2])(void *);
+static int synthetic_fd=17;
+static bool peer_present=true,allocation_fails;
+static mbedtls_ssl_context synthetic_ssl;
+static unsigned char synthetic_der=1;
+static mbedtls_x509_crt synthetic_peer={.raw={&synthetic_der,1}};
+static int allocations,releases;
+static void *certificate_alloc(size_t count,size_t size){
+    assert(count*size==32);++allocations;
+    return allocation_fails?NULL:calloc(count,size);
+}
+static void certificate_release(void *p){
+    const unsigned char *bytes=p;
+    for(size_t i=0;i<32;++i)assert(bytes[i]==0);
+    ++releases;free(p);
+}
+#define calloc certificate_alloc
+#define free certificate_release
+static int httpd_req_to_sockfd(httpd_req_t *req){return req->fd;}
+static void *httpd_sess_get_ctx(void *server,int fd){
+    assert(server==(void*)1 && fd>=17 && fd<=18);return session_contexts[fd-17];
+}
+static void httpd_sess_set_ctx(void *server,int fd,void *ctx,void (*release)(void *)){
+    assert(server==(void*)1 && fd>=17 && fd<=18);int i=fd-17;
+    if(session_contexts[i] && session_contexts[i]!=ctx)context_free[i](session_contexts[i]);
+    session_contexts[i]=ctx;context_free[i]=release;
+}
+static void end_session(int fd){
+    int i=fd-17;if(session_contexts[i])context_free[i](session_contexts[i]);
+    session_contexts[i]=NULL;context_free[i]=NULL;
+}
+"""
+CERTIFICATE_SESSION_MAIN = r"""
+static void create_session(int fd,bool certificate){
+    synthetic_fd=fd;peer_present=certificate;
+    esp_tls_t tls={0};esp_https_server_user_cb_arg_t arg={HTTPD_SSL_USER_CB_SESS_CREATE,&tls};
+    tls_session_callback(&arg);
+}
+int main(int argc,char **argv){
+    assert(argc==2);web.https=(void*)1;web.auth.record.cert_len=1;
+    memset(web.auth.record.client_fingerprint,0x2a,32);
+    internal_free=32768;dma_free=16384;dma_largest=8192;
+    httpd_req_t a={17},b={18};unsigned char out[32];
+    if(!strcmp(argv[1],"allocation_failure")){
+        allocation_fails=true;create_session(17,true);
+        assert(!certificate_on_request(&a,out));assert(allocations==1 && releases==0);
+    }else{
+        create_session(17,true);assert(certificate_on_request(&a,out));
+        create_session(18,false);
+        assert(certificate_on_request(&a,out));assert(!certificate_on_request(&b,out));
+        if(!strcmp(argv[1],"pin_replaced")){
+            web.auth.record.client_fingerprint[0]^=1;
+            assert(!certificate_on_request(&a,out));
+        }else if(!strcmp(argv[1],"other_close")){
+            end_session(18);synthetic_fd=18;esp_tls_t tls={0};
+            esp_https_server_user_cb_arg_t arg={HTTPD_SSL_USER_CB_SESS_CLOSE,&tls};
+            tls_session_callback(&arg);assert(certificate_on_request(&a,out));
+        }
+        end_session(17);assert(!certificate_on_request(&a,out));
+        assert(releases==1);
+    }
+    end_session(17);end_session(18);
+    printf("certificate session case=%s PASS\n",argv[1]);return 0;
+}
+"""
+
+
+class C6CertificateSessionIsolation(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.temp = tempfile.TemporaryDirectory()
+        cls.addClassCleanup(cls.temp.cleanup)
+        cls.binary = str(Path(cls.temp.name) / "certificate-session")
+        text = SOURCE.read_text()
+        host = TLS_DIAGNOSTIC_HOST.replace(
+            "*fd=17;", "*fd=synthetic_fd;")
+        # Declare before the reused SDK doubles, define storage in the suffix.
+        host = host.replace("static int fd_result,", "static int synthetic_fd;\nstatic int fd_result,")
+        host = host.replace("(void)tls;++cert_checks;return NULL;",
+                            "(void)tls;++cert_checks;return &synthetic_ssl;")
+        host = host.replace("(void)s;return NULL;", "(void)s;return peer_present?&synthetic_peer:NULL;")
+        host = host.replace("(void)p;(void)n;(void)o;return 0;",
+                            "(void)p;(void)n;memset(o,0x2a,32);return 0;")
+        # Fixture declarations must precede functions referencing them.
+        marker = "static int esp_tls_get_conn_sockfd("
+        before, after = host.split(marker, 1)
+        fixture = CERTIFICATE_SESSION_HOST.replace("static int synthetic_fd=17;", "")
+        optional = ""
+        if "static void free_certificate_session(" in text:
+            start = text.index("typedef struct {\n    uint8_t fingerprint[32];")
+            end = text.index("} CertificateSession;", start) + len("} CertificateSession;")
+            optional = text[start:end] + "\n" + function(text, "static void free_certificate_session(")
+        floors = re.findall(r"^#define LIVE_FREE_(?:INTERNAL|DMA)\b.*$", text, re.M)
+        source = before + fixture + "\n" + marker + after + "\n" + optional + "\n" + "\n".join(floors)
+        source += "\n" + function(text, "static void tls_session_callback(")
+        source += "\n" + function(text, "static bool certificate_on_request(") + CERTIFICATE_SESSION_MAIN
+        path = Path(cls.temp.name) / "certificate-session.c"
+        path.write_text(source)
+        execute_tls_callback(["cc", "-std=c11", "-Wall", "-Wextra", "-Werror", "-Wno-unused-function", str(path), "-o", cls.binary])
+
+    def test_verified_peer_survives_second_password_only_connection(self):
+        execute_tls_callback([self.binary, "isolation"])
+
+    def test_other_session_close_does_not_revoke_verified_peer(self):
+        execute_tls_callback([self.binary, "other_close"])
+
+    def test_replaced_pin_is_not_accepted_from_cached_session(self):
+        execute_tls_callback([self.binary, "pin_replaced"])
+
+    def test_allocation_failure_denies_certificate_login(self):
+        execute_tls_callback([self.binary, "allocation_failure"])
 
 if __name__ == "__main__":
     unittest.main()
