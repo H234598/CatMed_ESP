@@ -6,6 +6,12 @@ const vm = require("node:vm");
 
 const ui = path.resolve(__dirname, "../../firmware/components/katmed_web/ui");
 const html = fs.readFileSync(path.join(ui, "index.html"), "utf8");
+assert.match(html, /<h2 id="advanced-category-title">Erweitert<\/h2>/,
+  "German advanced category heading must be localized");
+assert.match(html, /<button id="open-advanced" type="button">Erweitert<\/button>/,
+  "German advanced navigation control must be localized");
+assert.match(html, /<h2 id="time-title">Erweitert<\/h2>/,
+  "German advanced page heading must be localized");
 for (const code of ["bar", "tlh-Latn"])
   assert.match(html, new RegExp(`<option value="${code}">`));
 const nodes = [{ nodeValue: " Einstellungen " }, { nodeValue: "My own alarm text" }];
