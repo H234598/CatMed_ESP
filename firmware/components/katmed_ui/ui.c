@@ -335,6 +335,7 @@ static const char *result_text(UiSubmitResult result)
     switch (result) {
     case UI_SUBMIT_COMMITTED: return T("Gespeichert");
     case UI_SUBMIT_QUEUED: return T("Änderung vorgemerkt");
+    case UI_SUBMIT_OBSERVED: return T("Signal erfasst");
     case UI_SUBMIT_DISMISSED: return T("Hinweis geschlossen");
     case UI_SUBMIT_PENDING: return T("Lokal gespeichert; Gruppe ausstehend");
     case UI_SUBMIT_PENDING_SHARED: return T("Koordinator prüft Änderung");
@@ -348,7 +349,13 @@ static const char *result_text(UiSubmitResult result)
 static UiSubmitResult submit(const UiRequest *request)
 {
     if (!ui.services.submit) return UI_SUBMIT_UNAVAILABLE;
-    return ui.services.submit(ui.services.context, request);
+    UiRequest intent=*request;
+    if(intent.kind==UI_REQUEST_CONFIRM || intent.kind==UI_REQUEST_DISMISS_BOOT ||
+       intent.kind==UI_REQUEST_SET_MEDICATION_SECONDS || intent.kind==UI_REQUEST_SET_IMAGE_SECONDS ||
+       intent.kind==UI_REQUEST_SET_NEXT_LOCAL_TIME || intent.kind==UI_REQUEST_SET_ROTATION_MODE){
+        intent.guard_model=true;intent.expected_round=ui.state.round;intent.expected_revision=ui.state.revision;
+    }
+    return ui.services.submit(ui.services.context, &intent);
 }
 
 static UiSubmitResult request_action(const UiRequest *request)
@@ -390,8 +397,18 @@ static UiSubmitResult request_action(const UiRequest *request)
 
 void ui_deferred_result(const UiRequest *request,UiSubmitResult result)
 {
-    /* Completion never closes a newly opened editor or resubmits an action. */
-    if(result==UI_SUBMIT_COMMITTED && ui.services.read_model)
+    /* Queued is not durable. Apply the original action's completion semantics
+     * only when the owner has actually executed that copied intent. */
+    if(request->kind==UI_REQUEST_CONFIRM && (result==UI_SUBMIT_COMMITTED || result==UI_SUBMIT_PENDING)){
+        ui.confirmed_round=true;ui.confirmed_id=request->guard_model ? request->expected_round : ui.state.round;
+        if(ui.morse_alarm_paused && same_round(ui.confirmed_id,ui.state.round))ui.morse_alarm_confirmed=true;
+    }
+    if(request->kind==UI_REQUEST_DISMISS_BOOT && result==UI_SUBMIT_DISMISSED){
+        ui.confirmed_round=true;ui.confirmed_id=request->guard_model ? request->expected_round : ui.state.round;
+    }
+    if(result==UI_SUBMIT_PENDING_SHARED){ui.shared_pending=true;ui.shared_result_status=0;}
+    if(result==UI_SUBMIT_STALE)ui.preview_valid=false;
+    if((result==UI_SUBMIT_COMMITTED || result==UI_SUBMIT_DISMISSED) && ui.services.read_model)
         ui.services.read_model(ui.services.context,&ui.state,&ui.local,&ui.clock);
     if(request->kind==UI_REQUEST_SET_BRIGHTNESS && ui.brightness_pending){
         ui.brightness_pending=false;
@@ -975,7 +992,7 @@ static void style_save(lv_event_t *event)
     UiRequest request = {.kind = UI_REQUEST_SET_CLOCK_STYLE};
     request.value.clock_style = ui.pending_style;
     UiSubmitResult result = request_action(&request);
-    if (result == UI_SUBMIT_COMMITTED) style_cancel(NULL);
+    if (result == UI_SUBMIT_COMMITTED || result == UI_SUBMIT_QUEUED) style_cancel(NULL);
     else if (ui.style_title) lv_label_set_text(ui.style_title, result_text(result));
 }
 

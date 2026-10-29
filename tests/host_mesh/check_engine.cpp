@@ -17,11 +17,27 @@
 #include <vector>
 #include <fstream>
 #include <cstdio>
+#include <cstdarg>
+#include <type_traits>
+#include <regex>
 #include <zlib.h>
 extern "C" unsigned char *SHA256(const unsigned char *,size_t,unsigned char *);
 
 namespace {
 uint8_t level=0;
+struct Registered {esp_event_base_t base;int32_t id;esp_event_handler_t callback;void *arg;};
+std::vector<Registered> registered;
+std::vector<std::string> network_calls,network_logs;
+bool router_setup_fail=false,disconnect_emit=false;
+esp_err_t disconnect_result=ESP_OK;
+int64_t host_clock_us=7000000;
+void emit_event(esp_event_base_t base,int32_t id,void *data=nullptr){
+    unsigned called=0;
+    for(const auto &e:registered)if(e.base==base&&e.id==id){e.callback(e.arg,base,id,data);++called;}
+    assert(called==1);
+}
+static_assert(std::is_same_v<decltype(esp_mesh_lite_connect()),void>,"Match actual SDK void connect");
+
 raw_msg_process_cb_t receiver=nullptr;
 unsigned dropped=0,boot_random=0,failed_sends=0;
 bool fail_send=false;
@@ -159,7 +175,7 @@ KatmedMeshFrame latest_kind(KatmedMeshKind kind){
 }
 
 esp_err_t esp_event_loop_create_default(){startup_platform_done=true;return ESP_OK;}
-esp_err_t esp_event_handler_register(esp_event_base_t,int32_t,esp_event_handler_t,void *){return ESP_OK;}
+esp_err_t esp_event_handler_register(esp_event_base_t base,int32_t id,esp_event_handler_t cb,void *arg){registered.push_back({base,id,cb,arg});return ESP_OK;}
 esp_err_t esp_netif_init(){return startup_netif_failure?ESP_FAIL:ESP_OK;}
 void esp_bridge_create_all_netif(){startup_bridge_done=true;}
 /* Standalone Mesh harness does not link the separate diagnostic component. */
@@ -168,12 +184,12 @@ void esp_fill_random(void *out,size_t n){auto *p=static_cast<uint8_t *>(out);for
 const esp_app_desc_t *esp_app_get_description(){static esp_app_desc_t app{{'d','9','4','1','f','a','e',0}};return &app;}
 void esp_mesh_lite_init(esp_mesh_lite_config_t *){startup_mesh_init_done=true;}
 void esp_mesh_lite_start(){++mesh_starts;}
-esp_err_t esp_mesh_lite_connect(){return ESP_OK;}
+void esp_mesh_lite_connect(){network_calls.emplace_back("CONNECT");}
 uint8_t esp_mesh_lite_get_level(){return level;}
-esp_err_t esp_mesh_lite_disconnect(){level=0;return ESP_OK;}
+esp_err_t esp_mesh_lite_disconnect(){network_calls.emplace_back("DISCONNECT");level=0;if(disconnect_emit)emit_event(WIFI_EVENT,WIFI_EVENT_STA_DISCONNECTED);return disconnect_result;}
 esp_err_t esp_mesh_lite_set_argot(uint32_t){return ESP_OK;}
 esp_err_t esp_mesh_lite_set_softap_info(const char *ssid,const char *){assert(std::strlen(ssid)==23 && !std::strcmp(ssid,"Katmed_ESP_optout_nomap"));return ESP_OK;}
-esp_err_t esp_mesh_lite_set_router_config(mesh_lite_sta_config_t *){++router_configs;return ESP_OK;}
+esp_err_t esp_mesh_lite_set_router_config(mesh_lite_sta_config_t *){++router_configs;network_calls.emplace_back("SETUP");return router_setup_fail?ESP_FAIL:ESP_OK;}
 esp_err_t esp_mesh_lite_raw_msg_action_list_register(const esp_mesh_lite_raw_msg_action_t *actions){receiver=actions[0].raw_process;return ESP_OK;}
 esp_err_t esp_mesh_lite_send_msg(int,esp_mesh_lite_msg_config_t *request){
     if(night_interleave_hook)night_interleave_hook();
@@ -198,6 +214,13 @@ int xQueueReceive(QueueHandle_t q,void *data,unsigned){
 }
 int xQueueReset(QueueHandle_t q){static_cast<HostQueue *>(q)->values.clear();return pdTRUE;}
 
+int64_t esp_timer_get_time(){host_clock_us+=1000;return host_clock_us;}
+void host_event_log(const char *tag,const char *format,...){
+    assert(!std::strcmp(tag,"katmed_net_event"));
+    char text[256];va_list args;va_start(args,format);
+    const int count=std::vsnprintf(text,sizeof(text),format,args);va_end(args);
+    assert(count>0&&static_cast<size_t>(count)<sizeof(text));network_logs.emplace_back(text);
+}
 int main(int argc,char **argv){
     uint8_t catalog[32]{};catalog[0]=43;
     if(argc==3&&std::strcmp(argv[1],"cold_consume")==0){
@@ -228,6 +251,8 @@ int main(int argc,char **argv){
         mesh_history_add(&seed,11);mesh_history_add(&seed,88);
         uint8_t bytes[MESH_HISTORY_BLOB];assert(mesh_history_encode(&seed,bytes));history_memory.blob.assign(bytes,bytes+sizeof(bytes));
     }
+    const bool network_case=argc==2&&(!std::strcmp(argv[1],"network_events")||!std::strcmp(argv[1],"network_events_behavior"));
+    if(network_case)assert(store_save_setup(&store,&provision)==STORE_OK&&store.record.wifi_profile_count==1);
     const bool mesh_only=argc==2 && !std::strcmp(argv[1],"mesh_only");
     const bool offline=argc==2 && !std::strcmp(argv[1],"offline");
     if(mesh_only || offline) {
@@ -259,6 +284,68 @@ int main(int argc,char **argv){
         assert(startup_samples.size()==3 && mesh_starts==1);return 0;
     }
     assert(startup_samples.empty()); /* Optional callback absent on existing paths. */
+    if(network_case){
+        assert(registered.size()==3);level=ROOT;network_calls.clear();network_logs.clear();
+        katmed_mesh_poll(&now);assert(network_calls.empty());
+        emit_event(IP_EVENT,IP_EVENT_STA_GOT_IP);emit_event(IP_EVENT,IP_EVENT_STA_GOT_IP);
+        emit_event(IP_EVENT,IP_EVENT_STA_LOST_IP);emit_event(IP_EVENT,IP_EVENT_STA_LOST_IP);
+        KatmedMeshDiagnostics diag{};assert(katmed_mesh_diagnostics(&diag));
+        assert(diag.ip_got_transitions==1&&diag.ip_lost_transitions==1);
+        wifi_event_sta_disconnected_t event{201};
+        emit_event(WIFI_EVENT,WIFI_EVENT_STA_DISCONNECTED,&event);katmed_mesh_poll(&now);
+        assert(network_calls==std::vector<std::string>({"SETUP","CONNECT"}));
+        network_calls.clear();katmed_mesh_poll(&now);assert(network_calls.empty());
+        emit_event(WIFI_EVENT,WIFI_EVENT_STA_DISCONNECTED);katmed_mesh_poll(&now);
+        assert(network_calls==std::vector<std::string>({"SETUP","CONNECT"}));
+        network_calls.clear();disconnect_emit=true;assert(katmed_mesh_schedule_reconnect());katmed_mesh_poll(&now);
+        assert(network_calls==std::vector<std::string>({"DISCONNECT","SETUP","CONNECT"}));
+        network_calls.clear();katmed_mesh_poll(&now);assert(network_calls.empty());
+        disconnect_emit=false;disconnect_result=ESP_FAIL;assert(katmed_mesh_schedule_reconnect());katmed_mesh_poll(&now);
+        assert(network_calls==std::vector<std::string>({"DISCONNECT","SETUP","CONNECT"}));
+        network_calls.clear();emit_event(WIFI_EVENT,WIFI_EVENT_STA_DISCONNECTED,&event);katmed_mesh_poll(&now);
+        assert(network_calls==std::vector<std::string>({"SETUP","CONNECT"}));
+        network_calls.clear();disconnect_emit=true;disconnect_result=ESP_OK;router_setup_fail=true;
+        assert(katmed_mesh_schedule_reconnect());katmed_mesh_poll(&now);
+        assert(network_calls==std::vector<std::string>({"DISCONNECT","SETUP"}));
+        network_calls.clear();katmed_mesh_poll(&now);assert(network_calls.empty());
+        store.record.wifi_profile_count=0;emit_event(WIFI_EVENT,WIFI_EVENT_STA_DISCONNECTED,&event);katmed_mesh_poll(&now);
+        assert(network_calls.empty());assert(!katmed_mesh_schedule_reconnect());
+        assert(katmed_mesh_diagnostics(&diag)&&diag.ip_got_transitions==1&&diag.ip_lost_transitions==1);
+        if(!std::strcmp(argv[1],"network_events")){
+            const std::vector<std::pair<std::string,std::string>> expected={
+                {"GOT_IP",""},{"GOT_IP",""},{"LOST_IP",""},{"LOST_IP",""},
+                {"DISCONNECTED"," reason_valid=1 reason=201 explicit_disconnect=0"},
+                {"RECONNECT_SELECT"," explicit_reconnect=0 disconnect_trigger=1 selected=1"},
+                {"PROFILE_SETUP"," ok=1"},{"CONNECT_CALLED",""},
+                {"DISCONNECTED"," reason_valid=0 reason=0 explicit_disconnect=0"},
+                {"RECONNECT_SELECT"," explicit_reconnect=0 disconnect_trigger=1 selected=1"},
+                {"PROFILE_SETUP"," ok=1"},{"CONNECT_CALLED",""},
+                {"RECONNECT_SELECT"," explicit_reconnect=1 disconnect_trigger=0 selected=1"},
+                {"DISCONNECTED"," reason_valid=0 reason=0 explicit_disconnect=1"},
+                {"DISCONNECT_RESULT"," result=0"},{"PROFILE_SETUP"," ok=1"},{"CONNECT_CALLED",""},
+                {"RECONNECT_SELECT"," explicit_reconnect=1 disconnect_trigger=0 selected=1"},
+                {"DISCONNECT_RESULT"," result=-1"},{"PROFILE_SETUP"," ok=1"},{"CONNECT_CALLED",""},
+                {"DISCONNECTED"," reason_valid=1 reason=201 explicit_disconnect=0"},
+                {"RECONNECT_SELECT"," explicit_reconnect=0 disconnect_trigger=1 selected=1"},
+                {"PROFILE_SETUP"," ok=1"},{"CONNECT_CALLED",""},
+                {"RECONNECT_SELECT"," explicit_reconnect=1 disconnect_trigger=0 selected=1"},
+                {"DISCONNECTED"," reason_valid=0 reason=0 explicit_disconnect=1"},
+                {"DISCONNECT_RESULT"," result=0"},{"PROFILE_SETUP"," ok=0"},
+                {"DISCONNECTED"," reason_valid=1 reason=201 explicit_disconnect=0"},
+                {"RECONNECT_SELECT"," explicit_reconnect=0 disconnect_trigger=1 selected=0"}};
+            assert(network_logs.size()==expected.size());
+            const std::regex format("^schema=1 event=([A-Z_]+) uptime_ms=([0-9]+)(.*)$");
+            uint64_t previous=0;
+            for(size_t i=0;i<expected.size();++i){
+                std::smatch match;assert(std::regex_match(network_logs[i],match,format));
+                assert(match[1]==expected[i].first&&match[3]==expected[i].second);
+                const auto timestamp=std::stoull(match[2]);assert(timestamp>previous);previous=timestamp;
+            }
+            std::puts("Real registered callbacks/poll: 31 bounded event records, clocks, null reasons and unchanged calls/flags OK");
+        }else std::puts("Legacy real callback/poll behavior control OK");
+        return 0;
+    }
+
     if(mesh_only) {assert(mesh_starts==1 && router_configs==0);return 0;}
     if(argc==2&&!std::strcmp(argv[1],"names_hostname_retry_netif")){
         NamesMemory bytes;

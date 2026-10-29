@@ -143,7 +143,19 @@
     return tr("Anfrage fehlgeschlagen. Bitte erneut versuchen.");
   }
 
-  async function api(path, method = "GET", body = null) {
+  // The HTTPS server admits one client session. Keep API bursts bounded through
+  // JSON consumption; rejection must not prevent independent callers running.
+  let apiTail = null;
+  function api(path, method = "GET", body = null) {
+    const request = apiTail ? apiTail.then(() => apiRequest(path, method, body)) :
+      apiRequest(path, method, body);
+    const finished = request.then(clear, clear);
+    apiTail = finished;
+    function clear() { if (apiTail === finished) apiTail = null; }
+    return request;
+  }
+
+  async function apiRequest(path, method = "GET", body = null) {
     const headers = { Accept: "application/json" };
     const rawBody = typeof Blob !== "undefined" && body instanceof Blob;
     if (body !== null) headers["Content-Type"] = rawBody ? body.type : "application/json";
@@ -650,6 +662,9 @@
       await api("/api/logout", "POST", {});
       state.bootstrap = null;
       state.config = null;
+      // The server has invalidated the session. Do not keep private data
+      // visible if the following bootstrap request cannot complete.
+      show("login-view");
       $("cert-form").reset();
       $("cert-remove-form").reset();
       await refreshBootstrap();
@@ -731,10 +746,11 @@
     }
     applyLocale(response.language);
     if (state.config) renderConfig(state.config);
-    try { await Promise.all([loadWifi(), loadImages(), loadCatalog()]); }
-    catch (error) { await handleFailure(error); }
-    notice(tr("Einstellung gespeichert."));
-    setBusy(form, false);
+    try {
+      await Promise.all([loadWifi(), loadImages(), loadCatalog()]);
+      notice(tr("Einstellung gespeichert."));
+    } catch (error) { await handleFailure(error); }
+    finally { setBusy(form, false); }
   });
   $("advanced-back").addEventListener("click", () => closeAdvanced());
   window.addEventListener("popstate", (event) => {

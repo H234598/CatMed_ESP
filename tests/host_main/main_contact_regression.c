@@ -117,9 +117,12 @@ int main(int argc, char **argv) {
         assert(transient_inputs[0].menu_entry==7);
         KatmedInteractionStatus status;
         runtime.state.alarm_active=true;
+        /* Host callbacks use the published Mesh/UI snapshot, not Runtime. */
+        interaction_snapshot.alarm_active=runtime.state.alarm_active;
         interaction_status(NULL, &status, 500);
         assert(status.overflow);
         runtime.state.alarm_active=false;
+        interaction_snapshot.alarm_active=runtime.state.alarm_active;
         interaction_status(NULL, &status, 500);
         assert(status.overflow); /* retained until a genuine non-alarm UI projection */
         interaction_status(NULL, &status, 500);

@@ -324,11 +324,119 @@ static bool certificate_time_valid(const mbedtls_x509_crt *cert)
     return value >= first && value <= last;
 }
 
+#if CONFIG_IDF_TARGET_ESP32C6
+/* HTTPD owns this optional verified identity for exactly one TLS session.
+ * A second connection must not replace the first client's certificate login. */
+typedef struct {
+    uint8_t fingerprint[32];
+} CertificateSession;
+
+static void free_certificate_session(void *ctx)
+{
+    if (!ctx) return;
+    wipe(ctx, sizeof(CertificateSession));
+    free(ctx);
+}
+#endif
+
+/* Private endpoint correlation: only qualified Main may retain raw serial tuples.
+ * Stack-only snapshots; no network API, persistent registry or socket policy change. */
+#if CONFIG_IDF_TARGET_ESP32C6
+typedef struct {
+    uint8_t family;
+    uint16_t port;
+    uint8_t address[16];
+} TlsEndpoint;
+
+static bool tls_endpoint_canonical(const struct sockaddr_storage *storage,
+                                   socklen_t length, TlsEndpoint *out)
+{
+    *out = (TlsEndpoint){0};
+    if (length < sizeof(storage->ss_family) || length > sizeof(*storage)) return false;
+    if (storage->ss_family == AF_INET && length >= sizeof(struct sockaddr_in)) {
+        struct sockaddr_in value;
+        memcpy(&value, storage, sizeof(value));
+        out->family = 4;
+        out->port = ntohs(value.sin_port);
+        memcpy(out->address, &value.sin_addr, 4);
+    } else if (storage->ss_family == AF_INET6 && length >= sizeof(struct sockaddr_in6)) {
+        struct sockaddr_in6 value;
+        memcpy(&value, storage, sizeof(value));
+        /* Scope IDs are interface-local and cannot safely be compared across hosts. */
+        if (value.sin6_scope_id != 0) return false;
+        out->port = ntohs(value.sin6_port);
+        bool mapped = IN6_IS_ADDR_V4MAPPED(&value.sin6_addr);
+        out->family = mapped ? 4 : 6;
+        memcpy(out->address, value.sin6_addr.s6_addr + (mapped ? 12 : 0), mapped ? 4 : 16);
+    } else {
+        return false;
+    }
+    uint8_t any = 0;
+    for (size_t i = 0; i < sizeof(out->address); ++i) any |= out->address[i];
+    return out->port != 0 && any != 0;
+}
+
+static bool tls_endpoint_pair(int fd, TlsEndpoint out[2])
+{
+    for (unsigned i = 0; i < 2; ++i) {
+        struct sockaddr_storage storage = {0};
+        socklen_t length = sizeof(storage);
+        int result = i ? getpeername(fd, (struct sockaddr *)&storage, &length) :
+                         getsockname(fd, (struct sockaddr *)&storage, &length);
+        if (result != 0 || !tls_endpoint_canonical(&storage, length, &out[i])) return false;
+    }
+    return true;
+}
+
+static void tls_endpoint_diagnostic(esp_tls_t *tls, int fd)
+{
+    TlsEndpoint first[2], second[2];
+    bool valid = fd >= 0 && tls_endpoint_pair(fd, first) && tls_endpoint_pair(fd, second);
+    int current_fd = -1;
+    valid = valid && esp_tls_get_conn_sockfd(tls, &current_fd) == ESP_OK && current_fd == fd;
+    for (unsigned i = 0; valid && i < 2; ++i) {
+        valid = first[i].family == second[i].family && first[i].port == second[i].port &&
+                memcmp(first[i].address, second[i].address, sizeof(first[i].address)) == 0;
+    }
+    if (!valid) {
+        ESP_LOGI(WEB_TAG, "TLS endpoint schema=1 valid=0 fd=%d boot_ms=%" PRIu64,
+                 fd, monotonic_ms());
+        return;
+    }
+    char address[2][33];
+    static const char hex[] = "0123456789abcdef";
+    for (unsigned i = 0; i < 2; ++i) {
+        for (unsigned j = 0; j < 16; ++j) {
+            address[i][2*j] = hex[first[i].address[j] >> 4];
+            address[i][2*j+1] = hex[first[i].address[j] & 15];
+        }
+        address[i][32] = 0;
+    }
+    ESP_LOGI(WEB_TAG, "TLS endpoint schema=1 valid=1 fd=%d boot_ms=%" PRIu64
+             " local_family=%u local_addr=%s local_port=%u peer_family=%u peer_addr=%s peer_port=%u",
+             fd, monotonic_ms(), (unsigned)first[0].family, address[0], (unsigned)first[0].port,
+             (unsigned)first[1].family, address[1], (unsigned)first[1].port);
+}
+#endif /* C6 endpoint correlation */
+
 static void tls_session_callback(esp_https_server_user_cb_arg_t *arg)
 {
-    if (!arg || !arg->tls) return;
+    if (!arg) return;
+    const char *event = arg->user_cb_state == HTTPD_SSL_USER_CB_SESS_CREATE ? "CREATE" :
+                        arg->user_cb_state == HTTPD_SSL_USER_CB_SESS_CLOSE ? "CLOSE" :
+                        arg->user_cb_state == HTTPD_SSL_USER_CB_SESS_ERROR ? "ERROR" : "UNKNOWN";
+    if (!arg->tls) {
+        ESP_LOGI(WEB_TAG, "TLS hook event=%s fd=-1 fd_state=NO_TLS", event);
+        return;
+    }
     int fd = -1;
-    if (esp_tls_get_conn_sockfd(arg->tls, &fd) != ESP_OK) return;
+    esp_err_t fd_result = esp_tls_get_conn_sockfd(arg->tls, &fd);
+    if (fd_result != ESP_OK) fd = -1;
+    ESP_LOGI(WEB_TAG, "TLS hook event=%s fd=%d fd_result=%d", event, fd, (int)fd_result);
+    if (fd_result != ESP_OK) return;
+#if CONFIG_IDF_TARGET_ESP32C6
+    if (arg->user_cb_state == HTTPD_SSL_USER_CB_SESS_CREATE) tls_endpoint_diagnostic(arg->tls, fd);
+#endif
     if (arg->user_cb_state == HTTPD_SSL_USER_CB_SESS_CLOSE) {
         if (web.certificate_fd == fd) {
             web.certificate_fd = -1;
@@ -342,10 +450,38 @@ static void tls_session_callback(esp_https_server_user_cb_arg_t *arg)
     wipe(web.certificate_fingerprint, sizeof(web.certificate_fingerprint));
     const uint32_t internal = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
     const uint32_t dma = MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
-    if (heap_caps_get_free_size(internal) < LIVE_FREE_INTERNAL ||
-        heap_caps_get_free_size(dma) < LIVE_FREE_DMA ||
-        heap_caps_get_largest_free_block(dma) < 1024u) {
-        if (web.https) httpd_sess_trigger_close(web.https, fd);
+    const size_t internal_free = heap_caps_get_free_size(internal);
+    size_t dma_free = 0, dma_largest = 0;
+    bool decision_dma_free = false, decision_dma_largest = false;
+    bool reject = internal_free < LIVE_FREE_INTERNAL;
+    if (!reject) {
+        decision_dma_free = true;
+        dma_free = heap_caps_get_free_size(dma);
+        reject = dma_free < LIVE_FREE_DMA;
+    }
+    if (!reject) {
+        decision_dma_largest = true;
+        dma_largest = heap_caps_get_largest_free_block(dma);
+        reject = dma_largest < 1024u;
+    }
+    if (reject) {
+        const char *reason = !decision_dma_free ? "INTERNAL_FREE" :
+                             !decision_dma_largest ? "DMA_FREE" : "DMA_LARGEST";
+        /* Preserve the original short-circuit decision. Missing operands are
+         * later sequential diagnostics, never re-read to decide admission. */
+        if (!decision_dma_free) dma_free = heap_caps_get_free_size(dma);
+        if (!decision_dma_largest) dma_largest = heap_caps_get_largest_free_block(dma);
+        ESP_LOGW(WEB_TAG, "TLS resource reject fd=%d reason=%s internal_free=%zu/%u "
+                 "dma_free=%zu/%u dma_largest=%zu/1024 decision_dma_free=%d "
+                 "decision_dma_largest=%d samples_sequential=1",
+                 fd, reason, internal_free, LIVE_FREE_INTERNAL, dma_free,
+                 LIVE_FREE_DMA, dma_largest, decision_dma_free, decision_dma_largest);
+        if (web.https) {
+            esp_err_t result = httpd_sess_trigger_close(web.https, fd);
+            ESP_LOGW(WEB_TAG, "TLS close request fd=%d result=%d", fd, (int)result);
+        } else {
+            ESP_LOGW(WEB_TAG, "TLS close request fd=%d state=NO_SERVER", fd);
+        }
         return;
     }
     if (web.auth.record.cert_len == 0) return;
@@ -357,13 +493,30 @@ static void tls_session_callback(esp_https_server_user_cb_arg_t *arg)
                      web.certificate_fingerprint) != 0) return;
     web.certificate_verified = katmed_web_auth_equal(
         web.certificate_fingerprint, web.auth.record.client_fingerprint, 32);
+#if CONFIG_IDF_TARGET_ESP32C6
+    if (web.certificate_verified && web.https) {
+        CertificateSession *session = calloc(1, sizeof(*session));
+        if (!session) return; /* Missing session identity fails closed. */
+        memcpy(session->fingerprint, web.certificate_fingerprint, 32);
+        httpd_sess_set_ctx(web.https, fd, session, free_certificate_session);
+    }
+#endif
 }
 
 static bool certificate_on_request(httpd_req_t *req, uint8_t out[32])
 {
     int fd = httpd_req_to_sockfd(req);
+#if CONFIG_IDF_TARGET_ESP32C6
+    if (fd < 0 || !web.https) return false;
+    const CertificateSession *session = httpd_sess_get_ctx(web.https, fd);
+    if (!session || !web.auth.record.cert_len ||
+        !katmed_web_auth_equal(session->fingerprint,
+                              web.auth.record.client_fingerprint, 32)) return false;
+    memcpy(out, session->fingerprint, 32);
+#else
     if (!web.certificate_verified || fd < 0 || fd != web.certificate_fd) return false;
     memcpy(out, web.certificate_fingerprint, 32);
+#endif
     return true;
 }
 
@@ -582,7 +735,7 @@ static const char *json_string(const cJSON *obj, const char *key, size_t max_len
 #ifdef KATMED_WEB_SECURITY_JS_GZIP
 /* Only the two build-generated gzip members reach this path. Never allocate
  * their full decoded size: one ROM inflater and one 32 KiB history ring suffice.
- * The synchronous HTTPS server has one socket and runs handlers serially. */
+ * The synchronous HTTPS server still runs handlers serially across its sockets. */
 typedef struct {
     tinfl_decompressor inflater;
     unsigned char dictionary[TINFL_LZ_DICT_SIZE];
@@ -787,17 +940,25 @@ static const char *const language_codes[KATMED_LANGUAGE_COUNT] = {
     "en", "de", "fr", "nl", "uk", "ar", "zh-Hans", "es", "ja", "bar", "eo", "tlh-Latn"
 };
 
-static esp_err_t language_get(httpd_req_t *req)
+static esp_err_t bridge_error(httpd_req_t *req, KatmedConfigStatus status);
+
+static esp_err_t language_reply(httpd_req_t *req, uint8_t language)
 {
-    uint8_t language = KATMED_LANG_EN;
-    if (web.services.language_get &&
-        !web.services.language_get(web.services.context, &language))
-        return error_reply(req, "503 Service Unavailable", "unavailable");
     if (language >= KATMED_LANGUAGE_COUNT) language = KATMED_LANG_EN;
     cJSON *obj = cJSON_CreateObject();
     if (!obj) return error_reply(req, "503 Service Unavailable", "unavailable");
     cJSON_AddStringToObject(obj, "language", language_codes[language]);
     return json_reply(req, "200 OK", obj);
+}
+
+static esp_err_t language_get(httpd_req_t *req)
+{
+    uint8_t language = KATMED_LANG_EN;
+    if (web.services.language_get) {
+        const KatmedConfigStatus status=web.services.language_get(web.services.context,&language);
+        if (status!=KATMED_CONFIG_OK) return bridge_error(req,status);
+    }
+    return language_reply(req,language);
 }
 
 static esp_err_t language_put(httpd_req_t *req)
@@ -813,10 +974,13 @@ static esp_err_t language_put(httpd_req_t *req)
             if (strcmp(code, language_codes[i]) == 0) selected = (int)i;
     if (obj) { wipe_json(obj); cJSON_Delete(obj); }
     if (selected < 0) return error_reply(req, "422 Unprocessable Entity", "invalid");
-    if (!web.services.language_set ||
-        !web.services.language_set(web.services.context, (uint8_t)selected))
+    if (!web.services.language_set)
         return error_reply(req, "503 Service Unavailable", "unavailable");
-    return language_get(req);
+    uint8_t committed=KATMED_LANG_EN;
+    const KatmedConfigStatus status=web.services.language_set(web.services.context,
+                                                               (uint8_t)selected,&committed);
+    if (status!=KATMED_CONFIG_OK) return bridge_error(req,status);
+    return language_reply(req,committed);
 }
 
 static cJSON *bootstrap_object(httpd_req_t *req, KatmedWebSession *session)
@@ -1566,7 +1730,13 @@ static bool start_listeners(void)
         return false;
     }
     httpd_ssl_config_t tls = HTTPD_SSL_CONFIG_DEFAULT();
+#if CONFIG_IDF_TARGET_ESP32C6
+    /* Keep a completed client connection while another browser connection
+     * arrives; a single LRU slot can discard the first request after TLS. */
+    tls.httpd.max_open_sockets = 2;
+#else
     tls.httpd.max_open_sockets = 1;
+#endif
     /* 21 local routes plus Wi-Fi(4), reset(3) and media(5). */
     tls.httpd.max_uri_handlers = 35;
     tls.httpd.backlog_conn = 1;

@@ -243,7 +243,8 @@ class UsbSetupTests(unittest.TestCase):
                 port = setup._open_serial(port_name, timeout=timeout)
             self.assertIsInstance(port, Spy)
             self.assertEqual([
-                ("construct", dict(port=None, baudrate=115200, timeout=timeout, write_timeout=3)),
+                ("construct", dict(port=None, baudrate=115200, timeout=timeout,
+                                    write_timeout=3, exclusive=True)),
                 ("dtr", False), ("rts", False), ("port", port_name),
                 ("open", port_name, False, False),
             ], events)
@@ -309,6 +310,30 @@ class UsbSetupTests(unittest.TestCase):
                 data.write_bytes(b"x" * (setup.MAX_CONFIG_BYTES + 1))
                 with self.assertRaises(setup.SetupError):
                     setup._private_config_bytes(data)
+
+    def test_exact_explicit_external_config_authorization_is_required(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            base = Path(d)
+            private = base / "synthetic-external"
+            private.mkdir(mode=0o700)
+            private.chmod(0o700)
+            data = private / "config.json"
+            data.write_bytes(cfg())
+            data.chmod(0o600)
+            other = private / "other.json"
+            other.write_bytes(cfg())
+            other.chmod(0o600)
+            self.assertEqual(
+                cfg(), setup._private_config_bytes(data, authorized_external_path=data)
+            )
+            with self.assertRaises(setup.SetupError):
+                setup._private_config_bytes(data)
+            with self.assertRaises(setup.SetupError):
+                setup._private_config_bytes(other, authorized_external_path=data)
+            data.unlink()
+            data.symlink_to(other)
+            with self.assertRaises(setup.SetupError):
+                setup._private_config_bytes(data, authorized_external_path=data)
 
     def test_status_parses_and_rejects_corruption(self) -> None:
         fake = FakeSerial([b"boot output\n", STATUS])

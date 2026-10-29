@@ -154,7 +154,8 @@
     "WARNUNG: Nach Ihrer Bestätigung werden ausschließlich App-Testdaten gelöscht: katmed/state, mesh_history, names_ctl, names_view und zwei Mesh-Namensdateien. Bilder, Webzugang, Zertifikate und Gerätesicherheit bleiben erhalten. Ohne Bestätigung wird nichts gelöscht.": "GHUP: bIghobchu'DI' app wa'leS De' neH polHa'lu': katmed/state, mesh_history, names_ctl, names_view, mesh pong De' tetlhmey cha' je. mIllogh, web naw', chaw' 'angwI'mey, jan Hung je poltaHlu'. bIghobbe'chugh pagh polHa'lu'.",
     "Wartung abgeschlossen. Gerät angehalten; kein automatischer Neustart.": "Qapbe'Ha'moH rIn. jan mev; pang'eghbe'.",
     "Wartung angehalten. Keine weitere Löschung und kein normaler Start. Prüfbericht erforderlich.": "Qapbe'Ha'moH mev. latlh De' polHa'be'lu'; motlh taghbe'. wa'leS QonoS poQlu'.",
-    "Wartung vorbereiten": "Qapbe'Ha'moHrup"
+    "Wartung vorbereiten": "Qapbe'Ha'moHrup",
+    "Signal erfasst": "QIn qonlu'"
   },
   "web_dynamic": {
     "Gerät: {0}": "jan: {0}",

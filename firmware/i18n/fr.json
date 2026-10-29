@@ -154,7 +154,8 @@
     "WARNUNG: Nach Ihrer Bestätigung werden ausschließlich App-Testdaten gelöscht: katmed/state, mesh_history, names_ctl, names_view und zwei Mesh-Namensdateien. Bilder, Webzugang, Zertifikate und Gerätesicherheit bleiben erhalten. Ohne Bestätigung wird nichts gelöscht.": "AVERTISSEMENT : Après votre confirmation, seules les données de test de l’application sont supprimées : katmed/state, mesh_history, names_ctl, names_view et deux fichiers de noms du mesh. Images, accès Web, certificats et sécurité de l’appareil sont conservés. Rien n’est supprimé sans confirmation.",
     "Wartung abgeschlossen. Gerät angehalten; kein automatischer Neustart.": "Maintenance terminée. Appareil arrêté ; aucun redémarrage automatique.",
     "Wartung angehalten. Keine weitere Löschung und kein normaler Start. Prüfbericht erforderlich.": "Maintenance interrompue. Aucune autre suppression ni démarrage normal. Rapport de vérification requis.",
-    "Wartung vorbereiten": "Préparer la maintenance"
+    "Wartung vorbereiten": "Préparer la maintenance",
+    "Signal erfasst": "Signal enregistré"
   },
   "web_static": {
     "Eigener DNS-Name (FQDN, optional)": "Nom DNS propre (FQDN, facultatif)",

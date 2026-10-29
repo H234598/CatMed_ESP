@@ -116,13 +116,31 @@ class SerialPort(Protocol):
     def close(self) -> None: ...
 
 
-def _private_config_bytes(path: Path) -> bytes:
-    # A fixed ignored directory also keeps an accidentally supplied repository
-    # path from becoming the source of a secret-bearing provisioning request.
-    if path.parent.absolute() != PRIVATE_DIR or path.name in ("", ".", ".."):
-        raise SetupError("Konfigurationsdatei muss direkt unter .local/ liegen")
+def _private_config_directory(path: Path, authorized_external_path: Path | None) -> Path:
+    path = Path(path)
+    authorized = Path(authorized_external_path).absolute() if authorized_external_path else None
+    selected = path.absolute()
+    if path.parent.absolute() == PRIVATE_DIR and (authorized is None or authorized == selected):
+        return PRIVATE_DIR
+    if authorized is None or not authorized.is_absolute() or selected != authorized:
+        raise SetupError("Konfigurationsdatei muss explizit und exakt autorisiert sein")
     try:
-        dir_fd = os.open(PRIVATE_DIR, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW)
+        if path.resolve(strict=True) != authorized:
+            raise SetupError("Autorisierte Konfigurationsdatei ist nicht sicher")
+    except OSError:
+        raise SetupError("Private Konfigurationsdatei ist nicht lesbar") from None
+    return authorized.parent
+
+
+def _private_config_bytes(path: Path, *, authorized_external_path: Path | None = None) -> bytes:
+    # Normal config stays under the ignored .local directory. An external file
+    # must be explicitly authorized as the exact same path by the caller.
+    path = Path(path)
+    private_dir = _private_config_directory(path, authorized_external_path)
+    if path.name in ("", ".", ".."):
+        raise SetupError("Konfigurationsdatei muss eine Datei mit sicherem Namen sein")
+    try:
+        dir_fd = os.open(private_dir, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW)
         try:
             directory = os.fstat(dir_fd)
             if not stat.S_ISDIR(directory.st_mode) or directory.st_uid != os.getuid():
@@ -799,7 +817,8 @@ def _open_serial(port_name: str, *, timeout: float = 3.0) -> SerialPort:
 
         # Configure the desired idle lines while closed. Native USB Serial/JTAG
         # interprets DTR/RTS as boot controls; do not request their defaults.
-        port = serial.Serial(port=None, baudrate=115200, timeout=timeout, write_timeout=3)
+        port = serial.Serial(port=None, baudrate=115200, timeout=timeout,
+                             write_timeout=3, exclusive=True)
         port.dtr = False
         port.rts = False
         port.port = port_name
@@ -818,7 +837,11 @@ def run_command(args: argparse.Namespace, opener: Callable[[str], SerialPort] = 
             re.fullmatch(r"[0-9a-fA-F]{7,12}", expected_firmware) is None):
         raise SetupError("--expect-firmware erfordert 7 bis 12 Hexzeichen")
     if args.command == "provision":
-        request = build_provision_request(_private_config_bytes(Path(args.config)))
+        external = getattr(args, "authorize_external_config", None)
+        request = build_provision_request(_private_config_bytes(
+            Path(args.config),
+            authorized_external_path=Path(external) if external is not None else None,
+        ))
     if args.command == "reset-config" and args.confirm_reset != "RESET CONFIG":
         raise SetupError("Reset erfordert --confirm-reset 'RESET CONFIG'")
     if args.command in {"provision", "reset-config"}:
@@ -925,7 +948,11 @@ def run_bound_provision(args: argparse.Namespace,
                         startup: Callable[[SerialPort], None] = _drain_startup,
                         nonce_factory: Callable[[], str] = lambda: secrets.token_hex(16)) -> dict[str, int]:
     """Private, one-shot commit witness; the public provision command is unchanged."""
-    request = build_provision_request(_private_config_bytes(Path(args.config)))
+    external = getattr(args, "authorize_external_config", None)
+    request = build_provision_request(_private_config_bytes(
+        Path(args.config),
+        authorized_external_path=Path(external) if external is not None else None,
+    ))
     expected = (args.expect_device, args.expect_firmware, args.expect_build,
                 args.expect_catalog)
     if (not DEVICE_RE.fullmatch(expected[0] or "") or
@@ -1027,6 +1054,8 @@ def parser() -> argparse.ArgumentParser:
     sub.add_parser("status", help="Nicht geheimen Gerätestatus lesen")
     provision = sub.add_parser("provision", help="Private Konfiguration dauerhaft übernehmen")
     provision.add_argument("--config", default=str(DEFAULT_CONFIG), help="JSON-Datei direkt unter .local/")
+    provision.add_argument("--authorize-external-config", metavar="EXACT_PATH",
+                           help="Autorisiert genau die unter --config angegebene externe Datei")
     reset = sub.add_parser("reset-config", help="Nur Einrichtungsdaten löschen")
     reset.add_argument("--confirm-reset", help="Wörtlich RESET CONFIG")
     observe = sub.add_parser("observe", help="Eine begrenzte durchgehende Lese- und Messsitzung")

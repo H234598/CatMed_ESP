@@ -29,6 +29,9 @@ typedef enum {
 } UiRequestKind;
 typedef struct {
     UiRequestKind kind;
+    bool guard_model; /* Physical domain intent refers to the displayed model. */
+    AlarmRoundId expected_round;
+    StateRevision expected_revision;
     union {
         uint32_t seconds;
         uint16_t display_value;
@@ -52,7 +55,8 @@ typedef enum {
     UI_SUBMIT_UNAVAILABLE,
     UI_SUBMIT_STALE,
     UI_SUBMIT_DISMISSED, /* Transient boot notice closed; no durable mutation. */
-    UI_SUBMIT_QUEUED /* App-loop intent accepted, not a durable result. */
+    UI_SUBMIT_QUEUED, /* App-loop intent accepted, not a durable result. */
+    UI_SUBMIT_OBSERVED /* RAM-only emergency signal consumed; no Store/transport claim. */
 } UiSubmitResult;
 typedef struct {
     EventId id;

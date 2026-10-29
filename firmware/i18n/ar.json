@@ -154,7 +154,8 @@
     "WARNUNG: Nach Ihrer Bestätigung werden ausschließlich App-Testdaten gelöscht: katmed/state, mesh_history, names_ctl, names_view und zwei Mesh-Namensdateien. Bilder, Webzugang, Zertifikate und Gerätesicherheit bleiben erhalten. Ohne Bestätigung wird nichts gelöscht.": "تحذير: بعد تأكيدك، تُحذف بيانات اختبار التطبيق فقط: katmed/state وmesh_history وnames_ctl وnames_view وملفا أسماء للشبكة المتداخلة. تبقى الصور والوصول عبر الويب والشهادات وأمان الجهاز. لا يُحذف شيء دون تأكيد.",
     "Wartung abgeschlossen. Gerät angehalten; kein automatischer Neustart.": "اكتملت الصيانة. الجهاز متوقف؛ لا إعادة تشغيل تلقائية.",
     "Wartung angehalten. Keine weitere Löschung und kein normaler Start. Prüfbericht erforderlich.": "توقفت الصيانة. لا مزيد من الحذف ولا تشغيل عادي. يلزم تقرير مراجعة.",
-    "Wartung vorbereiten": "التحضير للصيانة"
+    "Wartung vorbereiten": "التحضير للصيانة",
+    "Signal erfasst": "تم تسجيل الإشارة"
   },
   "web_static": {
     "Eigener DNS-Name (FQDN, optional)": "اسم DNS خاص (FQDN، اختياري)",

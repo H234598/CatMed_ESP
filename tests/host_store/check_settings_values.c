@@ -81,6 +81,7 @@ static void keys(const char *text)
 
 static void render(void)
 {
+    publish_ui_owner(&runtime); /* Same publication boundary as the app loop. */
     ClockSample now = clock_sample(runtime.boot_domain);
     ui_render(&runtime.state, &runtime.local, SETTINGS, &now);
     lv_obj_update_layout(lv_screen_active());
