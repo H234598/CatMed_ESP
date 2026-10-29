@@ -40,6 +40,16 @@ typedef enum {
     KATMED_CONFIG_TIME_UNAVAILABLE
 } KatmedConfigStatus;
 
+/* Numeric, payload-free explanation for the exchange return path. These
+ * values are diagnostic only; they do not change KatmedConfigStatus. */
+typedef enum {
+    KATMED_CONFIG_BRIDGE_DIAG_RESPONSE = 0,
+    KATMED_CONFIG_BRIDGE_DIAG_PRECONDITION = 1,
+    KATMED_CONFIG_BRIDGE_DIAG_ADMISSION_TIMEOUT = 2,
+    KATMED_CONFIG_BRIDGE_DIAG_QUEUED_CANCELLED = 3,
+    KATMED_CONFIG_BRIDGE_DIAG_PROCESSING_TIMEOUT = 4
+} KatmedConfigBridgeDiagnostic;
+
 typedef enum {
     KATMED_DUE_NONE,
     KATMED_DUE_ACTIVE,
@@ -137,6 +147,9 @@ bool katmed_config_bridge_start(void);
 KatmedConfigStatus katmed_config_exchange(const KatmedConfigRequest *request,
                                           KatmedConfigResponse *response,
                                           uint32_t timeout_ms);
+KatmedConfigStatus katmed_config_exchange_diagnostic(
+    const KatmedConfigRequest *request, KatmedConfigResponse *response,
+    uint32_t timeout_ms, KatmedConfigBridgeDiagnostic *diagnostic);
 /* Call at most once per application-loop turn. */
 void katmed_config_poll(KatmedConfigExecute execute, void *context);
 

@@ -10,13 +10,14 @@ ROUTE_SOURCE = Path(os.environ.get("KATMED_WIFI_DIAG_ROUTE_SOURCE", ROOT / "firm
 MAIN_SOURCE = Path(os.environ.get("KATMED_WIFI_DIAG_MAIN_SOURCE", ROOT / "firmware/main/main.c"))
 LOG = r'''
 #include <stdarg.h>
-static unsigned records, logged_stage, logged_valid, logged_ready;
+static unsigned records, logged_stage, logged_reason, logged_valid, logged_ready;
 static int logged_bridge;
 void katmed_wifi_test_log(const char *tag,const char *format,...){
  assert(!strcmp(tag,"katmed_wifi"));va_list args;va_start(args,format);++records;
  if(!strcmp(format,"get_failed stage=%u"))logged_stage=va_arg(args,unsigned);
- else {assert(!strcmp(format,"status_stage=%u bridge=%d ready_valid=%u ready=%u"));
+ else {assert(!strcmp(format,"status_stage=%u bridge=%d bridge_diag=%u ready_valid=%u ready=%u"));
  logged_stage=va_arg(args,unsigned);logged_bridge=va_arg(args,int);
+ logged_reason=va_arg(args,unsigned);
  logged_valid=va_arg(args,unsigned);logged_ready=va_arg(args,unsigned);}
  va_end(args);
 }
@@ -32,19 +33,22 @@ MAIN_PREFIX = r'''
 #include "esp_log.h"
 static unsigned calls;
 static KatmedConfigStatus bridge_status;
+static KatmedConfigBridgeDiagnostic bridge_diagnostic;
 static bool actual_ready;
-KatmedConfigStatus katmed_config_exchange(const KatmedConfigRequest *request,
- KatmedConfigResponse *response,uint32_t wait){
+KatmedConfigStatus katmed_config_exchange_diagnostic(const KatmedConfigRequest *request,
+ KatmedConfigResponse *response,uint32_t wait,KatmedConfigBridgeDiagnostic *diagnostic){
  assert(request->operation==KATMED_CONFIG_WIFI_STATUS && wait==1500u);++calls;
  response->status=bridge_status;response->wifi.ready=actual_ready;
  response->wifi.configured=true;response->wifi.recovery=false;response->wifi.limit=4;
+ *diagnostic=bridge_diagnostic;
  return bridge_status;
 }
 '''
 MAIN_CASE = r'''
 int main(int argc,char **argv){
- assert(argc==5);unsigned stage=(unsigned)atoi(argv[1]);bridge_status=(KatmedConfigStatus)atoi(argv[2]);
- actual_ready=atoi(argv[3])!=0;bool diagnostics=atoi(argv[4])!=0;
+ assert(argc==6);unsigned stage=(unsigned)atoi(argv[1]);bridge_status=(KatmedConfigStatus)atoi(argv[2]);
+ bridge_diagnostic=(KatmedConfigBridgeDiagnostic)atoi(argv[3]);
+ actual_ready=atoi(argv[4])!=0;bool diagnostics=atoi(argv[5])!=0;
  bool value=false;size_t limit=0;bool ok;
  if(stage==1)ok=web_wifi_configured((void*)1,&value);
  else if(stage==2)ok=web_wifi_recovery_available((void*)1,&value);
@@ -54,7 +58,8 @@ int main(int argc,char **argv){
  if(ok){if(stage==1)assert(value);if(stage==2)assert(!value);if(stage==3)assert(limit==4);}
  if(diagnostics){
   assert(records==(expected?0u:1u));
-  if(!expected){assert(logged_stage==stage && logged_bridge==(int)bridge_status);
+  if(!expected){assert(logged_stage==stage && logged_bridge==(int)bridge_status &&
+                        logged_reason==(unsigned)bridge_diagnostic);
    assert(logged_valid==(bridge_status==KATMED_CONFIG_OK));
    assert(logged_ready==(bridge_status==KATMED_CONFIG_OK && actual_ready));}
  }
@@ -130,9 +135,12 @@ class WifiStatusDiagnostics(unittest.TestCase):
 
     def exercise(self, diagnostics):
         for stage in range(1, 4):
-            for status, ready in [(0, 1), (0, 0), (4, 0), (5, 0)]:
-                with self.subTest(callback=stage, status=status, ready=ready):
-                    execute_tls_callback([str(self.main_binary), str(stage), str(status), str(ready), str(diagnostics)])
+            for status, reason, ready in [(0, 0, 1), (0, 0, 0), (4, 0, 0),
+                                           (4, 1, 0), (4, 2, 0), (4, 3, 0),
+                                           (5, 4, 0)]:
+                with self.subTest(callback=stage, status=status, reason=reason, ready=ready):
+                    execute_tls_callback([str(self.main_binary), str(stage), str(status),
+                                          str(reason), str(ready), str(diagnostics)])
         for stage in range(5):
             with self.subTest(route_failure_stage=stage):
                 execute_tls_callback([str(self.route_binary), str(stage), str(diagnostics)])

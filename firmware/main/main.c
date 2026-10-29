@@ -1719,11 +1719,14 @@ static bool web_wifi_status(void *context,KatmedConfigResponse *response,unsigne
 {
     if(!context || !response)return false;
     const KatmedConfigRequest request={.operation=KATMED_CONFIG_WIFI_STATUS};
-    const KatmedConfigStatus status=katmed_config_exchange(&request,response,1500u);
+    KatmedConfigBridgeDiagnostic diagnostic=KATMED_CONFIG_BRIDGE_DIAG_RESPONSE;
+    const KatmedConfigStatus status=katmed_config_exchange_diagnostic(
+        &request,response,1500u,&diagnostic);
     const bool valid=status==KATMED_CONFIG_OK;
     if(!valid || (stage!=2u && !response->wifi.ready))
-        ESP_LOGW("katmed_wifi","status_stage=%u bridge=%d ready_valid=%u ready=%u",
-                 stage,(int)status,(unsigned)valid,(unsigned)(valid && response->wifi.ready));
+        ESP_LOGW("katmed_wifi","status_stage=%u bridge=%d bridge_diag=%u ready_valid=%u ready=%u",
+                 stage,(int)status,(unsigned)diagnostic,(unsigned)valid,
+                 (unsigned)(valid && response->wifi.ready));
     return valid;
 }
 static bool web_wifi_configured(void *context,bool *out)

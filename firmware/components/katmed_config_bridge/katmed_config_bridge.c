@@ -27,14 +27,18 @@ bool katmed_config_bridge_start(void)
     return true;
 }
 
-KatmedConfigStatus katmed_config_exchange(const KatmedConfigRequest *request,
-                                          KatmedConfigResponse *response,
-                                          uint32_t timeout_ms)
+KatmedConfigStatus katmed_config_exchange_diagnostic(
+    const KatmedConfigRequest *request, KatmedConfigResponse *response,
+    uint32_t timeout_ms, KatmedConfigBridgeDiagnostic *diagnostic)
 {
-    if (!gate || !done || !request || !response || timeout_ms == 0)
+    if (!gate || !done || !request || !response || timeout_ms == 0) {
+        if (diagnostic) *diagnostic=KATMED_CONFIG_BRIDGE_DIAG_PRECONDITION;
         return KATMED_CONFIG_UNAVAILABLE;
-    if (xSemaphoreTake(gate, pdMS_TO_TICKS(timeout_ms)) != pdTRUE)
+    }
+    if (xSemaphoreTake(gate, pdMS_TO_TICKS(timeout_ms)) != pdTRUE) {
+        if (diagnostic) *diagnostic=KATMED_CONFIG_BRIDGE_DIAG_ADMISSION_TIMEOUT;
         return KATMED_CONFIG_UNAVAILABLE;
+    }
     /* A previous abandoned request can never leave a stale completion token. */
     (void)xSemaphoreTake(done, 0);
     portENTER_CRITICAL(&slot_lock);
@@ -51,6 +55,7 @@ KatmedConfigStatus katmed_config_exchange(const KatmedConfigRequest *request,
         slot_state = SLOT_IDLE;
         portEXIT_CRITICAL(&slot_lock);
         xSemaphoreGive(gate);
+        if (diagnostic) *diagnostic=KATMED_CONFIG_BRIDGE_DIAG_RESPONSE;
         return response->status;
     }
     /* A queued request is cancelled without side effects. An executing
@@ -61,7 +66,17 @@ KatmedConfigStatus katmed_config_exchange(const KatmedConfigRequest *request,
     portEXIT_CRITICAL(&slot_lock);
     if (!processing) xSemaphoreGive(gate);
     (void)signalled;
+    if (diagnostic) *diagnostic=processing ?
+        KATMED_CONFIG_BRIDGE_DIAG_PROCESSING_TIMEOUT :
+        KATMED_CONFIG_BRIDGE_DIAG_QUEUED_CANCELLED;
     return processing ? KATMED_CONFIG_COMMIT_UNKNOWN : KATMED_CONFIG_UNAVAILABLE;
+}
+
+KatmedConfigStatus katmed_config_exchange(const KatmedConfigRequest *request,
+                                          KatmedConfigResponse *response,
+                                          uint32_t timeout_ms)
+{
+    return katmed_config_exchange_diagnostic(request,response,timeout_ms,NULL);
 }
 
 void katmed_config_poll(KatmedConfigExecute execute, void *context)
