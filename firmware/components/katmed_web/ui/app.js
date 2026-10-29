@@ -746,10 +746,11 @@
     }
     applyLocale(response.language);
     if (state.config) renderConfig(state.config);
-    try { await Promise.all([loadWifi(), loadImages(), loadCatalog()]); }
-    catch (error) { await handleFailure(error); }
-    notice(tr("Einstellung gespeichert."));
-    setBusy(form, false);
+    try {
+      await Promise.all([loadWifi(), loadImages(), loadCatalog()]);
+      notice(tr("Einstellung gespeichert."));
+    } catch (error) { await handleFailure(error); }
+    finally { setBusy(form, false); }
   });
   $("advanced-back").addEventListener("click", () => closeAdvanced());
   window.addEventListener("popstate", (event) => {
