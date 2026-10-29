@@ -1,6 +1,7 @@
 #include "katmed_web_wifi.h"
 
 #include "esp_err.h"
+#include "esp_log.h"
 #include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -111,15 +112,22 @@ static esp_err_t wifi_get(httpd_req_t *req)
     char *cursor;
     size_t body_capacity = 128;
     if (!authorize(req, false)) return ESP_OK;
-    if (!wifi_services.configured(wifi_services.context, &configured) ||
-        !wifi_services.recovery_available(wifi_services.context, &recovery) ||
-        !get_limit(&limit))
+    const unsigned failed_stage =
+        !wifi_services.configured(wifi_services.context, &configured) ? 1u :
+        !wifi_services.recovery_available(wifi_services.context, &recovery) ? 2u :
+        !get_limit(&limit) ? 3u : 0u;
+    if (failed_stage) {
+        ESP_LOGW("katmed_wifi", "get_failed stage=%u", failed_stage);
         return wifi_error(req, "503 Service Unavailable", "wifi_unavailable",
                           "Der WLAN-Status ist derzeit nicht verfügbar.");
+    }
     if (limit > 0) {
         profiles = calloc(limit, sizeof(*profiles));
-        if (!profiles) return wifi_error(req, "503 Service Unavailable", "wifi_unavailable",
-                                         "Der WLAN-Status ist derzeit nicht verfügbar.");
+        if (!profiles) {
+            ESP_LOGW("katmed_wifi", "get_failed stage=%u", 4u);
+            return wifi_error(req, "503 Service Unavailable", "wifi_unavailable",
+                              "Der WLAN-Status ist derzeit nicht verfügbar.");
+        }
     }
     capacity = limit;
     if (!wifi_services.list_profiles(wifi_services.context, profiles, capacity, &count) ||
