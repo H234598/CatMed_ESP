@@ -1034,9 +1034,9 @@ static void *wifi_client(void *context)
     case 0:c->ok=web_wifi_save_profiles(&runtime,&c->update,1);break;
     case 1:c->ok=web_wifi_list_profiles(&runtime,c->views,KATMED_CONFIG_WIFI_MAX,&c->count);break;
     case 2:c->ok=web_wifi_delete_profile(&runtime,c->update.id);break;
-    case 3:c->ok=web_wifi_configured(&runtime,&c->value);break;
-    case 5:c->ok=web_wifi_recovery_available(&runtime,&c->value);break;
-    case 6:c->ok=web_wifi_profile_limit(&runtime,&c->count);break;
+    case 3:c->ok=web_wifi_configured(&runtime,&c->value,NULL);break;
+    case 5:c->ok=web_wifi_recovery_available(&runtime,&c->value,NULL);break;
+    case 6:c->ok=web_wifi_profile_limit(&runtime,&c->count,NULL);break;
     case 4:c->ok=web_wifi_schedule_reconnect(&runtime);break;
     }
     atomic_store(&c->done,true);return NULL;
