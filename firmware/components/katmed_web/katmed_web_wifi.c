@@ -68,16 +68,161 @@ static esp_err_t wifi_error(httpd_req_t *req, const char *status,
     return wifi_reply(req, status, body);
 }
 
+static bool append_diagnostic_u32(char *body, size_t capacity, size_t *used,
+                                  const char *name, uint32_t value)
+{
+    const int length=snprintf(body+*used,capacity-*used,
+                              ",\"%s\":%" PRIu32,name,value);
+    if (length<0 || (size_t)length>=capacity-*used) return false;
+    *used+=(size_t)length;
+    return true;
+}
+
+/* Relative to this exchange's admission start; absolute uptime stays internal. */
+static uint32_t trace_offset_ms(const KatmedConfigBridgeTrace *trace, uint32_t tick)
+{
+    const uint64_t elapsed=(uint64_t)(uint32_t)(tick-trace->gate_start_tick)*
+                           trace->tick_period_ms;
+    return elapsed>UINT32_MAX ? UINT32_MAX : (uint32_t)elapsed;
+}
+
+static esp_err_t wifi_status_error(httpd_req_t *req, unsigned stage,
+                                   const KatmedWebWifiStatusDiagnostic *diagnostic)
+{
+    /* Fixed upper bound for the old fields and one bounded inner group. */
+    char body[1536];
+    int length;
+    if (stage <= 3u && diagnostic && diagnostic->available) {
+        length = snprintf(body, sizeof(body),
+            "{\"error\":\"wifi_unavailable\",\"message\":\"Der WLAN-Status ist derzeit nicht verfügbar.\","
+            "\"status_stage\":%u,\"bridge\":%d,\"bridge_diag\":%u,\"ready_valid\":%u,\"ready\":%u",
+            stage, diagnostic->bridge, diagnostic->bridge_diag,
+            (unsigned)diagnostic->ready_valid, (unsigned)diagnostic->ready);
+        if (length<0 || (size_t)length>=sizeof(body)) return ESP_ERR_NO_MEM;
+        size_t used=(size_t)length;
+        const KatmedConfigBridgeTrace *trace=&diagnostic->trace;
+        const struct { uint32_t valid; const char *name; uint32_t value; } fields[]={
+            {KATMED_CONFIG_TRACE_GATE_START,"trace_tick_ms",trace->tick_period_ms},
+            {KATMED_CONFIG_TRACE_GATE_START,"admission_start_ms",0u},
+            {KATMED_CONFIG_TRACE_GATE_START | KATMED_CONFIG_TRACE_GATE_RETURN,
+                "gate_return_elapsed_ms",trace_offset_ms(trace,trace->gate_return_tick)},
+            {KATMED_CONFIG_TRACE_GATE_RETURN,"gate_acquired",trace->gate_acquired},
+            {KATMED_CONFIG_TRACE_GATE_START | KATMED_CONFIG_TRACE_ENQUEUE,
+                "enqueue_elapsed_ms",trace_offset_ms(trace,trace->enqueue_tick)},
+            {KATMED_CONFIG_TRACE_GATE_START | KATMED_CONFIG_TRACE_POLL_ENTER,
+                "owner_poll_elapsed_ms",trace_offset_ms(trace,trace->poll_enter_tick)},
+            {KATMED_CONFIG_TRACE_GATE_START | KATMED_CONFIG_TRACE_POLL_COMPLETE,
+                "owner_complete_elapsed_ms",trace_offset_ms(trace,trace->poll_complete_tick)},
+            {KATMED_CONFIG_TRACE_GATE_START | KATMED_CONFIG_TRACE_WAIT_RETURN,
+                "wait_return_elapsed_ms",trace_offset_ms(trace,trace->wait_return_tick)},
+            {KATMED_CONFIG_TRACE_WAIT_RETURN,"wait_elapsed_ms",trace->wait_elapsed_ms},
+            {KATMED_CONFIG_TRACE_WAIT_RETURN,"wait_signalled",trace->wait_signalled},
+            {KATMED_CONFIG_TRACE_GATE_START | KATMED_CONFIG_TRACE_DECISION,
+                "decision_elapsed_ms",trace_offset_ms(trace,trace->decision_tick)},
+            {KATMED_CONFIG_TRACE_DECISION,"slot_at_decision",trace->slot_at_decision},
+            {KATMED_CONFIG_TRACE_PHASE_ENQUEUE,"owner_phase_enqueue",trace->owner_phase_at_enqueue},
+            {KATMED_CONFIG_TRACE_PHASE_DECISION,"owner_phase_decision",trace->owner_phase_at_decision},
+            {KATMED_CONFIG_TRACE_PHASE_SEEN,"owner_phase_seen",trace->owner_phase_seen_mask},
+            {KATMED_CONFIG_TRACE_PHASE_SEEN,"render_call_overlap_ms",trace->render_overlap_ms},
+        };
+        for (size_t i=0;i<sizeof(fields)/sizeof(fields[0]);++i) {
+            if ((trace->valid & fields[i].valid)==fields[i].valid &&
+                !append_diagnostic_u32(body,sizeof(body),&used,fields[i].name,fields[i].value))
+                return ESP_ERR_NO_MEM;
+        }
+        if (trace->valid & KATMED_CONFIG_TRACE_RENDER_INNER) {
+            const uint32_t known=(1u<<KATMED_RENDER_INNER_COUNT)-1u;
+            const uint32_t seen=trace->inner_seen_mask;
+            const uint32_t pre=trace->inner_pre_enqueue_mask;
+            const uint32_t opens=trace->inner_open_enqueue_mask |
+                                 trace->inner_open_freeze_mask;
+            const uint32_t valid_status=trace->inner_status_valid;
+            const bool multi=trace->inner_period_at_freeze==KATMED_CONFIG_RENDER_INNER_MULTI;
+            const bool proper_period=trace->inner_period_at_freeze==KATMED_CONFIG_RENDER_INNER_ACTIVE ||
+                                     trace->inner_period_at_freeze==KATMED_CONFIG_RENDER_INNER_ENDED || multi;
+            const bool proper_group=proper_period &&
+                (trace->valid & KATMED_CONFIG_TRACE_GATE_START) &&
+                trace->tick_period_ms>0 && !(seen & ~known) && !(pre & ~known) &&
+                !(opens & ~seen) && !(trace->inner_multi_mask & ~(seen|pre)) &&
+                !(valid_status & ~(KATMED_CONFIG_RENDER_STATUS_LOCK |
+                                   KATMED_CONFIG_RENDER_STATUS_SELECT |
+                                   KATMED_CONFIG_RENDER_STATUS_PRESENT)) &&
+                (!multi || (!seen && !pre && !opens &&
+                            !trace->inner_multi_mask && !valid_status)) &&
+                (trace->inner_period_at_freeze!=KATMED_CONFIG_RENDER_INNER_ENDED ||
+                 !trace->inner_open_freeze_mask) &&
+                (!(valid_status & KATMED_CONFIG_RENDER_STATUS_LOCK) ||
+                 (((seen|pre) & (1u<<KATMED_RENDER_INNER_LVGL_LOCK)) &&
+                  trace->inner_lock_success<=1u)) &&
+                (!(valid_status & KATMED_CONFIG_RENDER_STATUS_SELECT) ||
+                 (((seen|pre) & (1u<<KATMED_RENDER_INNER_IMAGE_SELECT)) &&
+                  trace->inner_select_status<=KATMED_RENDER_IMAGE_STATUS_MAX)) &&
+                (!(valid_status & KATMED_CONFIG_RENDER_STATUS_PRESENT) ||
+                 (((seen|pre) & (1u<<KATMED_RENDER_INNER_IMAGE_PRESENT)) &&
+                  trace->inner_present_status<=KATMED_RENDER_IMAGE_STATUS_MAX));
+            if (proper_group) {
+                if (!append_diagnostic_u32(body,sizeof(body),&used,
+                                           "render_inner_period_at_freeze",
+                                           trace->inner_period_at_freeze)) return ESP_ERR_NO_MEM;
+                if (!multi) {
+                    const struct { const char *name; uint32_t value; } group[]={
+                        {"render_inner_seen",seen},
+                        {"render_inner_pre_enqueue",pre},
+                        {"render_inner_open_enqueue",trace->inner_open_enqueue_mask},
+                        {"render_inner_open_freeze",trace->inner_open_freeze_mask},
+                        {"render_inner_multi",trace->inner_multi_mask},
+                    };
+                    for (size_t i=0;i<sizeof(group)/sizeof(group[0]);++i)
+                        if (!append_diagnostic_u32(body,sizeof(body),&used,
+                                                   group[i].name,group[i].value))
+                            return ESP_ERR_NO_MEM;
+                    static const char *const duration_names[KATMED_RENDER_INNER_COUNT]={
+                        "render_lock_wait_overlap_ms", "render_ui_overlap_ms",
+                        "render_rebuild_overlap_ms", "render_image_present_overlap_ms",
+                        "render_image_select_overlap_ms", "render_variant_hash_overlap_ms",
+                        "render_jpeg_decode_overlap_ms", "render_store_wait_overlap_ms",
+                        "render_validation_wait_overlap_ms"};
+                    for (unsigned i=0;i<KATMED_RENDER_INNER_COUNT;++i)
+                        if ((seen & (1u<<i)) &&
+                            !append_diagnostic_u32(body,sizeof(body),&used,
+                                                   duration_names[i],trace->inner_overlap_ms[i]))
+                            return ESP_ERR_NO_MEM;
+                    const struct { uint32_t valid; const char *name; uint32_t value; } statuses[]={
+                        {KATMED_CONFIG_RENDER_STATUS_LOCK,"render_lock_success",trace->inner_lock_success},
+                        {KATMED_CONFIG_RENDER_STATUS_SELECT,"render_image_select_status",trace->inner_select_status},
+                        {KATMED_CONFIG_RENDER_STATUS_PRESENT,"render_image_present_status",trace->inner_present_status},
+                    };
+                    for (size_t i=0;i<sizeof(statuses)/sizeof(statuses[0]);++i)
+                        if ((valid_status & statuses[i].valid) &&
+                            !append_diagnostic_u32(body,sizeof(body),&used,
+                                                   statuses[i].name,statuses[i].value))
+                            return ESP_ERR_NO_MEM;
+                }
+            }
+        }
+        if (used+2u>sizeof(body)) return ESP_ERR_NO_MEM;
+        body[used++]='}';
+        body[used]='\0';
+        return wifi_reply(req,"503 Service Unavailable",body);
+    } else {
+        length = snprintf(body, sizeof(body),
+            "{\"error\":\"wifi_unavailable\",\"message\":\"Der WLAN-Status ist derzeit nicht verfügbar.\","
+            "\"status_stage\":%u}", stage);
+    }
+    if (length < 0 || (size_t)length >= sizeof(body)) return ESP_ERR_NO_MEM;
+    return wifi_reply(req, "503 Service Unavailable", body);
+}
+
 static bool authorize(httpd_req_t *req, bool mutate)
 {
     return wifi_services.authorize &&
            wifi_services.authorize(req, mutate, wifi_services.context);
 }
 
-static bool get_limit(size_t *limit)
+static bool get_limit(size_t *limit, KatmedWebWifiStatusDiagnostic *diagnostic)
 {
     return wifi_services.profile_limit && limit &&
-           wifi_services.profile_limit(wifi_services.context, limit);
+           wifi_services.profile_limit(wifi_services.context, limit, diagnostic);
 }
 
 static size_t escaped_length(const char *value)
@@ -112,26 +257,51 @@ static esp_err_t wifi_get(httpd_req_t *req)
     char *cursor;
     size_t body_capacity = 128;
     if (!authorize(req, false)) return ESP_OK;
-    const unsigned failed_stage =
-        !wifi_services.configured(wifi_services.context, &configured) ? 1u :
-        !wifi_services.recovery_available(wifi_services.context, &recovery) ? 2u :
-        !get_limit(&limit) ? 3u : 0u;
+    KatmedWebWifiRenderSnapshot render={0};
+    const bool during_render=wifi_services.render_snapshot &&
+        wifi_services.render_snapshot(wifi_services.context,&render);
+    KatmedWebWifiStatusDiagnostic diagnostic = {0};
+    unsigned failed_stage = 0u;
+    if (during_render) {
+        configured=render.configured;
+        recovery=render.recovery;
+        limit=render.limit;
+    } else {
+        if (!wifi_services.configured(wifi_services.context, &configured, &diagnostic))
+            failed_stage = 1u;
+        if (!failed_stage) {
+            diagnostic = (KatmedWebWifiStatusDiagnostic){0};
+            if (!wifi_services.recovery_available(wifi_services.context, &recovery, &diagnostic))
+                failed_stage = 2u;
+        }
+        if (!failed_stage) {
+            diagnostic = (KatmedWebWifiStatusDiagnostic){0};
+            if (!get_limit(&limit, &diagnostic)) failed_stage = 3u;
+        }
+    }
     if (failed_stage) {
         ESP_LOGW("katmed_wifi", "get_failed stage=%u", failed_stage);
-        return wifi_error(req, "503 Service Unavailable", "wifi_unavailable",
-                          "Der WLAN-Status ist derzeit nicht verfügbar.");
+        return wifi_status_error(req, failed_stage, &diagnostic);
     }
+    if (during_render && (limit>KATMED_WEB_WIFI_SNAPSHOT_MAX_PROFILES ||
+                          render.count>limit))
+        return wifi_error(req,"503 Service Unavailable","wifi_unavailable",
+                          "Die gespeicherten WLAN-Profile sind derzeit nicht verfügbar.");
     if (limit > 0) {
         profiles = calloc(limit, sizeof(*profiles));
         if (!profiles) {
             ESP_LOGW("katmed_wifi", "get_failed stage=%u", 4u);
-            return wifi_error(req, "503 Service Unavailable", "wifi_unavailable",
-                              "Der WLAN-Status ist derzeit nicht verfügbar.");
+            return wifi_status_error(req, 4u, NULL);
         }
     }
     capacity = limit;
-    if (!wifi_services.list_profiles(wifi_services.context, profiles, capacity, &count) ||
-        count > limit) {
+    bool list_ok=true;
+    if (during_render) {
+        count=render.count;
+        if (count) memcpy(profiles,render.profiles,count*sizeof(*profiles));
+    } else list_ok=wifi_services.list_profiles(wifi_services.context, profiles,
+                                               capacity, &count);
+    if (!list_ok || count > limit) {
         free(profiles);
         return wifi_error(req, "503 Service Unavailable", "wifi_unavailable",
                           "Die gespeicherten WLAN-Profile sind derzeit nicht verfügbar.");
@@ -417,7 +587,7 @@ static esp_err_t wifi_profiles_save(httpd_req_t *req)
         return wifi_error(req, "415 Unsupported Media Type", "wifi_input_type",
                           "Die WLAN-Profile müssen als JSON übertragen werden.");
     }
-    if (!get_limit(&limit) || !read_body(req, &body, &body_length)) {
+    if (!get_limit(&limit, NULL) || !read_body(req, &body, &body_length)) {
         (void)httpd_resp_set_hdr(req, "Connection", "close");
         return wifi_error(req, "413 Content Too Large", "wifi_input_size",
                           "Die WLAN-Profileingabe ist zu groß oder unvollständig.");

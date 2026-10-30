@@ -33,7 +33,31 @@ static bool lock_fails;
 static unsigned commits;
 static AppState test_state;
 static LocalSettings test_local;
-bool lvgl_port_lock(uint32_t timeout) { (void)timeout; return !lock_fails; }
+static unsigned render_trace_begin[KATMED_RENDER_INNER_COUNT];
+static unsigned render_trace_end[KATMED_RENDER_INNER_COUNT];
+static bool render_trace_open[KATMED_RENDER_INNER_COUNT];
+static uint8_t render_trace_lock_success;
+void katmed_config_render_inner(KatmedRenderInnerPhase phase, bool begin,
+                                uint8_t outcome)
+{
+    assert(phase == KATMED_RENDER_INNER_LVGL_LOCK ||
+           phase == KATMED_RENDER_INNER_UI_RENDER);
+    if (begin) {
+        assert(outcome == 0 && !render_trace_open[phase]);
+        if (phase == KATMED_RENDER_INNER_UI_RENDER)
+            assert(render_trace_lock_success == 1);
+        render_trace_open[phase] = true;
+        ++render_trace_begin[phase];
+    } else {
+        assert(render_trace_open[phase]);
+        assert(outcome <= (phase == KATMED_RENDER_INNER_LVGL_LOCK ? 1 : 0));
+        render_trace_open[phase] = false;
+        ++render_trace_end[phase];
+        if (phase == KATMED_RENDER_INNER_LVGL_LOCK)
+            render_trace_lock_success = outcome;
+    }
+}
+bool lvgl_port_lock(uint32_t timeout) { assert(timeout == 100); return !lock_fails; }
 void lvgl_port_unlock(void) {}
 static UiSubmitResult submit(void *ctx, const UiRequest *req) {
     (void)ctx;
@@ -54,8 +78,20 @@ static void dispatch(bool down, int x, bool valid, uint64_t ms,
     BoardTouch touch = {.down = down, .x = (int16_t)x, .y = 100,
                         .monotonic_ms = ms};
     lock_fails = fail;
+    const unsigned lock_begin = render_trace_begin[KATMED_RENDER_INNER_LVGL_LOCK];
+    const unsigned lock_end = render_trace_end[KATMED_RENDER_INNER_LVGL_LOCK];
+    const unsigned ui_begin = render_trace_begin[KATMED_RENDER_INNER_UI_RENDER];
     assert(render_ui(&test_state, &test_local, &clock, &touch,
                      valid, render_due) == !fail);
+    assert(render_trace_begin[KATMED_RENDER_INNER_LVGL_LOCK] == lock_begin + 1);
+    assert(render_trace_end[KATMED_RENDER_INNER_LVGL_LOCK] == lock_end + 1);
+    assert(!render_trace_open[KATMED_RENDER_INNER_LVGL_LOCK] &&
+           !render_trace_open[KATMED_RENDER_INNER_UI_RENDER]);
+    assert(render_trace_lock_success == (uint8_t)!fail);
+    assert(render_trace_begin[KATMED_RENDER_INNER_UI_RENDER] ==
+           render_trace_end[KATMED_RENDER_INNER_UI_RENDER]);
+    if (fail)
+        assert(render_trace_begin[KATMED_RENDER_INNER_UI_RENDER] == ui_begin);
 }
 int main(int argc, char **argv) {
     assert(argc == 2);

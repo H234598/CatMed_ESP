@@ -4,6 +4,7 @@
 #include "katmed_display.h"
 #include "katmed_interaction.h"
 #include "katmed_language.h"
+#include "katmed_render_trace.h"
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -114,6 +115,8 @@ typedef struct {
     /* Coalesced local preview intent only; 0 cancels, 1..100 previews. No Store/PWM here. */
     bool (*brightness_preview)(void *context, uint8_t percent);
     void (*night_copy_status)(void *context, KatmedNightCopyStatus *out);
+    /* Optional fixed-number observer; never receives UI strings or IDs. */
+    KatmedRenderTraceObserver render_trace;
 } UiServices;
 
 /* A display render cycle caused by a change of the alarm bar's visibility.

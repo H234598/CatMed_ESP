@@ -113,6 +113,12 @@ typedef struct {
 } UiContext;
 
 static UiContext ui = {.view = BACKGROUND, .grid = {1, 1}, .shown_clock_tick = INT64_MIN};
+
+static void ui_trace(KatmedRenderInnerPhase phase, bool begin)
+{
+    if (ui.services.render_trace)
+        ui.services.render_trace(ui.services.context,phase,begin,0);
+}
 typedef struct {
     lv_display_t *display;
     UiBlinkRenderMetrics snapshot;
@@ -2556,11 +2562,14 @@ void ui_render(const AppState *state, const LocalSettings *local,
                    width != ui.width || height != ui.height ||
                    local->orientation != ui.screen_orientation ||
                    ui.applied_language != katmed_i18n_selected();
+    const bool language_rebuild=ui.applied_language != katmed_i18n_selected();
     bool editing_before_rebuild = rebuild && (ui.keypad || ui.style_dialog);
     if (rebuild) {
         interaction_cancel(clock->monotonic_ms);
         if (ui.touch_down) ui.reject_contact = true;
+        if (language_rebuild) ui_trace(KATMED_RENDER_INNER_LANGUAGE_REBUILD,true);
         build_screen(width, height);
+        if (language_rebuild) ui_trace(KATMED_RENDER_INNER_LANGUAGE_REBUILD,false);
         ui.applied_language=katmed_i18n_selected();
         if (editing_before_rebuild) show_feedback(T("Eingabe nach Drehung verworfen"));
     }

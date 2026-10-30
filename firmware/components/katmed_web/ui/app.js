@@ -49,6 +49,7 @@
 
   function applyLocale(language) {
     if (!translations[language]) language = "en";
+    const localeChanged = language !== state.language;
     state.language = language;
     document.documentElement.lang = language;
     document.documentElement.dir = language === "ar" ? "rtl" : "ltr";
@@ -62,6 +63,7 @@
       $("runtime-setup-state").textContent = setupConfigured ?
         tr("Eingerichtet; Änderungen erfordern ausdrückliches Speichern.") :
         tr("Ersteinrichtung; Gruppe wählen oder Einrichtung offline verlassen. Ohne sichere Gruppe bleibt Mesh aus.");
+    if (localeChanged) resetPreview();
     document.body?.classList?.remove("i18n-loading");
   }
 

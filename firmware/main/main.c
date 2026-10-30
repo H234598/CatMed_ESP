@@ -670,9 +670,14 @@ typedef struct {
     ClockSample clock, confirmation;
     UiConflict conflict[KATMED_STORE_CONFLICT_MAX];
     char setup_ssid[33], setup_password[17];
+    KatmedWebWifiRenderSnapshot wifi_render;
+    bool wifi_render_valid;
 } UiOwnerSnapshot;
 static UiOwnerSnapshot ui_owner_snapshot;
-static void publish_ui_owner(Runtime *rt)
+static bool wifi_render_active;
+_Static_assert(KATMED_WEB_WIFI_SNAPSHOT_MAX_PROFILES==KATMED_STORE_WIFI_PROFILE_MAX,
+               "render WiFi view must match Store profile capacity");
+static void publish_ui_owner_state(Runtime *rt, bool entering_render)
 {
     UiOwnerSnapshot next={0};
     next.valid=rt!=NULL;
@@ -696,6 +701,30 @@ static void publish_ui_owner(Runtime *rt)
                 if(store_conflict_at(&rt->store,i,&entry)!=STORE_OK)break;
                 next.conflict[next.conflicts++]=(UiConflict){entry.id,entry.round,entry.occurred_at};
             }
+            if (next.ready) {
+                KatmedWebWifiRenderSnapshot *wifi=&next.wifi_render;
+                wifi->configured=rt->store.record.provision.configured;
+                wifi->recovery=!rt->store.uncertain;
+                wifi->limit=store_wifi_profile_limit();
+                wifi->count=rt->store.record.wifi_profile_count;
+                next.wifi_render_valid=wifi->limit==KATMED_WEB_WIFI_SNAPSHOT_MAX_PROFILES &&
+                    wifi->count<=wifi->limit;
+                for (size_t i=0;next.wifi_render_valid && i<wifi->count;++i) {
+                    const StoreWifiProfile *source=&rt->store.record.wifi_profiles[i];
+                    KatmedWebWifiProfileView *view=&wifi->profiles[i];
+                    if (!source->id || !source->priority || source->ssid_length==0 ||
+                        source->ssid_length>sizeof(source->ssid)) {
+                        next.wifi_render_valid=false;
+                        break;
+                    }
+                    view->id=source->id;
+                    view->priority=source->priority;
+                    view->secured=source->secured;
+                    memcpy(view->ssid,source->ssid,source->ssid_length);
+                }
+                if (!next.wifi_render_valid)
+                    next.wifi_render=(KatmedWebWifiRenderSnapshot){0};
+            }
         }
         if(next.mesh_started){
             next.connected=katmed_mesh_connected();
@@ -703,7 +732,18 @@ static void publish_ui_owner(Runtime *rt)
         }
         if(next.setup_open){memcpy(next.setup_ssid,rt->setup_ssid,sizeof(next.setup_ssid));memcpy(next.setup_password,rt->setup_password,sizeof(next.setup_password));}
     }
-    DISPLAY_MB_LOCK(&display_mailbox);ui_owner_snapshot=next;DISPLAY_MB_UNLOCK(&display_mailbox);
+    DISPLAY_MB_LOCK(&display_mailbox);
+    ui_owner_snapshot=next;
+    if (entering_render) wifi_render_active=true;
+    DISPLAY_MB_UNLOCK(&display_mailbox);
+}
+static void publish_ui_owner(Runtime *rt) { publish_ui_owner_state(rt,false); }
+static void publish_render_owner(Runtime *rt) { publish_ui_owner_state(rt,true); }
+static void finish_render_owner(void)
+{
+    DISPLAY_MB_LOCK(&display_mailbox);
+    wifi_render_active=false;
+    DISPLAY_MB_UNLOCK(&display_mailbox);
 }
 static bool published_orientation_automatic;
 static bool orientation_automatic(void *context)
@@ -1557,6 +1597,17 @@ static bool web_wifi_ready(Runtime *rt)
         store_get_status(&rt->store, NULL, NULL, NULL) == STORE_OK;
 }
 
+static bool web_wifi_render_snapshot(void *context,
+                                     KatmedWebWifiRenderSnapshot *out)
+{
+    if (!context || !out) return false;
+    DISPLAY_MB_LOCK(&display_mailbox);
+    const bool valid=wifi_render_active && ui_owner_snapshot.wifi_render_valid;
+    if (valid) *out=ui_owner_snapshot.wifi_render;
+    DISPLAY_MB_UNLOCK(&display_mailbox);
+    return valid;
+}
+
 /* These language callbacks never dereference Runtime/Store on HTTPD.
  * Validation, transaction and snapshot execute on the app-loop owner. */
 static KatmedConfigStatus web_language_get(void *context, uint8_t *out)
@@ -1715,36 +1766,42 @@ static void wifi_execute(Runtime *rt,const KatmedConfigRequest *request,KatmedCo
 }
 
 /* HTTPD only copies POD through the existing single-owner bridge. */
-static bool web_wifi_status(void *context,KatmedConfigResponse *response,unsigned stage)
+static bool web_wifi_status(void *context,KatmedConfigResponse *response,unsigned stage,
+                            KatmedWebWifiStatusDiagnostic *out_diagnostic)
 {
     if(!context || !response)return false;
     const KatmedConfigRequest request={.operation=KATMED_CONFIG_WIFI_STATUS};
     KatmedConfigBridgeDiagnostic diagnostic=KATMED_CONFIG_BRIDGE_DIAG_RESPONSE;
+    KatmedConfigBridgeTrace trace={0};
     const KatmedConfigStatus status=katmed_config_exchange_diagnostic(
-        &request,response,1500u,&diagnostic);
+        &request,response,1500u,&diagnostic,&trace);
     const bool valid=status==KATMED_CONFIG_OK;
+    if(out_diagnostic)*out_diagnostic=(KatmedWebWifiStatusDiagnostic){
+        .bridge=(int)status,.bridge_diag=(unsigned)diagnostic,
+        .ready_valid=valid,.ready=valid && response->wifi.ready,.available=true,
+        .trace=trace};
     if(!valid || (stage!=2u && !response->wifi.ready))
         ESP_LOGW("katmed_wifi","status_stage=%u bridge=%d bridge_diag=%u ready_valid=%u ready=%u",
                  stage,(int)status,(unsigned)diagnostic,(unsigned)valid,
                  (unsigned)(valid && response->wifi.ready));
     return valid;
 }
-static bool web_wifi_configured(void *context,bool *out)
+static bool web_wifi_configured(void *context,bool *out,KatmedWebWifiStatusDiagnostic *diagnostic)
 {
     KatmedConfigResponse response={0};
-    if(!out || !web_wifi_status(context,&response,1u) || !response.wifi.ready)return false;
+    if(!out || !web_wifi_status(context,&response,1u,diagnostic) || !response.wifi.ready)return false;
     *out=response.wifi.configured;return true;
 }
-static bool web_wifi_recovery_available(void *context,bool *out)
+static bool web_wifi_recovery_available(void *context,bool *out,KatmedWebWifiStatusDiagnostic *diagnostic)
 {
     KatmedConfigResponse response={0};
-    if(!out || !web_wifi_status(context,&response,2u))return false;
+    if(!out || !web_wifi_status(context,&response,2u,diagnostic))return false;
     *out=response.wifi.recovery;return true;
 }
-static bool web_wifi_profile_limit(void *context,size_t *out)
+static bool web_wifi_profile_limit(void *context,size_t *out,KatmedWebWifiStatusDiagnostic *diagnostic)
 {
     KatmedConfigResponse response={0};
-    if(!out || !web_wifi_status(context,&response,3u) || !response.wifi.ready)return false;
+    if(!out || !web_wifi_status(context,&response,3u,diagnostic) || !response.wifi.ready)return false;
     *out=response.wifi.limit;return true;
 }
 static bool web_wifi_list_profiles(void *context,KatmedWebWifiProfileView *out,size_t capacity,size_t *count)
@@ -2156,6 +2213,13 @@ static void display_touch_sample(const AppState *state,const BoardTouch *touch,b
     else ui_touch_sample(false,0,0,false,touch->monotonic_ms);
 }
 
+static void render_trace_observer(void *context, KatmedRenderInnerPhase phase,
+                                  bool begin, uint8_t outcome)
+{
+    (void)context;
+    katmed_config_render_inner(phase,begin,outcome);
+}
+
 static bool render_ui(const AppState *state, const LocalSettings *local,
                       const ClockSample *clock, const BoardTouch *touch,
                       bool touch_valid, bool render_due)
@@ -2168,7 +2232,11 @@ static bool render_ui(const AppState *state, const LocalSettings *local,
     static bool projected_alarm_active;
     static Orientation projected_orientation;
     static AlarmRoundId projected_round;
-    if (!lvgl_port_lock(100)) {
+    katmed_config_render_inner(KATMED_RENDER_INNER_LVGL_LOCK,true,0);
+    const bool lvgl_locked=lvgl_port_lock(100);
+    katmed_config_render_inner(KATMED_RENDER_INNER_LVGL_LOCK,false,
+                               (uint8_t)lvgl_locked);
+    if (!lvgl_locked) {
 #if defined(ESP_PLATFORM) || defined(KATMED_HOST_TOUCH_SAMPLER)
         if (!board_touch_sampler_running()) contact_interrupted = true;
 #else
@@ -2209,7 +2277,9 @@ static bool render_ui(const AppState *state, const LocalSettings *local,
         projected_alarm_active != state->alarm_active ||
         (state->alarm_active && !same_alarm_round(projected_round, state->round)));
     if (alarm_changed) {
+        katmed_config_render_inner(KATMED_RENDER_INNER_UI_RENDER,true,0);
         ui_render(state, local, ui_current_view(), clock);
+        katmed_config_render_inner(KATMED_RENDER_INNER_UI_RENDER,false,0);
         projected_orientation=local->orientation;
         projected_alarm_active = state->alarm_active;
         projected_round = state->round;
@@ -2238,8 +2308,11 @@ static bool render_ui(const AppState *state, const LocalSettings *local,
         ui_set_display_awake(!runtime.display_policy.initialized || runtime.display_policy.awake);
     }
 #endif
-    if (render_due && state != NULL && local != NULL)
+    if (render_due && state != NULL && local != NULL) {
+        katmed_config_render_inner(KATMED_RENDER_INNER_UI_RENDER,true,0);
         ui_render(state, local, ui_current_view(), clock);
+        katmed_config_render_inner(KATMED_RENDER_INNER_UI_RENDER,false,0);
+    }
     lvgl_port_unlock();
     return true;
 }
@@ -2582,6 +2655,7 @@ void app_main(void)
         .display_settings=display_settings,
         .brightness_preview=brightness_preview,
         .night_copy_status=night_copy_status,
+        .render_trace=render_trace_observer,
         .orientation_auto_available = orientation_auto_supported(),
         .orientation_automatic = orientation_automatic,
         .submit = submit_ui_dispatch,
@@ -2633,6 +2707,7 @@ void app_main(void)
     if (!katmed_config_bridge_start())
         ESP_LOGE(tag,"web configuration bridge unavailable");
     else {
+        katmed_images_set_render_trace(render_trace_observer,NULL);
         startup_heap_sample("after_config_bridge");
         const KatmedWebServices web_services = {
             .context = &runtime,
@@ -2645,6 +2720,7 @@ void app_main(void)
                 .recovery_available = web_wifi_recovery_available,
                 .profile_limit = web_wifi_profile_limit,
                 .list_profiles = web_wifi_list_profiles,
+                .render_snapshot = web_wifi_render_snapshot,
                 .save_profiles_atomic = web_wifi_save_profiles,
                 .delete_profile_atomic = web_wifi_delete_profile,
                 .schedule_reconnect = web_wifi_schedule_reconnect,
@@ -2676,8 +2752,11 @@ void app_main(void)
         .restart = boot_restart_now,
     };
     for (;;) {
+        katmed_config_owner_phase(KATMED_CONFIG_OWNER_PHASE_SLEEP);
         vTaskDelay(pdMS_TO_TICKS(25));
+        katmed_config_owner_phase(KATMED_CONFIG_OWNER_PHASE_PRE_POLL);
         if (reset_runtime_step(&runtime,monotonic_ms())) {
+            katmed_config_owner_phase(KATMED_CONFIG_OWNER_PHASE_SLEEP);
             vTaskDelay(pdMS_TO_TICKS(100));
             continue;
         }
@@ -2722,8 +2801,11 @@ void app_main(void)
         process_usb(&runtime, &now);
         now = clock_sample(runtime.boot_domain);
         restore_manual_if_ready(&runtime,&now);
+        katmed_config_owner_phase(KATMED_CONFIG_OWNER_PHASE_POLL);
         katmed_config_poll(config_execute,&runtime);
+        katmed_config_owner_phase(KATMED_CONFIG_OWNER_PHASE_WEB);
         katmed_web_poll(now.monotonic_ms);
+        katmed_config_owner_phase(KATMED_CONFIG_OWNER_PHASE_OTHER);
         bool reset_offer=false, reset_close=false, reset_expired=false;
         uint64_t reset_close_generation=0, reset_expired_generation=0;
         uint64_t reset_offer_epoch=0;
@@ -2777,9 +2859,13 @@ void app_main(void)
         if (runtime.mesh_started && !runtime.reboot_required)
             interaction_drain(now.monotonic_ms);
         const bool render_due = now.monotonic_ms - last_render_ms >= 50;
-        publish_ui_owner(&runtime);
-        if (render_ui(&runtime.state, &runtime.local, &now, NULL,
-                      false, render_due) && render_due) {
+        publish_render_owner(&runtime);
+        katmed_config_owner_phase(KATMED_CONFIG_OWNER_PHASE_RENDER_CALL);
+        const bool rendered=render_ui(&runtime.state, &runtime.local, &now, NULL,
+                                      false, render_due);
+        katmed_config_owner_phase(KATMED_CONFIG_OWNER_PHASE_OTHER);
+        finish_render_owner();
+        if (rendered && render_due) {
             last_render_ms = now.monotonic_ms;
         }
         if (katmed_runtime_metrics_due(&metrics_gate, now.monotonic_ms)) {

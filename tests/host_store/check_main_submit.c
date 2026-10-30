@@ -1026,7 +1026,7 @@ static void test_all_physical_owners(void)
     puts("All physical owner categories: actual producer/backend interleave, copied intent, busy/stale/domain/PENDING_SHARED/result ownership PASS");
 }
 
-typedef struct {unsigned action;bool ok,value;atomic_bool done;size_t count;KatmedWebWifiProfileUpdate update;KatmedWebWifiProfileView views[KATMED_CONFIG_WIFI_MAX];} WifiClient;
+typedef struct {unsigned action;bool ok,value;atomic_bool done;size_t count;KatmedWebWifiStatusDiagnostic diagnostic;KatmedWebWifiProfileUpdate update;KatmedWebWifiProfileView views[KATMED_CONFIG_WIFI_MAX];} WifiClient;
 static void *wifi_client(void *context)
 {
     WifiClient *c=context;
@@ -1034,9 +1034,9 @@ static void *wifi_client(void *context)
     case 0:c->ok=web_wifi_save_profiles(&runtime,&c->update,1);break;
     case 1:c->ok=web_wifi_list_profiles(&runtime,c->views,KATMED_CONFIG_WIFI_MAX,&c->count);break;
     case 2:c->ok=web_wifi_delete_profile(&runtime,c->update.id);break;
-    case 3:c->ok=web_wifi_configured(&runtime,&c->value);break;
-    case 5:c->ok=web_wifi_recovery_available(&runtime,&c->value);break;
-    case 6:c->ok=web_wifi_profile_limit(&runtime,&c->count);break;
+    case 3:c->ok=web_wifi_configured(&runtime,&c->value,&c->diagnostic);break;
+    case 5:c->ok=web_wifi_recovery_available(&runtime,&c->value,&c->diagnostic);break;
+    case 6:c->ok=web_wifi_profile_limit(&runtime,&c->count,&c->diagnostic);break;
     case 4:c->ok=web_wifi_schedule_reconnect(&runtime);break;
     }
     atomic_store(&c->done,true);return NULL;
@@ -1051,6 +1051,16 @@ static void test_wifi_owner(void)
 {
     committed_length=0;initialize_runtime();display_ui_publish(&runtime);assert(katmed_config_bridge_start());language_owner_thread=pthread_self();
     WifiClient status={.action=3};wifi_owner_call(&status);assert(status.ok && !status.value);
+    assert(status.diagnostic.available && status.diagnostic.bridge==KATMED_CONFIG_OK &&
+           status.diagnostic.bridge_diag==KATMED_CONFIG_BRIDGE_DIAG_RESPONSE &&
+           (status.diagnostic.trace.valid & (KATMED_CONFIG_TRACE_POLL_ENTER |
+             KATMED_CONFIG_TRACE_POLL_COMPLETE | KATMED_CONFIG_TRACE_WAIT_RETURN |
+             KATMED_CONFIG_TRACE_DECISION)) == (KATMED_CONFIG_TRACE_POLL_ENTER |
+             KATMED_CONFIG_TRACE_POLL_COMPLETE | KATMED_CONFIG_TRACE_WAIT_RETURN |
+             KATMED_CONFIG_TRACE_DECISION) &&
+           status.diagnostic.trace.wait_signalled &&
+           status.diagnostic.trace.slot_at_decision==KATMED_CONFIG_TRACE_SLOT_DONE &&
+           !(status.diagnostic.trace.valid & KATMED_CONFIG_TRACE_PHASE_ENQUEUE));
     status=(WifiClient){.action=5};wifi_owner_call(&status);assert(status.ok && status.value);
     status=(WifiClient){.action=6};wifi_owner_call(&status);assert(status.ok && status.count==KATMED_STORE_WIFI_PROFILE_MAX);
     LanguageClient language={.wanted=1,.out=255};owner_call(&language);assert(language.status==KATMED_CONFIG_OK);

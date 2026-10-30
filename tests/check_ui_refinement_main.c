@@ -30,6 +30,106 @@ static UiSubmitResult refinement_submit(void *context,const UiRequest *request)
     return result;
 }
 UiServices refinement_services(void) { return (UiServices){.context=&runtime,.submit=refinement_submit,.read_model=read_ui_model}; }
+void refinement_wifi_prepare(void)
+{
+    StoreWifiProfileUpdate profile={.priority=1,.ssid_length=17,
+        .credential_action=STORE_WIFI_CREDENTIAL_OPEN};
+    memcpy(profile.ssid,"synthetic-network",profile.ssid_length);
+    assert(store_wifi_profiles_save_atomic(&runtime.store,&profile,1)==STORE_OK);
+    assert(katmed_config_bridge_start());
+}
+void refinement_language_commit(uint8_t language)
+{
+    const KatmedConfigRequest request={.operation=KATMED_CONFIG_LANGUAGE_SAVE,
+                                       .language=language};
+    KatmedConfigResponse response={0};
+    config_execute(&runtime,&request,&response);
+    assert(response.status==KATMED_CONFIG_OK && response.language==language);
+}
+KatmedWebWifiServices refinement_wifi_services(void)
+{
+    return (KatmedWebWifiServices){.context=&runtime,
+        .configured=web_wifi_configured,
+        .recovery_available=web_wifi_recovery_available,
+        .profile_limit=web_wifi_profile_limit,
+        .list_profiles=web_wifi_list_profiles,
+        .save_profiles_atomic=web_wifi_save_profiles,
+        .delete_profile_atomic=web_wifi_delete_profile,
+        .schedule_reconnect=web_wifi_schedule_reconnect,
+#ifdef KATMED_WEB_WIFI_RENDER_SNAPSHOT
+        .render_snapshot=web_wifi_render_snapshot,
+#endif
+    };
+}
+void refinement_render_owner(void)
+{
+    ClockSample now=refinement_clock();
+#ifdef KATMED_WEB_WIFI_RENDER_SNAPSHOT
+    publish_render_owner(&runtime);
+#else
+    publish_ui_owner(&runtime);
+#endif
+    katmed_config_owner_phase(KATMED_CONFIG_OWNER_PHASE_RENDER_CALL);
+    assert(render_ui(&runtime.state,&runtime.local,&now,NULL,false,true));
+    katmed_config_owner_phase(KATMED_CONFIG_OWNER_PHASE_OTHER);
+#ifdef KATMED_WEB_WIFI_RENDER_SNAPSHOT
+    finish_render_owner();
+#endif
+}
+void refinement_poll_owner(void) { katmed_config_poll(config_execute,&runtime); }
+void refinement_wifi_snapshot_contract(void)
+{
+#ifdef KATMED_WEB_WIFI_RENDER_SNAPSHOT
+    KatmedWebWifiRenderSnapshot view={0};
+    assert(!web_wifi_render_snapshot(&runtime,&view));
+    publish_render_owner(&runtime);
+    assert(web_wifi_render_snapshot(&runtime,&view) && view.count==1 &&
+           !strcmp(view.profiles[0].ssid,"synthetic-network"));
+    const uint32_t id=view.profiles[0].id;
+    finish_render_owner();
+    assert(!web_wifi_render_snapshot(&runtime,&view));
+
+    KatmedConfigRequest rename={.operation=KATMED_CONFIG_WIFI_SAVE};
+    rename.wifi.count=1;
+    rename.wifi.profiles[0].id=id;
+    rename.wifi.profiles[0].priority=1;
+    rename.wifi.profiles[0].credential_action=KATMED_WEB_WIFI_CREDENTIAL_KEEP;
+    strcpy(rename.wifi.profiles[0].ssid,"synthetic-renamed");
+    KatmedConfigResponse response={0};
+    config_execute(&runtime,&rename,&response);
+    assert(response.status==KATMED_CONFIG_OK);
+    publish_render_owner(&runtime);
+    assert(web_wifi_render_snapshot(&runtime,&view) && view.count==1 &&
+           !strcmp(view.profiles[0].ssid,"synthetic-renamed") &&
+           strcmp(view.profiles[0].ssid,"synthetic-network"));
+    finish_render_owner();
+
+    const KatmedConfigRequest remove={.operation=KATMED_CONFIG_WIFI_DELETE,.wifi.id=id};
+    response=(KatmedConfigResponse){0};
+    config_execute(&runtime,&remove,&response);
+    assert(response.status==KATMED_CONFIG_OK);
+    publish_render_owner(&runtime);
+    assert(web_wifi_render_snapshot(&runtime,&view) && view.count==0);
+    finish_render_owner();
+
+    runtime.store.record.wifi_profile_count=KATMED_STORE_WIFI_PROFILE_MAX+1;
+    publish_render_owner(&runtime);
+    assert(!web_wifi_render_snapshot(&runtime,&view));
+    finish_render_owner();
+    runtime.store.record.wifi_profile_count=0;
+
+    fail_commit=true;
+    rename.wifi.profiles[0].id=0;
+    rename.wifi.profiles[0].credential_action=KATMED_WEB_WIFI_CREDENTIAL_OPEN;
+    response=(KatmedConfigResponse){0};
+    config_execute(&runtime,&rename,&response);
+    fail_commit=false;
+    assert(response.status==KATMED_CONFIG_COMMIT_UNKNOWN && runtime.store.uncertain);
+    publish_render_owner(&runtime);
+    assert(!web_wifi_render_snapshot(&runtime,&view));
+    finish_render_owner();
+#endif
+}
 const AppState *refinement_state(void) { return &runtime.state; }
 const LocalSettings *refinement_local(void) { return &runtime.local; }
 ClockSample refinement_clock(void) { return clock_sample(runtime.boot_domain); }

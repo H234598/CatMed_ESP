@@ -28,6 +28,10 @@ static inline BaseType_t xSemaphoreTake(SemaphoreHandle_t sem, TickType_t ms)
 {
     pthread_mutex_lock(&sem->mutex);
     if (!sem->count && ms) {
+#ifdef KATMED_CONFIG_BRIDGE_TEST_TICK
+        extern void katmed_test_before_sem_wait(void);
+        katmed_test_before_sem_wait();
+#endif
         struct timespec deadline;
         clock_gettime(CLOCK_REALTIME,&deadline);
         deadline.tv_sec+=ms/1000u;

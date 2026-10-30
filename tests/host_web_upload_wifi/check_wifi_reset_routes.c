@@ -1,6 +1,7 @@
 #include "katmed_web_wifi.h"
 #include "katmed_web_reset.h"
 #include "esp_err.h"
+#include "cJSON.h"
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -48,9 +49,9 @@ esp_err_t httpd_query_key_value(const char *query,const char *key,char *out,size
 static esp_err_t (*route(const char *uri,httpd_method_t method))(httpd_req_t *){for(size_t i=0;i<route_count;i++)if(routes[i].method==method&&!strcmp(routes[i].uri,uri))return routes[i].handler;return NULL;}
 static void req_init(httpd_req_t *r,const char *body){memset(r,0,sizeof(*r));r->authenticated=true;r->csrf_ok=true;r->content_type="application/json";if(body){r->body=(const unsigned char*)body;r->body_size=strlen(body);r->content_len=(int)r->body_size;}}
 static bool auth(httpd_req_t *req,bool mutate,void *ctx){(void)ctx;if(!req->authenticated){httpd_resp_set_status(req,"401 Unauthorized");return false;}if(mutate&&!req->csrf_ok){httpd_resp_set_status(req,"403 Forbidden");return false;}return true;}
-static bool configured(void *ctx,bool*out){(void)ctx;*out=true;return true;}
-static bool recovery(void *ctx,bool*out){(void)ctx;*out=true;return true;}
-static bool limit(void *ctx,size_t*out){(void)ctx;*out=4;return true;}
+static bool configured(void *ctx,bool*out,KatmedWebWifiStatusDiagnostic*diagnostic){(void)ctx;(void)diagnostic;*out=true;return true;}
+static bool recovery(void *ctx,bool*out,KatmedWebWifiStatusDiagnostic*diagnostic){(void)ctx;(void)diagnostic;*out=true;return true;}
+static bool limit(void *ctx,size_t*out,KatmedWebWifiStatusDiagnostic*diagnostic){(void)ctx;(void)diagnostic;*out=4;return true;}
 static bool list_profiles(void *ctx,KatmedWebWifiProfileView*out,size_t cap,size_t*count){FakeWifi*f=ctx;f->list_calls++;if(f->count>cap)return false;memcpy(out,f->view,f->count*sizeof(*out));*count=f->count;return true;}
 static bool save_profiles(void *ctx,const KatmedWebWifiProfileUpdate*updates,size_t count){FakeWifi*f=ctx;f->save_calls++;if(f->fail_save||count>8)return false;KatmedWebWifiProfileView next[8]={0};char passwords[8][65]={{0}};for(size_t i=0;i<count;i++){const KatmedWebWifiProfileUpdate*u=&updates[i];next[i].id=u->id?u->id:(uint32_t)(100+i);snprintf(next[i].ssid,sizeof(next[i].ssid),"%s",u->ssid);next[i].priority=u->priority;const char*old=NULL;for(size_t j=0;j<f->count;j++)if(f->view[j].id==u->id)old=f->passwords[j];if(u->credential_action==KATMED_WEB_WIFI_CREDENTIAL_KEEP){if(!old&&u->id)return false;if(old)snprintf(passwords[i],sizeof(passwords[i]),"%s",old);}else if(u->credential_action==KATMED_WEB_WIFI_CREDENTIAL_REPLACE)snprintf(passwords[i],sizeof(passwords[i]),"%s",u->password);next[i].secured=passwords[i][0]!=0;}
  memcpy(f->view,next,sizeof(next));memcpy(f->passwords,passwords,sizeof(passwords));f->count=count;return true;}

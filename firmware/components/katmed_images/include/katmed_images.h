@@ -2,6 +2,7 @@
 #define KATMED_IMAGES_H
 
 #include "katmed_types.h"
+#include "katmed_render_trace.h"
 #include "lvgl.h"
 #include <stdbool.h>
 #include <stdint.h>
@@ -101,6 +102,10 @@ KatmedImageStatus katmed_images_last_error(void);
 KatmedImageTimingSample katmed_images_pack_hash_timing(void);
 KatmedImageTimingSample katmed_images_variant_hash_timing(void);
 KatmedImageTimingSample katmed_images_jpeg_decode_timing(void);
+/* Optional fixed numeric observer, registered once before the Web bridge is
+ * started. It does not receive image IDs, paths, bytes or task identities. */
+void katmed_images_set_render_trace(KatmedRenderTraceObserver observer,
+                                    void *context);
 /* Saturating count of failed completed presentations, including a later
  * transition to the neutral fallback after a successful initial draw. */
 uint32_t katmed_images_failed_presentations(void);

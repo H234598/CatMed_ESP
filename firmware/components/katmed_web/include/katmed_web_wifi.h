@@ -5,6 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "esp_http_server.h"
+#include "katmed_config_bridge_diag.h"
 
 typedef enum {
     KATMED_WEB_WIFI_CREDENTIAL_KEEP = 0,
@@ -27,18 +28,40 @@ typedef struct {
     char password[65]; /* Empty unless action is REPLACE; never returned or logged. */
 } KatmedWebWifiProfileUpdate;
 
+/* Filled by the status callback used by this WLAN GET, never from shared state. */
+typedef struct {
+    int bridge;
+    unsigned bridge_diag;
+    bool ready_valid;
+    bool ready;
+    bool available;
+    KatmedConfigBridgeTrace trace;
+} KatmedWebWifiStatusDiagnostic;
+
+/* One owner-published view for a GET during a render call. Only profile
+ * metadata is copied; Store and credentials stay with the application task. */
+#define KATMED_WEB_WIFI_RENDER_SNAPSHOT 1
+#define KATMED_WEB_WIFI_SNAPSHOT_MAX_PROFILES 4u
+typedef struct {
+    bool configured, recovery;
+    size_t limit, count;
+    KatmedWebWifiProfileView profiles[KATMED_WEB_WIFI_SNAPSHOT_MAX_PROFILES];
+} KatmedWebWifiRenderSnapshot;
+
 typedef struct {
     void *context;
     bool (*authorize)(httpd_req_t *req, bool mutate, void *context);
-    bool (*configured)(void *context, bool *out);
-    bool (*recovery_available)(void *context, bool *out);
+    bool (*configured)(void *context, bool *out, KatmedWebWifiStatusDiagnostic *diagnostic);
+    bool (*recovery_available)(void *context, bool *out, KatmedWebWifiStatusDiagnostic *diagnostic);
     /* Derived from actual NVS/RAM budget; C does not invent a profile count. */
-    bool (*profile_limit)(void *context, size_t *out);
+    bool (*profile_limit)(void *context, size_t *out, KatmedWebWifiStatusDiagnostic *diagnostic);
     /* Metadata only. Never return credentials through this callback. The load
        adapter migrates legacy single-network state as priority 1; stored
        runtime profiles override explicitly selected private build defaults. */
     bool (*list_profiles)(void *context, KatmedWebWifiProfileView *out,
                           size_t capacity, size_t *count);
+    /* Optional atomic status+list view only while the owner is rendering. */
+    bool (*render_snapshot)(void *context, KatmedWebWifiRenderSnapshot *out);
     /* Validates IDs, retains KEEP credentials, and atomically replaces the set. */
     bool (*save_profiles_atomic)(void *context,
                                  const KatmedWebWifiProfileUpdate *profiles,
