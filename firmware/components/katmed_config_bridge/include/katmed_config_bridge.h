@@ -155,6 +155,11 @@ KatmedConfigStatus katmed_config_exchange_diagnostic(
 /* Current owner-loop phase is producer state, not a last-request result. The
  * bridge copies it into its one live request under the same slot lock. */
 void katmed_config_owner_phase(KatmedConfigOwnerPhase phase);
+/* Only the task that entered the active owner render call can mark an inner
+ * boundary. The call records fixed numbers in a short independent critical
+ * section and never takes the request-slot lock under LVGL or image locks. */
+void katmed_config_render_inner(KatmedRenderInnerPhase phase, bool begin,
+                                uint8_t outcome);
 /* Call at most once per application-loop turn. */
 void katmed_config_poll(KatmedConfigExecute execute, void *context);
 

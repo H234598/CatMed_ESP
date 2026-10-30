@@ -19,6 +19,21 @@ typedef struct {
     size_t largest_read;
 } Pack;
 
+typedef struct {
+    unsigned begin[KATMED_RENDER_INNER_COUNT];
+    unsigned end[KATMED_RENDER_INNER_COUNT];
+    uint8_t last[KATMED_RENDER_INNER_COUNT];
+} RenderEvents;
+
+static void observe_render(void *context, KatmedRenderInnerPhase phase,
+                           bool begin, uint8_t outcome)
+{
+    RenderEvents *events=context;
+    assert((unsigned)phase<KATMED_RENDER_INNER_COUNT);
+    if (begin) ++events->begin[phase];
+    else { ++events->end[phase]; events->last[phase]=outcome; }
+}
+
 static bool read_pack(void *context, uint32_t offset, uint8_t *dst,
                       size_t wanted, size_t *actual)
 {
@@ -68,6 +83,8 @@ int main(int argc, char **argv)
     pack.bytes = (uint32_t)size;
     KatmedStorage storage = {&pack, pack.bytes, read_pack, NULL};
     assert(katmed_images_mount_storage(storage) == KATMED_IMAGE_OK);
+    RenderEvents events={0};
+    katmed_images_set_render_trace(observe_render,&events);
     KatmedImageTimingSample sample = katmed_images_pack_hash_timing();
     assert(sample.measured && sample.status == KATMED_IMAGE_OK && sample.elapsed_us > 0);
     assert(pack.largest_read <= KATMED_IMAGE_READ_CHUNK);
@@ -75,6 +92,9 @@ int main(int argc, char **argv)
     Orientation orientation = width > height && width != 240 ? ORIENTATION_90 : ORIENTATION_0;
     KatmedImageSelection selection;
     assert(katmed_images_select(0, orientation, &selection) == KATMED_IMAGE_OK);
+    assert(events.begin[KATMED_RENDER_INNER_VARIANT_HASH]==1 &&
+           events.end[KATMED_RENDER_INNER_VARIANT_HASH]==1 &&
+           events.last[KATMED_RENDER_INNER_VARIANT_HASH]==KATMED_IMAGE_OK);
     sample = katmed_images_variant_hash_timing();
     assert(sample.measured && sample.status == KATMED_IMAGE_OK && sample.elapsed_us > 0);
     pack.corrupt = true;
@@ -96,12 +116,26 @@ int main(int argc, char **argv)
     lv_obj_t *fallback = lv_label_create(lv_screen_active());
     assert(image && fallback);
     assert(katmed_images_present(image, fallback, 0, orientation) == KATMED_IMAGE_OK);
+    assert(events.begin[KATMED_RENDER_INNER_IMAGE_PRESENT]==1 &&
+           events.end[KATMED_RENDER_INNER_IMAGE_PRESENT]==1 &&
+           events.begin[KATMED_RENDER_INNER_IMAGE_SELECT]==1 &&
+           events.end[KATMED_RENDER_INNER_IMAGE_SELECT]==1 &&
+           events.begin[KATMED_RENDER_INNER_JPEG_DECODE]==1 &&
+           events.end[KATMED_RENDER_INNER_JPEG_DECODE]==1 &&
+           events.last[KATMED_RENDER_INNER_IMAGE_PRESENT]==KATMED_IMAGE_OK);
     sample = katmed_images_jpeg_decode_timing();
     assert(sample.measured && sample.status == KATMED_IMAGE_OK && sample.elapsed_us > 0);
     assert(katmed_images_open_file_count() == 0);
-    assert(!lv_obj_has_flag(image, LV_OBJ_FLAG_HIDDEN));
+    assert(!lv_obj_is_hidden(image));
     assert(katmed_images_present(image, fallback, KATMED_IMAGE_COUNT, orientation) ==
            KATMED_IMAGE_BAD_ID);
+    assert(events.begin[KATMED_RENDER_INNER_IMAGE_PRESENT]==2 &&
+           events.end[KATMED_RENDER_INNER_IMAGE_PRESENT]==2 &&
+           events.begin[KATMED_RENDER_INNER_IMAGE_SELECT]==2 &&
+           events.end[KATMED_RENDER_INNER_IMAGE_SELECT]==2 &&
+           events.begin[KATMED_RENDER_INNER_JPEG_DECODE]==1 &&
+           events.last[KATMED_RENDER_INNER_IMAGE_SELECT]==KATMED_IMAGE_BAD_ID &&
+           events.last[KATMED_RENDER_INNER_IMAGE_PRESENT]==KATMED_IMAGE_BAD_ID);
     assert(!katmed_images_jpeg_decode_timing().measured);
     assert(katmed_images_open_file_count() == 0);
     assert(katmed_images_present(image, fallback, 0, orientation) == KATMED_IMAGE_OK);
@@ -136,8 +170,8 @@ int main(int argc, char **argv)
     sample = katmed_images_variant_hash_timing();
     assert(sample.measured && sample.status == KATMED_IMAGE_IO_ERROR);
     assert(katmed_images_open_file_count() == 0);
-    assert(lv_obj_has_flag(image, LV_OBJ_FLAG_HIDDEN));
-    assert(!lv_obj_has_flag(fallback, LV_OBJ_FLAG_HIDDEN));
+    assert(lv_obj_is_hidden(image));
+    assert(!lv_obj_is_hidden(fallback));
 
     pack.fail_at_read = 0;
     assert(katmed_images_present(image, fallback, 1, orientation) == KATMED_IMAGE_OK);
@@ -160,6 +194,7 @@ int main(int argc, char **argv)
     sample = katmed_images_pack_hash_timing();
     assert(sample.measured && sample.status == KATMED_IMAGE_IO_ERROR);
     pack.fail_at_read = 0;
+    katmed_images_set_render_trace(NULL,NULL);
     katmed_images_unmount();
     assert(fclose(pack.file) == 0);
     printf("image_metrics=PASS profile=%dx%d reads=%llu\n", width, height,

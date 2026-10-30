@@ -92,7 +92,13 @@ static bool file_read_detailed(void *context, uint32_t offset, uint8_t *dst,
                       size_t wanted, size_t *actual, KatmedImageIoFailure *failure)
 {
     *failure=(KatmedImageIoFailure){0};*actual=0;
-    if (validation_lock == NULL || xSemaphoreTake(validation_lock, portMAX_DELAY) != pdTRUE)
+    if (validation_lock == NULL)
+        return read_failure(failure,KATMED_IMAGE_IO_VALIDATION_LOCK,KATMED_IMAGE_UNAVAILABLE);
+    katmed_images_render_trace(KATMED_RENDER_INNER_VALIDATION_WAIT,true,0);
+    const BaseType_t acquired=xSemaphoreTake(validation_lock, portMAX_DELAY);
+    katmed_images_render_trace(KATMED_RENDER_INNER_VALIDATION_WAIT,false,
+                               (uint8_t)(acquired==pdTRUE));
+    if (acquired != pdTRUE)
         return read_failure(failure,KATMED_IMAGE_IO_VALIDATION_LOCK,KATMED_IMAGE_UNAVAILABLE);
     bool ok = file_read_locked(context, offset, dst, wanted, actual, failure);
     (void)xSemaphoreGive(validation_lock);

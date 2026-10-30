@@ -583,6 +583,7 @@ void katmed_images_register_lvgl_fs(void)
 
 static KatmedImageStatus decode_check(const KatmedImageSelection *selection)
 {
+    katmed_images_render_trace(KATMED_RENDER_INNER_JPEG_DECODE,true,0);
     uint64_t start = monotonic_us();
     if(++jpeg_sequence == 0) ++jpeg_sequence;
 #ifdef ESP_PLATFORM
@@ -614,6 +615,8 @@ static KatmedImageStatus decode_check(const KatmedImageSelection *selection)
 #ifdef ESP_PLATFORM
         if(writer) katmed_source_writer_leave();
 #endif
+        katmed_images_render_trace(KATMED_RENDER_INNER_JPEG_DECODE,false,
+                                   (uint8_t)KATMED_IMAGE_IO_ERROR);
         return KATMED_IMAGE_IO_ERROR;
     }
     lv_area_t full = {0, 0, (lv_coord_t)selection->width - 1,
@@ -653,6 +656,7 @@ static KatmedImageStatus decode_check(const KatmedImageSelection *selection)
         .decode_stage=complete ? KATMED_JPEG_COMPLETE : stage,
         .decoded_areas=decoded_areas,
         .pool_valid=pool_valid, .pool_free=pool_free, .pool_largest=pool_largest};
+    katmed_images_render_trace(KATMED_RENDER_INNER_JPEG_DECODE,false,(uint8_t)status);
     return status;
 }
 
@@ -730,17 +734,22 @@ static void prepare_fallback(lv_obj_t *image, lv_obj_t *label)
 KatmedImageStatus katmed_images_present(lv_obj_t *image, lv_obj_t *fallback_label,
                                         uint32_t index, Orientation orientation)
 {
+    katmed_images_render_trace(KATMED_RENDER_INNER_IMAGE_PRESENT,true,0);
     /* A failed selection has no decoder run. Do not expose the preceding
      * scene's duration as if it belonged to this request. */
     jpeg_decode_timing = (KatmedImageTimingSample){0};
     if(image == NULL || fallback_label == NULL) {
         record_failed_presentation();
+        katmed_images_render_trace(KATMED_RENDER_INNER_IMAGE_PRESENT,false,
+                                   (uint8_t)KATMED_IMAGE_BAD_ID);
         return KATMED_IMAGE_BAD_ID;
     }
     prepare_fallback(image, fallback_label);
     clear_render_cache();
     KatmedImageSelection selection;
+    katmed_images_render_trace(KATMED_RENDER_INNER_IMAGE_SELECT,true,0);
     KatmedImageStatus status = katmed_images_select(index, orientation, &selection);
+    katmed_images_render_trace(KATMED_RENDER_INNER_IMAGE_SELECT,false,(uint8_t)status);
     if(status == KATMED_IMAGE_OK) status = decode_check(&selection);
     if(status == KATMED_IMAGE_OK) {
         const char *source = render_cache_ready ? render_cache_source : selection.lvgl_path;
@@ -763,5 +772,6 @@ KatmedImageStatus katmed_images_present(lv_obj_t *image, lv_obj_t *fallback_labe
         show_fallback(image, fallback_label);
         clear_render_cache();
     }
+    katmed_images_render_trace(KATMED_RENDER_INNER_IMAGE_PRESENT,false,(uint8_t)status);
     return status;
 }

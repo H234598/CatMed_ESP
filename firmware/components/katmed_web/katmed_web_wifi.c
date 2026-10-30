@@ -89,7 +89,8 @@ static uint32_t trace_offset_ms(const KatmedConfigBridgeTrace *trace, uint32_t t
 static esp_err_t wifi_status_error(httpd_req_t *req, unsigned stage,
                                    const KatmedWebWifiStatusDiagnostic *diagnostic)
 {
-    char body[1024];
+    /* Fixed upper bound for the old fields and one bounded inner group. */
+    char body[1536];
     int length;
     if (stage <= 3u && diagnostic && diagnostic->available) {
         length = snprintf(body, sizeof(body),
@@ -128,6 +129,76 @@ static esp_err_t wifi_status_error(httpd_req_t *req, unsigned stage,
             if ((trace->valid & fields[i].valid)==fields[i].valid &&
                 !append_diagnostic_u32(body,sizeof(body),&used,fields[i].name,fields[i].value))
                 return ESP_ERR_NO_MEM;
+        }
+        if (trace->valid & KATMED_CONFIG_TRACE_RENDER_INNER) {
+            const uint32_t known=(1u<<KATMED_RENDER_INNER_COUNT)-1u;
+            const uint32_t seen=trace->inner_seen_mask;
+            const uint32_t pre=trace->inner_pre_enqueue_mask;
+            const uint32_t opens=trace->inner_open_enqueue_mask |
+                                 trace->inner_open_freeze_mask;
+            const uint32_t valid_status=trace->inner_status_valid;
+            const bool multi=trace->inner_period_at_freeze==KATMED_CONFIG_RENDER_INNER_MULTI;
+            const bool proper_period=trace->inner_period_at_freeze==KATMED_CONFIG_RENDER_INNER_ACTIVE ||
+                                     trace->inner_period_at_freeze==KATMED_CONFIG_RENDER_INNER_ENDED || multi;
+            const bool proper_group=proper_period &&
+                (trace->valid & KATMED_CONFIG_TRACE_GATE_START) &&
+                trace->tick_period_ms>0 && !(seen & ~known) && !(pre & ~known) &&
+                !(opens & ~seen) && !(trace->inner_multi_mask & ~(seen|pre)) &&
+                !(valid_status & ~(KATMED_CONFIG_RENDER_STATUS_LOCK |
+                                   KATMED_CONFIG_RENDER_STATUS_SELECT |
+                                   KATMED_CONFIG_RENDER_STATUS_PRESENT)) &&
+                (!multi || (!seen && !pre && !opens &&
+                            !trace->inner_multi_mask && !valid_status)) &&
+                (trace->inner_period_at_freeze!=KATMED_CONFIG_RENDER_INNER_ENDED ||
+                 !trace->inner_open_freeze_mask) &&
+                (!(valid_status & KATMED_CONFIG_RENDER_STATUS_LOCK) ||
+                 (((seen|pre) & (1u<<KATMED_RENDER_INNER_LVGL_LOCK)) &&
+                  trace->inner_lock_success<=1u)) &&
+                (!(valid_status & KATMED_CONFIG_RENDER_STATUS_SELECT) ||
+                 (((seen|pre) & (1u<<KATMED_RENDER_INNER_IMAGE_SELECT)) &&
+                  trace->inner_select_status<=KATMED_RENDER_IMAGE_STATUS_MAX)) &&
+                (!(valid_status & KATMED_CONFIG_RENDER_STATUS_PRESENT) ||
+                 (((seen|pre) & (1u<<KATMED_RENDER_INNER_IMAGE_PRESENT)) &&
+                  trace->inner_present_status<=KATMED_RENDER_IMAGE_STATUS_MAX));
+            if (proper_group) {
+                if (!append_diagnostic_u32(body,sizeof(body),&used,
+                                           "render_inner_period_at_freeze",
+                                           trace->inner_period_at_freeze)) return ESP_ERR_NO_MEM;
+                if (!multi) {
+                    const struct { const char *name; uint32_t value; } group[]={
+                        {"render_inner_seen",seen},
+                        {"render_inner_pre_enqueue",pre},
+                        {"render_inner_open_enqueue",trace->inner_open_enqueue_mask},
+                        {"render_inner_open_freeze",trace->inner_open_freeze_mask},
+                        {"render_inner_multi",trace->inner_multi_mask},
+                    };
+                    for (size_t i=0;i<sizeof(group)/sizeof(group[0]);++i)
+                        if (!append_diagnostic_u32(body,sizeof(body),&used,
+                                                   group[i].name,group[i].value))
+                            return ESP_ERR_NO_MEM;
+                    static const char *const duration_names[KATMED_RENDER_INNER_COUNT]={
+                        "render_lock_wait_overlap_ms", "render_ui_overlap_ms",
+                        "render_rebuild_overlap_ms", "render_image_present_overlap_ms",
+                        "render_image_select_overlap_ms", "render_variant_hash_overlap_ms",
+                        "render_jpeg_decode_overlap_ms", "render_store_wait_overlap_ms",
+                        "render_validation_wait_overlap_ms"};
+                    for (unsigned i=0;i<KATMED_RENDER_INNER_COUNT;++i)
+                        if ((seen & (1u<<i)) &&
+                            !append_diagnostic_u32(body,sizeof(body),&used,
+                                                   duration_names[i],trace->inner_overlap_ms[i]))
+                            return ESP_ERR_NO_MEM;
+                    const struct { uint32_t valid; const char *name; uint32_t value; } statuses[]={
+                        {KATMED_CONFIG_RENDER_STATUS_LOCK,"render_lock_success",trace->inner_lock_success},
+                        {KATMED_CONFIG_RENDER_STATUS_SELECT,"render_image_select_status",trace->inner_select_status},
+                        {KATMED_CONFIG_RENDER_STATUS_PRESENT,"render_image_present_status",trace->inner_present_status},
+                    };
+                    for (size_t i=0;i<sizeof(statuses)/sizeof(statuses[0]);++i)
+                        if ((valid_status & statuses[i].valid) &&
+                            !append_diagnostic_u32(body,sizeof(body),&used,
+                                                   statuses[i].name,statuses[i].value))
+                            return ESP_ERR_NO_MEM;
+                }
+            }
         }
         if (used+2u>sizeof(body)) return ESP_ERR_NO_MEM;
         body[used++]='}';

@@ -2162,6 +2162,13 @@ static void display_touch_sample(const AppState *state,const BoardTouch *touch,b
     else ui_touch_sample(false,0,0,false,touch->monotonic_ms);
 }
 
+static void render_trace_observer(void *context, KatmedRenderInnerPhase phase,
+                                  bool begin, uint8_t outcome)
+{
+    (void)context;
+    katmed_config_render_inner(phase,begin,outcome);
+}
+
 static bool render_ui(const AppState *state, const LocalSettings *local,
                       const ClockSample *clock, const BoardTouch *touch,
                       bool touch_valid, bool render_due)
@@ -2174,7 +2181,11 @@ static bool render_ui(const AppState *state, const LocalSettings *local,
     static bool projected_alarm_active;
     static Orientation projected_orientation;
     static AlarmRoundId projected_round;
-    if (!lvgl_port_lock(100)) {
+    katmed_config_render_inner(KATMED_RENDER_INNER_LVGL_LOCK,true,0);
+    const bool lvgl_locked=lvgl_port_lock(100);
+    katmed_config_render_inner(KATMED_RENDER_INNER_LVGL_LOCK,false,
+                               (uint8_t)lvgl_locked);
+    if (!lvgl_locked) {
 #if defined(ESP_PLATFORM) || defined(KATMED_HOST_TOUCH_SAMPLER)
         if (!board_touch_sampler_running()) contact_interrupted = true;
 #else
@@ -2215,7 +2226,9 @@ static bool render_ui(const AppState *state, const LocalSettings *local,
         projected_alarm_active != state->alarm_active ||
         (state->alarm_active && !same_alarm_round(projected_round, state->round)));
     if (alarm_changed) {
+        katmed_config_render_inner(KATMED_RENDER_INNER_UI_RENDER,true,0);
         ui_render(state, local, ui_current_view(), clock);
+        katmed_config_render_inner(KATMED_RENDER_INNER_UI_RENDER,false,0);
         projected_orientation=local->orientation;
         projected_alarm_active = state->alarm_active;
         projected_round = state->round;
@@ -2244,8 +2257,11 @@ static bool render_ui(const AppState *state, const LocalSettings *local,
         ui_set_display_awake(!runtime.display_policy.initialized || runtime.display_policy.awake);
     }
 #endif
-    if (render_due && state != NULL && local != NULL)
+    if (render_due && state != NULL && local != NULL) {
+        katmed_config_render_inner(KATMED_RENDER_INNER_UI_RENDER,true,0);
         ui_render(state, local, ui_current_view(), clock);
+        katmed_config_render_inner(KATMED_RENDER_INNER_UI_RENDER,false,0);
+    }
     lvgl_port_unlock();
     return true;
 }
@@ -2588,6 +2604,7 @@ void app_main(void)
         .display_settings=display_settings,
         .brightness_preview=brightness_preview,
         .night_copy_status=night_copy_status,
+        .render_trace=render_trace_observer,
         .orientation_auto_available = orientation_auto_supported(),
         .orientation_automatic = orientation_automatic,
         .submit = submit_ui_dispatch,
@@ -2639,6 +2656,7 @@ void app_main(void)
     if (!katmed_config_bridge_start())
         ESP_LOGE(tag,"web configuration bridge unavailable");
     else {
+        katmed_images_set_render_trace(render_trace_observer,NULL);
         startup_heap_sample("after_config_bridge");
         const KatmedWebServices web_services = {
             .context = &runtime,

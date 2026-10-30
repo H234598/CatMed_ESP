@@ -91,7 +91,15 @@ static bool allowed_diagnostic_key(const char *key){
   "gate_acquired","enqueue_elapsed_ms","owner_poll_elapsed_ms",
   "owner_complete_elapsed_ms","wait_return_elapsed_ms","wait_elapsed_ms",
   "wait_signalled","decision_elapsed_ms","slot_at_decision","owner_phase_enqueue",
-  "owner_phase_decision","owner_phase_seen","render_call_overlap_ms"};
+  "owner_phase_decision","owner_phase_seen","render_call_overlap_ms",
+  "render_inner_period_at_freeze","render_inner_seen","render_inner_pre_enqueue",
+  "render_inner_open_enqueue",
+  "render_inner_open_freeze","render_inner_multi","render_lock_wait_overlap_ms",
+  "render_ui_overlap_ms","render_rebuild_overlap_ms",
+  "render_image_present_overlap_ms","render_image_select_overlap_ms",
+  "render_variant_hash_overlap_ms","render_jpeg_decode_overlap_ms",
+  "render_store_wait_overlap_ms","render_validation_wait_overlap_ms",
+  "render_lock_success","render_image_select_status","render_image_present_status"};
  for(size_t i=0;i<sizeof(allowed)/sizeof(allowed[0]);++i)
   if(!strcmp(key,allowed[i]))return true;
  return false;
@@ -99,6 +107,8 @@ static bool allowed_diagnostic_key(const char *key){
 static void assert_diagnostic_keys(const cJSON *parsed){
  for(const cJSON *item=parsed->child;item;item=item->next){
   assert(item->string && allowed_diagnostic_key(item->string));
+  for(const cJSON *older=parsed->child;older!=item;older=older->next)
+   assert(older->string && strcmp(older->string,item->string));
   if(strcmp(item->string,"error") && strcmp(item->string,"message"))
    assert(cJSON_IsNumber(item));
  }
@@ -109,7 +119,8 @@ void *__wrap_calloc(size_t count,size_t size){
  if(fail_alloc){fail_alloc=false;return NULL;}return __real_calloc(count,size);
 }
 int main(int argc,char **argv){
- assert(argc==3);fail_stage=(unsigned)atoi(argv[1]);bool diagnostics=atoi(argv[2])!=0;
+ assert(argc==3 || argc==4);fail_stage=(unsigned)atoi(argv[1]);bool diagnostics=atoi(argv[2])!=0;
+ inner_mode=argc==4?(unsigned)atoi(argv[3]):0u;
  FakeWifi wifi={.view={{.ssid="synthetic-private-profile"}},
                 .passwords={"synthetic-secret-never-return"}};
  KatmedWebWifiServices ws={.context=&wifi,.authorize=auth,
@@ -120,14 +131,16 @@ int main(int argc,char **argv){
  req_init(&req,NULL);req.authenticated=false;assert(route("/api/wifi",HTTP_GET)(&req)==ESP_OK);
  assert(!strcmp(req.response_status,"401 Unauthorized") && !records && !callback_count);
  assert(!strstr(req.response,"status_stage") && !strstr(req.response,"bridge_diag") &&
-        !strstr(req.response,"admission_start_ms"));
+        !strstr(req.response,"admission_start_ms") &&
+        !strstr(req.response,"render_inner_period_at_freeze"));
  req_init(&req,NULL);fail_alloc=fail_stage==4;
  assert(route("/api/wifi",HTTP_GET)(&req)==ESP_OK);
  cJSON *parsed=cJSON_ParseWithLength(req.response,req.response_size);
  assert(parsed && cJSON_IsObject(parsed));if(fail_stage)assert_diagnostic_keys(parsed);cJSON_Delete(parsed);
  if(!fail_stage){assert(!strcmp(req.response_status,"200 OK"));assert(wifi.list_calls==1);assert(!records);
  assert(!strstr(req.response,"status_stage") && !strstr(req.response,"bridge_diag") &&
-        !strstr(req.response,"admission_start_ms"));}
+        !strstr(req.response,"admission_start_ms") &&
+        !strstr(req.response,"render_inner_period_at_freeze"));}
  else {assert(!strcmp(req.response_status,"503 Service Unavailable"));
  assert(strstr(req.response,"wifi_unavailable"));assert(strstr(req.response,"Der WLAN-Status ist derzeit nicht verf"));
  char stage_field[32];snprintf(stage_field,sizeof(stage_field),"\"status_stage\":%u",fail_stage);
@@ -135,7 +148,7 @@ int main(int argc,char **argv){
  if(fail_stage<=3){char bridge_field[32];snprintf(bridge_field,sizeof(bridge_field),"\"bridge\":%u",10u+fail_stage);
  assert(strstr(req.response,bridge_field));assert(strstr(req.response,"\"bridge_diag\":7"));
  assert(strstr(req.response,"\"ready_valid\":0"));assert(strstr(req.response,"\"ready\":0"));
- if(fail_stage==1){assert(strstr(req.response,"\"admission_start_ms\":0"));
+ if(fail_stage==1){if(inner_mode!=6 && inner_mode!=8){assert(strstr(req.response,"\"admission_start_ms\":0"));
  assert(strstr(req.response,"\"gate_return_elapsed_ms\":1"));
  assert(strstr(req.response,"\"wait_elapsed_ms\":19"));
  assert(strstr(req.response,"\"wait_signalled\":0"));
@@ -143,14 +156,50 @@ int main(int argc,char **argv){
  assert(strstr(req.response,"\"decision_elapsed_ms\":21"));
  assert(strstr(req.response,"\"slot_at_decision\":1"));
  assert(strstr(req.response,"\"render_call_overlap_ms\":17"));}
+ if(inner_mode==1){
+  assert(strstr(req.response,"\"render_inner_period_at_freeze\":2"));
+  assert(strstr(req.response,"\"render_inner_seen\":511"));
+  assert(strstr(req.response,"\"render_inner_pre_enqueue\":0"));
+  assert(strstr(req.response,"\"render_inner_open_enqueue\":0"));
+  assert(strstr(req.response,"\"render_inner_open_freeze\":0"));
+  assert(strstr(req.response,"\"render_inner_multi\":0"));
+  assert(strstr(req.response,"\"render_lock_wait_overlap_ms\":4294967295"));
+  assert(strstr(req.response,"\"render_validation_wait_overlap_ms\":4294967295"));
+  assert(strstr(req.response,"\"render_lock_success\":1"));
+  assert(strstr(req.response,"\"render_image_select_status\":10"));
+  assert(strstr(req.response,"\"render_image_present_status\":10"));
+  assert(req.response_size<1536);
+ } else if(inner_mode==2){
+  assert(strstr(req.response,"\"render_inner_period_at_freeze\":1"));
+  assert(strstr(req.response,"\"render_inner_seen\":1"));
+  assert(strstr(req.response,"\"render_inner_pre_enqueue\":0"));
+  assert(strstr(req.response,"\"render_lock_wait_overlap_ms\":0"));
+  assert(!strstr(req.response,"render_ui_overlap_ms"));
+  assert(!strstr(req.response,"render_lock_success"));
+ } else if(inner_mode==3){
+  assert(strstr(req.response,"\"render_inner_period_at_freeze\":3"));
+  assert(!strstr(req.response,"render_inner_seen"));
+  assert(!strstr(req.response,"render_lock_wait_overlap_ms"));
+ } else if(inner_mode==7){
+  assert(strstr(req.response,"\"render_inner_period_at_freeze\":2"));
+  assert(strstr(req.response,"\"render_inner_seen\":0"));
+  assert(strstr(req.response,"\"render_inner_pre_enqueue\":25"));
+  assert(strstr(req.response,"\"render_lock_success\":1"));
+  assert(strstr(req.response,"\"render_image_select_status\":7"));
+  assert(strstr(req.response,"\"render_image_present_status\":0"));
+  assert(!strstr(req.response,"render_lock_wait_overlap_ms"));
+ } else assert(!strstr(req.response,"render_inner_period_at_freeze"));}
  if(fail_stage==2){assert(strstr(req.response,"\"gate_return_elapsed_ms\":5"));
- assert(!strstr(req.response,"\"wait_elapsed_ms\""));}
- if(fail_stage==3)assert(!strstr(req.response,"admission_start_ms"));
+ assert(!strstr(req.response,"\"wait_elapsed_ms\""));
+ assert(!strstr(req.response,"render_inner_period_at_freeze"));}
+ if(fail_stage==3){assert(!strstr(req.response,"admission_start_ms"));
+ assert(!strstr(req.response,"render_inner_period_at_freeze"));}
  assert(!strstr(req.response,"gate_start_tick") &&
         !strstr(req.response,"enqueue_tick") &&
         !strstr(req.response,"wait_return_tick"));}
  else {assert(!strstr(req.response,"\"bridge\""));assert(!strstr(req.response,"bridge_diag"));
- assert(!strstr(req.response,"admission_start_ms"));}
+ assert(!strstr(req.response,"admission_start_ms"));
+ assert(!strstr(req.response,"render_inner_period_at_freeze"));}
  assert(!strstr(req.response,"synthetic-private-profile") &&
         !strstr(req.response,"synthetic-secret-never-return"));
  assert(!wifi.list_calls);if(diagnostics)assert(records==1 && logged_stage==fail_stage);}
@@ -161,8 +210,11 @@ int main(int argc,char **argv){
  char next_field[32];snprintf(next_field,sizeof(next_field),"\"bridge\":%u",10u+next);
  assert(strstr(req.response,next_field));assert(callback_count==next);
  if(next==2)assert(strstr(req.response,"\"gate_return_elapsed_ms\":5") &&
-                  !strstr(req.response,"\"wait_elapsed_ms\""));
- if(next==1)assert(strstr(req.response,"\"gate_return_elapsed_ms\":1"));
+                  !strstr(req.response,"\"wait_elapsed_ms\"") &&
+                  !strstr(req.response,"render_inner_period_at_freeze") &&
+                  !strstr(req.response,"render_lock_wait_overlap_ms"));
+ if(next==1 && inner_mode!=6 && inner_mode!=8)
+  assert(strstr(req.response,"\"gate_return_elapsed_ms\":1"));
  if(first<=3){char old_field[32];snprintf(old_field,sizeof(old_field),"\"bridge\":%u",10u+first);
  assert(!strstr(req.response,old_field));}}
  fail_stage=0;wifi.count=5;req_init(&req,NULL);
@@ -170,7 +222,8 @@ int main(int argc,char **argv){
  assert(!strcmp(req.response_status,"503 Service Unavailable"));
  assert(strstr(req.response,"Die gespeicherten WLAN-Profile"));
  assert(!strstr(req.response,"status_stage") && !strstr(req.response,"bridge_diag") &&
-        !strstr(req.response,"admission_start_ms"));
+        !strstr(req.response,"admission_start_ms") &&
+        !strstr(req.response,"render_inner_period_at_freeze"));
  parsed=cJSON_ParseWithLength(req.response,req.response_size);assert(parsed && cJSON_IsObject(parsed));cJSON_Delete(parsed);
  wifi.count=0;fail_stage=1;extreme_diag=true;req_init(&req,NULL);
  assert(route("/api/wifi",HTTP_GET)(&req)==ESP_OK);
@@ -180,6 +233,7 @@ int main(int argc,char **argv){
  parsed=cJSON_ParseWithLength(req.response,req.response_size);assert(parsed && cJSON_IsObject(parsed));
  assert(cJSON_IsNumber(cJSON_GetObjectItemCaseSensitive(parsed,"bridge")));
  assert(cJSON_IsNumber(cJSON_GetObjectItemCaseSensitive(parsed,"bridge_diag")));
+ if(inner_mode==1)assert(req.response_size>1024 && req.response_size<1536);
  cJSON_Delete(parsed);
  extreme_diag=false;
  for(unsigned early=2;early<=3;++early){early_fail_stage=early;fail_stage=early;callback_count=0;
@@ -218,8 +272,33 @@ class WifiStatusDiagnostics(unittest.TestCase):
         # Reuse the existing route harness's actual HTTP stubs/registration.
         fixture = (ROOT / "tests/host_web_upload_wifi/check_wifi_reset_routes.c").read_text().split("int main(void){", 1)[0]
         fixture = fixture.replace("static bool configured(void *ctx,bool*out,KatmedWebWifiStatusDiagnostic*diagnostic){(void)ctx;(void)diagnostic;*out=true;return true;}",
-                                  "static unsigned fail_stage,callback_count,early_fail_stage;static bool extreme_diag;\n"
-                                  "static void seed_trace(KatmedWebWifiStatusDiagnostic*d,unsigned stage){if(stage==1)d->trace=(KatmedConfigBridgeTrace){.valid=KATMED_CONFIG_TRACE_GATE_START|KATMED_CONFIG_TRACE_GATE_RETURN|KATMED_CONFIG_TRACE_WAIT_RETURN|KATMED_CONFIG_TRACE_DECISION|KATMED_CONFIG_TRACE_PHASE_SEEN,.tick_period_ms=1,.gate_start_tick=100,.gate_return_tick=101,.gate_acquired=1,.wait_return_tick=120,.decision_tick=121,.wait_elapsed_ms=19,.wait_signalled=0,.slot_at_decision=1,.owner_phase_seen_mask=1u<<KATMED_CONFIG_OWNER_PHASE_RENDER_CALL,.render_overlap_ms=17};else if(stage==2)d->trace=(KatmedConfigBridgeTrace){.valid=KATMED_CONFIG_TRACE_GATE_START|KATMED_CONFIG_TRACE_GATE_RETURN,.tick_period_ms=1,.gate_start_tick=200,.gate_return_tick=205,.gate_acquired=1};}\n"
+                                  "static unsigned fail_stage,callback_count,early_fail_stage,inner_mode;static bool extreme_diag;\n"
+                                  "static void seed_inner(KatmedWebWifiStatusDiagnostic*d){\n"
+                                  " if(!inner_mode)return;\n"
+                                  " d->trace.valid|=KATMED_CONFIG_TRACE_RENDER_INNER;\n"
+                                  " if(inner_mode==1){d->trace.inner_period_at_freeze=KATMED_CONFIG_RENDER_INNER_ENDED;\n"
+                                  " d->trace.inner_seen_mask=(1u<<KATMED_RENDER_INNER_COUNT)-1u;\n"
+                                  " d->trace.inner_status_valid=KATMED_CONFIG_RENDER_STATUS_LOCK|KATMED_CONFIG_RENDER_STATUS_SELECT|KATMED_CONFIG_RENDER_STATUS_PRESENT;\n"
+                                  " d->trace.inner_lock_success=1;d->trace.inner_select_status=10;d->trace.inner_present_status=10;\n"
+                                  " for(unsigned i=0;i<KATMED_RENDER_INNER_COUNT;++i)d->trace.inner_overlap_ms[i]=~0u;\n"
+                                  " }else if(inner_mode==2){d->trace.inner_period_at_freeze=KATMED_CONFIG_RENDER_INNER_ACTIVE;\n"
+                                  " d->trace.inner_seen_mask=1;d->trace.inner_open_freeze_mask=1;\n"
+                                  " }else if(inner_mode==3)d->trace.inner_period_at_freeze=KATMED_CONFIG_RENDER_INNER_MULTI;\n"
+                                  " else if(inner_mode==6){d->trace.inner_period_at_freeze=KATMED_CONFIG_RENDER_INNER_ENDED;\n"
+                                  " d->trace.inner_seen_mask=1;d->trace.inner_status_valid=KATMED_CONFIG_RENDER_STATUS_LOCK;\n"
+                                  " d->trace.inner_lock_success=1;}\n"
+                                  " else if(inner_mode==7){d->trace.inner_period_at_freeze=KATMED_CONFIG_RENDER_INNER_ENDED;\n"
+                                  " d->trace.inner_pre_enqueue_mask=(1u<<KATMED_RENDER_INNER_LVGL_LOCK)|(1u<<KATMED_RENDER_INNER_IMAGE_SELECT)|(1u<<KATMED_RENDER_INNER_IMAGE_PRESENT);\n"
+                                  " d->trace.inner_status_valid=KATMED_CONFIG_RENDER_STATUS_LOCK|KATMED_CONFIG_RENDER_STATUS_SELECT|KATMED_CONFIG_RENDER_STATUS_PRESENT;\n"
+                                  " d->trace.inner_lock_success=1;d->trace.inner_select_status=7;d->trace.inner_present_status=0;}\n"
+                                  " else if(inner_mode==8){d->trace.inner_period_at_freeze=KATMED_CONFIG_RENDER_INNER_ENDED;\n"
+                                  " d->trace.inner_seen_mask=1;d->trace.tick_period_ms=0;}\n"
+                                  " else {d->trace.inner_period_at_freeze=KATMED_CONFIG_RENDER_INNER_ENDED;\n"
+                                  " d->trace.inner_seen_mask=inner_mode==4?~0u:1u;\n"
+                                  " d->trace.inner_status_valid=KATMED_CONFIG_RENDER_STATUS_LOCK;\n"
+                                  " d->trace.inner_lock_success=2;}\n"
+                                  "}\n"
+                                  "static void seed_trace(KatmedWebWifiStatusDiagnostic*d,unsigned stage){if(stage==1){d->trace=(KatmedConfigBridgeTrace){.valid=KATMED_CONFIG_TRACE_GATE_START|KATMED_CONFIG_TRACE_GATE_RETURN|KATMED_CONFIG_TRACE_WAIT_RETURN|KATMED_CONFIG_TRACE_DECISION|KATMED_CONFIG_TRACE_PHASE_SEEN,.tick_period_ms=1,.gate_start_tick=100,.gate_return_tick=101,.gate_acquired=1,.wait_return_tick=120,.decision_tick=121,.wait_elapsed_ms=19,.wait_signalled=0,.slot_at_decision=1,.owner_phase_seen_mask=1u<<KATMED_CONFIG_OWNER_PHASE_RENDER_CALL,.render_overlap_ms=17};seed_inner(d);if(extreme_diag){d->trace.valid|=(1u<<10)-1u;d->trace.gate_return_tick=99;d->trace.enqueue_tick=99;d->trace.poll_enter_tick=99;d->trace.poll_complete_tick=99;d->trace.wait_return_tick=99;d->trace.decision_tick=99;d->trace.wait_elapsed_ms=~0u;d->trace.render_overlap_ms=~0u;d->trace.owner_phase_seen_mask=~0u;d->trace.gate_acquired=255;d->trace.wait_signalled=255;d->trace.slot_at_decision=255;d->trace.owner_phase_at_enqueue=255;d->trace.owner_phase_at_decision=255;}if(inner_mode==6)d->trace.valid&=~KATMED_CONFIG_TRACE_GATE_START;}else if(stage==2)d->trace=(KatmedConfigBridgeTrace){.valid=KATMED_CONFIG_TRACE_GATE_START|KATMED_CONFIG_TRACE_GATE_RETURN,.tick_period_ms=1,.gate_start_tick=200,.gate_return_tick=205,.gate_acquired=1};}\n"
                                   "static bool configured(void *ctx,bool*out,KatmedWebWifiStatusDiagnostic*diagnostic){(void)ctx;++callback_count;*out=true;if(diagnostic){*diagnostic=(KatmedWebWifiStatusDiagnostic){.bridge=extreme_diag?(-2147483647-1):11,.bridge_diag=extreme_diag?~0u:7u,.available=true};seed_trace(diagnostic,1);}return fail_stage!=1;}")
         fixture = fixture.replace("static bool recovery(void *ctx,bool*out,KatmedWebWifiStatusDiagnostic*diagnostic){(void)ctx;(void)diagnostic;*out=true;return true;}",
                                   "static bool recovery(void *ctx,bool*out,KatmedWebWifiStatusDiagnostic*diagnostic){(void)ctx;++callback_count;*out=true;if(early_fail_stage==2)return false;if(diagnostic){*diagnostic=(KatmedWebWifiStatusDiagnostic){.bridge=12,.bridge_diag=7,.available=true};seed_trace(diagnostic,2);}return fail_stage!=2;}")
@@ -253,3 +332,11 @@ class WifiStatusDiagnostics(unittest.TestCase):
 
     def test_numeric_failure_reason_contract(self):
         self.exercise(1)
+
+    def test_request_bound_inner_group_and_privacy(self):
+        # The real route emits only fixed numeric fields on authenticated stage-1 503.
+        # Modes cover max-size payload, partial active period, MULTI, and malformed groups.
+        for mode in range(1, 9):
+            for stage in (0, 1, 2, 3, 4):
+                with self.subTest(mode=mode, stage=stage):
+                    execute_tls_callback([str(self.route_binary), str(stage), "1", str(mode)])

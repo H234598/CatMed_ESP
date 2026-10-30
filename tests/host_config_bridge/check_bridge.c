@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
+#include "freertos/task.h"
 #include "katmed_config_bridge.h"
 
 typedef struct {
@@ -14,6 +15,48 @@ typedef struct {
     KatmedConfigBridgeTrace trace;
 } Client;
 static unsigned executions;
+TickType_t katmed_test_tick_offset;
+static pthread_mutex_t wait_mutex=PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t wait_changed=PTHREAD_COND_INITIALIZER;
+static bool wait_armed, wait_observed;
+
+/* The existing semaphore stub calls this only immediately before a real
+ * blocking take. With the gate already free, this is the done wait after
+ * the request entered SLOT_QUEUED; no timing guess or dummy owner sleep. */
+void katmed_test_before_sem_wait(void)
+{
+    pthread_mutex_lock(&wait_mutex);
+    if (wait_armed) {
+        wait_observed=true;
+        pthread_cond_signal(&wait_changed);
+    }
+    pthread_mutex_unlock(&wait_mutex);
+}
+static void arm_done_wait(void)
+{
+    pthread_mutex_lock(&wait_mutex);
+    wait_armed=true;
+    wait_observed=false;
+    pthread_mutex_unlock(&wait_mutex);
+}
+static void await_done_wait(void)
+{
+    struct timespec deadline;
+    assert(clock_gettime(CLOCK_REALTIME,&deadline)==0);
+    deadline.tv_sec+=2;
+    pthread_mutex_lock(&wait_mutex);
+    while (!wait_observed)
+        assert(pthread_cond_timedwait(&wait_changed,&wait_mutex,&deadline)==0);
+    wait_armed=false;
+    pthread_mutex_unlock(&wait_mutex);
+}
+static void *foreign_mark(void *unused)
+{
+    (void)unused;
+    katmed_config_render_inner(KATMED_RENDER_INNER_JPEG_DECODE,true,0);
+    katmed_config_render_inner(KATMED_RENDER_INNER_JPEG_DECODE,false,0);
+    return NULL;
+}
 
 static void pause_ms(long ms)
 {
@@ -151,5 +194,149 @@ int main(void)
     assert(!(last.trace.owner_phase_seen_mask &
              (1u << KATMED_CONFIG_OWNER_PHASE_RENDER_CALL)) &&
            last.trace.slot_at_decision==KATMED_CONFIG_TRACE_SLOT_DONE);
+
+    /* A render period already includes completed lock and image decisions at
+     * enqueue. Their statuses belong to this period, not their old durations. */
+    katmed_config_owner_phase(KATMED_CONFIG_OWNER_PHASE_RENDER_CALL);
+    katmed_config_render_inner(KATMED_RENDER_INNER_LVGL_LOCK,true,0);
+    katmed_config_render_inner(KATMED_RENDER_INNER_LVGL_LOCK,false,1);
+    katmed_config_render_inner(KATMED_RENDER_INNER_IMAGE_SELECT,true,0);
+    katmed_config_render_inner(KATMED_RENDER_INNER_IMAGE_SELECT,false,7);
+    katmed_config_render_inner(KATMED_RENDER_INNER_IMAGE_PRESENT,true,0);
+    katmed_config_render_inner(KATMED_RENDER_INNER_IMAGE_PRESENT,false,0);
+    Client pre_enqueue={.request.operation=KATMED_CONFIG_GET,.timeout_ms=20};
+    arm_done_wait();
+    assert(pthread_create(&thread,NULL,call,&pre_enqueue)==0);
+    await_done_wait();
+    pthread_join(thread,NULL);
+    assert(pre_enqueue.diagnostic==KATMED_CONFIG_BRIDGE_DIAG_QUEUED_CANCELLED &&
+           (pre_enqueue.trace.inner_status_valid &
+               (KATMED_CONFIG_RENDER_STATUS_LOCK |
+                KATMED_CONFIG_RENDER_STATUS_SELECT |
+                KATMED_CONFIG_RENDER_STATUS_PRESENT))==
+               (KATMED_CONFIG_RENDER_STATUS_LOCK |
+                KATMED_CONFIG_RENDER_STATUS_SELECT |
+                KATMED_CONFIG_RENDER_STATUS_PRESENT) &&
+           pre_enqueue.trace.inner_lock_success==1 &&
+           pre_enqueue.trace.inner_select_status==7 &&
+           pre_enqueue.trace.inner_present_status==0 &&
+           pre_enqueue.trace.inner_seen_mask==0 &&
+           pre_enqueue.trace.inner_pre_enqueue_mask==
+               ((1u<<KATMED_RENDER_INNER_LVGL_LOCK) |
+                (1u<<KATMED_RENDER_INNER_IMAGE_SELECT) |
+                (1u<<KATMED_RENDER_INNER_IMAGE_PRESENT)) &&
+           pre_enqueue.trace.inner_overlap_ms[KATMED_RENDER_INNER_LVGL_LOCK]==0 &&
+           pre_enqueue.trace.inner_overlap_ms[KATMED_RENDER_INNER_IMAGE_SELECT]==0 &&
+           pre_enqueue.trace.inner_overlap_ms[KATMED_RENDER_INNER_IMAGE_PRESENT]==0);
+    katmed_config_owner_phase(KATMED_CONFIG_OWNER_PHASE_OTHER);
+
+    /* Owner completion can freeze the inner view before Web decision. The
+     * open flag and ACTIVE value describe that freeze, never a later state. */
+    katmed_config_owner_phase(KATMED_CONFIG_OWNER_PHASE_RENDER_CALL);
+    katmed_config_render_inner(KATMED_RENDER_INNER_UI_RENDER,true,0);
+    Client completed_during_render={.request.operation=KATMED_CONFIG_GET,
+                                    .timeout_ms=1000};
+    arm_done_wait();
+    assert(pthread_create(&thread,NULL,call,&completed_during_render)==0);
+    await_done_wait();
+    katmed_config_poll(fast,NULL);
+    katmed_config_render_inner(KATMED_RENDER_INNER_UI_RENDER,false,0);
+    katmed_config_owner_phase(KATMED_CONFIG_OWNER_PHASE_OTHER);
+    pthread_join(thread,NULL);
+    assert(completed_during_render.result==KATMED_CONFIG_OK &&
+           completed_during_render.trace.inner_period_at_freeze==
+               KATMED_CONFIG_RENDER_INNER_ACTIVE &&
+           (completed_during_render.trace.inner_open_freeze_mask &
+               (1u<<KATMED_RENDER_INNER_UI_RENDER)) &&
+           (completed_during_render.trace.inner_seen_mask &
+               (1u<<KATMED_RENDER_INNER_UI_RENDER)));
+
+    /* The render call and LVGL wait already run when the HTTP request enters.
+     * A forced host tick offset crosses uint32 wrap during the real wait. */
+    katmed_test_tick_offset=UINT32_MAX-15u-xTaskGetTickCount();
+    katmed_config_owner_phase(KATMED_CONFIG_OWNER_PHASE_RENDER_CALL);
+    katmed_config_render_inner(KATMED_RENDER_INNER_LVGL_LOCK,true,0);
+    Client render_in_flight={.request.operation=KATMED_CONFIG_GET,.timeout_ms=40};
+    arm_done_wait();
+    assert(pthread_create(&thread,NULL,call,&render_in_flight)==0);
+    await_done_wait();
+    pthread_t intruder;
+    assert(pthread_create(&intruder,NULL,foreign_mark,NULL)==0);
+    pthread_join(intruder,NULL);
+    katmed_config_render_inner(KATMED_RENDER_INNER_UI_RENDER,true,0);
+    katmed_config_render_inner(KATMED_RENDER_INNER_LANGUAGE_REBUILD,true,0);
+    katmed_config_render_inner(KATMED_RENDER_INNER_IMAGE_PRESENT,true,0);
+    katmed_config_render_inner(KATMED_RENDER_INNER_IMAGE_SELECT,true,0);
+    katmed_config_render_inner(KATMED_RENDER_INNER_VARIANT_HASH,true,0);
+    katmed_config_render_inner(KATMED_RENDER_INNER_VALIDATION_WAIT,true,0);
+    katmed_config_render_inner(KATMED_RENDER_INNER_VALIDATION_WAIT,false,1);
+    katmed_config_render_inner(KATMED_RENDER_INNER_VARIANT_HASH,false,0);
+    katmed_config_render_inner(KATMED_RENDER_INNER_IMAGE_SELECT,false,0);
+    katmed_config_render_inner(KATMED_RENDER_INNER_IMAGE_PRESENT,false,0);
+    katmed_config_render_inner(KATMED_RENDER_INNER_LANGUAGE_REBUILD,false,0);
+    katmed_config_render_inner(KATMED_RENDER_INNER_UI_RENDER,false,0);
+    katmed_config_render_inner(KATMED_RENDER_INNER_UI_RENDER,true,0);
+    katmed_config_render_inner(KATMED_RENDER_INNER_UI_RENDER,false,0);
+    pthread_join(thread,NULL);
+    assert(render_in_flight.diagnostic==KATMED_CONFIG_BRIDGE_DIAG_QUEUED_CANCELLED);
+    const KatmedConfigBridgeTrace frozen=render_in_flight.trace;
+    assert((frozen.valid & KATMED_CONFIG_TRACE_RENDER_INNER) &&
+           frozen.inner_period_at_freeze==KATMED_CONFIG_RENDER_INNER_ACTIVE &&
+           frozen.gate_start_tick>frozen.decision_tick &&
+           (frozen.inner_open_enqueue_mask & (1u<<KATMED_RENDER_INNER_LVGL_LOCK)) &&
+           (frozen.inner_open_freeze_mask & (1u<<KATMED_RENDER_INNER_LVGL_LOCK)) &&
+           frozen.inner_overlap_ms[KATMED_RENDER_INNER_LVGL_LOCK]>=20u &&
+           (frozen.inner_seen_mask & (1u<<KATMED_RENDER_INNER_IMAGE_SELECT)) &&
+           !(frozen.inner_seen_mask & (1u<<KATMED_RENDER_INNER_JPEG_DECODE)) &&
+           (frozen.inner_multi_mask & (1u<<KATMED_RENDER_INNER_UI_RENDER)) &&
+           (frozen.inner_status_valid & (KATMED_CONFIG_RENDER_STATUS_SELECT |
+                                        KATMED_CONFIG_RENDER_STATUS_PRESENT)) ==
+               (KATMED_CONFIG_RENDER_STATUS_SELECT | KATMED_CONFIG_RENDER_STATUS_PRESENT) &&
+           !(frozen.inner_status_valid & KATMED_CONFIG_RENDER_STATUS_LOCK) &&
+           frozen.inner_select_status==0 && frozen.inner_present_status==0);
+    katmed_config_render_inner(KATMED_RENDER_INNER_LVGL_LOCK,false,1);
+    katmed_config_owner_phase(KATMED_CONFIG_OWNER_PHASE_OTHER);
+    assert(memcmp(&frozen,&render_in_flight.trace,sizeof(frozen))==0);
+    katmed_test_tick_offset=0;
+
+    /* A completed earlier period is never a global last-render result. */
+    katmed_config_owner_phase(KATMED_CONFIG_OWNER_PHASE_RENDER_CALL);
+    katmed_config_render_inner(KATMED_RENDER_INNER_IMAGE_PRESENT,true,0);
+    katmed_config_render_inner(KATMED_RENDER_INNER_IMAGE_PRESENT,false,0);
+    katmed_config_owner_phase(KATMED_CONFIG_OWNER_PHASE_OTHER);
+    Client stale={.request.operation=KATMED_CONFIG_GET,.timeout_ms=20};
+    assert(pthread_create(&thread,NULL,call,&stale)==0);
+    pthread_join(thread,NULL);
+    assert(!(stale.trace.valid & KATMED_CONFIG_TRACE_RENDER_INNER));
+
+    /* Two periods in one request are marked MULTI, without mixed details. */
+    katmed_config_owner_phase(KATMED_CONFIG_OWNER_PHASE_RENDER_CALL);
+    Client multiple={.request.operation=KATMED_CONFIG_GET,.timeout_ms=80};
+    arm_done_wait();
+    assert(pthread_create(&thread,NULL,call,&multiple)==0);
+    await_done_wait();
+    katmed_config_render_inner(KATMED_RENDER_INNER_UI_RENDER,true,0);
+    katmed_config_render_inner(KATMED_RENDER_INNER_UI_RENDER,false,0);
+    katmed_config_owner_phase(KATMED_CONFIG_OWNER_PHASE_OTHER);
+    katmed_config_owner_phase(KATMED_CONFIG_OWNER_PHASE_RENDER_CALL);
+    katmed_config_render_inner(KATMED_RENDER_INNER_IMAGE_PRESENT,true,0);
+    katmed_config_render_inner(KATMED_RENDER_INNER_IMAGE_PRESENT,false,0);
+    pthread_join(thread,NULL);
+    assert(multiple.trace.inner_period_at_freeze==KATMED_CONFIG_RENDER_INNER_MULTI &&
+           multiple.trace.inner_seen_mask==0 && multiple.trace.inner_multi_mask==0 &&
+           multiple.trace.inner_pre_enqueue_mask==0 &&
+           multiple.trace.inner_status_valid==0);
+    katmed_config_owner_phase(KATMED_CONFIG_OWNER_PHASE_OTHER);
+
+    /* A later successful request must not inherit the cancelled period. */
+    Client after={.request.operation=KATMED_CONFIG_GET,.timeout_ms=1000};
+    arm_done_wait();
+    assert(pthread_create(&thread,NULL,call,&after)==0);
+    await_done_wait();
+    katmed_config_owner_phase(KATMED_CONFIG_OWNER_PHASE_POLL);
+    katmed_config_poll(fast,NULL);
+    pthread_join(thread,NULL);
+    assert(after.result==KATMED_CONFIG_OK &&
+           !(after.trace.valid & KATMED_CONFIG_TRACE_RENDER_INNER));
     puts("bounded config bridge passed");
 }
