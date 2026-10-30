@@ -1715,7 +1715,8 @@ static void wifi_execute(Runtime *rt,const KatmedConfigRequest *request,KatmedCo
 }
 
 /* HTTPD only copies POD through the existing single-owner bridge. */
-static bool web_wifi_status(void *context,KatmedConfigResponse *response,unsigned stage)
+static bool web_wifi_status(void *context,KatmedConfigResponse *response,unsigned stage,
+                            KatmedWebWifiStatusDiagnostic *out_diagnostic)
 {
     if(!context || !response)return false;
     const KatmedConfigRequest request={.operation=KATMED_CONFIG_WIFI_STATUS};
@@ -1723,28 +1724,31 @@ static bool web_wifi_status(void *context,KatmedConfigResponse *response,unsigne
     const KatmedConfigStatus status=katmed_config_exchange_diagnostic(
         &request,response,1500u,&diagnostic);
     const bool valid=status==KATMED_CONFIG_OK;
+    if(out_diagnostic)*out_diagnostic=(KatmedWebWifiStatusDiagnostic){
+        .bridge=(int)status,.bridge_diag=(unsigned)diagnostic,
+        .ready_valid=valid,.ready=valid && response->wifi.ready,.available=true};
     if(!valid || (stage!=2u && !response->wifi.ready))
         ESP_LOGW("katmed_wifi","status_stage=%u bridge=%d bridge_diag=%u ready_valid=%u ready=%u",
                  stage,(int)status,(unsigned)diagnostic,(unsigned)valid,
                  (unsigned)(valid && response->wifi.ready));
     return valid;
 }
-static bool web_wifi_configured(void *context,bool *out)
+static bool web_wifi_configured(void *context,bool *out,KatmedWebWifiStatusDiagnostic *diagnostic)
 {
     KatmedConfigResponse response={0};
-    if(!out || !web_wifi_status(context,&response,1u) || !response.wifi.ready)return false;
+    if(!out || !web_wifi_status(context,&response,1u,diagnostic) || !response.wifi.ready)return false;
     *out=response.wifi.configured;return true;
 }
-static bool web_wifi_recovery_available(void *context,bool *out)
+static bool web_wifi_recovery_available(void *context,bool *out,KatmedWebWifiStatusDiagnostic *diagnostic)
 {
     KatmedConfigResponse response={0};
-    if(!out || !web_wifi_status(context,&response,2u))return false;
+    if(!out || !web_wifi_status(context,&response,2u,diagnostic))return false;
     *out=response.wifi.recovery;return true;
 }
-static bool web_wifi_profile_limit(void *context,size_t *out)
+static bool web_wifi_profile_limit(void *context,size_t *out,KatmedWebWifiStatusDiagnostic *diagnostic)
 {
     KatmedConfigResponse response={0};
-    if(!out || !web_wifi_status(context,&response,3u) || !response.wifi.ready)return false;
+    if(!out || !web_wifi_status(context,&response,3u,diagnostic) || !response.wifi.ready)return false;
     *out=response.wifi.limit;return true;
 }
 static bool web_wifi_list_profiles(void *context,KatmedWebWifiProfileView *out,size_t capacity,size_t *count)

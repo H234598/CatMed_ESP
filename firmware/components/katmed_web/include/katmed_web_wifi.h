@@ -27,13 +27,22 @@ typedef struct {
     char password[65]; /* Empty unless action is REPLACE; never returned or logged. */
 } KatmedWebWifiProfileUpdate;
 
+/* Filled by the status callback used by this WLAN GET, never from shared state. */
+typedef struct {
+    int bridge;
+    unsigned bridge_diag;
+    bool ready_valid;
+    bool ready;
+    bool available;
+} KatmedWebWifiStatusDiagnostic;
+
 typedef struct {
     void *context;
     bool (*authorize)(httpd_req_t *req, bool mutate, void *context);
-    bool (*configured)(void *context, bool *out);
-    bool (*recovery_available)(void *context, bool *out);
+    bool (*configured)(void *context, bool *out, KatmedWebWifiStatusDiagnostic *diagnostic);
+    bool (*recovery_available)(void *context, bool *out, KatmedWebWifiStatusDiagnostic *diagnostic);
     /* Derived from actual NVS/RAM budget; C does not invent a profile count. */
-    bool (*profile_limit)(void *context, size_t *out);
+    bool (*profile_limit)(void *context, size_t *out, KatmedWebWifiStatusDiagnostic *diagnostic);
     /* Metadata only. Never return credentials through this callback. The load
        adapter migrates legacy single-network state as priority 1; stored
        runtime profiles override explicitly selected private build defaults. */

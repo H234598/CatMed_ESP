@@ -68,16 +68,36 @@ static esp_err_t wifi_error(httpd_req_t *req, const char *status,
     return wifi_reply(req, status, body);
 }
 
+static esp_err_t wifi_status_error(httpd_req_t *req, unsigned stage,
+                                   const KatmedWebWifiStatusDiagnostic *diagnostic)
+{
+    char body[256];
+    int length;
+    if (stage <= 3u && diagnostic && diagnostic->available) {
+        length = snprintf(body, sizeof(body),
+            "{\"error\":\"wifi_unavailable\",\"message\":\"Der WLAN-Status ist derzeit nicht verfügbar.\","
+            "\"status_stage\":%u,\"bridge\":%d,\"bridge_diag\":%u,\"ready_valid\":%u,\"ready\":%u}",
+            stage, diagnostic->bridge, diagnostic->bridge_diag,
+            (unsigned)diagnostic->ready_valid, (unsigned)diagnostic->ready);
+    } else {
+        length = snprintf(body, sizeof(body),
+            "{\"error\":\"wifi_unavailable\",\"message\":\"Der WLAN-Status ist derzeit nicht verfügbar.\","
+            "\"status_stage\":%u}", stage);
+    }
+    if (length < 0 || (size_t)length >= sizeof(body)) return ESP_ERR_NO_MEM;
+    return wifi_reply(req, "503 Service Unavailable", body);
+}
+
 static bool authorize(httpd_req_t *req, bool mutate)
 {
     return wifi_services.authorize &&
            wifi_services.authorize(req, mutate, wifi_services.context);
 }
 
-static bool get_limit(size_t *limit)
+static bool get_limit(size_t *limit, KatmedWebWifiStatusDiagnostic *diagnostic)
 {
     return wifi_services.profile_limit && limit &&
-           wifi_services.profile_limit(wifi_services.context, limit);
+           wifi_services.profile_limit(wifi_services.context, limit, diagnostic);
 }
 
 static size_t escaped_length(const char *value)
@@ -112,21 +132,28 @@ static esp_err_t wifi_get(httpd_req_t *req)
     char *cursor;
     size_t body_capacity = 128;
     if (!authorize(req, false)) return ESP_OK;
-    const unsigned failed_stage =
-        !wifi_services.configured(wifi_services.context, &configured) ? 1u :
-        !wifi_services.recovery_available(wifi_services.context, &recovery) ? 2u :
-        !get_limit(&limit) ? 3u : 0u;
+    KatmedWebWifiStatusDiagnostic diagnostic = {0};
+    unsigned failed_stage = 0u;
+    if (!wifi_services.configured(wifi_services.context, &configured, &diagnostic))
+        failed_stage = 1u;
+    if (!failed_stage) {
+        diagnostic = (KatmedWebWifiStatusDiagnostic){0};
+        if (!wifi_services.recovery_available(wifi_services.context, &recovery, &diagnostic))
+            failed_stage = 2u;
+    }
+    if (!failed_stage) {
+        diagnostic = (KatmedWebWifiStatusDiagnostic){0};
+        if (!get_limit(&limit, &diagnostic)) failed_stage = 3u;
+    }
     if (failed_stage) {
         ESP_LOGW("katmed_wifi", "get_failed stage=%u", failed_stage);
-        return wifi_error(req, "503 Service Unavailable", "wifi_unavailable",
-                          "Der WLAN-Status ist derzeit nicht verfügbar.");
+        return wifi_status_error(req, failed_stage, &diagnostic);
     }
     if (limit > 0) {
         profiles = calloc(limit, sizeof(*profiles));
         if (!profiles) {
             ESP_LOGW("katmed_wifi", "get_failed stage=%u", 4u);
-            return wifi_error(req, "503 Service Unavailable", "wifi_unavailable",
-                              "Der WLAN-Status ist derzeit nicht verfügbar.");
+            return wifi_status_error(req, 4u, NULL);
         }
     }
     capacity = limit;
@@ -417,7 +444,7 @@ static esp_err_t wifi_profiles_save(httpd_req_t *req)
         return wifi_error(req, "415 Unsupported Media Type", "wifi_input_type",
                           "Die WLAN-Profile müssen als JSON übertragen werden.");
     }
-    if (!get_limit(&limit) || !read_body(req, &body, &body_length)) {
+    if (!get_limit(&limit, NULL) || !read_body(req, &body, &body_length)) {
         (void)httpd_resp_set_hdr(req, "Connection", "close");
         return wifi_error(req, "413 Content Too Large", "wifi_input_size",
                           "Die WLAN-Profileingabe ist zu groß oder unvollständig.");

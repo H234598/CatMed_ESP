@@ -30,6 +30,7 @@ MAIN_PREFIX = r'''
 #include <string.h>
 #include <stdlib.h>
 #include "katmed_config_bridge.h"
+#include "katmed_web_wifi.h"
 #include "esp_log.h"
 static unsigned calls;
 static KatmedConfigStatus bridge_status;
@@ -49,12 +50,16 @@ int main(int argc,char **argv){
  assert(argc==6);unsigned stage=(unsigned)atoi(argv[1]);bridge_status=(KatmedConfigStatus)atoi(argv[2]);
  bridge_diagnostic=(KatmedConfigBridgeDiagnostic)atoi(argv[3]);
  actual_ready=atoi(argv[4])!=0;bool diagnostics=atoi(argv[5])!=0;
- bool value=false;size_t limit=0;bool ok;
- if(stage==1)ok=web_wifi_configured((void*)1,&value);
- else if(stage==2)ok=web_wifi_recovery_available((void*)1,&value);
- else {assert(stage==3);ok=web_wifi_profile_limit((void*)1,&limit);}
+ bool value=false;size_t limit=0;bool ok;KatmedWebWifiStatusDiagnostic observed={0};
+ if(stage==1)ok=web_wifi_configured((void*)1,&value,&observed);
+ else if(stage==2)ok=web_wifi_recovery_available((void*)1,&value,&observed);
+ else {assert(stage==3);ok=web_wifi_profile_limit((void*)1,&limit,&observed);}
  bool expected=bridge_status==KATMED_CONFIG_OK && (stage==2 || actual_ready);
  assert(calls==1 && ok==expected);
+ assert(observed.available && observed.bridge==(int)bridge_status &&
+        observed.bridge_diag==(unsigned)bridge_diagnostic &&
+        observed.ready_valid==(bridge_status==KATMED_CONFIG_OK) &&
+        observed.ready==(bridge_status==KATMED_CONFIG_OK && actual_ready));
  if(ok){if(stage==1)assert(value);if(stage==2)assert(!value);if(stage==3)assert(limit==4);}
  if(diagnostics){
   assert(records==(expected?0u:1u));
@@ -63,8 +68,8 @@ int main(int argc,char **argv){
    assert(logged_valid==(bridge_status==KATMED_CONFIG_OK));
    assert(logged_ready==(bridge_status==KATMED_CONFIG_OK && actual_ready));}
  }
- unsigned before=calls;assert(!web_wifi_configured((void*)1,NULL));
- assert(!web_wifi_recovery_available((void*)1,NULL));assert(!web_wifi_profile_limit((void*)1,NULL));
+ unsigned before=calls;assert(!web_wifi_configured((void*)1,NULL,&observed));
+ assert(!web_wifi_recovery_available((void*)1,NULL,&observed));assert(!web_wifi_profile_limit((void*)1,NULL,&observed));
  assert(calls==before);
  return 0;
 }
@@ -77,20 +82,64 @@ void *__wrap_calloc(size_t count,size_t size){
 }
 int main(int argc,char **argv){
  assert(argc==3);fail_stage=(unsigned)atoi(argv[1]);bool diagnostics=atoi(argv[2])!=0;
- FakeWifi wifi={0};KatmedWebWifiServices ws={.context=&wifi,.authorize=auth,
+ FakeWifi wifi={.view={{.ssid="synthetic-private-profile"}},
+                .passwords={"synthetic-secret-never-return"}};
+ KatmedWebWifiServices ws={.context=&wifi,.authorize=auth,
  .configured=configured,.recovery_available=recovery,.profile_limit=limit,
  .list_profiles=list_profiles,.save_profiles_atomic=save_profiles,
  .delete_profile_atomic=delete_profile,.schedule_reconnect=reconnect};
  assert(katmed_web_wifi_register((httpd_handle_t)1,&ws));httpd_req_t req;
  req_init(&req,NULL);req.authenticated=false;assert(route("/api/wifi",HTTP_GET)(&req)==ESP_OK);
  assert(!strcmp(req.response_status,"401 Unauthorized") && !records && !callback_count);
+ assert(!strstr(req.response,"status_stage") && !strstr(req.response,"bridge_diag"));
  req_init(&req,NULL);fail_alloc=fail_stage==4;
  assert(route("/api/wifi",HTTP_GET)(&req)==ESP_OK);
- if(!fail_stage){assert(!strcmp(req.response_status,"200 OK"));assert(wifi.list_calls==1);assert(!records);}
+ cJSON *parsed=cJSON_ParseWithLength(req.response,req.response_size);
+ assert(parsed && cJSON_IsObject(parsed));cJSON_Delete(parsed);
+ if(!fail_stage){assert(!strcmp(req.response_status,"200 OK"));assert(wifi.list_calls==1);assert(!records);
+ assert(!strstr(req.response,"status_stage") && !strstr(req.response,"bridge_diag"));}
  else {assert(!strcmp(req.response_status,"503 Service Unavailable"));
  assert(strstr(req.response,"wifi_unavailable"));assert(strstr(req.response,"Der WLAN-Status ist derzeit nicht verf"));
+ char stage_field[32];snprintf(stage_field,sizeof(stage_field),"\"status_stage\":%u",fail_stage);
+ assert(strstr(req.response,stage_field));
+ if(fail_stage<=3){char bridge_field[32];snprintf(bridge_field,sizeof(bridge_field),"\"bridge\":%u",10u+fail_stage);
+ assert(strstr(req.response,bridge_field));assert(strstr(req.response,"\"bridge_diag\":7"));
+ assert(strstr(req.response,"\"ready_valid\":0"));assert(strstr(req.response,"\"ready\":0"));}
+ else {assert(!strstr(req.response,"\"bridge\""));assert(!strstr(req.response,"bridge_diag"));}
  assert(!wifi.list_calls);if(diagnostics)assert(records==1 && logged_stage==fail_stage);}
  assert(callback_count==(fail_stage>=1 && fail_stage<=3?fail_stage:3));
+ if(fail_stage){unsigned first=fail_stage,next=first==1?2u:1u;fail_stage=next;callback_count=0;
+ req_init(&req,NULL);assert(route("/api/wifi",HTTP_GET)(&req)==ESP_OK);
+ parsed=cJSON_ParseWithLength(req.response,req.response_size);assert(parsed && cJSON_IsObject(parsed));cJSON_Delete(parsed);
+ char next_field[32];snprintf(next_field,sizeof(next_field),"\"bridge\":%u",10u+next);
+ assert(strstr(req.response,next_field));assert(callback_count==next);
+ if(first<=3){char old_field[32];snprintf(old_field,sizeof(old_field),"\"bridge\":%u",10u+first);
+ assert(!strstr(req.response,old_field));}}
+ fail_stage=0;wifi.count=5;req_init(&req,NULL);
+ assert(route("/api/wifi",HTTP_GET)(&req)==ESP_OK);
+ assert(!strcmp(req.response_status,"503 Service Unavailable"));
+ assert(strstr(req.response,"Die gespeicherten WLAN-Profile"));
+ assert(!strstr(req.response,"status_stage") && !strstr(req.response,"bridge_diag"));
+ parsed=cJSON_ParseWithLength(req.response,req.response_size);assert(parsed && cJSON_IsObject(parsed));cJSON_Delete(parsed);
+ wifi.count=0;fail_stage=1;extreme_diag=true;req_init(&req,NULL);
+ assert(route("/api/wifi",HTTP_GET)(&req)==ESP_OK);
+ assert(strstr(req.response,"\"bridge\":-2147483648"));
+ assert(strstr(req.response,"\"bridge_diag\":4294967295"));
+ assert(req.response_size<sizeof(req.response) && req.response[req.response_size-1]=='}');
+ parsed=cJSON_ParseWithLength(req.response,req.response_size);assert(parsed && cJSON_IsObject(parsed));
+ assert(cJSON_IsNumber(cJSON_GetObjectItemCaseSensitive(parsed,"bridge")));
+ assert(cJSON_IsNumber(cJSON_GetObjectItemCaseSensitive(parsed,"bridge_diag")));
+ cJSON_Delete(parsed);
+ extreme_diag=false;
+ for(unsigned early=2;early<=3;++early){early_fail_stage=early;fail_stage=early;callback_count=0;
+ req_init(&req,NULL);assert(route("/api/wifi",HTTP_GET)(&req)==ESP_OK);
+ assert(!strcmp(req.response_status,"503 Service Unavailable"));
+ char early_field[32];snprintf(early_field,sizeof(early_field),"\"status_stage\":%u",early);
+ assert(strstr(req.response,early_field) && !strstr(req.response,"\"bridge\""));
+ assert(!strstr(req.response,"bridge_diag") && callback_count==early);
+ assert(!strstr(req.response,"synthetic-private-profile") &&
+        !strstr(req.response,"synthetic-secret-never-return"));
+ parsed=cJSON_ParseWithLength(req.response,req.response_size);assert(parsed && cJSON_IsObject(parsed));cJSON_Delete(parsed);}
  return 0;
 }
 '''
@@ -116,12 +165,12 @@ class WifiStatusDiagnostics(unittest.TestCase):
                               "-DKATMED_WIFI_DIAGNOSTIC_CAPTURE", "-I" + str(ROOT / "firmware/components/katmed_core/include"), *includes, str(main), "-o", str(cls.main_binary)])
         # Reuse the existing route harness's actual HTTP stubs/registration.
         fixture = (ROOT / "tests/host_web_upload_wifi/check_wifi_reset_routes.c").read_text().split("int main(void){", 1)[0]
-        fixture = fixture.replace("static bool configured(void *ctx,bool*out){(void)ctx;*out=true;return true;}",
-                                  "static unsigned fail_stage,callback_count;\nstatic bool configured(void *ctx,bool*out){(void)ctx;++callback_count;*out=true;return fail_stage!=1;}")
-        fixture = fixture.replace("static bool recovery(void *ctx,bool*out){(void)ctx;*out=true;return true;}",
-                                  "static bool recovery(void *ctx,bool*out){(void)ctx;++callback_count;*out=true;return fail_stage!=2;}")
-        fixture = fixture.replace("static bool limit(void *ctx,size_t*out){(void)ctx;*out=4;return true;}",
-                                  "static bool limit(void *ctx,size_t*out){(void)ctx;++callback_count;*out=4;return fail_stage!=3;}")
+        fixture = fixture.replace("static bool configured(void *ctx,bool*out,KatmedWebWifiStatusDiagnostic*diagnostic){(void)ctx;(void)diagnostic;*out=true;return true;}",
+                                  "static unsigned fail_stage,callback_count,early_fail_stage;static bool extreme_diag;\nstatic bool configured(void *ctx,bool*out,KatmedWebWifiStatusDiagnostic*diagnostic){(void)ctx;++callback_count;*out=true;if(diagnostic)*diagnostic=(KatmedWebWifiStatusDiagnostic){.bridge=extreme_diag?(-2147483647-1):11,.bridge_diag=extreme_diag?~0u:7u,.available=true};return fail_stage!=1;}")
+        fixture = fixture.replace("static bool recovery(void *ctx,bool*out,KatmedWebWifiStatusDiagnostic*diagnostic){(void)ctx;(void)diagnostic;*out=true;return true;}",
+                                  "static bool recovery(void *ctx,bool*out,KatmedWebWifiStatusDiagnostic*diagnostic){(void)ctx;++callback_count;*out=true;if(early_fail_stage==2)return false;if(diagnostic)*diagnostic=(KatmedWebWifiStatusDiagnostic){.bridge=12,.bridge_diag=7,.available=true};return fail_stage!=2;}")
+        fixture = fixture.replace("static bool limit(void *ctx,size_t*out,KatmedWebWifiStatusDiagnostic*diagnostic){(void)ctx;(void)diagnostic;*out=4;return true;}",
+                                  "static bool limit(void *ctx,size_t*out,KatmedWebWifiStatusDiagnostic*diagnostic){(void)ctx;++callback_count;*out=4;if(early_fail_stage==3)return false;if(diagnostic)*diagnostic=(KatmedWebWifiStatusDiagnostic){.bridge=13,.bridge_diag=7,.available=true};return fail_stage!=3;}")
         route = directory / "route.c"
         route.write_text(fixture + LOG + ROUTE_CASE)
         production_route = directory / "production_wifi.c"
