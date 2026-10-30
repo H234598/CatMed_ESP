@@ -3,6 +3,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include "katmed_config_bridge_diag.h"
 #include "katmed_types.h"
 #include "katmed_display.h"
 
@@ -149,7 +150,11 @@ KatmedConfigStatus katmed_config_exchange(const KatmedConfigRequest *request,
                                           uint32_t timeout_ms);
 KatmedConfigStatus katmed_config_exchange_diagnostic(
     const KatmedConfigRequest *request, KatmedConfigResponse *response,
-    uint32_t timeout_ms, KatmedConfigBridgeDiagnostic *diagnostic);
+    uint32_t timeout_ms, KatmedConfigBridgeDiagnostic *diagnostic,
+    KatmedConfigBridgeTrace *trace);
+/* Current owner-loop phase is producer state, not a last-request result. The
+ * bridge copies it into its one live request under the same slot lock. */
+void katmed_config_owner_phase(KatmedConfigOwnerPhase phase);
 /* Call at most once per application-loop turn. */
 void katmed_config_poll(KatmedConfigExecute execute, void *context);
 

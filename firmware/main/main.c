@@ -1721,12 +1721,14 @@ static bool web_wifi_status(void *context,KatmedConfigResponse *response,unsigne
     if(!context || !response)return false;
     const KatmedConfigRequest request={.operation=KATMED_CONFIG_WIFI_STATUS};
     KatmedConfigBridgeDiagnostic diagnostic=KATMED_CONFIG_BRIDGE_DIAG_RESPONSE;
+    KatmedConfigBridgeTrace trace={0};
     const KatmedConfigStatus status=katmed_config_exchange_diagnostic(
-        &request,response,1500u,&diagnostic);
+        &request,response,1500u,&diagnostic,&trace);
     const bool valid=status==KATMED_CONFIG_OK;
     if(out_diagnostic)*out_diagnostic=(KatmedWebWifiStatusDiagnostic){
         .bridge=(int)status,.bridge_diag=(unsigned)diagnostic,
-        .ready_valid=valid,.ready=valid && response->wifi.ready,.available=true};
+        .ready_valid=valid,.ready=valid && response->wifi.ready,.available=true,
+        .trace=trace};
     if(!valid || (stage!=2u && !response->wifi.ready))
         ESP_LOGW("katmed_wifi","status_stage=%u bridge=%d bridge_diag=%u ready_valid=%u ready=%u",
                  stage,(int)status,(unsigned)diagnostic,(unsigned)valid,
@@ -2680,8 +2682,11 @@ void app_main(void)
         .restart = boot_restart_now,
     };
     for (;;) {
+        katmed_config_owner_phase(KATMED_CONFIG_OWNER_PHASE_SLEEP);
         vTaskDelay(pdMS_TO_TICKS(25));
+        katmed_config_owner_phase(KATMED_CONFIG_OWNER_PHASE_PRE_POLL);
         if (reset_runtime_step(&runtime,monotonic_ms())) {
+            katmed_config_owner_phase(KATMED_CONFIG_OWNER_PHASE_SLEEP);
             vTaskDelay(pdMS_TO_TICKS(100));
             continue;
         }
@@ -2726,8 +2731,11 @@ void app_main(void)
         process_usb(&runtime, &now);
         now = clock_sample(runtime.boot_domain);
         restore_manual_if_ready(&runtime,&now);
+        katmed_config_owner_phase(KATMED_CONFIG_OWNER_PHASE_POLL);
         katmed_config_poll(config_execute,&runtime);
+        katmed_config_owner_phase(KATMED_CONFIG_OWNER_PHASE_WEB);
         katmed_web_poll(now.monotonic_ms);
+        katmed_config_owner_phase(KATMED_CONFIG_OWNER_PHASE_OTHER);
         bool reset_offer=false, reset_close=false, reset_expired=false;
         uint64_t reset_close_generation=0, reset_expired_generation=0;
         uint64_t reset_offer_epoch=0;
@@ -2782,8 +2790,11 @@ void app_main(void)
             interaction_drain(now.monotonic_ms);
         const bool render_due = now.monotonic_ms - last_render_ms >= 50;
         publish_ui_owner(&runtime);
-        if (render_ui(&runtime.state, &runtime.local, &now, NULL,
-                      false, render_due) && render_due) {
+        katmed_config_owner_phase(KATMED_CONFIG_OWNER_PHASE_RENDER_CALL);
+        const bool rendered=render_ui(&runtime.state, &runtime.local, &now, NULL,
+                                      false, render_due);
+        katmed_config_owner_phase(KATMED_CONFIG_OWNER_PHASE_OTHER);
+        if (rendered && render_due) {
             last_render_ms = now.monotonic_ms;
         }
         if (katmed_runtime_metrics_due(&metrics_gate, now.monotonic_ms)) {

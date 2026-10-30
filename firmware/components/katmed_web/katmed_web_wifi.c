@@ -68,17 +68,71 @@ static esp_err_t wifi_error(httpd_req_t *req, const char *status,
     return wifi_reply(req, status, body);
 }
 
+static bool append_diagnostic_u32(char *body, size_t capacity, size_t *used,
+                                  const char *name, uint32_t value)
+{
+    const int length=snprintf(body+*used,capacity-*used,
+                              ",\"%s\":%" PRIu32,name,value);
+    if (length<0 || (size_t)length>=capacity-*used) return false;
+    *used+=(size_t)length;
+    return true;
+}
+
+/* Relative to this exchange's admission start; absolute uptime stays internal. */
+static uint32_t trace_offset_ms(const KatmedConfigBridgeTrace *trace, uint32_t tick)
+{
+    const uint64_t elapsed=(uint64_t)(uint32_t)(tick-trace->gate_start_tick)*
+                           trace->tick_period_ms;
+    return elapsed>UINT32_MAX ? UINT32_MAX : (uint32_t)elapsed;
+}
+
 static esp_err_t wifi_status_error(httpd_req_t *req, unsigned stage,
                                    const KatmedWebWifiStatusDiagnostic *diagnostic)
 {
-    char body[256];
+    char body[1024];
     int length;
     if (stage <= 3u && diagnostic && diagnostic->available) {
         length = snprintf(body, sizeof(body),
             "{\"error\":\"wifi_unavailable\",\"message\":\"Der WLAN-Status ist derzeit nicht verfügbar.\","
-            "\"status_stage\":%u,\"bridge\":%d,\"bridge_diag\":%u,\"ready_valid\":%u,\"ready\":%u}",
+            "\"status_stage\":%u,\"bridge\":%d,\"bridge_diag\":%u,\"ready_valid\":%u,\"ready\":%u",
             stage, diagnostic->bridge, diagnostic->bridge_diag,
             (unsigned)diagnostic->ready_valid, (unsigned)diagnostic->ready);
+        if (length<0 || (size_t)length>=sizeof(body)) return ESP_ERR_NO_MEM;
+        size_t used=(size_t)length;
+        const KatmedConfigBridgeTrace *trace=&diagnostic->trace;
+        const struct { uint32_t valid; const char *name; uint32_t value; } fields[]={
+            {KATMED_CONFIG_TRACE_GATE_START,"trace_tick_ms",trace->tick_period_ms},
+            {KATMED_CONFIG_TRACE_GATE_START,"admission_start_ms",0u},
+            {KATMED_CONFIG_TRACE_GATE_START | KATMED_CONFIG_TRACE_GATE_RETURN,
+                "gate_return_elapsed_ms",trace_offset_ms(trace,trace->gate_return_tick)},
+            {KATMED_CONFIG_TRACE_GATE_RETURN,"gate_acquired",trace->gate_acquired},
+            {KATMED_CONFIG_TRACE_GATE_START | KATMED_CONFIG_TRACE_ENQUEUE,
+                "enqueue_elapsed_ms",trace_offset_ms(trace,trace->enqueue_tick)},
+            {KATMED_CONFIG_TRACE_GATE_START | KATMED_CONFIG_TRACE_POLL_ENTER,
+                "owner_poll_elapsed_ms",trace_offset_ms(trace,trace->poll_enter_tick)},
+            {KATMED_CONFIG_TRACE_GATE_START | KATMED_CONFIG_TRACE_POLL_COMPLETE,
+                "owner_complete_elapsed_ms",trace_offset_ms(trace,trace->poll_complete_tick)},
+            {KATMED_CONFIG_TRACE_GATE_START | KATMED_CONFIG_TRACE_WAIT_RETURN,
+                "wait_return_elapsed_ms",trace_offset_ms(trace,trace->wait_return_tick)},
+            {KATMED_CONFIG_TRACE_WAIT_RETURN,"wait_elapsed_ms",trace->wait_elapsed_ms},
+            {KATMED_CONFIG_TRACE_WAIT_RETURN,"wait_signalled",trace->wait_signalled},
+            {KATMED_CONFIG_TRACE_GATE_START | KATMED_CONFIG_TRACE_DECISION,
+                "decision_elapsed_ms",trace_offset_ms(trace,trace->decision_tick)},
+            {KATMED_CONFIG_TRACE_DECISION,"slot_at_decision",trace->slot_at_decision},
+            {KATMED_CONFIG_TRACE_PHASE_ENQUEUE,"owner_phase_enqueue",trace->owner_phase_at_enqueue},
+            {KATMED_CONFIG_TRACE_PHASE_DECISION,"owner_phase_decision",trace->owner_phase_at_decision},
+            {KATMED_CONFIG_TRACE_PHASE_SEEN,"owner_phase_seen",trace->owner_phase_seen_mask},
+            {KATMED_CONFIG_TRACE_PHASE_SEEN,"render_call_overlap_ms",trace->render_overlap_ms},
+        };
+        for (size_t i=0;i<sizeof(fields)/sizeof(fields[0]);++i) {
+            if ((trace->valid & fields[i].valid)==fields[i].valid &&
+                !append_diagnostic_u32(body,sizeof(body),&used,fields[i].name,fields[i].value))
+                return ESP_ERR_NO_MEM;
+        }
+        if (used+2u>sizeof(body)) return ESP_ERR_NO_MEM;
+        body[used++]='}';
+        body[used]='\0';
+        return wifi_reply(req,"503 Service Unavailable",body);
     } else {
         length = snprintf(body, sizeof(body),
             "{\"error\":\"wifi_unavailable\",\"message\":\"Der WLAN-Status ist derzeit nicht verfügbar.\","

@@ -5,6 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "esp_http_server.h"
+#include "katmed_config_bridge_diag.h"
 
 typedef enum {
     KATMED_WEB_WIFI_CREDENTIAL_KEEP = 0,
@@ -34,6 +35,7 @@ typedef struct {
     bool ready_valid;
     bool ready;
     bool available;
+    KatmedConfigBridgeTrace trace;
 } KatmedWebWifiStatusDiagnostic;
 
 typedef struct {
