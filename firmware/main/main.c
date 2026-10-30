@@ -670,9 +670,14 @@ typedef struct {
     ClockSample clock, confirmation;
     UiConflict conflict[KATMED_STORE_CONFLICT_MAX];
     char setup_ssid[33], setup_password[17];
+    KatmedWebWifiRenderSnapshot wifi_render;
+    bool wifi_render_valid;
 } UiOwnerSnapshot;
 static UiOwnerSnapshot ui_owner_snapshot;
-static void publish_ui_owner(Runtime *rt)
+static bool wifi_render_active;
+_Static_assert(KATMED_WEB_WIFI_SNAPSHOT_MAX_PROFILES==KATMED_STORE_WIFI_PROFILE_MAX,
+               "render WiFi view must match Store profile capacity");
+static void publish_ui_owner_state(Runtime *rt, bool entering_render)
 {
     UiOwnerSnapshot next={0};
     next.valid=rt!=NULL;
@@ -696,6 +701,30 @@ static void publish_ui_owner(Runtime *rt)
                 if(store_conflict_at(&rt->store,i,&entry)!=STORE_OK)break;
                 next.conflict[next.conflicts++]=(UiConflict){entry.id,entry.round,entry.occurred_at};
             }
+            if (next.ready) {
+                KatmedWebWifiRenderSnapshot *wifi=&next.wifi_render;
+                wifi->configured=rt->store.record.provision.configured;
+                wifi->recovery=!rt->store.uncertain;
+                wifi->limit=store_wifi_profile_limit();
+                wifi->count=rt->store.record.wifi_profile_count;
+                next.wifi_render_valid=wifi->limit==KATMED_WEB_WIFI_SNAPSHOT_MAX_PROFILES &&
+                    wifi->count<=wifi->limit;
+                for (size_t i=0;next.wifi_render_valid && i<wifi->count;++i) {
+                    const StoreWifiProfile *source=&rt->store.record.wifi_profiles[i];
+                    KatmedWebWifiProfileView *view=&wifi->profiles[i];
+                    if (!source->id || !source->priority || source->ssid_length==0 ||
+                        source->ssid_length>sizeof(source->ssid)) {
+                        next.wifi_render_valid=false;
+                        break;
+                    }
+                    view->id=source->id;
+                    view->priority=source->priority;
+                    view->secured=source->secured;
+                    memcpy(view->ssid,source->ssid,source->ssid_length);
+                }
+                if (!next.wifi_render_valid)
+                    next.wifi_render=(KatmedWebWifiRenderSnapshot){0};
+            }
         }
         if(next.mesh_started){
             next.connected=katmed_mesh_connected();
@@ -703,7 +732,18 @@ static void publish_ui_owner(Runtime *rt)
         }
         if(next.setup_open){memcpy(next.setup_ssid,rt->setup_ssid,sizeof(next.setup_ssid));memcpy(next.setup_password,rt->setup_password,sizeof(next.setup_password));}
     }
-    DISPLAY_MB_LOCK(&display_mailbox);ui_owner_snapshot=next;DISPLAY_MB_UNLOCK(&display_mailbox);
+    DISPLAY_MB_LOCK(&display_mailbox);
+    ui_owner_snapshot=next;
+    if (entering_render) wifi_render_active=true;
+    DISPLAY_MB_UNLOCK(&display_mailbox);
+}
+static void publish_ui_owner(Runtime *rt) { publish_ui_owner_state(rt,false); }
+static void publish_render_owner(Runtime *rt) { publish_ui_owner_state(rt,true); }
+static void finish_render_owner(void)
+{
+    DISPLAY_MB_LOCK(&display_mailbox);
+    wifi_render_active=false;
+    DISPLAY_MB_UNLOCK(&display_mailbox);
 }
 static bool published_orientation_automatic;
 static bool orientation_automatic(void *context)
@@ -1555,6 +1595,17 @@ static bool web_wifi_ready(Runtime *rt)
 {
     return rt != NULL && rt->store_ready &&
         store_get_status(&rt->store, NULL, NULL, NULL) == STORE_OK;
+}
+
+static bool web_wifi_render_snapshot(void *context,
+                                     KatmedWebWifiRenderSnapshot *out)
+{
+    if (!context || !out) return false;
+    DISPLAY_MB_LOCK(&display_mailbox);
+    const bool valid=wifi_render_active && ui_owner_snapshot.wifi_render_valid;
+    if (valid) *out=ui_owner_snapshot.wifi_render;
+    DISPLAY_MB_UNLOCK(&display_mailbox);
+    return valid;
 }
 
 /* These language callbacks never dereference Runtime/Store on HTTPD.
@@ -2669,6 +2720,7 @@ void app_main(void)
                 .recovery_available = web_wifi_recovery_available,
                 .profile_limit = web_wifi_profile_limit,
                 .list_profiles = web_wifi_list_profiles,
+                .render_snapshot = web_wifi_render_snapshot,
                 .save_profiles_atomic = web_wifi_save_profiles,
                 .delete_profile_atomic = web_wifi_delete_profile,
                 .schedule_reconnect = web_wifi_schedule_reconnect,
@@ -2807,11 +2859,12 @@ void app_main(void)
         if (runtime.mesh_started && !runtime.reboot_required)
             interaction_drain(now.monotonic_ms);
         const bool render_due = now.monotonic_ms - last_render_ms >= 50;
-        publish_ui_owner(&runtime);
+        publish_render_owner(&runtime);
         katmed_config_owner_phase(KATMED_CONFIG_OWNER_PHASE_RENDER_CALL);
         const bool rendered=render_ui(&runtime.state, &runtime.local, &now, NULL,
                                       false, render_due);
         katmed_config_owner_phase(KATMED_CONFIG_OWNER_PHASE_OTHER);
+        finish_render_owner();
         if (rendered && render_due) {
             last_render_ms = now.monotonic_ms;
         }

@@ -257,23 +257,36 @@ static esp_err_t wifi_get(httpd_req_t *req)
     char *cursor;
     size_t body_capacity = 128;
     if (!authorize(req, false)) return ESP_OK;
+    KatmedWebWifiRenderSnapshot render={0};
+    const bool during_render=wifi_services.render_snapshot &&
+        wifi_services.render_snapshot(wifi_services.context,&render);
     KatmedWebWifiStatusDiagnostic diagnostic = {0};
     unsigned failed_stage = 0u;
-    if (!wifi_services.configured(wifi_services.context, &configured, &diagnostic))
-        failed_stage = 1u;
-    if (!failed_stage) {
-        diagnostic = (KatmedWebWifiStatusDiagnostic){0};
-        if (!wifi_services.recovery_available(wifi_services.context, &recovery, &diagnostic))
-            failed_stage = 2u;
-    }
-    if (!failed_stage) {
-        diagnostic = (KatmedWebWifiStatusDiagnostic){0};
-        if (!get_limit(&limit, &diagnostic)) failed_stage = 3u;
+    if (during_render) {
+        configured=render.configured;
+        recovery=render.recovery;
+        limit=render.limit;
+    } else {
+        if (!wifi_services.configured(wifi_services.context, &configured, &diagnostic))
+            failed_stage = 1u;
+        if (!failed_stage) {
+            diagnostic = (KatmedWebWifiStatusDiagnostic){0};
+            if (!wifi_services.recovery_available(wifi_services.context, &recovery, &diagnostic))
+                failed_stage = 2u;
+        }
+        if (!failed_stage) {
+            diagnostic = (KatmedWebWifiStatusDiagnostic){0};
+            if (!get_limit(&limit, &diagnostic)) failed_stage = 3u;
+        }
     }
     if (failed_stage) {
         ESP_LOGW("katmed_wifi", "get_failed stage=%u", failed_stage);
         return wifi_status_error(req, failed_stage, &diagnostic);
     }
+    if (during_render && (limit>KATMED_WEB_WIFI_SNAPSHOT_MAX_PROFILES ||
+                          render.count>limit))
+        return wifi_error(req,"503 Service Unavailable","wifi_unavailable",
+                          "Die gespeicherten WLAN-Profile sind derzeit nicht verfügbar.");
     if (limit > 0) {
         profiles = calloc(limit, sizeof(*profiles));
         if (!profiles) {
@@ -282,8 +295,13 @@ static esp_err_t wifi_get(httpd_req_t *req)
         }
     }
     capacity = limit;
-    if (!wifi_services.list_profiles(wifi_services.context, profiles, capacity, &count) ||
-        count > limit) {
+    bool list_ok=true;
+    if (during_render) {
+        count=render.count;
+        if (count) memcpy(profiles,render.profiles,count*sizeof(*profiles));
+    } else list_ok=wifi_services.list_profiles(wifi_services.context, profiles,
+                                               capacity, &count);
+    if (!list_ok || count > limit) {
         free(profiles);
         return wifi_error(req, "503 Service Unavailable", "wifi_unavailable",
                           "Die gespeicherten WLAN-Profile sind derzeit nicht verfügbar.");

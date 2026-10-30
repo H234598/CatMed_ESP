@@ -38,6 +38,16 @@ typedef struct {
     KatmedConfigBridgeTrace trace;
 } KatmedWebWifiStatusDiagnostic;
 
+/* One owner-published view for a GET during a render call. Only profile
+ * metadata is copied; Store and credentials stay with the application task. */
+#define KATMED_WEB_WIFI_RENDER_SNAPSHOT 1
+#define KATMED_WEB_WIFI_SNAPSHOT_MAX_PROFILES 4u
+typedef struct {
+    bool configured, recovery;
+    size_t limit, count;
+    KatmedWebWifiProfileView profiles[KATMED_WEB_WIFI_SNAPSHOT_MAX_PROFILES];
+} KatmedWebWifiRenderSnapshot;
+
 typedef struct {
     void *context;
     bool (*authorize)(httpd_req_t *req, bool mutate, void *context);
@@ -50,6 +60,8 @@ typedef struct {
        runtime profiles override explicitly selected private build defaults. */
     bool (*list_profiles)(void *context, KatmedWebWifiProfileView *out,
                           size_t capacity, size_t *count);
+    /* Optional atomic status+list view only while the owner is rendering. */
+    bool (*render_snapshot)(void *context, KatmedWebWifiRenderSnapshot *out);
     /* Validates IDs, retains KEEP credentials, and atomically replaces the set. */
     bool (*save_profiles_atomic)(void *context,
                                  const KatmedWebWifiProfileUpdate *profiles,
