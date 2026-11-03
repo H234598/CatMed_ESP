@@ -11,6 +11,16 @@
 #ifndef DRAW_LINES
 #define DRAW_LINES 16u
 #endif
+static unsigned render_begin[KATMED_RENDER_INNER_COUNT];
+static unsigned render_end[KATMED_RENDER_INNER_COUNT];
+static uint8_t render_last[KATMED_RENDER_INNER_COUNT];
+static void render_observer(void *context, KatmedRenderInnerPhase phase,
+                            bool begin, uint8_t outcome)
+{
+ (void)context;assert((unsigned)phase<KATMED_RENDER_INNER_COUNT);
+ if(begin)++render_begin[phase];
+ else {++render_end[phase];render_last[phase]=outcome;}
+}
 static uint64_t pack_reads;
 static lv_indev_state_t probe_touch_state=LV_INDEV_STATE_RELEASED;
 static lv_point_t probe_touch_point={200,190};
@@ -56,9 +66,40 @@ int main(int argc,char**argv){assert(argc==5);int width=atoi(argv[1]),height=ato
  Host host={.width=width,.height=height,.result=UI_SUBMIT_COMMITTED};host.frame=calloc((size_t)width*height,2);uint16_t *buffer=calloc((size_t)width*DRAW_LINES,2);assert(host.frame&&buffer);lv_init();monitor("after_lv_init");
  lv_display_t*d=lv_display_create(width,height);lv_display_set_color_format(d,LV_COLOR_FORMAT_RGB565);lv_display_set_buffers(d,buffer,NULL,(uint32_t)width*DRAW_LINES*2,LV_DISPLAY_RENDER_MODE_PARTIAL);lv_display_set_flush_cb(d,flush);lv_display_set_user_data(d,&host);monitor("before_ui_render");
  katmed_images_register_lvgl_fs();FILE *pack=fopen(argv[4],"rb");assert(pack);KatmedStorage storage={pack,katmed_generated_catalog.pack_bytes,read_image_pack,NULL};assert(katmed_images_mount_storage(storage)==KATMED_IMAGE_OK);
- UiServices services={.context=&host,.submit=submit,.connected=connected};ui_set_services(&services);AppState state={0};state.round.origin=(EventId){1,1,1};state.round.ordinal=1;LocalSettings local={.clock_style=DIGITAL_LARGE,.orientation=width>height?ORIENTATION_90:ORIENTATION_0};ClockSample clock={.monotonic_ms=1000,.domain=1,.utc_ms=1791973800000LL,.utc_valid=true,.quality=CLOCK_SYNCHRONIZED};
+ katmed_images_set_render_trace(render_observer,NULL);
+ UiServices services={.context=&host,.submit=submit,.connected=connected,.render_trace=render_observer};ui_set_services(&services);AppState state={0};state.round.origin=(EventId){1,1,1};state.round.ordinal=1;LocalSettings local={.clock_style=DIGITAL_LARGE,.orientation=width>height?ORIENTATION_90:ORIENTATION_0};ClockSample clock={.monotonic_ms=1000,.domain=1,.utc_ms=1791973800000LL,.utc_valid=true,.quality=CLOCK_SYNCHRONIZED};
  ui_render(&state,&local,BACKGROUND,&clock);draw();monitor("first_render_background");lv_obj_t*s=lv_screen_active();
- if(!strcmp(mode,"heap")){
+ if(!strcmp(mode,"render_trace")){
+  memset(render_begin,0,sizeof(render_begin));
+  memset(render_end,0,sizeof(render_end));
+  katmed_i18n_select(KATMED_LANG_FR);
+  clock.monotonic_ms+=1000;
+  ui_render(&state,&local,BACKGROUND,&clock);
+  printf("render_trace_counts language=%u/%u present=%u/%u select=%u/%u hash=%u/%u jpeg=%u/%u status=%u\n",
+         render_begin[KATMED_RENDER_INNER_LANGUAGE_REBUILD],render_end[KATMED_RENDER_INNER_LANGUAGE_REBUILD],
+         render_begin[KATMED_RENDER_INNER_IMAGE_PRESENT],render_end[KATMED_RENDER_INNER_IMAGE_PRESENT],
+         render_begin[KATMED_RENDER_INNER_IMAGE_SELECT],render_end[KATMED_RENDER_INNER_IMAGE_SELECT],
+         render_begin[KATMED_RENDER_INNER_VARIANT_HASH],render_end[KATMED_RENDER_INNER_VARIANT_HASH],
+         render_begin[KATMED_RENDER_INNER_JPEG_DECODE],render_end[KATMED_RENDER_INNER_JPEG_DECODE],
+         render_last[KATMED_RENDER_INNER_IMAGE_PRESENT]);fflush(stdout);
+  assert(render_begin[KATMED_RENDER_INNER_LANGUAGE_REBUILD]==1 &&
+         render_end[KATMED_RENDER_INNER_LANGUAGE_REBUILD]==1 &&
+         render_begin[KATMED_RENDER_INNER_IMAGE_PRESENT]==1 &&
+         render_end[KATMED_RENDER_INNER_IMAGE_PRESENT]==1 &&
+         render_begin[KATMED_RENDER_INNER_IMAGE_SELECT]==1 &&
+         render_end[KATMED_RENDER_INNER_IMAGE_SELECT]==1 &&
+         render_begin[KATMED_RENDER_INNER_VARIANT_HASH]>=1 &&
+         render_begin[KATMED_RENDER_INNER_VARIANT_HASH]==
+             render_end[KATMED_RENDER_INNER_VARIANT_HASH] &&
+         render_begin[KATMED_RENDER_INNER_JPEG_DECODE]==1 &&
+         render_end[KATMED_RENDER_INNER_JPEG_DECODE]==1 &&
+         render_last[KATMED_RENDER_INNER_IMAGE_PRESENT]==KATMED_IMAGE_OK);
+  ui_render(&state,&local,BACKGROUND,&clock);
+  assert(render_begin[KATMED_RENDER_INNER_LANGUAGE_REBUILD]==1 &&
+         render_begin[KATMED_RENDER_INNER_IMAGE_PRESENT]==1);
+  puts("real language rebuild and image producer trace passed");
+ }
+ else if(!strcmp(mode,"heap")){
  ui_render(&state,&local,SETTINGS,&clock);draw();monitor("settings");click_label(s,"Uhrdesign");draw();monitor("style_dialog");click_label(s,"Abbrechen");draw();size_t stable=monitor("style_closed");click_label(s,"Advanced");
  for(int i=0;i<100;i++){click_label(s,"Uhrdesign");click_label(s,"Analog");click_label(s,"Abbrechen");}draw();assert(monitor("style_100_closed")<=stable+64);size_t warmed=monitor("style_warmed");for(int i=0;i<100;i++){click_label(s,"Uhrdesign");click_label(s,"Analog");click_label(s,"Abbrechen");}draw();assert(monitor("style_200_closed")==warmed);
  click_label(s,"Medikamente: Stunden");draw();monitor("hours_dialog");click_label(s,"Abbrechen");draw();size_t closed=monitor("hours_closed");for(int i=0;i<100;i++){click_label(s,"Medikamente: Stunden");click_label(s,"1");click_label(s,"Abbrechen");}draw();assert(monitor("hours_100_closed")<=closed+64);size_t warmed_hours=monitor("hours_warmed");for(int i=0;i<100;i++){click_label(s,"Medikamente: Stunden");click_label(s,"1");click_label(s,"Abbrechen");}draw();assert(monitor("hours_200_closed")==warmed_hours);
@@ -74,7 +115,7 @@ int main(int argc,char**argv){assert(argc==5);int width=atoi(argv[1]),height=ato
  else if(!strcmp(mode,"settings_latency")){
   ui_render(&state,&local,SETTINGS,&clock);draw();
   lv_obj_t *title=find_label(s,"Einstellungen");assert(title);
-  lv_obj_t *settings=lv_obj_get_parent(title);assert(settings&&lv_obj_has_flag(settings,LV_OBJ_FLAG_SCROLLABLE));
+  lv_obj_t *settings=lv_obj_get_parent(title);assert(settings&&lv_obj_is_scrollable(settings));
   uint64_t before_reads=pack_reads, before_us=now_us();
   lv_obj_scroll_by(settings,0,-80,LV_ANIM_OFF);draw();
   printf("settings_scroll_reads=%llu settings_scroll_us=%llu buffer_lines=%u scroll_y=%ld\n",
@@ -107,7 +148,7 @@ int main(int argc,char**argv){assert(argc==5);int width=atoi(argv[1]),height=ato
   probe_sample(indev,LV_INDEV_STATE_RELEASED,150);
   printf("settings_indev_release at=%ld immediate=%ld after_throw=%ld reverse=%ld postrelease_scroll_events=%u scroll_end=%u momentum=%d\n",
    at_release,immediate,after_throw,after_reverse,events_after_release,probe_scroll_end_events,
-   lv_obj_has_flag(settings,LV_OBJ_FLAG_SCROLL_MOMENTUM));
+   lv_obj_is_scroll_momentum(settings));
   fflush(stdout);
   assert(at_release>0);
   assert(after_reverse<after_throw);
@@ -171,8 +212,8 @@ int main(int argc,char**argv){assert(argc==5);int width=atoi(argv[1]),height=ato
   assert(background0[tick_probe]!=0xffffu);
   assert(host.frame[tick_probe]==background0[tick_probe]);
   lv_obj_t *hour_hand=lv_obj_get_child(dial,12),*minute_hand=lv_obj_get_child(dial,13);
-  assert(hour_hand&&minute_hand&&!lv_obj_has_flag(hour_hand,LV_OBJ_FLAG_HIDDEN)&&
-         !lv_obj_has_flag(minute_hand,LV_OBJ_FLAG_HIDDEN));
+  assert(hour_hand&&minute_hand&&!lv_obj_is_hidden(hour_hand)&&
+         !lv_obj_is_hidden(minute_hand));
   const lv_point_precise_t *hour_points=lv_line_get_points(hour_hand);
   const lv_point_precise_t *minute_points=lv_line_get_points(minute_hand);
   assert(hour_points&&minute_points);
@@ -215,5 +256,5 @@ int main(int argc,char**argv){assert(argc==5);int width=atoi(argv[1]),height=ato
  else assert(0);
  KatmedImageStatus image_error=katmed_images_last_error();
  if(image_error!=KATMED_IMAGE_OK) fprintf(stderr,"image_error=%d\n",image_error);
- assert(image_error==KATMED_IMAGE_OK);lv_display_delete(d);assert(katmed_images_open_file_count()==0);katmed_images_unmount();assert(fclose(pack)==0);monitor("after_display_delete");lv_deinit();free(buffer);free(host.frame);return 0;
+ assert(image_error==KATMED_IMAGE_OK);lv_display_delete(d);assert(katmed_images_open_file_count()==0);katmed_images_set_render_trace(NULL,NULL);katmed_images_unmount();assert(fclose(pack)==0);monitor("after_display_delete");lv_deinit();free(buffer);free(host.frame);return 0;
 }

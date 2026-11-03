@@ -17,6 +17,9 @@
 #include "esp_random.h"
 #include "esp_timer.h"
 #include "esp_lvgl_port.h"
+#if KATMED_C3_ALARM_DIAG && CONFIG_IDF_TARGET_ESP32C3
+#include "esp_lvgl_port_c3_alarm_probe.h"
+#endif
 #include "esp_mesh_lite.h"
 #include "esp_netif.h"
 #include "esp_wifi.h"
@@ -411,7 +414,7 @@ static void interaction_status(void *context, KatmedInteractionStatus *out, uint
     *out = interaction_snapshot; /* serialized with render_ui by the LVGL lock */
     INTERACTION_LOCK();
     out->overflow = out->overflow || interaction_queue.quality_pending;
-    if (!runtime.state.alarm_active) interaction_queue.quality_pending = false;
+    if (!out->alarm_active) interaction_queue.quality_pending = false;
     INTERACTION_UNLOCK();
 }
 static void interaction_drain(uint64_t now)
@@ -628,6 +631,7 @@ static void mesh_shared_result(void *context, EventId id, KatmedMeshSharedOutcom
 }
 
 static bool accept_manual_clock(Runtime *rt, const char *text);
+static bool same_alarm_round(AlarmRoundId a, AlarmRoundId b);
 
 static bool orientation_auto_supported(void)
 {
@@ -658,6 +662,92 @@ static void poll_auto_orientation(Runtime *rt)
 static DisplayUiMailbox display_mailbox=DISPLAY_MB_INITIALIZER;
 /* The LVGL callback must not read the app-loop-owned Store mode. Reuse the
  * mailbox's short POD lock for this published scalar, never for Store/I2C. */
+typedef struct {
+    bool valid, ready, divergent, has_confirmation, configured, setup_open;
+    bool setup_dismissed, manual_clock_required, mesh_started, connected, mesh_active;
+    uint8_t mesh_channel;
+    KatmedMeshCounts mesh_counts;
+    uint8_t pending, conflicts;
+    AppState state;
+    LocalSettings local;
+    ClockSample clock, confirmation;
+    UiConflict conflict[KATMED_STORE_CONFLICT_MAX];
+    char setup_ssid[33], setup_password[17];
+    KatmedWebWifiRenderSnapshot wifi_render;
+    bool wifi_render_valid;
+} UiOwnerSnapshot;
+static UiOwnerSnapshot ui_owner_snapshot;
+static bool wifi_render_active;
+_Static_assert(KATMED_WEB_WIFI_SNAPSHOT_MAX_PROFILES==KATMED_STORE_WIFI_PROFILE_MAX,
+               "render WiFi view must match Store profile capacity");
+static void publish_ui_owner_state(Runtime *rt, bool entering_render)
+{
+    UiOwnerSnapshot next={0};
+    next.valid=rt!=NULL;
+    if (rt) {
+        next.state=rt->state;next.local=rt->local;next.clock=clock_sample(rt->boot_domain);
+        next.ready=rt->store_ready && store_get_status(&rt->store,NULL,&next.pending,NULL)==STORE_OK;
+        next.mesh_started=rt->mesh_started;next.setup_open=rt->setup_ap;
+        if (rt->store_ready) {
+            next.configured=rt->store.record.provision.configured;
+            next.setup_dismissed=rt->store.record.setup_dismissed;
+            next.manual_clock_required=(next.configured && rt->store.record.provision.network_mode!=STORE_NETWORK_ONLINE) ||
+                (!next.configured && next.setup_dismissed && !next.setup_open);
+            next.divergent=store_durable_divergent(&rt->store);
+            StoreRecovery recovery;
+            if(store_get_recovery(&rt->store,&recovery)==STORE_OK && recovery.has_last_confirmation){
+                next.has_confirmation=true;next.confirmation=recovery.last_confirmation;
+            }
+            uint8_t count=0;
+            if(store_conflict_count(&rt->store,&count)==STORE_OK) for(size_t i=0;i<count && i<KATMED_STORE_CONFLICT_MAX;++i){
+                StorePendingConfirm entry;
+                if(store_conflict_at(&rt->store,i,&entry)!=STORE_OK)break;
+                next.conflict[next.conflicts++]=(UiConflict){entry.id,entry.round,entry.occurred_at};
+            }
+            if (next.ready) {
+                KatmedWebWifiRenderSnapshot *wifi=&next.wifi_render;
+                wifi->configured=rt->store.record.provision.configured;
+                wifi->recovery=!rt->store.uncertain;
+                wifi->limit=store_wifi_profile_limit();
+                wifi->count=rt->store.record.wifi_profile_count;
+                next.wifi_render_valid=wifi->limit==KATMED_WEB_WIFI_SNAPSHOT_MAX_PROFILES &&
+                    wifi->count<=wifi->limit;
+                for (size_t i=0;next.wifi_render_valid && i<wifi->count;++i) {
+                    const StoreWifiProfile *source=&rt->store.record.wifi_profiles[i];
+                    KatmedWebWifiProfileView *view=&wifi->profiles[i];
+                    if (!source->id || !source->priority || source->ssid_length==0 ||
+                        source->ssid_length>sizeof(source->ssid)) {
+                        next.wifi_render_valid=false;
+                        break;
+                    }
+                    view->id=source->id;
+                    view->priority=source->priority;
+                    view->secured=source->secured;
+                    memcpy(view->ssid,source->ssid,source->ssid_length);
+                }
+                if (!next.wifi_render_valid)
+                    next.wifi_render=(KatmedWebWifiRenderSnapshot){0};
+            }
+        }
+        if(next.mesh_started){
+            next.connected=katmed_mesh_connected();
+            if(next.configured){next.mesh_active=katmed_mesh_radio_channel(&next.mesh_channel);katmed_mesh_counts(&next.mesh_counts);}
+        }
+        if(next.setup_open){memcpy(next.setup_ssid,rt->setup_ssid,sizeof(next.setup_ssid));memcpy(next.setup_password,rt->setup_password,sizeof(next.setup_password));}
+    }
+    DISPLAY_MB_LOCK(&display_mailbox);
+    ui_owner_snapshot=next;
+    if (entering_render) wifi_render_active=true;
+    DISPLAY_MB_UNLOCK(&display_mailbox);
+}
+static void publish_ui_owner(Runtime *rt) { publish_ui_owner_state(rt,false); }
+static void publish_render_owner(Runtime *rt) { publish_ui_owner_state(rt,true); }
+static void finish_render_owner(void)
+{
+    DISPLAY_MB_LOCK(&display_mailbox);
+    wifi_render_active=false;
+    DISPLAY_MB_UNLOCK(&display_mailbox);
+}
 static bool published_orientation_automatic;
 static bool orientation_automatic(void *context)
 {
@@ -682,6 +772,7 @@ static void night_copy_status(void *context,KatmedNightCopyStatus *out)
 }
 static void display_ui_publish(Runtime *rt)
 {
+    publish_ui_owner(rt);
     const KatmedDisplaySettings settings=rt->store_ready ? rt->store.record.display : katmed_display_defaults();
     KatmedNightCopyStatus night={0};katmed_mesh_night_status(&night);
     const bool automatic=orientation_auto_for(rt);
@@ -711,16 +802,44 @@ static void display_policy_step(Runtime *rt,const ClockSample *now)
     }
 }
 
+/* app_main only: same non-wrapping uint32 HA sequence as the original single
+ * press, applied in O(1) for a counted batch. This never touches Store. */
+static UiSubmitResult submit_emergency_count(Runtime *rt,uint64_t count)
+{
+    if(!rt || rt->reboot_required || !count)return UI_SUBMIT_UNAVAILABLE;
+    const uint32_t room=UINT32_MAX-rt->emergency_button_sequence;
+    rt->emergency_button_sequence+=count<room ? (uint32_t)count : room;
+    return UI_SUBMIT_OBSERVED;
+}
+static void emergency_ui_poll(Runtime *rt)
+{
+    /* Only scalar RAM work under the existing lock: no Store, UI, allocation,
+     * transport or foreign callback. Completion counts cannot exceed the
+     * capacity reserved when their presses were accepted. */
+    DISPLAY_MB_LOCK(&display_mailbox);
+    const uint64_t count=display_mailbox.emergency_pending;
+    if(count){
+        const UiSubmitResult result=submit_emergency_count(rt,count);
+        if(result==UI_SUBMIT_OBSERVED)display_mailbox.emergency_observed+=count;
+        else display_mailbox.emergency_failed+=count;
+        display_mailbox.emergency_pending=0;
+    }
+    DISPLAY_MB_UNLOCK(&display_mailbox);
+}
+
 static UiSubmitResult submit_ui_with_id(void *context, const UiRequest *request,
                                        const EventId *retry_id)
 {
     Runtime *rt = (Runtime *)context;
     if (rt == NULL || request == NULL || rt->reboot_required)
         return UI_SUBMIT_UNAVAILABLE;
-    if(request->kind==UI_REQUEST_EMERGENCY) {
-        if(rt->emergency_button_sequence<UINT32_MAX)++rt->emergency_button_sequence;
-        return UI_SUBMIT_COMMITTED;
-    }
+    if (request->guard_model &&
+        (!same_alarm_round(request->expected_round,rt->state.round) ||
+         request->expected_revision.number!=rt->state.revision.number ||
+         request->expected_revision.coordinator!=rt->state.revision.coordinator))
+        return UI_SUBMIT_STALE;
+    if(request->kind==UI_REQUEST_EMERGENCY)
+        return submit_emergency_count(rt,1);
     if (request->kind == UI_REQUEST_DISMISS_BOOT) {
         const ClockSample now = clock_sample(rt->boot_domain);
         return app_dismiss_boot_alarm(&rt->state, &now, NULL) == APP_OK
@@ -927,18 +1046,20 @@ static UiSubmitResult submit_ui(void *context, const UiRequest *request)
     return submit_ui_with_id(context,request,NULL);
 }
 
-/* Called from taskLVGL: new display intents perform no Store/Mesh work here. */
+/* taskLVGL only copies an intent; every Runtime/Core/Store action executes on
+ * app_main. Never wait for the owner while holding the LVGL lock. */
 static UiSubmitResult submit_ui_dispatch(void *context,const UiRequest *request)
 {
-    if(request && ((request->kind>=UI_REQUEST_SET_BRIGHTNESS && request->kind<=UI_REQUEST_COPY_NIGHT) ||
-                   request->kind==UI_REQUEST_SET_ORIENTATION ||
-                   request->kind==UI_REQUEST_SET_ORIENTATION_AUTOMATIC))
-        return display_mb_submit(&display_mailbox,request) ? UI_SUBMIT_QUEUED : UI_SUBMIT_UNAVAILABLE;
-    return submit_ui(context,request);
+    if (!context || !request || request->kind>UI_REQUEST_COPY_NIGHT)
+        return UI_SUBMIT_UNAVAILABLE;
+    if(request->kind==UI_REQUEST_EMERGENCY)
+        return display_mb_emergency_submit(&display_mailbox) ? UI_SUBMIT_QUEUED : UI_SUBMIT_UNAVAILABLE;
+    return display_mb_submit(&display_mailbox,request) ? UI_SUBMIT_QUEUED : UI_SUBMIT_UNAVAILABLE;
 }
 /* Sole consumer, on app_main before rendering; no UI lock held. */
 static void display_ui_poll(Runtime *rt)
 {
+    emergency_ui_poll(rt);
     uint8_t preview;
     if(display_mb_take_preview(&display_mailbox,&preview))
         rt->brightness_preview=rt->store_ready && !rt->reboot_required &&
@@ -950,6 +1071,7 @@ static void display_ui_poll(Runtime *rt)
         display_ui_publish(rt);
         (void)display_mb_complete(&display_mailbox,sequence,result);
     }else display_ui_publish(rt);
+    emergency_ui_poll(rt); /* Includes presses that arrived during ordinary work. */
 }
 
 static uint64_t config_mix(uint64_t hash, uint64_t value)
@@ -983,6 +1105,9 @@ static void config_revision(const Runtime *rt, char out[KATMED_CONFIG_REVISION_M
         hash=config_mix(hash,d.night_start);hash=config_mix(hash,d.night_end);}
     hash = config_mix(hash, (uint64_t)rt->local.clock_style);
     hash = config_mix(hash, (uint64_t)rt->store.record.manual_intent.pending);
+    hash = config_mix(hash, rt->time.utc_known);
+    hash = config_mix(hash, rt->time.anchor_monotonic_ms);
+    hash = config_mix(hash, (uint64_t)rt->time.anchor_utc_ms);
     (void)snprintf(out, KATMED_CONFIG_REVISION_MAX, "%016" PRIx64, hash);
 }
 
@@ -1024,6 +1149,13 @@ static void config_snapshot(const Runtime *rt, KatmedConfigSnapshot *out)
     *out=(KatmedConfigSnapshot){0};
     config_hours(out->medication_hours,rt->state.settings.medication_seconds);
     config_hours(out->image_hours,rt->state.settings.image_seconds);
+    const ClockSample clock=katmed_time_sample(&rt->time,monotonic_ms());
+    LocalDateTime civil;
+    if(clock.utc_valid && app_berlin_local_time(clock.utc_ms,&civil)==APP_OK &&
+       civil.year>0 && civil.year<=9999)
+        (void)snprintf(out->system_datetime,sizeof(out->system_datetime),
+                       "%04d-%02u-%02uT%02u:%02u",civil.year,civil.month,civil.day,
+                       civil.hour,civil.minute);
     out->clock_style=rt->local.clock_style;
     out->orientation=rt->local.orientation;
     out->orientation_auto_supported=orientation_auto_supported();
@@ -1099,14 +1231,35 @@ static bool start_setup_ap(Runtime *rt) {
     memset(&config,0,sizeof(config));rt->setup_ap=ok;return ok;
 }
 
+static void wifi_execute(Runtime *rt,const KatmedConfigRequest *request,KatmedConfigResponse *response);
 static void config_execute(void *context, const KatmedConfigRequest *request,
                            KatmedConfigResponse *response)
 {
     Runtime *rt=context;
     if (!response) return;
     response->status=KATMED_CONFIG_UNAVAILABLE;
+    if(rt && request && request->operation>=KATMED_CONFIG_WIFI_STATUS && request->operation<=KATMED_CONFIG_WIFI_RECONNECT){
+        wifi_execute(rt,request,response);return;
+    }
     if (!rt || !request || !response || !rt->store_ready || rt->reboot_required ||
         store_get_status(&rt->store,NULL,NULL,NULL)!=STORE_OK) return;
+    if (request->operation==KATMED_CONFIG_LANGUAGE_GET ||
+        request->operation==KATMED_CONFIG_LANGUAGE_SAVE) {
+        if (request->operation==KATMED_CONFIG_LANGUAGE_SAVE) {
+            const UiRequest language={.kind=UI_REQUEST_SET_LANGUAGE,
+                                      .value.language=request->language};
+            const UiSubmitResult result=submit_ui(rt,&language);
+            if (result!=UI_SUBMIT_COMMITTED) {
+                response->status=result==UI_SUBMIT_REJECTED ? KATMED_CONFIG_INVALID :
+                    rt->store.uncertain ? KATMED_CONFIG_COMMIT_UNKNOWN : KATMED_CONFIG_UNAVAILABLE;
+                return;
+            }
+        }
+        response->language=katmed_i18n_available(rt->store.record.language) ?
+            rt->store.record.language : KATMED_LANG_EN;
+        response->status=KATMED_CONFIG_OK;
+        return;
+    }
     if (request->operation==KATMED_CONFIG_HA_GET) {
         const ClockSample clock=clock_sample(rt->boot_domain);
         snprintf(response->ha.device_id,sizeof(response->ha.device_id),"%012" PRIx64,rt->boot.device);
@@ -1127,6 +1280,14 @@ static void config_execute(void *context, const KatmedConfigRequest *request,
         config_snapshot(rt,&response->snapshot);
         response->setup.configured=rt->store.record.provision.configured;
         response->setup.mode=rt->store.record.provision.network_mode;
+        response->setup.time_source[0]=0;
+        if (response->setup.configured) {
+            const StoreProvision *saved=&rt->store.record.provision;
+            const size_t length=saved->time_source_length;
+            if (length>sizeof(saved->time_source)) return;
+            memcpy(response->setup.time_source,saved->time_source,length);
+            response->setup.time_source[length]=0;
+        }
         response->setup.setup_open=rt->setup_ap;
         response->setup.clock_required=!clock_sample(rt->boot_domain).utc_valid;
         response->status=KATMED_CONFIG_OK;return;
@@ -1249,6 +1410,14 @@ static void config_execute(void *context, const KatmedConfigRequest *request,
             else if (strcmp(request->value,"digital_date")==0) ui_request.value.clock_style=DIGITAL_DATE;
             else if (strcmp(request->value,"analog")==0) ui_request.value.clock_style=ANALOG;
             else { response->status=KATMED_CONFIG_INVALID; return; }
+            break;
+        case KATMED_CONFIG_SYSTEM_DATETIME:
+            if(strlen(request->value)!=sizeof(ui_request.value.local_datetime)-1u) {
+                response->status=KATMED_CONFIG_INVALID;return;
+            }
+            ui_request.kind=UI_REQUEST_SET_SYSTEM_TIME;
+            memcpy(ui_request.value.local_datetime,request->value,
+                   sizeof(ui_request.value.local_datetime));
             break;
         case KATMED_CONFIG_BRIGHTNESS: {
             unsigned value=0;size_t length=strlen(request->value);
@@ -1388,30 +1557,26 @@ static void restore_manual_if_ready(Runtime *rt, const ClockSample *now)
  * netif address is not usable unless the STA is associated and up now. */
 static void network_status(void *context, UiNetworkStatus *out)
 {
-    Runtime *rt = context;
     if (!out) return;
     *out = (UiNetworkStatus){0};
     snprintf(out->device_name, sizeof(out->device_name), "KatmedESP");
     katmed_mesh_device_name(out->device_name,sizeof(out->device_name),&out->device_name_assigned,
                             &out->device_name_uncertain);
-    out->configured = rt && rt->store_ready &&
-                      rt->store.record.provision.configured;
-    out->setup_open=rt && rt->setup_ap;
-    out->offline_setup_exited=rt && rt->store_ready && !out->configured &&
-        rt->store.record.setup_dismissed && !out->setup_open;
-    out->manual_clock_required=rt && rt->store_ready &&
-        ((out->configured && rt->store.record.provision.network_mode!=STORE_NETWORK_ONLINE) ||
-         out->offline_setup_exited) && !clock_sample(rt->boot_domain).utc_valid;
-    if(out->setup_open) {memcpy(out->setup_ssid,rt->setup_ssid,sizeof(out->setup_ssid));memcpy(out->setup_password,rt->setup_password,sizeof(out->setup_password));}
-    if (!out->configured || !rt->mesh_started) return;
-    out->mesh_active = katmed_mesh_radio_channel(&out->mesh_channel);
-    KatmedMeshCounts mesh_counts = {0};
-    katmed_mesh_counts(&mesh_counts);
-    out->mesh_current_count = mesh_counts.current;
-    out->mesh_history_count = mesh_counts.history;
-    out->mesh_quality = mesh_counts.quality;
-    out->mesh_current_valid = mesh_counts.current_valid;
-    out->mesh_history_complete = mesh_counts.history_complete;
+    if(!context)return;
+    DISPLAY_MB_LOCK(&display_mailbox);
+    out->configured=ui_owner_snapshot.configured;
+    out->setup_open=ui_owner_snapshot.setup_open;
+    out->offline_setup_exited=ui_owner_snapshot.valid && !out->configured &&
+        ui_owner_snapshot.setup_dismissed && !out->setup_open;
+    out->manual_clock_required=ui_owner_snapshot.manual_clock_required && !ui_owner_snapshot.clock.utc_valid;
+    const bool mesh_started=ui_owner_snapshot.mesh_started;
+    out->mesh_active=ui_owner_snapshot.mesh_active;out->mesh_channel=ui_owner_snapshot.mesh_channel;
+    out->mesh_current_count=ui_owner_snapshot.mesh_counts.current;out->mesh_history_count=ui_owner_snapshot.mesh_counts.history;
+    out->mesh_quality=ui_owner_snapshot.mesh_counts.quality;out->mesh_current_valid=ui_owner_snapshot.mesh_counts.current_valid;
+    out->mesh_history_complete=ui_owner_snapshot.mesh_counts.history_complete;
+    if(out->setup_open){memcpy(out->setup_ssid,ui_owner_snapshot.setup_ssid,sizeof(out->setup_ssid));memcpy(out->setup_password,ui_owner_snapshot.setup_password,sizeof(out->setup_password));}
+    DISPLAY_MB_UNLOCK(&display_mailbox);
+    if (!out->configured || !mesh_started) return;
     esp_netif_t *station = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
     esp_netif_ip_info_t ip = {0};
     wifi_ap_record_t access_point;
@@ -1461,26 +1626,43 @@ static bool web_wifi_ready(Runtime *rt)
         store_get_status(&rt->store, NULL, NULL, NULL) == STORE_OK;
 }
 
-static bool web_language_get(void *context, uint8_t *out)
+static bool web_wifi_render_snapshot(void *context,
+                                     KatmedWebWifiRenderSnapshot *out)
 {
-    Runtime *rt=context;
-    if (!out || !web_wifi_ready(rt)) return false;
-    *out=katmed_i18n_available(rt->store.record.language) ?
-        rt->store.record.language : KATMED_LANG_EN;
-    return true;
+    if (!context || !out) return false;
+    DISPLAY_MB_LOCK(&display_mailbox);
+    const bool valid=wifi_render_active && ui_owner_snapshot.wifi_render_valid;
+    if (valid) *out=ui_owner_snapshot.wifi_render;
+    DISPLAY_MB_UNLOCK(&display_mailbox);
+    return valid;
 }
 
-static bool web_language_set(void *context, uint8_t language)
+/* These language callbacks never dereference Runtime/Store on HTTPD.
+ * Validation, transaction and snapshot execute on the app-loop owner. */
+static KatmedConfigStatus web_language_get(void *context, uint8_t *out)
 {
-    Runtime *rt=context;
-    if (!web_wifi_ready(rt) || !katmed_i18n_available(language)) return false;
-    const StoreResult result=store_set_language(&rt->store,language);
-    if (result!=STORE_OK && result!=STORE_DUPLICATE) return false;
-    katmed_i18n_select(language);
-    return true;
+    if (!context || !out) return KATMED_CONFIG_UNAVAILABLE;
+    const KatmedConfigRequest request={.operation=KATMED_CONFIG_LANGUAGE_GET};
+    KatmedConfigResponse response={0};
+    const KatmedConfigStatus status=katmed_config_exchange(&request,&response,1500u);
+    if (status==KATMED_CONFIG_OK) *out=response.language;
+    return status;
 }
 
-static bool web_wifi_configured(void *context, bool *out)
+static KatmedConfigStatus web_language_set(void *context, uint8_t language,
+                                           uint8_t *committed)
+{
+    if (!context || !committed) return KATMED_CONFIG_UNAVAILABLE;
+    const KatmedConfigRequest request={.operation=KATMED_CONFIG_LANGUAGE_SAVE,
+                                       .language=language};
+    KatmedConfigResponse response={0};
+    const KatmedConfigStatus status=katmed_config_exchange(&request,&response,1500u);
+    if (status==KATMED_CONFIG_OK) *committed=response.language;
+    return status;
+}
+
+_Static_assert(KATMED_CONFIG_WIFI_MAX==KATMED_STORE_WIFI_PROFILE_MAX,"WiFi bridge capacity must match Store");
+static bool owner_wifi_configured(void *context, bool *out)
 {
     Runtime *rt = context;
     if (!out || !web_wifi_ready(rt)) return false;
@@ -1488,7 +1670,7 @@ static bool web_wifi_configured(void *context, bool *out)
     return true;
 }
 
-static bool web_wifi_recovery_available(void *context, bool *out)
+static bool owner_wifi_recovery_available(void *context, bool *out)
 {
     Runtime *rt = context;
     if (!out) return false;
@@ -1496,14 +1678,14 @@ static bool web_wifi_recovery_available(void *context, bool *out)
     return true;
 }
 
-static bool web_wifi_profile_limit(void *context, size_t *out)
+static bool owner_wifi_profile_limit(void *context, size_t *out)
 {
     if (!out || !web_wifi_ready((Runtime *)context)) return false;
     *out = store_wifi_profile_limit();
     return true;
 }
 
-static bool web_wifi_list_profiles(void *context, KatmedWebWifiProfileView *out,
+static bool owner_wifi_list_profiles(void *context, KatmedWebWifiProfileView *out,
                                    size_t capacity, size_t *count)
 {
     Runtime *rt = context;
@@ -1528,7 +1710,7 @@ done:
     return ok;
 }
 
-static bool web_wifi_save_profiles(void *context,
+static bool owner_wifi_save_profiles(void *context,
                                    const KatmedWebWifiProfileUpdate *input,
                                    size_t count)
 {
@@ -1542,6 +1724,7 @@ static bool web_wifi_save_profiles(void *context,
         while (ssid_len < sizeof(input[i].ssid) && input[i].ssid[ssid_len]) ++ssid_len;
         while (password_len < sizeof(input[i].password) && input[i].password[password_len])
             ++password_len;
+        if(ssid_len>sizeof(updates[i].ssid) || password_len>sizeof(updates[i].password))goto done;
         updates[i].id = input[i].id;
         updates[i].priority = input[i].priority;
         updates[i].ssid_length = (uint8_t)ssid_len;
@@ -1562,17 +1745,136 @@ done:
     return ok;
 }
 
-static bool web_wifi_delete_profile(void *context, uint32_t id)
+static bool owner_wifi_delete_profile(void *context, uint32_t id)
 {
     Runtime *rt = context;
     return web_wifi_ready(rt) &&
         store_wifi_profile_delete_atomic(&rt->store, id) == STORE_OK;
 }
 
-static bool web_wifi_schedule_reconnect(void *context)
+static bool owner_wifi_schedule_reconnect(void *context)
 {
     Runtime *rt = context;
     return rt && rt->mesh_started && katmed_mesh_schedule_reconnect();
+}
+
+static void wifi_execute(Runtime *rt,const KatmedConfigRequest *request,KatmedConfigResponse *response)
+{
+    bool ok=false;
+    if(request->operation==KATMED_CONFIG_WIFI_STATUS){
+        size_t limit=store_wifi_profile_limit();
+        bool configured=false,recovery=false;
+        /* Recovery=false is a valid status even when Store is unavailable. */
+        ok=owner_wifi_recovery_available(rt,&recovery);
+        if(web_wifi_ready(rt))ok=owner_wifi_configured(rt,&configured) && owner_wifi_profile_limit(rt,&limit);
+        response->wifi.ready=web_wifi_ready(rt);response->wifi.configured=configured;response->wifi.recovery=recovery;response->wifi.limit=(uint8_t)limit;
+    }else if(request->operation==KATMED_CONFIG_WIFI_LIST){
+        KatmedWebWifiProfileView views[KATMED_CONFIG_WIFI_MAX]={0};size_t count=0;
+        ok=owner_wifi_list_profiles(rt,views,KATMED_CONFIG_WIFI_MAX,&count);
+        if(ok){
+            response->wifi.count=(uint8_t)count;
+            for(size_t i=0;i<count;++i){
+                response->wifi.profiles[i]=(KatmedConfigWifiView){.id=views[i].id,.priority=views[i].priority,.secured=views[i].secured};
+                memcpy(response->wifi.profiles[i].ssid,views[i].ssid,sizeof(views[i].ssid));
+            }
+        }
+        web_wipe(views,sizeof(views));
+    }else if(request->operation==KATMED_CONFIG_WIFI_SAVE){
+        KatmedWebWifiProfileUpdate updates[KATMED_CONFIG_WIFI_MAX]={0};
+        if(request->wifi.count>KATMED_CONFIG_WIFI_MAX)return;
+        for(size_t i=0;i<request->wifi.count;++i){
+            updates[i]=(KatmedWebWifiProfileUpdate){.id=request->wifi.profiles[i].id,.priority=request->wifi.profiles[i].priority,.credential_action=(KatmedWebWifiCredentialAction)request->wifi.profiles[i].credential_action};
+            memcpy(updates[i].ssid,request->wifi.profiles[i].ssid,sizeof(updates[i].ssid));
+            memcpy(updates[i].password,request->wifi.profiles[i].password,sizeof(updates[i].password));
+        }
+        ok=owner_wifi_save_profiles(rt,updates,request->wifi.count);
+        web_wipe(updates,sizeof(updates));
+    }else if(request->operation==KATMED_CONFIG_WIFI_DELETE)ok=owner_wifi_delete_profile(rt,request->wifi.id);
+    else if(request->operation==KATMED_CONFIG_WIFI_RECONNECT)ok=owner_wifi_schedule_reconnect(rt);
+    response->status=ok ? KATMED_CONFIG_OK : rt->store.uncertain ? KATMED_CONFIG_COMMIT_UNKNOWN : KATMED_CONFIG_UNAVAILABLE;
+}
+
+/* HTTPD only copies POD through the existing single-owner bridge. */
+static bool web_wifi_status(void *context,KatmedConfigResponse *response,unsigned stage,
+                            KatmedWebWifiStatusDiagnostic *out_diagnostic)
+{
+    if(!context || !response)return false;
+    const KatmedConfigRequest request={.operation=KATMED_CONFIG_WIFI_STATUS};
+    KatmedConfigBridgeDiagnostic diagnostic=KATMED_CONFIG_BRIDGE_DIAG_RESPONSE;
+    KatmedConfigBridgeTrace trace={0};
+    const KatmedConfigStatus status=katmed_config_exchange_diagnostic(
+        &request,response,1500u,&diagnostic,&trace);
+    const bool valid=status==KATMED_CONFIG_OK;
+    if(out_diagnostic)*out_diagnostic=(KatmedWebWifiStatusDiagnostic){
+        .bridge=(int)status,.bridge_diag=(unsigned)diagnostic,
+        .ready_valid=valid,.ready=valid && response->wifi.ready,.available=true,
+        .trace=trace};
+    if(!valid || (stage!=2u && !response->wifi.ready))
+        ESP_LOGW("katmed_wifi","status_stage=%u bridge=%d bridge_diag=%u ready_valid=%u ready=%u",
+                 stage,(int)status,(unsigned)diagnostic,(unsigned)valid,
+                 (unsigned)(valid && response->wifi.ready));
+    return valid;
+}
+static bool web_wifi_configured(void *context,bool *out,KatmedWebWifiStatusDiagnostic *diagnostic)
+{
+    KatmedConfigResponse response={0};
+    if(!out || !web_wifi_status(context,&response,1u,diagnostic) || !response.wifi.ready)return false;
+    *out=response.wifi.configured;return true;
+}
+static bool web_wifi_recovery_available(void *context,bool *out,KatmedWebWifiStatusDiagnostic *diagnostic)
+{
+    KatmedConfigResponse response={0};
+    if(!out || !web_wifi_status(context,&response,2u,diagnostic))return false;
+    *out=response.wifi.recovery;return true;
+}
+static bool web_wifi_profile_limit(void *context,size_t *out,KatmedWebWifiStatusDiagnostic *diagnostic)
+{
+    KatmedConfigResponse response={0};
+    if(!out || !web_wifi_status(context,&response,3u,diagnostic) || !response.wifi.ready)return false;
+    *out=response.wifi.limit;return true;
+}
+static bool web_wifi_list_profiles(void *context,KatmedWebWifiProfileView *out,size_t capacity,size_t *count)
+{
+    if(!context || !count || (!out && capacity))return false;
+    const KatmedConfigRequest request={.operation=KATMED_CONFIG_WIFI_LIST};
+    KatmedConfigResponse response={0};
+    if(katmed_config_exchange(&request,&response,1500u)!=KATMED_CONFIG_OK || response.wifi.count>capacity || response.wifi.count>KATMED_CONFIG_WIFI_MAX)return false;
+    for(size_t i=0;i<response.wifi.count;++i){
+        out[i]=(KatmedWebWifiProfileView){.id=response.wifi.profiles[i].id,.priority=response.wifi.profiles[i].priority,.secured=response.wifi.profiles[i].secured};
+        memcpy(out[i].ssid,response.wifi.profiles[i].ssid,sizeof(out[i].ssid));
+    }
+    *count=response.wifi.count;return true;
+}
+static bool web_wifi_save_profiles(void *context,const KatmedWebWifiProfileUpdate *input,size_t count)
+{
+    if(!context || count>KATMED_CONFIG_WIFI_MAX || (count && !input))return false;
+    KatmedConfigRequest request={.operation=KATMED_CONFIG_WIFI_SAVE};
+    request.wifi.count=(uint8_t)count;
+    for(size_t i=0;i<count;++i){
+        if(input[i].credential_action!=KATMED_WEB_WIFI_CREDENTIAL_KEEP &&
+           input[i].credential_action!=KATMED_WEB_WIFI_CREDENTIAL_REPLACE &&
+           input[i].credential_action!=KATMED_WEB_WIFI_CREDENTIAL_OPEN){web_wipe(&request,sizeof(request));return false;}
+        request.wifi.profiles[i]=(KatmedConfigWifiUpdate){.id=input[i].id,.priority=input[i].priority,.credential_action=(uint8_t)input[i].credential_action};
+        memcpy(request.wifi.profiles[i].ssid,input[i].ssid,sizeof(input[i].ssid));
+        memcpy(request.wifi.profiles[i].password,input[i].password,sizeof(input[i].password));
+    }
+    KatmedConfigResponse response={0};
+    const bool ok=katmed_config_exchange(&request,&response,1500u)==KATMED_CONFIG_OK;
+    web_wipe(&request,sizeof(request));return ok;
+}
+static bool web_wifi_delete_profile(void *context,uint32_t id)
+{
+    if(!context)return false;
+    const KatmedConfigRequest request={.operation=KATMED_CONFIG_WIFI_DELETE,.wifi.id=id};
+    KatmedConfigResponse response={0};
+    return katmed_config_exchange(&request,&response,1500u)==KATMED_CONFIG_OK;
+}
+static bool web_wifi_schedule_reconnect(void *context)
+{
+    if(!context)return false;
+    const KatmedConfigRequest request={.operation=KATMED_CONFIG_WIFI_RECONNECT};
+    KatmedConfigResponse response={0};
+    return katmed_config_exchange(&request,&response,1500u)==KATMED_CONFIG_OK;
 }
 
 static bool web_reset_offer(void *context)
@@ -1660,69 +1962,54 @@ static bool web_device_info(void *context, KatmedWebDeviceInfo *out)
 static bool group_connected(void *context)
 {
     Runtime *rt = (Runtime *)context;
-    return rt != NULL && rt->mesh_started && katmed_mesh_connected();
+    if(!rt)return false;
+    DISPLAY_MB_LOCK(&display_mailbox);const bool connected=ui_owner_snapshot.connected;DISPLAY_MB_UNLOCK(&display_mailbox);
+    return connected;
 }
 
 static bool historical_confirmation(void *context, ClockSample *historical)
 {
-    Runtime *rt = (Runtime *)context;
-    StoreRecovery recovery;
-    if (rt == NULL || historical == NULL ||
-        store_get_recovery(&rt->store, &recovery) != STORE_OK ||
-        !recovery.has_last_confirmation) return false;
-    *historical = recovery.last_confirmation;
-    return true;
+    if(!context || !historical)return false;
+    DISPLAY_MB_LOCK(&display_mailbox);
+    const bool ok=ui_owner_snapshot.valid && ui_owner_snapshot.has_confirmation;
+    if(ok)*historical=ui_owner_snapshot.confirmation;
+    DISPLAY_MB_UNLOCK(&display_mailbox);return ok;
 }
-
 static uint8_t pending_confirmations(void *context)
 {
-    Runtime *rt = (Runtime *)context;
-    uint8_t pending = 0;
-    if (rt != NULL) (void)store_get_status(&rt->store, NULL, &pending, NULL);
-    return pending;
+    if(!context)return 0;
+    DISPLAY_MB_LOCK(&display_mailbox);const uint8_t n=ui_owner_snapshot.pending;DISPLAY_MB_UNLOCK(&display_mailbox);return n;
 }
-
 static bool storage_ready(void *context)
 {
-    Runtime *rt = (Runtime *)context;
-    return rt != NULL && store_get_status(&rt->store, NULL, NULL, NULL) == STORE_OK;
+    if(!context)return false;
+    DISPLAY_MB_LOCK(&display_mailbox);const bool ready=ui_owner_snapshot.ready;DISPLAY_MB_UNLOCK(&display_mailbox);return ready;
 }
-
-static bool read_ui_model(void *context, AppState *state, LocalSettings *local,
-                          ClockSample *clock)
+static bool read_ui_model(void *context, AppState *state, LocalSettings *local, ClockSample *clock)
 {
-    Runtime *rt = context;
-    if (!rt || !state || !local || !clock) return false;
-    *state = rt->state;
-    *local = rt->local;
-    *clock = clock_sample(rt->boot_domain);
-    return true;
+    if(!context || !state || !local || !clock)return false;
+    DISPLAY_MB_LOCK(&display_mailbox);
+    const bool ok=ui_owner_snapshot.valid;
+    if(ok){*state=ui_owner_snapshot.state;*local=ui_owner_snapshot.local;*clock=ui_owner_snapshot.clock;}
+    DISPLAY_MB_UNLOCK(&display_mailbox);return ok;
 }
-
 static bool durable_divergence(void *context)
 {
-    Runtime *rt = (Runtime *)context;
-    return rt != NULL && store_durable_divergent(&rt->store);
+    if(!context)return false;
+    DISPLAY_MB_LOCK(&display_mailbox);const bool value=ui_owner_snapshot.divergent;DISPLAY_MB_UNLOCK(&display_mailbox);return value;
 }
-
 static uint8_t conflict_count(void *context)
 {
-    Runtime *rt = (Runtime *)context;
-    uint8_t count = 0;
-    if (rt != NULL) (void)store_conflict_count(&rt->store, &count);
-    return count;
+    if(!context)return 0;
+    DISPLAY_MB_LOCK(&display_mailbox);const uint8_t n=ui_owner_snapshot.conflicts;DISPLAY_MB_UNLOCK(&display_mailbox);return n;
 }
-
 static bool conflict_at(void *context, size_t index, UiConflict *out)
 {
-    Runtime *rt = (Runtime *)context;
-    StorePendingConfirm entry;
-    if (rt == NULL || out == NULL ||
-        store_conflict_at(&rt->store, index, &entry) != STORE_OK) return false;
-    out->id = entry.id;
-    out->round = entry.round;
-    out->occurred_at = entry.occurred_at;
-    return true;
+    if(!context || !out)return false;
+    DISPLAY_MB_LOCK(&display_mailbox);
+    const bool ok=index<ui_owner_snapshot.conflicts;
+    if(ok)*out=ui_owner_snapshot.conflict[index];
+    DISPLAY_MB_UNLOCK(&display_mailbox);return ok;
 }
 
 static void stop_group_for_reboot(Runtime *rt, const ClockSample *now,
@@ -1782,6 +2069,25 @@ static void witness_catalog(const uint8_t bytes[KATMED_CATALOG_BYTES], char text
     text[64] = '\0';
 }
 
+#if KATMED_C3_ALARM_DIAG && CONFIG_IDF_TARGET_ESP32C3
+static uint32_t c3_probe_status_word(void)
+{
+    lvgl_c3_alarm_probe_result_t probe;
+    if (!lvgl_port_c3_alarm_probe_snapshot(&probe) ||
+        (unsigned)probe.state > LVGL_C3_ALARM_PROBE_UNKNOWN ||
+        (unsigned)probe.pixel_class > LVGL_C3_ALARM_PIXEL_OUTSIDE_FILL_HULL ||
+        (probe.phase_valid && probe.phase_permyriad > 10000u)) {
+        return UINT32_MAX; /* The formatter rejects an invalid snapshot. */
+    }
+    return (probe.phase_valid ? (uint32_t)probe.phase_permyriad : 0u) |
+           ((uint32_t)probe.state << 14) |
+           ((probe.sample_valid ? (uint32_t)probe.pixel_class : 0u) << 17) |
+           ((uint32_t)probe.phase_valid << 19) |
+           ((uint32_t)probe.sample_valid << 20) |
+           ((uint32_t)probe.completion_valid << 21);
+}
+#endif
+
 static void process_usb(Runtime *rt, const ClockSample *now)
 {
     static const uint8_t build_wifi_ssid[] = KATMED_WIFI_DEFAULT_SSID;
@@ -1809,6 +2115,10 @@ static void process_usb(Runtime *rt, const ClockSample *now)
             .device = rt->boot.device,
             .clock_quality = now->quality,
         };
+#if KATMED_C3_ALARM_DIAG && CONFIG_IDF_TARGET_ESP32C3
+        status.c3_probe_present = true;
+        status.c3_probe_word = c3_probe_status_word();
+#endif
         memcpy(status.catalog_id, katmed_images_catalog_sha256(),
                sizeof(status.catalog_id));
         char reply[KATMED_STORE_USB_REPLY_MAX] = {0};
@@ -1955,6 +2265,13 @@ static void display_touch_sample(const AppState *state,const BoardTouch *touch,b
     else ui_touch_sample(false,0,0,false,touch->monotonic_ms);
 }
 
+static void render_trace_observer(void *context, KatmedRenderInnerPhase phase,
+                                  bool begin, uint8_t outcome)
+{
+    (void)context;
+    katmed_config_render_inner(phase,begin,outcome);
+}
+
 static bool render_ui(const AppState *state, const LocalSettings *local,
                       const ClockSample *clock, const BoardTouch *touch,
                       bool touch_valid, bool render_due)
@@ -1967,7 +2284,11 @@ static bool render_ui(const AppState *state, const LocalSettings *local,
     static bool projected_alarm_active;
     static Orientation projected_orientation;
     static AlarmRoundId projected_round;
-    if (!lvgl_port_lock(100)) {
+    katmed_config_render_inner(KATMED_RENDER_INNER_LVGL_LOCK,true,0);
+    const bool lvgl_locked=lvgl_port_lock(100);
+    katmed_config_render_inner(KATMED_RENDER_INNER_LVGL_LOCK,false,
+                               (uint8_t)lvgl_locked);
+    if (!lvgl_locked) {
 #if defined(ESP_PLATFORM) || defined(KATMED_HOST_TOUCH_SAMPLER)
         if (!board_touch_sampler_running()) contact_interrupted = true;
 #else
@@ -1979,9 +2300,23 @@ static bool render_ui(const AppState *state, const LocalSettings *local,
     if (runtime.mesh_started)
         katmed_mesh_interaction_status(&interaction_snapshot, clock->monotonic_ms);
 #endif
+    uint64_t emergency_observed,emergency_failed;
+    display_mb_emergency_results(&display_mailbox,&emergency_observed,&emergency_failed);
+    const UiRequest emergency={.kind=UI_REQUEST_EMERGENCY};
+    /* One feedback per same-result batch; every press remains counted in RAM.
+     * These completions never consume or overwrite the ordinary result. */
+    if(emergency_observed)ui_deferred_result(&emergency,UI_SUBMIT_OBSERVED);
+    if(emergency_failed)ui_deferred_result(&emergency,UI_SUBMIT_UNAVAILABLE);
     UiRequest completed_request;UiSubmitResult completed_result;
     if(display_mb_result(&display_mailbox,&completed_request,&completed_result))
         ui_deferred_result(&completed_request,completed_result);
+    /* Deliver the initial PENDING_SHARED completion before its final result,
+     * even if a previous render could not acquire the LVGL lock. */
+    if(runtime.shared_feedback){
+        if(runtime.shared_feedback==-2)ui_shared_timeout();
+        else ui_shared_result(runtime.shared_feedback>0);
+        runtime.shared_feedback=0;
+    }
     ui_set_display_awake(!runtime.display_policy.initialized || runtime.display_policy.awake);
     if (contact_interrupted) {
         ui_touch_sample(false, 0, 0, false, clock->monotonic_ms);
@@ -1994,7 +2329,9 @@ static bool render_ui(const AppState *state, const LocalSettings *local,
         projected_alarm_active != state->alarm_active ||
         (state->alarm_active && !same_alarm_round(projected_round, state->round)));
     if (alarm_changed) {
+        katmed_config_render_inner(KATMED_RENDER_INNER_UI_RENDER,true,0);
         ui_render(state, local, ui_current_view(), clock);
+        katmed_config_render_inner(KATMED_RENDER_INNER_UI_RENDER,false,0);
         projected_orientation=local->orientation;
         projected_alarm_active = state->alarm_active;
         projected_round = state->round;
@@ -2023,8 +2360,11 @@ static bool render_ui(const AppState *state, const LocalSettings *local,
         ui_set_display_awake(!runtime.display_policy.initialized || runtime.display_policy.awake);
     }
 #endif
-    if (render_due && state != NULL && local != NULL)
+    if (render_due && state != NULL && local != NULL) {
+        katmed_config_render_inner(KATMED_RENDER_INNER_UI_RENDER,true,0);
         ui_render(state, local, ui_current_view(), clock);
+        katmed_config_render_inner(KATMED_RENDER_INNER_UI_RENDER,false,0);
+    }
     lvgl_port_unlock();
     return true;
 }
@@ -2367,6 +2707,7 @@ void app_main(void)
         .display_settings=display_settings,
         .brightness_preview=brightness_preview,
         .night_copy_status=night_copy_status,
+        .render_trace=render_trace_observer,
         .orientation_auto_available = orientation_auto_supported(),
         .orientation_automatic = orientation_automatic,
         .submit = submit_ui_dispatch,
@@ -2418,6 +2759,7 @@ void app_main(void)
     if (!katmed_config_bridge_start())
         ESP_LOGE(tag,"web configuration bridge unavailable");
     else {
+        katmed_images_set_render_trace(render_trace_observer,NULL);
         startup_heap_sample("after_config_bridge");
         const KatmedWebServices web_services = {
             .context = &runtime,
@@ -2430,6 +2772,7 @@ void app_main(void)
                 .recovery_available = web_wifi_recovery_available,
                 .profile_limit = web_wifi_profile_limit,
                 .list_profiles = web_wifi_list_profiles,
+                .render_snapshot = web_wifi_render_snapshot,
                 .save_profiles_atomic = web_wifi_save_profiles,
                 .delete_profile_atomic = web_wifi_delete_profile,
                 .schedule_reconnect = web_wifi_schedule_reconnect,
@@ -2461,8 +2804,11 @@ void app_main(void)
         .restart = boot_restart_now,
     };
     for (;;) {
+        katmed_config_owner_phase(KATMED_CONFIG_OWNER_PHASE_SLEEP);
         vTaskDelay(pdMS_TO_TICKS(25));
+        katmed_config_owner_phase(KATMED_CONFIG_OWNER_PHASE_PRE_POLL);
         if (reset_runtime_step(&runtime,monotonic_ms())) {
+            katmed_config_owner_phase(KATMED_CONFIG_OWNER_PHASE_SLEEP);
             vTaskDelay(pdMS_TO_TICKS(100));
             continue;
         }
@@ -2507,8 +2853,11 @@ void app_main(void)
         process_usb(&runtime, &now);
         now = clock_sample(runtime.boot_domain);
         restore_manual_if_ready(&runtime,&now);
+        katmed_config_owner_phase(KATMED_CONFIG_OWNER_PHASE_POLL);
         katmed_config_poll(config_execute,&runtime);
+        katmed_config_owner_phase(KATMED_CONFIG_OWNER_PHASE_WEB);
         katmed_web_poll(now.monotonic_ms);
+        katmed_config_owner_phase(KATMED_CONFIG_OWNER_PHASE_OTHER);
         bool reset_offer=false, reset_close=false, reset_expired=false;
         uint64_t reset_close_generation=0, reset_expired_generation=0;
         uint64_t reset_offer_epoch=0;
@@ -2562,14 +2911,33 @@ void app_main(void)
         if (runtime.mesh_started && !runtime.reboot_required)
             interaction_drain(now.monotonic_ms);
         const bool render_due = now.monotonic_ms - last_render_ms >= 50;
-        if (runtime.shared_feedback != 0 && lvgl_port_lock(100)) {
-            if (runtime.shared_feedback==-2) ui_shared_timeout();
-            else ui_shared_result(runtime.shared_feedback > 0);
-            runtime.shared_feedback = 0;
-            lvgl_port_unlock();
+        publish_render_owner(&runtime);
+        katmed_config_owner_phase(KATMED_CONFIG_OWNER_PHASE_RENDER_CALL);
+        const bool rendered=render_ui(&runtime.state, &runtime.local, &now, NULL,
+                                      false, render_due);
+#if KATMED_C3_ALARM_DIAG && CONFIG_IDF_TARGET_ESP32C3
+        static bool c3_alarm_probe_reported;
+        lvgl_c3_alarm_probe_result_t c3_alarm_probe;
+        if (!c3_alarm_probe_reported &&
+            lvgl_port_c3_alarm_probe_snapshot(&c3_alarm_probe) &&
+            (c3_alarm_probe.state == LVGL_C3_ALARM_PROBE_COMPLETED ||
+             c3_alarm_probe.state == LVGL_C3_ALARM_PROBE_UNKNOWN)) {
+            ESP_LOGI("katmed_alarm", "c3_spi_probe state=%u phase_valid=%u"
+                     " phase=%u sample_valid=%u pixel_class=%u completion=%u"
+                     " logical_x=5 logical_y=90",
+                     (unsigned)c3_alarm_probe.state,
+                     (unsigned)c3_alarm_probe.phase_valid,
+                     (unsigned)(c3_alarm_probe.phase_valid ?
+                                c3_alarm_probe.phase_permyriad : 0u),
+                     (unsigned)c3_alarm_probe.sample_valid,
+                     (unsigned)c3_alarm_probe.pixel_class,
+                     (unsigned)c3_alarm_probe.completion_valid);
+            c3_alarm_probe_reported = true;
         }
-        if (render_ui(&runtime.state, &runtime.local, &now, NULL,
-                      false, render_due) && render_due) {
+#endif
+        katmed_config_owner_phase(KATMED_CONFIG_OWNER_PHASE_OTHER);
+        finish_render_owner();
+        if (rendered && render_due) {
             last_render_ms = now.monotonic_ms;
         }
         if (katmed_runtime_metrics_due(&metrics_gate, now.monotonic_ms)) {

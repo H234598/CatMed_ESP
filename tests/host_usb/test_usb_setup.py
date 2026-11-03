@@ -243,7 +243,8 @@ class UsbSetupTests(unittest.TestCase):
                 port = setup._open_serial(port_name, timeout=timeout)
             self.assertIsInstance(port, Spy)
             self.assertEqual([
-                ("construct", dict(port=None, baudrate=115200, timeout=timeout, write_timeout=3)),
+                ("construct", dict(port=None, baudrate=115200, timeout=timeout,
+                                    write_timeout=3, exclusive=True)),
                 ("dtr", False), ("rts", False), ("port", port_name),
                 ("open", port_name, False, False),
             ], events)
@@ -309,6 +310,90 @@ class UsbSetupTests(unittest.TestCase):
                 data.write_bytes(b"x" * (setup.MAX_CONFIG_BYTES + 1))
                 with self.assertRaises(setup.SetupError):
                     setup._private_config_bytes(data)
+
+    def test_exact_explicit_external_config_authorization_is_required(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            base = Path(d)
+            private = base / "synthetic-external"
+            private.mkdir(mode=0o700)
+            private.chmod(0o700)
+            data = private / "config.json"
+            data.write_bytes(cfg())
+            data.chmod(0o600)
+            other = private / "other.json"
+            other.write_bytes(cfg())
+            other.chmod(0o600)
+            self.assertEqual(
+                cfg(), setup._private_config_bytes(data, authorized_external_path=data)
+            )
+            with self.assertRaises(setup.SetupError):
+                setup._private_config_bytes(data)
+            with self.assertRaises(setup.SetupError):
+                setup._private_config_bytes(other, authorized_external_path=data)
+            data.unlink()
+            data.symlink_to(other)
+            with self.assertRaises(setup.SetupError):
+                setup._private_config_bytes(data, authorized_external_path=data)
+
+    def test_c3_probe_status_preserves_legacy_and_bounded_word(self) -> None:
+        self.assertNotIn("c3p1", setup.read_status(FakeSerial([STATUS])))
+        for word in ("00000000", "00086710", "001a84d2", "001ac4d2",
+                     "003d09c4", "00134000"):
+            with self.subTest(word=word):
+                reply = STATUS[:-1] + b" c3p1=" + word.encode("ascii") + b"\n"
+                port = FakeSerial([reply])
+                self.assertEqual(setup.read_status(port)["c3p1"], word)
+                self.assertEqual(port.writes, [b"KM1 STATUS\n"])
+                self.assertLessEqual(len(reply), setup.MAX_RESPONSE_BYTES)
+        maximum = (STATUS.replace(b"pending=0", b"pending=255")
+                   .replace(b"clock=0", b"clock=2")
+                   .replace(b"firmware=1.0", b"firmware=" + b"f" * 24)
+                   .replace(b"build=abc123", b"build=" + b"b" * 24)
+                   .replace(b"error=OK\n", b"error=COMMIT_UNKNOWN c3p1=003d09c4\n"))
+        self.assertEqual(len(maximum), 250)
+        self.assertEqual(setup.read_status(FakeSerial([maximum]))["c3p1"], "003d09c4")
+
+    def test_c3_probe_decodes_enum_flags_and_unknown_without_changing_types(self) -> None:
+        cases = (
+            ("00000000", 0, None, None, False, False, False),
+            ("00084000", 1, None, 0, True, False, False),
+            ("00086710", 1, None, 10000, True, False, False),
+            ("001a84d2", 2, 1, 1234, True, True, False),
+            ("001ac4d2", 3, 1, 1234, True, True, False),
+            ("003d09c4", 4, 2, 2500, True, True, True),
+            ("00134000", 5, 1, None, False, True, False),
+            ("001d49c4", 5, 2, 2500, True, True, False),
+            ("00014000", 5, None, None, False, False, False),
+        )
+        for word, state, pixel, phase, phase_valid, sample_valid, completion_valid in cases:
+            with self.subTest(word=word):
+                result = setup.decode_c3_probe(word)
+                self.assertEqual(result, {
+                    "probe_present": True, "probe_state": state,
+                    "probe_pixel_class": pixel, "probe_phase_permyriad": phase,
+                    "probe_phase_valid": phase_valid, "probe_sample_valid": sample_valid,
+                    "probe_completion_valid": completion_valid})
+                self.assertIs(type(result["probe_state"]), int)
+                for key in ("probe_phase_valid", "probe_sample_valid", "probe_completion_valid"):
+                    self.assertIs(type(result[key]), bool)
+        for bad in (None, 0, False, b"00000000"):
+            with self.subTest(bad_type=type(bad)), self.assertRaises(setup.SetupError):
+                setup.decode_c3_probe(bad)
+
+    def test_c3_probe_status_rejects_shadow_reserved_and_invalid_values(self) -> None:
+        invalid = ("0000000", "000000000", "003D09C4", "0000000g",
+                   "00400000", "00018000", "00060000", "00082711",
+                   "00000001", "00020000", "00100000", "00200000",
+                   "00004000", "00080000")
+        for word in invalid:
+            with self.subTest(word=word), self.assertRaises(setup.SetupError):
+                setup.read_status(FakeSerial([
+                    STATUS[:-1] + b" c3p1=" + word.encode("ascii") + b"\n"]))
+        for suffix in (b" c3p1=00000000 c3p1=00000000", b" C3P1=00000000",
+                       b" c3p1=00000000 probe_present=1",
+                       b" probe_state=0", b" c3p1[x]=00000000"):
+            with self.subTest(suffix=suffix), self.assertRaises(setup.SetupError):
+                setup.read_status(FakeSerial([STATUS[:-1] + suffix + b"\n"]))
 
     def test_status_parses_and_rejects_corruption(self) -> None:
         fake = FakeSerial([b"boot output\n", STATUS])

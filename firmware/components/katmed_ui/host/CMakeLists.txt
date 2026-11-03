@@ -3,6 +3,9 @@ project(katmed_ui_host LANGUAGES C CXX)
 
 set(ROOT "${CMAKE_CURRENT_LIST_DIR}/../../../../")
 set(UI "${CMAKE_CURRENT_LIST_DIR}/..")
+set(KATMED_UI_HOST_LVGL_SOURCE "${ROOT}/firmware/managed_components/lvgl__lvgl"
+    CACHE PATH "LVGL source for the existing host tests")
+option(KATMED_UI_HOST_LVGL_ONLY "Build only the LVGL host library" OFF)
 option(KATMED_UI_HOST_MEM34 "Exercise the firmware's 34 KiB LVGL pool" OFF)
 if(KATMED_UI_HOST_MEM34)
     set(LV_BUILD_CONF_PATH "${CMAKE_CURRENT_LIST_DIR}/lv_conf_34k.h" CACHE PATH "" FORCE)
@@ -13,7 +16,10 @@ endif()
 set(CONFIG_LV_BUILD_DEMOS OFF CACHE BOOL "" FORCE)
 set(CONFIG_LV_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(CONFIG_LV_USE_THORVG_INTERNAL OFF CACHE BOOL "" FORCE)
-add_subdirectory("${ROOT}/firmware/managed_components/lvgl__lvgl" "${CMAKE_CURRENT_BINARY_DIR}/lvgl")
+add_subdirectory("${KATMED_UI_HOST_LVGL_SOURCE}" "${CMAKE_CURRENT_BINARY_DIR}/lvgl")
+if(KATMED_UI_HOST_LVGL_ONLY)
+    return()
+endif()
 set(KATMED_I18N_FONT_SOURCES
     "${UI}/katmed_font_i18n_12.c" "${UI}/katmed_font_i18n_14.c")
 
@@ -188,6 +194,32 @@ target_compile_options(check_ui_refinement PRIVATE -Wall -Wextra -Werror
 target_compile_features(check_ui_refinement PRIVATE cxx_std_17)
 target_link_options(check_ui_refinement PRIVATE -Wl,--gc-sections)
 target_link_libraries(check_ui_refinement PRIVATE lvgl m z tfpsacrypto)
+# The service regression reuses this existing real Main/UI/image fixture.
+# Only the Bridge and native WiFi route need their respective host SDK stubs.
+add_library(check_refinement_bridge OBJECT
+    "${ROOT}/firmware/components/katmed_config_bridge/katmed_config_bridge.c")
+target_include_directories(check_refinement_bridge PRIVATE
+    "${ROOT}/tests/host_config_bridge/stubs"
+    "${ROOT}/firmware/components/katmed_config_bridge/include"
+    "${ROOT}/firmware/components/katmed_core/include")
+target_compile_options(check_refinement_bridge PRIVATE -std=c11 -Wall -Wextra -Werror -pthread)
+add_library(check_refinement_wifi_route OBJECT
+    "${ROOT}/firmware/components/katmed_web/katmed_web_wifi.c"
+    "${ROOT}/tests/host_web_upload_wifi/check_wifi_render_route.c"
+    "${ROOT}/tests/host_web_upload_wifi/stubs/cJSON.c")
+target_include_directories(check_refinement_wifi_route PRIVATE
+    "${ROOT}/tests/host_web_upload_wifi/stubs"
+    "${ROOT}/firmware/components/katmed_web/include"
+    "${ROOT}/firmware/components/katmed_config_bridge/include"
+    "${ROOT}/firmware/components/katmed_core/include")
+target_compile_options(check_refinement_wifi_route PRIVATE
+    -std=c11 -Wall -Wextra -Werror -ffunction-sections -fdata-sections)
+target_sources(check_ui_refinement PRIVATE
+    $<TARGET_OBJECTS:check_refinement_bridge>
+    $<TARGET_OBJECTS:check_refinement_wifi_route>)
+target_link_libraries(check_ui_refinement PRIVATE pthread)
+add_test(NAME wifi_render_service COMMAND check_ui_refinement wifi_render_service
+    "${CMAKE_CURRENT_BINARY_DIR}/c3_image_stream_fixture.bin")
 foreach(mode IN ITEMS random save nav scroll scroll-status indices clock-menu tick)
     add_test(NAME ui_refinement_${mode} COMMAND check_ui_refinement ${mode}
         "${CMAKE_CURRENT_BINARY_DIR}/c3_image_stream_fixture.bin")

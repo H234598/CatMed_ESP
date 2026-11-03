@@ -154,7 +154,8 @@
     "WARNUNG: Nach Ihrer Bestätigung werden ausschließlich App-Testdaten gelöscht: katmed/state, mesh_history, names_ctl, names_view und zwei Mesh-Namensdateien. Bilder, Webzugang, Zertifikate und Gerätesicherheit bleiben erhalten. Ohne Bestätigung wird nichts gelöscht.",
     "Wartung abgeschlossen. Gerät angehalten; kein automatischer Neustart.",
     "Wartung angehalten. Keine weitere Löschung und kein normaler Start. Prüfbericht erforderlich.",
-    "Wartung vorbereiten"
+    "Wartung vorbereiten",
+    "Signal erfasst"
   ],
   "web_static": [
     "Eigener DNS-Name (FQDN, optional)",
@@ -193,7 +194,7 @@
     "Manuelles Datum und Uhrzeit (Europe/Berlin, ohne WLAN erforderlich)",
     "Diese Einrichtungsverbindung endet nach Speichern. Gespeicherte WLAN-Profile behalten ihre Prioritäten.",
     "Netzwerkeinrichtung speichern",
-    "Advanced",
+    "Erweitert",
     "Anzeige",
     "Uhrdesign",
     "Digital groß",
@@ -269,7 +270,9 @@
     "Noch keine globale Nachtkopie",
     "Einrichtung aktiv: Mesh pausiert. Speichern oder Einrichtung verlassen startet den Normalbetrieb neu.",
     "Einrichtung verlassen",
-    "Einrichtung verlassen und ein normaler Neustart löschen keine Daten."
+    "Einrichtung verlassen und ein normaler Neustart löschen keine Daten.",
+    "Datum und Uhrzeit",
+    "Vollständiges Berliner Datum und Uhrzeit eingeben; mehrdeutige oder fehlende Sommerzeitminuten sind ungültig."
   ],
   "web_dynamic": [
     "Gerät: {0}",

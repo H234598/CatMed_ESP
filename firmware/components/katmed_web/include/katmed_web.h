@@ -7,6 +7,7 @@
 #include "katmed_web_wifi.h"
 #include "katmed_web_reset.h"
 #include "katmed_language.h"
+#include "katmed_config_bridge.h"
 #include <stddef.h>
 
 #ifdef __cplusplus
@@ -26,8 +27,8 @@ typedef struct {
     /* Main-loop lifecycle barrier before destroying/replacing HTTP handles. */
     bool (*prepare_listener_stop)(void *context);
     bool (*device_info)(void *context, KatmedWebDeviceInfo *out);
-    bool (*language_get)(void *context, uint8_t *out);
-    bool (*language_set)(void *context, uint8_t language);
+    KatmedConfigStatus (*language_get)(void *context, uint8_t *out);
+    KatmedConfigStatus (*language_set)(void *context, uint8_t language, uint8_t *committed);
     /* Runtime data adapters. katmed_web_start supplies the shared HTTPS
      * session/CSRF authorize callback before registering these routes. */
     KatmedWebWifiServices wifi;

@@ -116,13 +116,31 @@ class SerialPort(Protocol):
     def close(self) -> None: ...
 
 
-def _private_config_bytes(path: Path) -> bytes:
-    # A fixed ignored directory also keeps an accidentally supplied repository
-    # path from becoming the source of a secret-bearing provisioning request.
-    if path.parent.absolute() != PRIVATE_DIR or path.name in ("", ".", ".."):
-        raise SetupError("Konfigurationsdatei muss direkt unter .local/ liegen")
+def _private_config_directory(path: Path, authorized_external_path: Path | None) -> Path:
+    path = Path(path)
+    authorized = Path(authorized_external_path).absolute() if authorized_external_path else None
+    selected = path.absolute()
+    if path.parent.absolute() == PRIVATE_DIR and (authorized is None or authorized == selected):
+        return PRIVATE_DIR
+    if authorized is None or not authorized.is_absolute() or selected != authorized:
+        raise SetupError("Konfigurationsdatei muss explizit und exakt autorisiert sein")
     try:
-        dir_fd = os.open(PRIVATE_DIR, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW)
+        if path.resolve(strict=True) != authorized:
+            raise SetupError("Autorisierte Konfigurationsdatei ist nicht sicher")
+    except OSError:
+        raise SetupError("Private Konfigurationsdatei ist nicht lesbar") from None
+    return authorized.parent
+
+
+def _private_config_bytes(path: Path, *, authorized_external_path: Path | None = None) -> bytes:
+    # Normal config stays under the ignored .local directory. An external file
+    # must be explicitly authorized as the exact same path by the caller.
+    path = Path(path)
+    private_dir = _private_config_directory(path, authorized_external_path)
+    if path.name in ("", ".", ".."):
+        raise SetupError("Konfigurationsdatei muss eine Datei mit sicherem Namen sein")
+    try:
+        dir_fd = os.open(private_dir, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW)
         try:
             directory = os.fstat(dir_fd)
             if not stat.S_ISDIR(directory.st_mode) or directory.st_uid != os.getuid():
@@ -366,6 +384,45 @@ def exchange(port: SerialPort, request: bytes, expected: str,
     raise SetupError("Unerwartete USB-Antwort")
 
 
+def _c3_probe_shape_valid(word: int, phase: int, state: int, pixel: int,
+                         phase_valid: bool, sample_valid: bool, completion_valid: bool) -> bool:
+    if word >> 22 or phase > 10000 or state > 5 or pixel > 2:
+        return False
+    if ((not phase_valid and phase != 0) or (not sample_valid and pixel != 0) or
+            (sample_valid and pixel == 0)):
+        return False
+    if completion_valid != (state == 4):
+        return False
+    if state < 5 and (phase_valid != (state != 0) or sample_valid != (state >= 2)):
+        return False
+    return True
+
+
+def decode_c3_probe(token: str) -> dict[str, int | bool | None]:
+    """Decode only the fixed nonprivate schema-1 snapshot word."""
+    if type(token) is not str or re.fullmatch(r"[0-9a-f]{8}", token) is None:
+        raise SetupError("Status enthält eine ungültige C3-Probe")
+    word = int(token, 16)
+    phase, state, pixel = word & 0x3fff, (word >> 14) & 7, (word >> 17) & 3
+    phase_valid, sample_valid, completion_valid = (bool(word & (1 << bit)) for bit in (19, 20, 21))
+    if not _c3_probe_shape_valid(word, phase, state, pixel,
+                               phase_valid, sample_valid, completion_valid):
+        raise SetupError("Status enthält eine ungültige C3-Probe")
+    return {"probe_present": True, "probe_state": state,
+            "probe_pixel_class": pixel if sample_valid else None,
+            "probe_phase_permyriad": phase if phase_valid else None,
+            "probe_phase_valid": phase_valid, "probe_sample_valid": sample_valid,
+            "probe_completion_valid": completion_valid}
+
+
+def _check_status_keys(fields: dict[str, str]) -> None:
+    required = {"configured", "durable", "pending", "clock", "device", "catalog", "firmware", "build", "error"}
+    if set(fields) not in (required, required | {"c3p1"}):
+        raise SetupError("Status enthält nicht die vereinbarten Felder")
+    if "c3p1" in fields:
+        decode_c3_probe(fields["c3p1"])
+
+
 def read_status(port: SerialPort,
                 reader: Callable[[SerialPort], str] = _read_protocol_line) -> dict[str, str]:
     reply = exchange(port, b"KM1 STATUS\n", "KM1 OK STATUS ", reader)
@@ -377,9 +434,7 @@ def read_status(port: SerialPort,
         if key in fields or not TOKEN_RE.fullmatch(value):
             raise SetupError("Status enthält ein doppeltes oder ungültiges Feld")
         fields[key] = value
-    required = {"configured", "durable", "pending", "clock", "device", "catalog", "firmware", "build", "error"}
-    if set(fields) != required:
-        raise SetupError("Status enthält nicht die vereinbarten Felder")
+    _check_status_keys(fields)
     if fields["configured"] not in {"0", "1"} or fields["durable"] not in {"0", "1"}:
         raise SetupError("Status enthält ungültige Zustandswerte")
     if fields["clock"] not in {"0", "1", "2"}:
@@ -799,7 +854,8 @@ def _open_serial(port_name: str, *, timeout: float = 3.0) -> SerialPort:
 
         # Configure the desired idle lines while closed. Native USB Serial/JTAG
         # interprets DTR/RTS as boot controls; do not request their defaults.
-        port = serial.Serial(port=None, baudrate=115200, timeout=timeout, write_timeout=3)
+        port = serial.Serial(port=None, baudrate=115200, timeout=timeout,
+                             write_timeout=3, exclusive=True)
         port.dtr = False
         port.rts = False
         port.port = port_name
@@ -818,7 +874,11 @@ def run_command(args: argparse.Namespace, opener: Callable[[str], SerialPort] = 
             re.fullmatch(r"[0-9a-fA-F]{7,12}", expected_firmware) is None):
         raise SetupError("--expect-firmware erfordert 7 bis 12 Hexzeichen")
     if args.command == "provision":
-        request = build_provision_request(_private_config_bytes(Path(args.config)))
+        external = getattr(args, "authorize_external_config", None)
+        request = build_provision_request(_private_config_bytes(
+            Path(args.config),
+            authorized_external_path=Path(external) if external is not None else None,
+        ))
     if args.command == "reset-config" and args.confirm_reset != "RESET CONFIG":
         raise SetupError("Reset erfordert --confirm-reset 'RESET CONFIG'")
     if args.command in {"provision", "reset-config"}:
@@ -925,7 +985,11 @@ def run_bound_provision(args: argparse.Namespace,
                         startup: Callable[[SerialPort], None] = _drain_startup,
                         nonce_factory: Callable[[], str] = lambda: secrets.token_hex(16)) -> dict[str, int]:
     """Private, one-shot commit witness; the public provision command is unchanged."""
-    request = build_provision_request(_private_config_bytes(Path(args.config)))
+    external = getattr(args, "authorize_external_config", None)
+    request = build_provision_request(_private_config_bytes(
+        Path(args.config),
+        authorized_external_path=Path(external) if external is not None else None,
+    ))
     expected = (args.expect_device, args.expect_firmware, args.expect_build,
                 args.expect_catalog)
     if (not DEVICE_RE.fullmatch(expected[0] or "") or
@@ -1027,6 +1091,8 @@ def parser() -> argparse.ArgumentParser:
     sub.add_parser("status", help="Nicht geheimen Gerätestatus lesen")
     provision = sub.add_parser("provision", help="Private Konfiguration dauerhaft übernehmen")
     provision.add_argument("--config", default=str(DEFAULT_CONFIG), help="JSON-Datei direkt unter .local/")
+    provision.add_argument("--authorize-external-config", metavar="EXACT_PATH",
+                           help="Autorisiert genau die unter --config angegebene externe Datei")
     reset = sub.add_parser("reset-config", help="Nur Einrichtungsdaten löschen")
     reset.add_argument("--confirm-reset", help="Wörtlich RESET CONFIG")
     observe = sub.add_parser("observe", help="Eine begrenzte durchgehende Lese- und Messsitzung")

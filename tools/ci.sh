@@ -88,6 +88,8 @@ elif [[ "$mode" == host ]]; then
     python3 tests/check_crop_geometry.py
     python3 tests/host_private_wifi_defaults/check.py
     python3 tests/host_tooling_qlty58/test_tooling_contracts.py
+    python3 tests/host_i18n/check_catalog.py
+    python3 tools/build_i18n_assets.py display --check
     cmake -S . -B build-ci-host -G Ninja \
         -DKATMED_MBEDTLS_SOURCE="${mbedtls_source}"
     cmake --build build-ci-host -j 4
@@ -122,11 +124,16 @@ elif [[ "$mode" == host ]]; then
     bash tests/host_web_auth/check_web_auth.sh
     python3 -m unittest discover -s tests/host_web_ui -p 'test_ap_host.py'
     node tests/host_web_ui/check_async_buttons.js
+    node tests/host_web_ui/check_async_buttons.js setup_time_source
     node tests/host_i18n/check_web_locale.js
     python3 tests/host_web_ui/check_contract.py
     python3 -m unittest discover -s tests/host_web_ui -p 'test_security_js_gzip.py'
     python3 -m unittest discover -s tests/host_web_ui -p 'test_security_js_handler.py'
     python3 -m unittest discover -s tests/host_web_ui -p 'test_network_startup.py'
+    python3 -m unittest discover -s tests/host_web_ui -p 'test_language_owner.py'
+    python3 -m unittest discover -s tests/host_web_ui -p 'test_setup_time_source.py'
+    python3 -m unittest discover -s tests/host_web_ui -p 'test_wifi_status_diagnostics.py'
+    python3 -m unittest discover -s tests/host_web_ui -p 'test_emergency_owner.py'
     python3 tests/host_runtime_metrics/test_c3_resource_policy.py
     # This standalone main performs a real synthetic TLS handshake; discovery
     # only imports it. Build the pinned public SDK library and run it explicitly.

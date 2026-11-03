@@ -154,7 +154,8 @@
     "WARNUNG: Nach Ihrer Bestätigung werden ausschließlich App-Testdaten gelöscht: katmed/state, mesh_history, names_ctl, names_view und zwei Mesh-Namensdateien. Bilder, Webzugang, Zertifikate und Gerätesicherheit bleiben erhalten. Ohne Bestätigung wird nichts gelöscht.": "WARNING: After your confirmation, only app test data is deleted: katmed/state, mesh_history, names_ctl, names_view and two mesh name files. Images, web access, certificates and device security remain. Nothing is deleted without confirmation.",
     "Wartung abgeschlossen. Gerät angehalten; kein automatischer Neustart.": "Maintenance complete. Device halted; no automatic restart.",
     "Wartung angehalten. Keine weitere Löschung und kein normaler Start. Prüfbericht erforderlich.": "Maintenance halted. No further deletion and no normal start. Review report required.",
-    "Wartung vorbereiten": "Prepare maintenance"
+    "Wartung vorbereiten": "Prepare maintenance",
+    "Signal erfasst": "Signal registered"
   },
   "web_static": {
     "Eigener DNS-Name (FQDN, optional)": "Own DNS name (FQDN, optional)",
@@ -193,7 +194,7 @@
     "Manuelles Datum und Uhrzeit (Europe/Berlin, ohne WLAN erforderlich)": "Manual date and time (Europe/Berlin, required without WiFi)",
     "Diese Einrichtungsverbindung endet nach Speichern. Gespeicherte WLAN-Profile behalten ihre Prioritäten.": "This setup connection ends after saving. Saved WiFi profiles retain their priorities.",
     "Netzwerkeinrichtung speichern": "Save network setup",
-    "Advanced": "Advanced",
+    "Erweitert": "Advanced",
     "Anzeige": "Display",
     "Uhrdesign": "Clock design",
     "Digital groß": "Large digital",
@@ -269,7 +270,9 @@
     "Noch keine globale Nachtkopie": "No global night copy yet",
     "Einrichtung aktiv: Mesh pausiert. Speichern oder Einrichtung verlassen startet den Normalbetrieb neu.": "Setup active: mesh paused. Saving or leaving setup restarts normal operation.",
     "Einrichtung verlassen": "Leave setup",
-    "Einrichtung verlassen und ein normaler Neustart löschen keine Daten.": "Leaving setup and a normal restart do not erase data."
+    "Einrichtung verlassen und ein normaler Neustart löschen keine Daten.": "Leaving setup and a normal restart do not erase data.",
+    "Datum und Uhrzeit": "Date and time",
+    "Vollständiges Berliner Datum und Uhrzeit eingeben; mehrdeutige oder fehlende Sommerzeitminuten sind ungültig.": "Enter a full Berlin date and time; ambiguous/nonexistent DST minutes are rejected."
   },
   "web_dynamic": {
     "Gerät: {0}": "Device: {0}",

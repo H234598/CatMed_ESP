@@ -55,7 +55,11 @@ static bool mounted;
 static bool enter_store(void)
 {
     if (!mounted || store_lock == NULL || !katmed_source_writer_enter()) return false;
-    if (xSemaphoreTake(store_lock, portMAX_DELAY) == pdTRUE) return true;
+    katmed_images_render_trace(KATMED_RENDER_INNER_STORE_WAIT,true,0);
+    const BaseType_t acquired=xSemaphoreTake(store_lock, portMAX_DELAY);
+    katmed_images_render_trace(KATMED_RENDER_INNER_STORE_WAIT,false,
+                               (uint8_t)(acquired==pdTRUE));
+    if (acquired == pdTRUE) return true;
     katmed_source_writer_leave();
     return false;
 }

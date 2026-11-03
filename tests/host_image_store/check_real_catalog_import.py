@@ -33,7 +33,7 @@ typedef struct { size_t size; } esp_partition_t;
 const esp_partition_t *esp_partition_find_first(int,int,const char *);
 """)
 (STUBS / "esp_random.h").write_text("#include <stdint.h>\nuint32_t esp_random(void);\n")
-(STUBS / "freertos/FreeRTOS.h").write_text("#define pdTRUE 1\n#define portMAX_DELAY 0x7fffffff\n")
+(STUBS / "freertos/FreeRTOS.h").write_text("typedef int BaseType_t;\n#define pdTRUE 1\n#define portMAX_DELAY 0x7fffffff\n")
 (STUBS / "freertos/semphr.h").write_text("typedef void *SemaphoreHandle_t;\nSemaphoreHandle_t xSemaphoreCreateMutex(void);\nint xSemaphoreTake(SemaphoreHandle_t, int);\nint xSemaphoreGive(SemaphoreHandle_t);\n")
 
 source = "#define _POSIX_C_SOURCE 200809L\n" + (ROOT / "firmware/components/katmed_images/katmed_image_store_idf.c").read_text()

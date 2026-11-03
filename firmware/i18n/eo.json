@@ -154,7 +154,8 @@
     "WARNUNG: Nach Ihrer Bestätigung werden ausschließlich App-Testdaten gelöscht: katmed/state, mesh_history, names_ctl, names_view und zwei Mesh-Namensdateien. Bilder, Webzugang, Zertifikate und Gerätesicherheit bleiben erhalten. Ohne Bestätigung wird nichts gelöscht.": "AVERTO: Post via konfirmo estos forigitaj nur testdatumoj de la aplikaĵo: katmed/state, mesh_history, names_ctl, names_view kaj du dosieroj de mesh-nomoj. Bildoj, reta aliro, atestiloj kaj aparata sekureco restas. Sen konfirmo nenio estas forigita.",
     "Wartung abgeschlossen. Gerät angehalten; kein automatischer Neustart.": "Prizorgado finiĝis. Aparato haltigita; neniu aŭtomata restartigo.",
     "Wartung angehalten. Keine weitere Löschung und kein normaler Start. Prüfbericht erforderlich.": "Prizorgado haltigita. Neniu plua forigo aŭ normala ekfunkciigo. Kontrolraporto necesas.",
-    "Wartung vorbereiten": "Prepari prizorgadon"
+    "Wartung vorbereiten": "Prepari prizorgadon",
+    "Signal erfasst": "Signalo registrita"
   },
   "web_static": {
     "Eigener DNS-Name (FQDN, optional)": "Propra DNS-nomo (FQDN, nedeviga)",
@@ -193,7 +194,7 @@
     "Manuelles Datum und Uhrzeit (Europe/Berlin, ohne WLAN erforderlich)": "Mane dato kaj horo (Europe/Berlin, sen vifio)",
     "Diese Einrichtungsverbindung endet nach Speichern. Gespeicherte WLAN-Profile behalten ihre Prioritäten.": "La konekto finiĝas post konservado. Vifiaj prioritatoj restas.",
     "Netzwerkeinrichtung speichern": "Konservi retan agordon",
-    "Advanced": "Altnivela",
+    "Erweitert": "Altnivela",
     "Anzeige": "Reklamo",
     "Uhrdesign": "Dezajno de horloĝo",
     "Digital groß": "Cifereca granda",
@@ -269,7 +270,9 @@
     "Noch keine globale Nachtkopie": "Ankoraŭ neniu tutreta nokta kopio",
     "Einrichtung aktiv: Mesh pausiert. Speichern oder Einrichtung verlassen startet den Normalbetrieb neu.": "Agordo aktivas: maŝo paŭzas. Konservi aŭ eliri restartigas normalan funkciadon.",
     "Einrichtung verlassen": "Eliri agordon",
-    "Einrichtung verlassen und ein normaler Neustart löschen keine Daten.": "Eliri agordon kaj normala restartigo ne forigas datumojn."
+    "Einrichtung verlassen und ein normaler Neustart löschen keine Daten.": "Eliri agordon kaj normala restartigo ne forigas datumojn.",
+    "Datum und Uhrzeit": "Dato kaj horo",
+    "Vollständiges Berliner Datum und Uhrzeit eingeben; mehrdeutige oder fehlende Sommerzeitminuten sind ungültig.": "Enigu plenan Berlinan daton kaj horon; ambiguaj aŭ mankantaj minutoj estas rifuzataj."
   },
   "web_dynamic": {
     "Gerät: {0}": "Aparato: {0}",

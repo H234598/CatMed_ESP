@@ -19,6 +19,19 @@ const KatmedGeneratedCatalog katmed_generated_catalog = {.profile_count=1};
 static unsigned char *jpeg[2];
 static KatmedStorage captured_storage;
 static unsigned asset_changes;
+static unsigned store_wait_begin, store_wait_end, validation_wait_begin,
+                validation_wait_end;
+static uint8_t last_validation_acquired;
+void katmed_images_render_trace(KatmedRenderInnerPhase phase, bool begin,
+                                uint8_t outcome)
+{
+    if (phase==KATMED_RENDER_INNER_STORE_WAIT) {
+        if (begin) ++store_wait_begin; else ++store_wait_end;
+    } else if (phase==KATMED_RENDER_INNER_VALIDATION_WAIT) {
+        if (begin) ++validation_wait_begin;
+        else { ++validation_wait_end; last_validation_acquired=outcome; }
+    }
+}
 void katmed_images_assets_changed(void) { ++asset_changes; }
 KatmedImageStatus katmed_images_mount_storage(KatmedStorage storage)
 { captured_storage=storage; return KATMED_IMAGE_OK; }
@@ -151,6 +164,9 @@ int main(int argc, char **argv)
     const uint32_t start=(uint32_t)jpeg_size[0]-4u;
     assert(captured_storage.read(NULL,start,crossing,sizeof(crossing),&actual));
     assert(actual==sizeof(crossing));
+    assert(store_wait_begin && store_wait_begin==store_wait_end &&
+           validation_wait_begin && validation_wait_begin==validation_wait_end &&
+           last_validation_acquired==1u);
     for (size_t n=0;n<sizeof(crossing);++n) {
         uint32_t position=start+(uint32_t)n;
         unsigned char expected=position<jpeg_size[0]?jpeg[0][position]:position<padded?0xff:jpeg[1][position-padded];
@@ -162,6 +178,7 @@ int main(int argc, char **argv)
     KatmedImageIoFailure detail={0};fail_mutex=true;
     assert(!captured_storage.read_detailed(NULL,0,crossing,sizeof(crossing),&actual,&detail));
     assert(actual==0 && detail.stage==KATMED_IMAGE_IO_VALIDATION_LOCK && detail.status==KATMED_IMAGE_UNAVAILABLE);
+    assert(validation_wait_begin==validation_wait_end && last_validation_acquired==0u);
     fail_mutex=false;
     /* Close the cached first file, then inject a missing standard file in this test-only mount. */
     assert(captured_storage.read(NULL,padded,crossing,sizeof(crossing),&actual));

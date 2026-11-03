@@ -154,7 +154,8 @@
     "WARNUNG: Nach Ihrer Bestätigung werden ausschließlich App-Testdaten gelöscht: katmed/state, mesh_history, names_ctl, names_view und zwei Mesh-Namensdateien. Bilder, Webzugang, Zertifikate und Gerätesicherheit bleiben erhalten. Ohne Bestätigung wird nichts gelöscht.": "ПОПЕРЕДЖЕННЯ: Після вашого підтвердження буде видалено лише тестові дані застосунку: katmed/state, mesh_history, names_ctl, names_view і два файли назв mesh. Зображення, вебдоступ, сертифікати й захист пристрою залишаться. Без підтвердження нічого не видаляється.",
     "Wartung abgeschlossen. Gerät angehalten; kein automatischer Neustart.": "Обслуговування завершено. Пристрій зупинено; автоматичного перезапуску немає.",
     "Wartung angehalten. Keine weitere Löschung und kein normaler Start. Prüfbericht erforderlich.": "Обслуговування зупинено. Подальшого видалення й звичайного запуску немає. Потрібен звіт перевірки.",
-    "Wartung vorbereiten": "Підготувати обслуговування"
+    "Wartung vorbereiten": "Підготувати обслуговування",
+    "Signal erfasst": "Сигнал зареєстровано"
   },
   "web_static": {
     "Eigener DNS-Name (FQDN, optional)": "Власне DNS-ім’я (FQDN, необов’язково)",
@@ -193,7 +194,7 @@
     "Manuelles Datum und Uhrzeit (Europe/Berlin, ohne WLAN erforderlich)": "Дата й час вручну (Europe/Berlin, без Wi-Fi)",
     "Diese Einrichtungsverbindung endet nach Speichern. Gespeicherte WLAN-Profile behalten ihre Prioritäten.": "Після збереження з'єднання закриється. Пріоритети Wi-Fi зберігаються.",
     "Netzwerkeinrichtung speichern": "Зберегти мережу",
-    "Advanced": "Просунутий",
+    "Erweitert": "Просунутий",
     "Anzeige": "Оголошення",
     "Uhrdesign": "Дизайн годинника",
     "Digital groß": "Цифровий великий",
@@ -269,7 +270,9 @@
     "Noch keine globale Nachtkopie": "Глобальної копії нічного режиму ще немає",
     "Einrichtung aktiv: Mesh pausiert. Speichern oder Einrichtung verlassen startet den Normalbetrieb neu.": "Налаштування активне: mesh призупинено. Збереження або вихід перезапускає звичайну роботу.",
     "Einrichtung verlassen": "Вийти з налаштування",
-    "Einrichtung verlassen und ein normaler Neustart löschen keine Daten.": "Вихід із налаштування та звичайний перезапуск не стирають дані."
+    "Einrichtung verlassen und ein normaler Neustart löschen keine Daten.": "Вихід із налаштування та звичайний перезапуск не стирають дані.",
+    "Datum und Uhrzeit": "Дата й час",
+    "Vollständiges Berliner Datum und Uhrzeit eingeben; mehrdeutige oder fehlende Sommerzeitminuten sind ungültig.": "Введіть повну дату й час Берліна; неоднозначні або відсутні хвилини відхиляються."
   },
   "web_dynamic": {
     "Gerät: {0}": "Пристрій: {0}",

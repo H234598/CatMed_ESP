@@ -154,7 +154,8 @@
     "WARNUNG: Nach Ihrer Bestätigung werden ausschließlich App-Testdaten gelöscht: katmed/state, mesh_history, names_ctl, names_view und zwei Mesh-Namensdateien. Bilder, Webzugang, Zertifikate und Gerätesicherheit bleiben erhalten. Ohne Bestätigung wird nichts gelöscht.": "警告：确认后仅删除应用测试数据：katmed/state、mesh_history、names_ctl、names_view 和两个 Mesh 名称文件。图片、网页访问、证书和设备安全设置均保留。未经确认不会删除任何内容。",
     "Wartung abgeschlossen. Gerät angehalten; kein automatischer Neustart.": "维护完成。设备已停止；不会自动重启。",
     "Wartung angehalten. Keine weitere Löschung und kein normaler Start. Prüfbericht erforderlich.": "维护已停止。不会继续删除或正常启动。需要审查报告。",
-    "Wartung vorbereiten": "准备维护"
+    "Wartung vorbereiten": "准备维护",
+    "Signal erfasst": "信号已记录"
   },
   "web_static": {
     "Eigener DNS-Name (FQDN, optional)": "自定义 DNS 名称（FQDN，可选）",
@@ -193,7 +194,7 @@
     "Manuelles Datum und Uhrzeit (Europe/Berlin, ohne WLAN erforderlich)": "手动日期和时间（Europe/Berlin，无 WiFi 时必填）",
     "Diese Einrichtungsverbindung endet nach Speichern. Gespeicherte WLAN-Profile behalten ihre Prioritäten.": "保存后此设置连接将结束。WiFi 配置优先级保持不变。",
     "Netzwerkeinrichtung speichern": "保存网络设置",
-    "Advanced": "高级",
+    "Erweitert": "高级",
     "Anzeige": "广告",
     "Uhrdesign": "时钟设计",
     "Digital groß": "数码大",
@@ -269,7 +270,9 @@
     "Noch keine globale Nachtkopie": "尚未全局复制夜间模式",
     "Einrichtung aktiv: Mesh pausiert. Speichern oder Einrichtung verlassen startet den Normalbetrieb neu.": "设置进行中：Mesh 已暂停。保存或退出设置后将重启正常运行。",
     "Einrichtung verlassen": "退出设置",
-    "Einrichtung verlassen und ein normaler Neustart löschen keine Daten.": "退出设置和正常重启不会删除数据。"
+    "Einrichtung verlassen und ein normaler Neustart löschen keine Daten.": "退出设置和正常重启不会删除数据。",
+    "Datum und Uhrzeit": "日期和时间",
+    "Vollständiges Berliner Datum und Uhrzeit eingeben; mehrdeutige oder fehlende Sommerzeitminuten sind ungültig.": "输入完整的柏林日期和时间；拒绝夏令时重复或不存在的分钟。"
   },
   "web_dynamic": {
     "Gerät: {0}": "设备：{0}",

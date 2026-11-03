@@ -154,7 +154,8 @@
     "WARNUNG: Nach Ihrer Bestätigung werden ausschließlich App-Testdaten gelöscht: katmed/state, mesh_history, names_ctl, names_view und zwei Mesh-Namensdateien. Bilder, Webzugang, Zertifikate und Gerätesicherheit bleiben erhalten. Ohne Bestätigung wird nichts gelöscht.": "AVERTISSEMENT : Après votre confirmation, seules les données de test de l’application sont supprimées : katmed/state, mesh_history, names_ctl, names_view et deux fichiers de noms du mesh. Images, accès Web, certificats et sécurité de l’appareil sont conservés. Rien n’est supprimé sans confirmation.",
     "Wartung abgeschlossen. Gerät angehalten; kein automatischer Neustart.": "Maintenance terminée. Appareil arrêté ; aucun redémarrage automatique.",
     "Wartung angehalten. Keine weitere Löschung und kein normaler Start. Prüfbericht erforderlich.": "Maintenance interrompue. Aucune autre suppression ni démarrage normal. Rapport de vérification requis.",
-    "Wartung vorbereiten": "Préparer la maintenance"
+    "Wartung vorbereiten": "Préparer la maintenance",
+    "Signal erfasst": "Signal enregistré"
   },
   "web_static": {
     "Eigener DNS-Name (FQDN, optional)": "Nom DNS propre (FQDN, facultatif)",
@@ -193,7 +194,7 @@
     "Manuelles Datum und Uhrzeit (Europe/Berlin, ohne WLAN erforderlich)": "Date et heure manuelles (Europe/Berlin, sans Wi-Fi)",
     "Diese Einrichtungsverbindung endet nach Speichern. Gespeicherte WLAN-Profile behalten ihre Prioritäten.": "Après enregistrement, la connexion se ferme. Les priorités Wi-Fi sont conservées.",
     "Netzwerkeinrichtung speichern": "Enregistrer le réseau",
-    "Advanced": "Avancé",
+    "Erweitert": "Avancé",
     "Anzeige": "Publicité",
     "Uhrdesign": "Conception d'horloge",
     "Digital groß": "Le numérique en grand",
@@ -269,7 +270,9 @@
     "Noch keine globale Nachtkopie": "Aucune copie globale du mode nuit",
     "Einrichtung aktiv: Mesh pausiert. Speichern oder Einrichtung verlassen startet den Normalbetrieb neu.": "Configuration active : maillage en pause. Enregistrer ou quitter redémarre le fonctionnement normal.",
     "Einrichtung verlassen": "Quitter la configuration",
-    "Einrichtung verlassen und ein normaler Neustart löschen keine Daten.": "Quitter la configuration et redémarrer normalement n’efface aucune donnée."
+    "Einrichtung verlassen und ein normaler Neustart löschen keine Daten.": "Quitter la configuration et redémarrer normalement n’efface aucune donnée.",
+    "Datum und Uhrzeit": "Date et heure",
+    "Vollständiges Berliner Datum und Uhrzeit eingeben; mehrdeutige oder fehlende Sommerzeitminuten sind ungültig.": "Saisir une date et heure de Berlin uniques ; les minutes ambiguës ou inexistantes sont refusées."
   },
   "web_dynamic": {
     "Gerät: {0}": "Appareil : {0}",

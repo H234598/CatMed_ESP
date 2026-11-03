@@ -49,6 +49,7 @@
 
   function applyLocale(language) {
     if (!translations[language]) language = "en";
+    const localeChanged = language !== state.language;
     state.language = language;
     document.documentElement.lang = language;
     document.documentElement.dir = language === "ar" ? "rtl" : "ltr";
@@ -62,6 +63,7 @@
       $("runtime-setup-state").textContent = setupConfigured ?
         tr("Eingerichtet; Änderungen erfordern ausdrückliches Speichern.") :
         tr("Ersteinrichtung; Gruppe wählen oder Einrichtung offline verlassen. Ohne sichere Gruppe bleibt Mesh aus.");
+    if (localeChanged) resetPreview();
     document.body?.classList?.remove("i18n-loading");
   }
 
@@ -71,12 +73,13 @@
     applyLocale(response.language);
   }
   const views = ["setup-view", "login-view", "private-view"];
-  const fields = ["medication_hours", "image_hours", "next_due_hhmm", "clock_style", "orientation", "rotation", "brightness", "night_enabled", "night_start", "night_end"];
+  const fields = ["medication_hours", "image_hours", "next_due_hhmm", "clock_style", "orientation", "rotation", "brightness", "night_enabled", "night_start", "night_end", "system_datetime"];
   const controls = {
     medication_hours: "medication-hours", image_hours: "image-hours",
     next_due_hhmm: "due-time", clock_style: "clock-style",
     orientation: "orientation", rotation: "rotation", brightness:"brightness",
-    night_enabled:"night-enabled", night_start:"night-start", night_end:"night-end"
+    night_enabled:"night-enabled", night_start:"night-start", night_end:"night-end",
+    system_datetime:"system-datetime"
   };
   let advancedTouchStart = null;
   let resetPoll = 0;
@@ -143,7 +146,19 @@
     return tr("Anfrage fehlgeschlagen. Bitte erneut versuchen.");
   }
 
-  async function api(path, method = "GET", body = null) {
+  // The HTTPS server admits one client session. Keep API bursts bounded through
+  // JSON consumption; rejection must not prevent independent callers running.
+  let apiTail = null;
+  function api(path, method = "GET", body = null) {
+    const request = apiTail ? apiTail.then(() => apiRequest(path, method, body)) :
+      apiRequest(path, method, body);
+    const finished = request.then(clear, clear);
+    apiTail = finished;
+    function clear() { if (apiTail === finished) apiTail = null; }
+    return request;
+  }
+
+  async function apiRequest(path, method = "GET", body = null) {
     const headers = { Accept: "application/json" };
     const rawBody = typeof Blob !== "undefined" && body instanceof Blob;
     if (body !== null) headers["Content-Type"] = rawBody ? body.type : "application/json";
@@ -174,6 +189,8 @@
     if (!config || typeof config.revision !== "string" || !config.revision) return false;
     if (!fields.every((field) => Object.prototype.hasOwnProperty.call(config, field))) return false;
     if (typeof config.medication_hours !== "string" || typeof config.image_hours !== "string") return false;
+    if (config.system_datetime !== null && (typeof config.system_datetime !== "string" ||
+        !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(config.system_datetime))) return false;
     if (config.next_due_hhmm !== null && typeof config.next_due_hhmm !== "string") return false;
     if (!["none", "active", "paused_boot"].includes(config.next_due_state)) return false;
     if ((config.next_due_state === "none") !== (config.next_due_hhmm === null)) return false;
@@ -206,6 +223,7 @@
     state.config = config;
     $(controls.medication_hours).value = config.medication_hours;
     $(controls.image_hours).value = config.image_hours;
+    $(controls.system_datetime).value = config.system_datetime || "";
     $(controls.next_due_hhmm).value = config.next_due_hhmm || "";
     $(controls.clock_style).value = config.clock_style;
     const orientation = $(controls.orientation);
@@ -234,10 +252,11 @@
   let setupRevision = null, setupConfigured = false;
   async function loadRuntimeEinrichtung() {
     const value = await api("/api/runtime-setup");
-    if (!value || typeof value.configured !== "boolean" || ![0,1,2].includes(value.mode) || typeof value.revision !== "string") throw new Error("Invalid setup state");
+    if (!value || typeof value.configured !== "boolean" || ![0,1,2].includes(value.mode) || typeof value.revision !== "string" || typeof value.time_source !== "string" || value.time_source.length > 63) throw new Error("Invalid setup state");
     setupRevision = value.revision;
     setupConfigured = value.configured;
     $("network-mode").value = String(value.mode);
+    $("runtime-time-source").value = value.time_source;
     $("group-action").value = value.configured ? "0" : "1";
     $("runtime-setup-state").textContent = value.configured ? tr("Eingerichtet; Änderungen erfordern ausdrückliches Speichern.") : tr("Ersteinrichtung; Gruppe wählen oder Einrichtung offline verlassen. Ohne sichere Gruppe bleibt Mesh aus.");
     $("runtime-setup-active").hidden = !value.setup_open;
@@ -523,6 +542,18 @@
     }catch(error){await handleFailure(error,true);}finally{button.disabled=false;}
   });
 
+  function confirmedSave(committed, readback, field, requestedValue) {
+    if (!validConfig(committed) || !validConfig(readback) ||
+        committed.revision !== readback.revision) return false;
+    if (field === "orientation")
+      return committed.orientation_automatic === readback.orientation_automatic &&
+        (readback.orientation_automatic || committed.orientation === readback.orientation);
+    if (field === "system_datetime")
+      return committed.accepted_system_datetime === requestedValue &&
+        readback.system_datetime !== null;
+    return committed[field] === readback[field];
+  }
+
   async function saveField(form) {
     if (!state.config) return;
     const field = form.dataset.field;
@@ -545,12 +576,7 @@
     try {
       const committed = await api("/api/config", "PUT", request);
       const readback = await api("/api/config");
-      if (!validConfig(committed) || !validConfig(readback) ||
-          committed.revision !== readback.revision ||
-          (field === "orientation" ?
-            (committed.orientation_automatic !== readback.orientation_automatic ||
-             (!readback.orientation_automatic && committed.orientation !== readback.orientation)) :
-            committed[field] !== readback[field]))
+      if (!confirmedSave(committed, readback, field, value))
         throw new Error("Readback differs from committed configuration");
       renderConfig(readback);
       $("save-status").textContent = tr("Gespeichert und bestätigt.");
@@ -650,6 +676,9 @@
       await api("/api/logout", "POST", {});
       state.bootstrap = null;
       state.config = null;
+      // The server has invalidated the session. Do not keep private data
+      // visible if the following bootstrap request cannot complete.
+      show("login-view");
       $("cert-form").reset();
       $("cert-remove-form").reset();
       await refreshBootstrap();
@@ -731,10 +760,11 @@
     }
     applyLocale(response.language);
     if (state.config) renderConfig(state.config);
-    try { await Promise.all([loadWifi(), loadImages(), loadCatalog()]); }
-    catch (error) { await handleFailure(error); }
-    notice(tr("Einstellung gespeichert."));
-    setBusy(form, false);
+    try {
+      await Promise.all([loadWifi(), loadImages(), loadCatalog()]);
+      notice(tr("Einstellung gespeichert."));
+    } catch (error) { await handleFailure(error); }
+    finally { setBusy(form, false); }
   });
   $("advanced-back").addEventListener("click", () => closeAdvanced());
   window.addEventListener("popstate", (event) => {

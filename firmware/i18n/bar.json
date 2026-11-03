@@ -154,7 +154,8 @@
     "WARNUNG: Nach Ihrer Bestätigung werden ausschließlich App-Testdaten gelöscht: katmed/state, mesh_history, names_ctl, names_view und zwei Mesh-Namensdateien. Bilder, Webzugang, Zertifikate und Gerätesicherheit bleiben erhalten. Ohne Bestätigung wird nichts gelöscht.": "WARNUNG: Nach deiner Bestätigung werdn bloß App-Testdaten gelöscht: katmed/state, mesh_history, names_ctl, names_view und zwoa Mesh-Namensdatein. Bilder, Webzugang, Zertifikate und Gerätesicherheit bleibn. Ohne Bestätigung wird nix gelöscht.",
     "Wartung abgeschlossen. Gerät angehalten; kein automatischer Neustart.": "Wartung fertig. Gerät angehaltn; ka automatischer Neustart.",
     "Wartung angehalten. Keine weitere Löschung und kein normaler Start. Prüfbericht erforderlich.": "Wartung angehaltn. Ka weiteres Löschn und ka normaler Start. Prüfbericht nötig.",
-    "Wartung vorbereiten": "Wartung herrichtn"
+    "Wartung vorbereiten": "Wartung herrichtn",
+    "Signal erfasst": "Signal erfasst"
   },
   "web_static": {
     "Eigener DNS-Name (FQDN, optional)": "Oagner DNS-Name (FQDN, freiwillig)",
@@ -193,7 +194,7 @@
     "Manuelles Datum und Uhrzeit (Europe/Berlin, ohne WLAN erforderlich)": "Datum und Uhrzeit (Europe/Berlin, ohne WLAN nötig)",
     "Diese Einrichtungsverbindung endet nach Speichern. Gespeicherte WLAN-Profile behalten ihre Prioritäten.": "Nach Speichern endet die Verbindung. WLAN-Prioritäten bleiben.",
     "Netzwerkeinrichtung speichern": "Netzwerk speichern",
-    "Advanced": "Erweitert",
+    "Erweitert": "Erweitert",
     "Anzeige": "Anzeig",
     "Uhrdesign": "Uhransicht",
     "Digital groß": "Groß digital",
@@ -269,7 +270,9 @@
     "Noch keine globale Nachtkopie": "Noch ka globale Nachtkopie",
     "Einrichtung aktiv: Mesh pausiert. Speichern oder Einrichtung verlassen startet den Normalbetrieb neu.": "Einrichtung aktiv: Mesh pausiert. Speichern oder Verlassen startet den Normalbetrieb neu.",
     "Einrichtung verlassen": "Einrichtung verlassen",
-    "Einrichtung verlassen und ein normaler Neustart löschen keine Daten.": "Einrichtung verlassen und normal neu starten löscht keine Daten."
+    "Einrichtung verlassen und ein normaler Neustart löschen keine Daten.": "Einrichtung verlassen und normal neu starten löscht keine Daten.",
+    "Datum und Uhrzeit": "Datum und Uhrzeit",
+    "Vollständiges Berliner Datum und Uhrzeit eingeben; mehrdeutige oder fehlende Sommerzeitminuten sind ungültig.": "Berliner Datum und Uhrzeit eingeben; doppelte oder fehlende Sommerzeitminuten sind ungültig."
   },
   "web_dynamic": {
     "Gerät: {0}": "Gerät: {0}",

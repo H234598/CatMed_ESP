@@ -205,6 +205,8 @@ typedef struct {
     uint64_t device;
     ClockQuality clock_quality;
     uint8_t catalog_id[KATMED_CATALOG_BYTES];
+    bool c3_probe_present; /* Only the C3 diagnostic producer opts in. */
+    uint32_t c3_probe_word; /* c3p1: bounded snapshot, never pixels or handles. */
 } StoreUsbStatusInfo;
 
 StoreResult store_open(Store *store, StoreBackend backend, uint64_t device,

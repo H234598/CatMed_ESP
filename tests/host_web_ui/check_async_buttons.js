@@ -9,7 +9,7 @@ const elements = new Map();
 function element(id) {
   if (!elements.has(id)) elements.set(id, {
     id, disabled: false, hidden: false, textContent: "", value: "",
-    classList: { toggle() {} }, listeners: {}, dataset: {}, style: {},
+    classList: { toggle(name, enabled) { this[name] = enabled; } }, listeners: {}, dataset: {}, style: {},
     addEventListener(type, callback) { this.listeners[type] = callback; },
     children: [],
     querySelector(selector) { return selector === 'option[value="auto"]' ?
@@ -24,6 +24,7 @@ function element(id) {
 const replies = [];
 const calls = [];
 const timers = [];
+let scenario = null;
 const document = {
   documentElement: { lang: "en", dir: "ltr" }, title: "Fixture",
   getElementById: element,
@@ -31,21 +32,40 @@ const document = {
   createElement(tag) { return element(`created-${tag}-${Math.random()}`); }
 };
 const windowEvents = {};
-const window = { scrollY: 130, scrollTo(_x, y) { this.scrollY = y; },
+const window = { KATMED_I18N: {keys: [], values: {en: [], de: []}}, scrollY: 130, scrollTo(_x, y) { this.scrollY = y; },
   addEventListener(type, callback) { windowEvents[type] = callback; } };
 const history = { pushState(state) { this.state = state; }, replaceState(state) { this.state = state; } };
 const location = { hostname: "device.local", protocol: "http:", hash: "", pathname: "/", search: "" };
-const script = fs.readFileSync(path.join(__dirname,
+const script = fs.readFileSync(process.env.KATMED_UI_SCRIPT || path.join(__dirname,
   "../../firmware/components/katmed_web/ui/app.js"), "utf8");
+replies.push({status:200,body:{language:"en"}});
 vm.runInNewContext(script.replace("const state = {", "const state = window.__testState = {")
+  .replace("void start();", "window.__testStartup=start();")
   .replace("async function loadRuntimeEinrichtung() {", "window.__loadRuntimeSetup=loadRuntimeEinrichtung; async function loadRuntimeEinrichtung() {")
   .replace("async function loadAcmeIdentifier() {", "window.__loadAcmeIdentifier=loadAcmeIdentifier; async function loadAcmeIdentifier() {")
   .replace("function renderConfig(config) {", "window.__renderConfig=renderConfig; window.__validConfig=validConfig; window.__saveField=saveField; function renderConfig(config) {")
+  .replace("async function applyBootstrap(bootstrap) {", "window.__testApplyBootstrap=applyBootstrap; window.__testApi=api; async function applyBootstrap(bootstrap) {")
   .replace("function cancelResetOnLeave() {", "window.__testShow = show; function cancelResetOnLeave() {"), {
   document, window, history, location,
   setTimeout: (callback, delay) => { callback.delay = delay; timers.push(callback); },
   fetch: async (url, options) => {
     calls.push({url, options});
+    if (scenario) {
+      const test = scenario;
+      test.active++; test.peak = Math.max(test.peak, test.active);
+      try {
+        await new Promise(resolve => setImmediate(resolve));
+        if (url === test.reject) throw new TypeError("synthetic network rejection");
+        assert.ok(Object.hasOwn(test.bodies, url), `unexpected initial loader ${url}`);
+        const status = test.statuses?.[url] || 200;
+        return {ok:status < 400, status, headers:{get:()=>"application/json"},
+          json:async()=>{
+            await new Promise(resolve => setImmediate(resolve));
+            test.active--; test.completed.push(url);
+            return test.bodies[url];
+          }};
+      } catch (error) { test.active--; test.completed.push(url); throw error; }
+    }
     const reply = replies.shift();
     assert.ok(reply, "unexpected request");
     await Promise.resolve();
@@ -77,7 +97,83 @@ async function submit(id) {
 }
 
 (async () => {
+  await window.__testStartup;
+  if (process.argv[2] === "setup_time_source") {
+    replies.push({status: 200, body: {configured: true, mode: 0, setup_open: false,
+      revision: "synthetic-setup", time_source: "ntp-readback-162.example.test"}});
+    await window.__loadRuntimeSetup();
+    assert.equal(element("runtime-time-source").value, "ntp-readback-162.example.test");
+    replies.push({status: 200, body: {configured: false, mode: 2, setup_open: true,
+      revision: "synthetic-empty", time_source: ""}});
+    await window.__loadRuntimeSetup();
+    assert.equal(element("runtime-time-source").value, "");
+    for (const invalid of [undefined, null, 42, "x".repeat(64)]) {
+      replies.push({status: 200, body: {configured: true, mode: 0,
+        revision: "synthetic-invalid", time_source: invalid}});
+      await assert.rejects(window.__loadRuntimeSetup(), /Invalid setup state/);
+    }
+    console.log("setup time_source: saved input prefill, empty state and bounded response PASS");
+    return;
+  }
+  if (process.argv[2] === "system_datetime") {
+    window.__testState.bootstrap = {csrf_token: "synthetic-csrf"};
+    const config = {revision: "synthetic-before", medication_hours: "6", image_hours: "8",
+      next_due_hhmm: null, next_due_state: "none", restore_status: "none",
+      clock_style: "digital_large", orientation: 0, rotation: "off",
+      orientation_auto_supported: true, orientation_automatic: true,
+      brightness: "40", night_enabled: "off", night_start: "22:00", night_end: "07:00",
+      system_datetime: "2026-11-01T12:00",
+      night_copy: {local_saved: false, active: false, finished: false,
+        membership_known: false, expected: 0, acknowledged: 0, rejected: 0}};
+    window.__renderConfig(config);
+    const input = element("system-datetime");
+    input.value = "2026-11-01T12:34";
+    const button = {disabled: false};
+    const form = {dataset: {field: "system_datetime"},
+      elements: {namedItem: () => input}, reportValidity: () => true,
+      querySelectorAll: () => [button]};
+    const before = calls.length;
+    replies.push({status: 200, body: {...config, revision: "synthetic-after",
+      system_datetime: "2026-11-01T12:34", accepted_system_datetime: input.value}},
+      {status: 200, body: {...config, revision: "synthetic-after", system_datetime: "2026-11-01T12:35"}});
+    await window.__saveField(form);
+    assert.equal(calls.length, before + 2, "independent clock save must reach PUT and current-clock GET");
+    assert.deepEqual(JSON.parse(calls[before].options.body), {
+      field: "system_datetime", value: "2026-11-01T12:34", revision: "synthetic-before"});
+    assert.equal(calls[before].url, "/api/config");
+    assert.equal(calls[before].options.method, "PUT");
+    assert.equal(calls[before].options.headers["X-Katmed-CSRF"], "synthetic-csrf");
+    assert.equal(calls[before + 1].options.method, "GET");
+    assert.equal(element("save-status").textContent, "Gespeichert und bestätigt.");
+    assert.equal(input.value, "2026-11-01T12:35", "readback is the advancing clock, not an input echo");
+    assert.equal(button.disabled, false);
+    for (const badReadback of ["missing-ack", "unknown-clock", "wrong-ack"]) {
+      const current = {...config, revision: "synthetic-after", system_datetime: "2026-11-01T12:35"};
+      window.__renderConfig(current);
+      input.value = "2026-11-01T13:00";
+      const committed = {...current};
+      if (badReadback !== "missing-ack") committed.accepted_system_datetime =
+        badReadback === "wrong-ack" ? "2026-11-01T12:00" : input.value;
+      replies.push({status: 200, body: committed}, {status: 200, body: {
+        ...current, system_datetime: badReadback === "unknown-clock" ? null : current.system_datetime}});
+      await window.__saveField(form);
+      assert.equal(element("save-status").textContent, "Speichern nicht bestätigt.", badReadback);
+      assert.equal(button.disabled, false);
+    }
+    window.__renderConfig({...config, system_datetime: null});
+    assert.equal(input.value, "", "unknown clock must not prefill a guessed time");
+    assert.equal(window.__validConfig({...config, system_datetime: undefined}), false);
+    input.value = "2026-03-29T02:30";
+    replies.push({status: 422, body: {error: "invalid"}});
+    await window.__saveField(form);
+    assert.equal(element("save-status").textContent, "Speichern nicht bestätigt.");
+    assert.equal(input.value, "2026-03-29T02:30");
+    assert.ok(calls.slice(before).every(call => call.url === "/api/config"), "no setup/network/reset endpoint");
+    console.log("independent system datetime: real saveField PUT/current readback passed");
+    return;
+  }
   window.__testState.bootstrap={csrf_token:"synthetic-csrf"};
+  if (process.argv[2] !== "display_contract") {
   replies.push({status:200,body:{identifier:""}});
   await window.__loadAcmeIdentifier();
   assert.equal(element("acme-identifier").value,"");
@@ -117,7 +213,9 @@ async function submit(id) {
   assert.equal(calls.length,identifierCalls+1,"failed reload invalidates the previous token; recover with GET only");
   assert.equal(calls.at(-1).options.method,"GET");
   assert.equal(element("acme-identifier").value,"latest.example.invalid");
+  }
   const config={revision:"synthetic-r1",medication_hours:"6",image_hours:"8",
+    system_datetime:null,
     next_due_hhmm:null,next_due_state:"none",restore_status:"none",
     clock_style:"digital_large",orientation:0,rotation:"off",
     orientation_auto_supported:false,orientation_automatic:false,
@@ -156,6 +254,10 @@ async function submit(id) {
   assert.match(element("save-status").textContent,/Gespeichert/);
   window.__renderConfig(config);
   assert.equal(element("orientation").querySelector('option[value="auto"]'),null);
+  if (process.argv[2] === "display_contract") {
+    console.log("display contract: night copy/local settings/C6-auto/manual selection passed");
+    return;
+  }
   replies.push({ status: 401, body: { error: "denied" } });
   await click("cert-login");
   assert.match(element("notice").textContent, /Anmeldung fehlgeschlagen/);
@@ -189,7 +291,7 @@ async function submit(id) {
   // mode. The POST carries the current revision and leaves profile fields out.
   window.__testState.bootstrap={csrf_token:"synthetic-csrf"};
   replies.push({status:200,body:{configured:true,mode:0,setup_open:true,
-    revision:"synthetic-setup-r1"}});
+    revision:"synthetic-setup-r1",time_source:"time.test"}});
   await window.__loadRuntimeSetup();
   assert.equal(element("runtime-setup-exit").hidden,false);
   assert.equal(element("runtime-setup-active").hidden,false);
@@ -200,7 +302,7 @@ async function submit(id) {
   assert.equal(calls.at(-1).options.headers["X-Katmed-CSRF"],"synthetic-csrf");
   assert.deepEqual(JSON.parse(calls.at(-1).options.body),{revision:"synthetic-setup-r1"});
   replies.push({status:200,body:{configured:false,mode:2,setup_open:true,
-    revision:"synthetic-fresh-r2"}});
+    revision:"synthetic-fresh-r2",time_source:""}});
   await window.__loadRuntimeSetup();
   assert.equal(element("runtime-setup-exit").hidden,false);
   assert.equal(element("runtime-setup-active").hidden,false);
@@ -350,5 +452,97 @@ async function submit(id) {
   element("factory-reset-dialog").close();
   assert.equal(calls.some((call) => call.url === "/api/factory-reset/confirm"), false);
   assert.equal(replies.length, 0);
+  // Execute the real authenticated initial loader path, not scheduler internals.
+  const bodies = {
+    "/api/config": config, "/api/acme-identifier": {identifier:""},
+    "/api/runtime-setup": {configured:true,mode:0,revision:"setup-r1",setup_open:false,time_source:"time.test"},
+    "/api/client-cert": {enrolled:false},
+    "/api/wifi": {configured:true,recovery_available:true,profile_limit:8,profiles:[]},
+    "/api/images?offset=0": {images:[],used_bytes:0,free_bytes:1024,image_count:0,next_offset:false},
+    "/api/catalog/images?offset=0": {images:[],catalog_count:0,offset:0},
+    "/api/probe-after-failure": {ok:true}
+  };
+  const initialPaths = Object.keys(bodies).filter(url=>url!=="/api/probe-after-failure").sort();
+  scenario = {bodies,active:0,peak:0,completed:[]};
+  await window.__testApplyBootstrap({setup_required:false,authenticated:true,device_name:"Synthetic"});
+  assert.equal(scenario.peak,1,"authenticated initial API burst must be bounded");
+  assert.deepEqual([...scenario.completed].sort(),initialPaths,"all intended loaders complete");
+  assert.equal(element("clock-style").value,config.clock_style);
+  assert.equal(element("brightness").value,config.brightness);
+  assert.equal(element("network-mode").value,"0");
+  scenario = {bodies,active:0,peak:0,completed:[],reject:"/api/config"};
+  await assert.rejects(window.__testApplyBootstrap({setup_required:false,authenticated:true}),
+    error=>error.name==="TypeError");
+  await window.__testApi("/api/probe-after-failure");
+  assert.equal(scenario.peak,1);
+  assert.deepEqual(scenario.completed.filter(url=>url!=="/api/probe-after-failure").sort(),initialPaths,
+    "one failed loader must not poison or discard the independent queued loaders");
+  assert.equal(scenario.completed.at(-1),"/api/probe-after-failure");
+  scenario=null;
+  // Execute the ACTUAL registered language submit handler in the real app VM.
+  // Minimal synthetic catalog only enables a second locale; translation quality
+  // is not the subject of this host regression.
+  const languageForm = element("language-form");
+  const languageButton = {disabled:false};
+  const oldLanguageButtons = languageForm.querySelectorAll;
+  languageForm.querySelectorAll = selector => selector === "button" ? [languageButton] : [];
+  for (const failedLoader of ["/api/wifi", "/api/images?offset=0",
+                              "/api/catalog/images?offset=0", null]) {
+    window.__testState.bootstrap = {csrf_token:"synthetic-csrf"};
+    window.__testState.config = config;
+    const unchangedConfig = JSON.stringify(config);
+    element("language-select").value = "de";
+    const beforeLanguage = calls.length;
+    scenario = {bodies:{...bodies,"/api/language":{language:"de"}},
+                statuses:failedLoader ? {[failedLoader]:503} : {},
+                active:0,peak:0,completed:[]};
+    const pendingLanguage = languageForm.listeners.submit({currentTarget:languageForm,preventDefault(){}});
+    assert.equal(languageButton.disabled,true,"language submit must retain its busy guard");
+    await pendingLanguage;
+    assert.equal(languageButton.disabled,false,"all completion paths release the busy guard");
+    // The real apiTail must finish independent queued JSON consumers even when
+    // Promise.all rejected. A later independent operation must still succeed.
+    await window.__testApi("/api/probe-after-failure");
+    const actual = calls.slice(beforeLanguage);
+    assert.deepEqual(actual.map(call=>call.url),["/api/language","/api/wifi",
+      "/api/images?offset=0","/api/catalog/images?offset=0","/api/probe-after-failure"]);
+    assert.equal(actual.filter(call=>call.options.method==="PUT").length,1,"never retry the committed locale");
+    assert.deepEqual(JSON.parse(actual[0].options.body),{language:"de"});
+    assert.equal(actual[0].options.headers["X-Katmed-CSRF"],"synthetic-csrf");
+    assert.equal(window.__testState.language,"de","dependent failure must not roll back committed locale");
+    assert.equal(document.documentElement.lang,"de");
+    assert.equal(element("language-select").value,"de");
+    assert.equal(JSON.stringify(window.__testState.config),unchangedConfig);
+    assert.equal(window.__testState.bootstrap.csrf_token,"synthetic-csrf");
+    assert.equal(scenario.peak,1);
+    assert.equal(scenario.completed.length,5,"all queued consumers and recovery request complete");
+    if (failedLoader) {
+      assert.equal(element("notice").classList.error,true,"dependent failure must remain visibly an error");
+      assert.equal(element("notice").textContent,"Speichern derzeit nicht verfügbar. Bitte später erneut versuchen.");
+      assert.notEqual(element("notice").textContent,"Einstellung gespeichert.");
+    } else {
+      assert.equal(element("notice").classList.error,false);
+      assert.equal(element("notice").textContent,"Einstellung gespeichert.");
+    }
+  }
+  languageForm.querySelectorAll = oldLanguageButtons;
+  scenario = null;
+  console.log("registered language handler: three dependent503 cases retain committed locale/error; all-success Saved; bounded queue/recovery/no retry: OK");
+  // A confirmed logout invalidates the private view even if its follow-up
+  // bootstrap request fails. Execute the real logout click handler.
+  window.__testState.bootstrap={csrf_token:"synthetic-csrf"};
+  window.__testState.config=config;
+  window.__testShow("private-view");
+  const beforeLogout=calls.length;
+  replies.push({status:200,body:{authenticated:false}},{network:true});
+  await click("logout");
+  assert.deepEqual(calls.slice(beforeLogout).map(call=>call.url),["/api/logout","/api/bootstrap"]);
+  assert.equal(window.__testState.bootstrap,null);
+  assert.equal(window.__testState.config,null);
+  assert.equal(element("private-view").hidden,true,"confirmed logout must hide private data before bootstrap retry-free failure");
+  assert.equal(element("login-view").hidden,false);
+  assert.equal(replies.length,0);
+  console.log("confirmed logout hides private view despite follow-up bootstrap failure: OK");
+  console.log("bounded real initial loaders, completion and rejection recovery: OK");
   console.log("async buttons, Advanced scroll restore and physical reset web flow: OK");
 })().catch((error) => { console.error(error); process.exitCode = 1; });

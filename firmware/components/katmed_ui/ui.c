@@ -13,6 +13,9 @@
 #include "katmed_private_ui_profile.h"
 #endif
 #include "katmed_ui_defaults.h"
+#if defined(KATMED_C3_ALARM_DIAG) && KATMED_C3_ALARM_DIAG
+#include "esp_lvgl_port_c3_alarm_probe.h"
+#endif
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -113,6 +116,12 @@ typedef struct {
 } UiContext;
 
 static UiContext ui = {.view = BACKGROUND, .grid = {1, 1}, .shown_clock_tick = INT64_MIN};
+
+static void ui_trace(KatmedRenderInnerPhase phase, bool begin)
+{
+    if (ui.services.render_trace)
+        ui.services.render_trace(ui.services.context,phase,begin,0);
+}
 typedef struct {
     lv_display_t *display;
     UiBlinkRenderMetrics snapshot;
@@ -185,6 +194,28 @@ static void display_metrics_event(lv_event_t *event)
         blink_metrics.flushed_pixels = 0;
         break;
     case LV_EVENT_FLUSH_START:
+#if defined(KATMED_C3_ALARM_DIAG) && KATMED_C3_ALARM_DIAG
+        {
+            const lv_area_t *probe_area = lv_event_get_param(event);
+            if (probe_area && probe_area->x1 <= 5 && probe_area->x2 >= 5 &&
+                probe_area->y1 <= 90 && probe_area->y2 >= 90) {
+                AlarmAnimation probe_animation;
+                const bool eligible = ui.have_state && ui.view == ALARM &&
+                    ui.state.alarm_active && ui.local.orientation == ORIENTATION_0 &&
+                    app_alarm_animation(&ui.state, &ui.clock,
+                                        &probe_animation) == APP_OK &&
+                    (probe_animation.color == ALARM_COLOR_YELLOW ||
+                     probe_animation.color == ALARM_COLOR_RED) &&
+                    probe_animation.phase_permyriad >= 3800u &&
+                    probe_animation.phase_permyriad <= 4200u;
+                const uint16_t expected = eligible ? lv_color_to_u16(lv_color_hex(
+                    probe_animation.color == ALARM_COLOR_RED ? 0xd50000 : 0xffc107)) : 0u;
+                lvgl_port_c3_alarm_probe_render_step(blink_metrics.display,
+                    eligible, eligible ? probe_animation.phase_permyriad : 0u,
+                    expected);
+            }
+        }
+#endif
         if (blink_metrics.rendering) {
             const lv_area_t *area = lv_event_get_param(event);
             if (area && blink_metrics.flush_areas < UINT32_MAX)
@@ -335,6 +366,7 @@ static const char *result_text(UiSubmitResult result)
     switch (result) {
     case UI_SUBMIT_COMMITTED: return T("Gespeichert");
     case UI_SUBMIT_QUEUED: return T("Änderung vorgemerkt");
+    case UI_SUBMIT_OBSERVED: return T("Signal erfasst");
     case UI_SUBMIT_DISMISSED: return T("Hinweis geschlossen");
     case UI_SUBMIT_PENDING: return T("Lokal gespeichert; Gruppe ausstehend");
     case UI_SUBMIT_PENDING_SHARED: return T("Koordinator prüft Änderung");
@@ -348,7 +380,13 @@ static const char *result_text(UiSubmitResult result)
 static UiSubmitResult submit(const UiRequest *request)
 {
     if (!ui.services.submit) return UI_SUBMIT_UNAVAILABLE;
-    return ui.services.submit(ui.services.context, request);
+    UiRequest intent=*request;
+    if(intent.kind==UI_REQUEST_CONFIRM || intent.kind==UI_REQUEST_DISMISS_BOOT ||
+       intent.kind==UI_REQUEST_SET_MEDICATION_SECONDS || intent.kind==UI_REQUEST_SET_IMAGE_SECONDS ||
+       intent.kind==UI_REQUEST_SET_NEXT_LOCAL_TIME || intent.kind==UI_REQUEST_SET_ROTATION_MODE){
+        intent.guard_model=true;intent.expected_round=ui.state.round;intent.expected_revision=ui.state.revision;
+    }
+    return ui.services.submit(ui.services.context, &intent);
 }
 
 static UiSubmitResult request_action(const UiRequest *request)
@@ -390,8 +428,18 @@ static UiSubmitResult request_action(const UiRequest *request)
 
 void ui_deferred_result(const UiRequest *request,UiSubmitResult result)
 {
-    /* Completion never closes a newly opened editor or resubmits an action. */
-    if(result==UI_SUBMIT_COMMITTED && ui.services.read_model)
+    /* Queued is not durable. Apply the original action's completion semantics
+     * only when the owner has actually executed that copied intent. */
+    if(request->kind==UI_REQUEST_CONFIRM && (result==UI_SUBMIT_COMMITTED || result==UI_SUBMIT_PENDING)){
+        ui.confirmed_round=true;ui.confirmed_id=request->guard_model ? request->expected_round : ui.state.round;
+        if(ui.morse_alarm_paused && same_round(ui.confirmed_id,ui.state.round))ui.morse_alarm_confirmed=true;
+    }
+    if(request->kind==UI_REQUEST_DISMISS_BOOT && result==UI_SUBMIT_DISMISSED){
+        ui.confirmed_round=true;ui.confirmed_id=request->guard_model ? request->expected_round : ui.state.round;
+    }
+    if(result==UI_SUBMIT_PENDING_SHARED){ui.shared_pending=true;ui.shared_result_status=0;}
+    if(result==UI_SUBMIT_STALE)ui.preview_valid=false;
+    if((result==UI_SUBMIT_COMMITTED || result==UI_SUBMIT_DISMISSED) && ui.services.read_model)
         ui.services.read_model(ui.services.context,&ui.state,&ui.local,&ui.clock);
     if(request->kind==UI_REQUEST_SET_BRIGHTNESS && ui.brightness_pending){
         ui.brightness_pending=false;
@@ -975,7 +1023,7 @@ static void style_save(lv_event_t *event)
     UiRequest request = {.kind = UI_REQUEST_SET_CLOCK_STYLE};
     request.value.clock_style = ui.pending_style;
     UiSubmitResult result = request_action(&request);
-    if (result == UI_SUBMIT_COMMITTED) style_cancel(NULL);
+    if (result == UI_SUBMIT_COMMITTED || result == UI_SUBMIT_QUEUED) style_cancel(NULL);
     else if (ui.style_title) lv_label_set_text(ui.style_title, result_text(result));
 }
 
@@ -2539,11 +2587,14 @@ void ui_render(const AppState *state, const LocalSettings *local,
                    width != ui.width || height != ui.height ||
                    local->orientation != ui.screen_orientation ||
                    ui.applied_language != katmed_i18n_selected();
+    const bool language_rebuild=ui.applied_language != katmed_i18n_selected();
     bool editing_before_rebuild = rebuild && (ui.keypad || ui.style_dialog);
     if (rebuild) {
         interaction_cancel(clock->monotonic_ms);
         if (ui.touch_down) ui.reject_contact = true;
+        if (language_rebuild) ui_trace(KATMED_RENDER_INNER_LANGUAGE_REBUILD,true);
         build_screen(width, height);
+        if (language_rebuild) ui_trace(KATMED_RENDER_INNER_LANGUAGE_REBUILD,false);
         ui.applied_language=katmed_i18n_selected();
         if (editing_before_rebuild) show_feedback(T("Eingabe nach Drehung verworfen"));
     }

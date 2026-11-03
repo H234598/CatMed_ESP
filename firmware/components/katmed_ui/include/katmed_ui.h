@@ -4,6 +4,7 @@
 #include "katmed_display.h"
 #include "katmed_interaction.h"
 #include "katmed_language.h"
+#include "katmed_render_trace.h"
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -29,6 +30,9 @@ typedef enum {
 } UiRequestKind;
 typedef struct {
     UiRequestKind kind;
+    bool guard_model; /* Physical domain intent refers to the displayed model. */
+    AlarmRoundId expected_round;
+    StateRevision expected_revision;
     union {
         uint32_t seconds;
         uint16_t display_value;
@@ -52,7 +56,8 @@ typedef enum {
     UI_SUBMIT_UNAVAILABLE,
     UI_SUBMIT_STALE,
     UI_SUBMIT_DISMISSED, /* Transient boot notice closed; no durable mutation. */
-    UI_SUBMIT_QUEUED /* App-loop intent accepted, not a durable result. */
+    UI_SUBMIT_QUEUED, /* App-loop intent accepted, not a durable result. */
+    UI_SUBMIT_OBSERVED /* RAM-only emergency signal consumed; no Store/transport claim. */
 } UiSubmitResult;
 typedef struct {
     EventId id;
@@ -110,6 +115,8 @@ typedef struct {
     /* Coalesced local preview intent only; 0 cancels, 1..100 previews. No Store/PWM here. */
     bool (*brightness_preview)(void *context, uint8_t percent);
     void (*night_copy_status)(void *context, KatmedNightCopyStatus *out);
+    /* Optional fixed-number observer; never receives UI strings or IDs. */
+    KatmedRenderTraceObserver render_trace;
 } UiServices;
 
 /* A display render cycle caused by a change of the alarm bar's visibility.

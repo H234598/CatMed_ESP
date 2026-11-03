@@ -154,7 +154,8 @@
     "WARNUNG: Nach Ihrer Bestätigung werden ausschließlich App-Testdaten gelöscht: katmed/state, mesh_history, names_ctl, names_view und zwei Mesh-Namensdateien. Bilder, Webzugang, Zertifikate und Gerätesicherheit bleiben erhalten. Ohne Bestätigung wird nichts gelöscht.": "ADVERTENCIA: Tras su confirmación, solo se borrarán datos de prueba de la aplicación: katmed/state, mesh_history, names_ctl, names_view y dos archivos de nombres de mesh. Se conservan imágenes, acceso web, certificados y seguridad del dispositivo. Sin confirmación no se borra nada.",
     "Wartung abgeschlossen. Gerät angehalten; kein automatischer Neustart.": "Mantenimiento completado. Dispositivo detenido; sin reinicio automático.",
     "Wartung angehalten. Keine weitere Löschung und kein normaler Start. Prüfbericht erforderlich.": "Mantenimiento detenido. No habrá más borrados ni arranque normal. Se requiere un informe de revisión.",
-    "Wartung vorbereiten": "Preparar mantenimiento"
+    "Wartung vorbereiten": "Preparar mantenimiento",
+    "Signal erfasst": "Señal registrada"
   },
   "web_static": {
     "Eigener DNS-Name (FQDN, optional)": "Nombre DNS propio (FQDN, opcional)",
@@ -193,7 +194,7 @@
     "Manuelles Datum und Uhrzeit (Europe/Berlin, ohne WLAN erforderlich)": "Fecha y hora manuales (Europe/Berlin, sin WiFi)",
     "Diese Einrichtungsverbindung endet nach Speichern. Gespeicherte WLAN-Profile behalten ihre Prioritäten.": "Esta conexión termina al guardar. Se conservan las prioridades WiFi.",
     "Netzwerkeinrichtung speichern": "Guardar red",
-    "Advanced": "Avanzado",
+    "Erweitert": "Avanzado",
     "Anzeige": "anuncio",
     "Uhrdesign": "Diseño de reloj",
     "Digital groß": "digital grande",
@@ -269,7 +270,9 @@
     "Noch keine globale Nachtkopie": "Sin copia global del modo nocturno",
     "Einrichtung aktiv: Mesh pausiert. Speichern oder Einrichtung verlassen startet den Normalbetrieb neu.": "Configuración activa: malla en pausa. Guardar o salir reinicia el funcionamiento normal.",
     "Einrichtung verlassen": "Salir de configuración",
-    "Einrichtung verlassen und ein normaler Neustart löschen keine Daten.": "Salir de configuración y reiniciar normalmente no borra datos."
+    "Einrichtung verlassen und ein normaler Neustart löschen keine Daten.": "Salir de configuración y reiniciar normalmente no borra datos.",
+    "Datum und Uhrzeit": "Fecha y hora",
+    "Vollständiges Berliner Datum und Uhrzeit eingeben; mehrdeutige oder fehlende Sommerzeitminuten sind ungültig.": "Introduzca fecha y hora de Berlín completas; se rechazan minutos ambiguos o inexistentes."
   },
   "web_dynamic": {
     "Gerät: {0}": "Dispositivo: {0}",

@@ -4,9 +4,54 @@
 #undef main
 #undef katmed_images_present
 #include "check_ui_refinement_main.h"
+#include "katmed_config_bridge.h"
 #include "katmed_images_internal.h"
 #include "katmed_font.h"
 #include "src/misc/lv_text_private.h"
+#include <pthread.h>
+#include <stdatomic.h>
+#include <errno.h>
+#include <time.h>
+
+void wifi_render_route_register(KatmedWebWifiServices services);
+int wifi_render_route_get(bool authenticated, bool *profile_present);
+unsigned wifi_render_snapshot_reads(void);
+
+static pthread_mutex_t image_gate=PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t image_changed=PTHREAD_COND_INITIALIZER;
+static bool image_block_next, image_inside_jpeg, image_blocked, image_release;
+static uint8_t image_present_outcome, image_jpeg_outcome;
+
+static void image_service_trace(void *context, KatmedRenderInnerPhase phase,
+                                bool begin, uint8_t outcome)
+{
+    (void)context;
+    katmed_config_render_inner(phase,begin,outcome);
+    if (!begin && phase==KATMED_RENDER_INNER_IMAGE_PRESENT)
+        image_present_outcome=outcome;
+    if (!begin && phase==KATMED_RENDER_INNER_JPEG_DECODE)
+        image_jpeg_outcome=outcome;
+    if (phase==KATMED_RENDER_INNER_JPEG_DECODE) {
+        assert(pthread_mutex_lock(&image_gate)==0);
+        image_inside_jpeg=begin;
+        assert(pthread_mutex_unlock(&image_gate)==0);
+    }
+}
+
+static void *render_owner_thread(void *unused)
+{
+    (void)unused;
+    refinement_render_owner();
+    return NULL;
+}
+typedef struct { atomic_bool done; int status; bool profile; } WifiRouteClient;
+static void *wifi_route_thread(void *context)
+{
+    WifiRouteClient *client=context;
+    client->status=wifi_render_route_get(true,&client->profile);
+    atomic_store(&client->done,true);
+    return NULL;
+}
 
 static uint64_t reads;
 static KatmedInteractionStatus interaction_model;
@@ -32,6 +77,14 @@ static void interaction_project(void *context,KatmedInteractionStatus *out,uint6
 {(void)context;(void)now;*out=interaction_model;}
 static bool pack_read(void *context,uint32_t offset,uint8_t *out,size_t wanted,size_t *actual)
 {
+    assert(pthread_mutex_lock(&image_gate)==0);
+    if (image_block_next && image_inside_jpeg && !image_blocked) {
+        image_blocked=true;
+        assert(pthread_cond_signal(&image_changed)==0);
+        while (!image_release)
+            assert(pthread_cond_wait(&image_changed,&image_gate)==0);
+    }
+    assert(pthread_mutex_unlock(&image_gate)==0);
     ++reads; FILE *file=context; *actual=0;
     if (offset>katmed_generated_catalog.pack_bytes || wanted>katmed_generated_catalog.pack_bytes-offset || fseek(file,offset,SEEK_SET)) return false;
     *actual=fread(out,1,wanted,file); return *actual==wanted;
@@ -108,9 +161,77 @@ int UI_REFINEMENT_ENTRYPOINT(int argc,char **argv)
     refinement_init(katmed_images_catalog_sha256(),katmed_images_count());
     UiServices services=refinement_services();ui_set_services(&services);
     katmed_i18n_select(KATMED_LANG_DE); /* Keep the German label assertions explicit. */
+    if (!strcmp(argv[1],"wifi_render_service"))
+        assert(refinement_image(50u%katmed_images_count())==APP_OK);
     ClockSample now=refinement_clock();
-    ui_render(refinement_state(),refinement_local(),SETTINGS,&now);draw();
+    ui_render(refinement_state(),refinement_local(),
+              !strcmp(argv[1],"wifi_render_service")?BACKGROUND:SETTINGS,&now);draw();
     lv_obj_t *screen=lv_screen_active();
+    if (!strcmp(argv[1],"wifi_render_service")) {
+        KatmedImageTimingSample initial=katmed_images_jpeg_decode_timing();
+        assert(katmed_images_last_error()==KATMED_IMAGE_OK);
+        assert(initial.status==KATMED_IMAGE_OK && initial.decoded_areas>0);
+        refinement_wifi_prepare();
+        services.render_trace=image_service_trace;
+        ui_set_services(&services);
+        katmed_images_set_render_trace(image_service_trace,NULL);
+        KatmedWebWifiServices wifi=refinement_wifi_services();
+        wifi_render_route_register(wifi);
+        assert(wifi_render_route_get(false,NULL)==401);
+        assert(wifi_render_snapshot_reads()==0);
+        assert(refinement_image(51u%katmed_images_count())==APP_OK);
+        refinement_language_commit(KATMED_LANG_FR);
+        assert(pthread_mutex_lock(&image_gate)==0);
+        image_block_next=true;
+        assert(pthread_mutex_unlock(&image_gate)==0);
+        pthread_t owner;
+        assert(pthread_create(&owner,NULL,render_owner_thread,NULL)==0);
+        assert(pthread_mutex_lock(&image_gate)==0);
+        struct timespec deadline;
+        assert(clock_gettime(CLOCK_REALTIME,&deadline)==0);
+        deadline.tv_sec+=5;
+        while (!image_blocked) {
+            const int result=pthread_cond_timedwait(&image_changed,&image_gate,&deadline);
+            assert(result==0 || (result==ETIMEDOUT && image_blocked));
+        }
+        assert(image_inside_jpeg);
+        assert(pthread_mutex_unlock(&image_gate)==0);
+        bool profile=false;
+        const int status=wifi_render_route_get(true,&profile);
+        fprintf(stderr,"render_wifi_status=%d profile_present=%u jpeg_open=%u\n",
+                status,(unsigned)profile,(unsigned)image_inside_jpeg);
+        assert(status==200 && profile && "real authenticated WiFi GET must finish during valid JPEG work");
+#ifdef KATMED_WEB_WIFI_RENDER_SNAPSHOT
+        assert(wifi_render_snapshot_reads()==1);
+#endif
+        assert(pthread_mutex_lock(&image_gate)==0);
+        image_release=true;
+        assert(pthread_cond_signal(&image_changed)==0);
+        assert(pthread_mutex_unlock(&image_gate)==0);
+        assert(pthread_join(owner,NULL)==0);
+        KatmedImageTimingSample final=katmed_images_jpeg_decode_timing();
+        assert(katmed_images_last_error()==KATMED_IMAGE_OK &&
+               final.status==KATMED_IMAGE_OK && final.decoded_areas>0 &&
+               image_present_outcome==KATMED_IMAGE_OK &&
+               image_jpeg_outcome==KATMED_IMAGE_OK);
+        assert(refinement_state()->image_id==51u%katmed_images_count());
+        draw();
+        assert(katmed_i18n_selected()==KATMED_LANG_FR);
+        grid_swipe(false,true);
+        assert(ui_current_view()==SETTINGS && find_label(screen,"Paramètres"));
+        WifiRouteClient outside={0};
+        pthread_t client;
+        assert(pthread_create(&client,NULL,wifi_route_thread,&outside)==0);
+        while (!atomic_load(&outside.done)) {
+            refinement_poll_owner();
+            const struct timespec pause={0,1000000};
+            nanosleep(&pause,NULL);
+        }
+        assert(pthread_join(client,NULL)==0);
+        assert(outside.status==200 && outside.profile);
+        refinement_wifi_snapshot_contract();
+        puts("real Main/Store/Bridge/Web/UI/JPEG owner service PASS");
+    }
     if (!strcmp(argv[1],"clock-menu")) {
         ui_render(refinement_state(),refinement_local(),CLOCK,&now);draw();
         grid_swipe(false,true);assert(ui_current_view()==BACKGROUND);

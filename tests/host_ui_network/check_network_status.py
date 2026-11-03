@@ -29,11 +29,12 @@ static void katmed_mesh_device_name(char *out,size_t cap,bool *assigned,bool *un
 }
 static bool fail_dns, unknown_dns, ipv6_dns, disconnect_dns;
 static unsigned sync_server=0x017100CB;
-static bool mesh_active=true;
-static uint8_t radio_channel=6;
-static bool katmed_mesh_radio_channel(uint8_t *channel) {*channel=radio_channel;return mesh_active;}
 typedef struct {unsigned short current,history; unsigned char quality; bool active,current_valid,history_complete;} KatmedMeshCounts;
-static void katmed_mesh_counts(KatmedMeshCounts *out){*out=(KatmedMeshCounts){2,3,16,true,true,true};}
+/* Real publisher/Store execution is covered by the Main harness. This boundary
+ * double supplies only a published POD and does not replace any SDK predicate. */
+#define DISPLAY_MB_LOCK(m) ((void)0)
+#define DISPLAY_MB_UNLOCK(m) ((void)0)
+static struct {bool valid,configured,setup_open,setup_dismissed,manual_clock_required,mesh_started,mesh_active;uint8_t mesh_channel;KatmedMeshCounts mesh_counts;struct {bool utc_valid;} clock;char setup_ssid[33],setup_password[17];} ui_owner_snapshot;
 static unsigned katmed_time_idf_sync_server_ipv4(void) {return sync_server;}
 static int esp_netif_get_dns_info(void *netif, int kind, esp_netif_dns_info_t *out);
 typedef struct {Address ip, gw;} esp_netif_ip_info_t;
@@ -72,6 +73,7 @@ int main(void) {
     rt.store.record.provision.configured=true;
     strcpy(rt.store.record.mesh_name, "KatmedESP-002");
     rt.store.record.mesh_name_index=2;
+    ui_owner_snapshot.valid=true;ui_owner_snapshot.configured=true;ui_owner_snapshot.mesh_started=true;ui_owner_snapshot.mesh_active=true;ui_owner_snapshot.mesh_channel=6;ui_owner_snapshot.mesh_counts=(KatmedMeshCounts){2,3,16,true,true,true};
     UiNetworkStatus out;
     network_status(&rt,&out);
     assert(out.mesh_active && out.mesh_channel==6);
@@ -122,14 +124,14 @@ int main(void) {
     zero_ip=false; zero_gateway=true;
     network_status(&rt,&out);
     assert(out.connected && !out.gateway[0]);
-    rt.mesh_started=false;
+    rt.mesh_started=false;ui_owner_snapshot.mesh_started=false;ui_owner_snapshot.mesh_active=false;
     network_status(&rt,&out);
     assert(out.configured && !out.connected && !out.station_ip[0] && !out.ap_ip[0]);
-    rt.mesh_started=true;
-    rt.store.record.provision.configured=false;
+    rt.mesh_started=true;ui_owner_snapshot.mesh_started=true;
+    rt.store.record.provision.configured=false;ui_owner_snapshot.configured=false;
     network_status(&rt,&out);
     assert(!out.configured && !out.connected && !out.station_ip[0] && !out.gateway[0] && !out.ap_ip[0]);
-    network_status(NULL,&out);
+    ui_owner_snapshot.configured=true;network_status(NULL,&out);
     assert(!out.configured && !out.connected);
     puts("Current network callback: association, interface, transition, error, AP and unconfigured cases passed");
 }

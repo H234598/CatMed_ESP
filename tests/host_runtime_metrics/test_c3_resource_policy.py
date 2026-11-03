@@ -6,6 +6,7 @@ This is a build-policy regression; it does not emulate radio traffic or claim
 runtime heap/latency acceptance.
 """
 import os
+import re
 from pathlib import Path
 import subprocess
 import tempfile
@@ -67,7 +68,9 @@ class C3ResourcePolicy(unittest.TestCase):
         result = self.compile_policy("#undef CONFIG_IDF_TARGET_ESP32C3\n"
                                      "#define CONFIG_IDF_TARGET_ESP32C3 0\n"
                                      "#undef CONFIG_LWIP_MAX_SOCKETS\n"
-                                     "#define CONFIG_LWIP_MAX_SOCKETS 12\n"
+                                     "#define CONFIG_LWIP_MAX_SOCKETS 13\n"
+                                     "#undef CONFIG_IDF_TARGET_ESP32C6\n"
+                                     "#define CONFIG_IDF_TARGET_ESP32C6 1\n"
                                      "#undef CONFIG_ESP_WIFI_IRAM_OPT\n"
                                      "#define CONFIG_ESP_WIFI_IRAM_OPT 1\n")
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -84,9 +87,16 @@ class C3ResourcePolicy(unittest.TestCase):
                                      "#undef CONFIG_IDF_TARGET_ESP32C6\n"
                                      "#define CONFIG_IDF_TARGET_ESP32C6 1\n"
                                      "#undef CONFIG_LWIP_MAX_SOCKETS\n"
-                                     "#define CONFIG_LWIP_MAX_SOCKETS 10\n")
+                                     "#define CONFIG_LWIP_MAX_SOCKETS 12\n")
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("FULLSTACK_SOCKET_POLICY", result.stderr)
+        self.assertIn("C6_FULLSTACK_SOCKET_POLICY", result.stderr)
+
+    def test_board_socket_defaults_preserve_target_budgets(self):
+        for board, expected in (("c3", 12), ("c6", 13)):
+            text = (ROOT / "firmware/boards" / (board + ".defaults")).read_text()
+            value = re.search(r"^CONFIG_LWIP_MAX_SOCKETS=(\d+)$", text, re.M)
+            self.assertIsNotNone(value)
+            self.assertEqual(int(value.group(1)), expected)
 
 
 if __name__ == "__main__":

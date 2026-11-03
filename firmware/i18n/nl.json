@@ -154,7 +154,8 @@
     "WARNUNG: Nach Ihrer Bestätigung werden ausschließlich App-Testdaten gelöscht: katmed/state, mesh_history, names_ctl, names_view und zwei Mesh-Namensdateien. Bilder, Webzugang, Zertifikate und Gerätesicherheit bleiben erhalten. Ohne Bestätigung wird nichts gelöscht.": "WAARSCHUWING: Na uw bevestiging worden uitsluitend app-testgegevens verwijderd: katmed/state, mesh_history, names_ctl, names_view en twee mesh-naambestanden. Afbeeldingen, webtoegang, certificaten en apparaatbeveiliging blijven behouden. Zonder bevestiging wordt niets verwijderd.",
     "Wartung abgeschlossen. Gerät angehalten; kein automatischer Neustart.": "Onderhoud voltooid. Apparaat gestopt; geen automatische herstart.",
     "Wartung angehalten. Keine weitere Löschung und kein normaler Start. Prüfbericht erforderlich.": "Onderhoud gestopt. Geen verdere verwijdering of normale start. Controleverslag vereist.",
-    "Wartung vorbereiten": "Onderhoud voorbereiden"
+    "Wartung vorbereiten": "Onderhoud voorbereiden",
+    "Signal erfasst": "Signaal geregistreerd"
   },
   "web_static": {
     "Eigener DNS-Name (FQDN, optional)": "Eigen DNS-naam (FQDN, optioneel)",
@@ -193,7 +194,7 @@
     "Manuelles Datum und Uhrzeit (Europe/Berlin, ohne WLAN erforderlich)": "Handmatige datum en tijd (Europe/Berlin, zonder wifi)",
     "Diese Einrichtungsverbindung endet nach Speichern. Gespeicherte WLAN-Profile behalten ihre Prioritäten.": "Na opslaan sluit deze verbinding. Wifi-prioriteiten blijven behouden.",
     "Netzwerkeinrichtung speichern": "Netwerk opslaan",
-    "Advanced": "Geavanceerd",
+    "Erweitert": "Geavanceerd",
     "Anzeige": "Advertentie",
     "Uhrdesign": "Klok ontwerp",
     "Digital groß": "Digitaal groot",
@@ -269,7 +270,9 @@
     "Noch keine globale Nachtkopie": "Nog geen globale nachtkopie",
     "Einrichtung aktiv: Mesh pausiert. Speichern oder Einrichtung verlassen startet den Normalbetrieb neu.": "Instellen actief: mesh gepauzeerd. Opslaan of afsluiten herstart de normale werking.",
     "Einrichtung verlassen": "Instellen afsluiten",
-    "Einrichtung verlassen und ein normaler Neustart löschen keine Daten.": "Instellen afsluiten en normaal herstarten wissen geen gegevens."
+    "Einrichtung verlassen und ein normaler Neustart löschen keine Daten.": "Instellen afsluiten en normaal herstarten wissen geen gegevens.",
+    "Datum und Uhrzeit": "Datum en tijd",
+    "Vollständiges Berliner Datum und Uhrzeit eingeben; mehrdeutige oder fehlende Sommerzeitminuten sind ungültig.": "Voer een volledige Berlijnse datum en tijd in; dubbele of ontbrekende zomertijdminuten zijn ongeldig."
   },
   "web_dynamic": {
     "Gerät: {0}": "Apparaat: {0}",
