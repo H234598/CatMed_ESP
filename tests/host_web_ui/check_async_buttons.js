@@ -98,6 +98,23 @@ async function submit(id) {
 
 (async () => {
   await window.__testStartup;
+  if (process.argv[2] === "setup_time_source") {
+    replies.push({status: 200, body: {configured: true, mode: 0, setup_open: false,
+      revision: "synthetic-setup", time_source: "ntp-readback-162.example.test"}});
+    await window.__loadRuntimeSetup();
+    assert.equal(element("runtime-time-source").value, "ntp-readback-162.example.test");
+    replies.push({status: 200, body: {configured: false, mode: 2, setup_open: true,
+      revision: "synthetic-empty", time_source: ""}});
+    await window.__loadRuntimeSetup();
+    assert.equal(element("runtime-time-source").value, "");
+    for (const invalid of [undefined, null, 42, "x".repeat(64)]) {
+      replies.push({status: 200, body: {configured: true, mode: 0,
+        revision: "synthetic-invalid", time_source: invalid}});
+      await assert.rejects(window.__loadRuntimeSetup(), /Invalid setup state/);
+    }
+    console.log("setup time_source: saved input prefill, empty state and bounded response PASS");
+    return;
+  }
   if (process.argv[2] === "system_datetime") {
     window.__testState.bootstrap = {csrf_token: "synthetic-csrf"};
     const config = {revision: "synthetic-before", medication_hours: "6", image_hours: "8",
@@ -274,7 +291,7 @@ async function submit(id) {
   // mode. The POST carries the current revision and leaves profile fields out.
   window.__testState.bootstrap={csrf_token:"synthetic-csrf"};
   replies.push({status:200,body:{configured:true,mode:0,setup_open:true,
-    revision:"synthetic-setup-r1"}});
+    revision:"synthetic-setup-r1",time_source:"time.test"}});
   await window.__loadRuntimeSetup();
   assert.equal(element("runtime-setup-exit").hidden,false);
   assert.equal(element("runtime-setup-active").hidden,false);
@@ -285,7 +302,7 @@ async function submit(id) {
   assert.equal(calls.at(-1).options.headers["X-Katmed-CSRF"],"synthetic-csrf");
   assert.deepEqual(JSON.parse(calls.at(-1).options.body),{revision:"synthetic-setup-r1"});
   replies.push({status:200,body:{configured:false,mode:2,setup_open:true,
-    revision:"synthetic-fresh-r2"}});
+    revision:"synthetic-fresh-r2",time_source:""}});
   await window.__loadRuntimeSetup();
   assert.equal(element("runtime-setup-exit").hidden,false);
   assert.equal(element("runtime-setup-active").hidden,false);
@@ -438,7 +455,7 @@ async function submit(id) {
   // Execute the real authenticated initial loader path, not scheduler internals.
   const bodies = {
     "/api/config": config, "/api/acme-identifier": {identifier:""},
-    "/api/runtime-setup": {configured:true,mode:0,revision:"setup-r1",setup_open:false},
+    "/api/runtime-setup": {configured:true,mode:0,revision:"setup-r1",setup_open:false,time_source:"time.test"},
     "/api/client-cert": {enrolled:false},
     "/api/wifi": {configured:true,recovery_available:true,profile_limit:8,profiles:[]},
     "/api/images?offset=0": {images:[],used_bytes:0,free_bytes:1024,image_count:0,next_offset:false},

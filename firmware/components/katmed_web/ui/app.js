@@ -252,10 +252,11 @@
   let setupRevision = null, setupConfigured = false;
   async function loadRuntimeEinrichtung() {
     const value = await api("/api/runtime-setup");
-    if (!value || typeof value.configured !== "boolean" || ![0,1,2].includes(value.mode) || typeof value.revision !== "string") throw new Error("Invalid setup state");
+    if (!value || typeof value.configured !== "boolean" || ![0,1,2].includes(value.mode) || typeof value.revision !== "string" || typeof value.time_source !== "string" || value.time_source.length > 63) throw new Error("Invalid setup state");
     setupRevision = value.revision;
     setupConfigured = value.configured;
     $("network-mode").value = String(value.mode);
+    $("runtime-time-source").value = value.time_source;
     $("group-action").value = value.configured ? "0" : "1";
     $("runtime-setup-state").textContent = value.configured ? tr("Eingerichtet; Änderungen erfordern ausdrückliches Speichern.") : tr("Ersteinrichtung; Gruppe wählen oder Einrichtung offline verlassen. Ohne sichere Gruppe bleibt Mesh aus.");
     $("runtime-setup-active").hidden = !value.setup_open;

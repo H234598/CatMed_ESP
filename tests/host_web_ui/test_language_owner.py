@@ -154,11 +154,9 @@ class SystemTimeOwnerHTTP(unittest.TestCase):
         source = Path(cls.tmp.name) / "system_time.c"
         source.write_text(code)
         cls.binary = Path(cls.tmp.name) / "check"
-        original = ROOT.parents[1]
         execute_tls_callback(["/usr/bin/cc", "-std=c11", "-D_POSIX_C_SOURCE=200809L", "-Wall", "-Wextra", "-Werror",
                               "-I" + str(ROOT / "firmware/components/katmed_config_bridge/include"),
-                              "-I" + str(original / "firmware/components/katmed_config_bridge/include"),
-                              "-I" + str(original / "firmware/components/katmed_core/include"),
+                              "-I" + str(ROOT / "firmware/components/katmed_core/include"),
                               str(source), "-o", str(cls.binary)])
 
     @classmethod

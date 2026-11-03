@@ -131,7 +131,10 @@ typedef struct {
     struct { bool ready, configured, recovery; uint8_t limit, count; KatmedConfigWifiView profiles[KATMED_CONFIG_WIFI_MAX]; } wifi;
     KatmedConfigSnapshot snapshot;
     KatmedConfigPreview preview;
-    struct { bool configured; uint8_t mode; bool clock_required; bool setup_open; } setup;
+    struct {
+        bool configured; uint8_t mode; bool clock_required; bool setup_open;
+        char time_source[64]; /* Committed server only; empty if none is configured. */
+    } setup;
     struct {
         char device_id[13], boot_id[21];
         bool alarm_active, boot_notice, last_dose_known;

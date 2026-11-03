@@ -1280,6 +1280,14 @@ static void config_execute(void *context, const KatmedConfigRequest *request,
         config_snapshot(rt,&response->snapshot);
         response->setup.configured=rt->store.record.provision.configured;
         response->setup.mode=rt->store.record.provision.network_mode;
+        response->setup.time_source[0]=0;
+        if (response->setup.configured) {
+            const StoreProvision *saved=&rt->store.record.provision;
+            const size_t length=saved->time_source_length;
+            if (length>sizeof(saved->time_source)) return;
+            memcpy(response->setup.time_source,saved->time_source,length);
+            response->setup.time_source[length]=0;
+        }
         response->setup.setup_open=rt->setup_ap;
         response->setup.clock_required=!clock_sample(rt->boot_domain).utc_valid;
         response->status=KATMED_CONFIG_OK;return;

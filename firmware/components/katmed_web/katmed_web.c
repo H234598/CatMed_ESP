@@ -1410,6 +1410,7 @@ static esp_err_t runtime_setup_get(httpd_req_t *req) {
     cJSON *obj=cJSON_CreateObject();
     cJSON_AddBoolToObject(obj,"configured",response.setup.configured);
     cJSON_AddNumberToObject(obj,"mode",response.setup.mode);
+    cJSON_AddStringToObject(obj,"time_source",response.setup.time_source);
     cJSON_AddBoolToObject(obj,"clock_required",response.setup.clock_required);
     cJSON_AddBoolToObject(obj,"setup_open",response.setup.setup_open);
     cJSON_AddStringToObject(obj,"revision",response.snapshot.revision);
