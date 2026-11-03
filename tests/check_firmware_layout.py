@@ -21,7 +21,7 @@ MAIN_SOURCE = "firmware/main/main.c"
 COMPILE_DATABASE = "compile_commands.json"
 CONFIG_INCLUDE_ERROR = "Compiler generated sdkconfig.h"
 spec = importlib.util.spec_from_file_location(
-    "layout_guard_fixture", REPO / "tests/host_usb/test_build_id_contract.py")
+    "layout_guard_fixture", REPO / "tests/layout_test_fixture.py")
 guard_fixture = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(guard_fixture)
 
@@ -61,8 +61,7 @@ class FirmwareLayoutTests(unittest.TestCase):
     def setUp(self):
         global layout
         layout = guard_fixture.load_public("layout", LAYOUT_TOOL)
-        (REPO / "build-host").mkdir(exist_ok=True)
-        self.temp = tempfile.TemporaryDirectory(dir=REPO / "build-host")
+        self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
         shutil.copytree(REPO / FIRMWARE_BOARDS, self.root / FIRMWARE_BOARDS)
         generated = self.root / GENERATED_ASSETS
@@ -526,6 +525,36 @@ class OldC3Development001NoIO(guard_fixture.BuildIdContractNoIO):
                                                     self.build / "partition_table/partition-table.bin")
         with self.assertRaisesRegex(ValueError, "Security partition factory differs"):
             self.check()
+
+    def test_isolation_rejects_external_io(self):
+        self.assertEqual(self.cfg.resolve(), self.cfg)
+        self.assertTrue(LAYOUT_TOOL.is_file())
+        import socket
+        import subprocess
+        import serial
+        from esptool.loader import ESPLoader
+        for action in (lambda: open(REPO / "CMakeLists.txt"),
+                       lambda: open(LAYOUT_TOOL, "w"),
+                       lambda: os.open(LAYOUT_TOOL, os.O_WRONLY),
+                       lambda: os.remove(LAYOUT_TOOL),
+                       lambda: os.utime(LAYOUT_TOOL),
+                       lambda: os.lstat(REPO.parent),
+                       lambda: os.readlink(REPO.parent / "synthetic-link"),
+                       lambda: os.readlink(self.work / "outside-link"),
+                       lambda: (self.work / "outside-link" / "data").resolve(),
+                       lambda: (self.work / "inside-link").resolve(),
+                       lambda: open(self.work / "outside-link" / ".." / "data"),
+                       lambda: socket.getaddrinfo("synthetic.invalid", 80),
+                       lambda: socket.socket(),
+                       lambda: socket.create_connection(("127.0.0.1", 1)),
+                       lambda: subprocess.Popen(["synthetic-command"]),
+                       lambda: os.system("synthetic-command"),
+                       lambda: serial.Serial("synthetic-port"),
+                       lambda: serial.serial_for_url("synthetic-port"),
+                       lambda: ESPLoader.connect(None)):
+            with self.subTest(action=action):
+                with self.assertRaisesRegex(AssertionError, "NO_IO"):
+                    action()
 
     def test_release_profile_still_passes(self):
         self.settings.pop("SECURE_FLASH_ENCRYPTION_MODE_DEVELOPMENT")

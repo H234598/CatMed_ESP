@@ -271,7 +271,8 @@
     "Einrichtung aktiv: Mesh pausiert. Speichern oder Einrichtung verlassen startet den Normalbetrieb neu.": "Agordo aktivas: maŝo paŭzas. Konservi aŭ eliri restartigas normalan funkciadon.",
     "Einrichtung verlassen": "Eliri agordon",
     "Einrichtung verlassen und ein normaler Neustart löschen keine Daten.": "Eliri agordon kaj normala restartigo ne forigas datumojn.",
-    "Datum und Uhrzeit": "Dato kaj horo"
+    "Datum und Uhrzeit": "Dato kaj horo",
+    "Vollständiges Berliner Datum und Uhrzeit eingeben; mehrdeutige oder fehlende Sommerzeitminuten sind ungültig.": "Enigu plenan Berlinan daton kaj horon; ambiguaj aŭ mankantaj minutoj estas rifuzataj."
   },
   "web_dynamic": {
     "Gerät: {0}": "Aparato: {0}",

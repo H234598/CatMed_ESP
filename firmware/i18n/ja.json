@@ -271,7 +271,8 @@
     "Einrichtung aktiv: Mesh pausiert. Speichern oder Einrichtung verlassen startet den Normalbetrieb neu.": "設定中: メッシュは一時停止しています。保存または終了すると通常動作で再起動します。",
     "Einrichtung verlassen": "設定を終了",
     "Einrichtung verlassen und ein normaler Neustart löschen keine Daten.": "設定の終了と通常の再起動ではデータは消去されません。",
-    "Datum und Uhrzeit": "日付と時刻"
+    "Datum und Uhrzeit": "日付と時刻",
+    "Vollständiges Berliner Datum und Uhrzeit eingeben; mehrdeutige oder fehlende Sommerzeitminuten sind ungültig.": "ベルリンの完全な日時を入力してください。夏時間の曖昧または存在しない分は拒否します。"
   },
   "web_dynamic": {
     "Gerät: {0}": "デバイス: {0}",

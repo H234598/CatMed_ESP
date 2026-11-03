@@ -271,7 +271,8 @@
     "Einrichtung aktiv: Mesh pausiert. Speichern oder Einrichtung verlassen startet den Normalbetrieb neu.": "Instellen actief: mesh gepauzeerd. Opslaan of afsluiten herstart de normale werking.",
     "Einrichtung verlassen": "Instellen afsluiten",
     "Einrichtung verlassen und ein normaler Neustart löschen keine Daten.": "Instellen afsluiten en normaal herstarten wissen geen gegevens.",
-    "Datum und Uhrzeit": "Datum en tijd"
+    "Datum und Uhrzeit": "Datum en tijd",
+    "Vollständiges Berliner Datum und Uhrzeit eingeben; mehrdeutige oder fehlende Sommerzeitminuten sind ungültig.": "Voer een volledige Berlijnse datum en tijd in; dubbele of ontbrekende zomertijdminuten zijn ongeldig."
   },
   "web_dynamic": {
     "Gerät: {0}": "Apparaat: {0}",

@@ -271,7 +271,8 @@
     "Einrichtung aktiv: Mesh pausiert. Speichern oder Einrichtung verlassen startet den Normalbetrieb neu.": "Setup active: mesh paused. Saving or leaving setup restarts normal operation.",
     "Einrichtung verlassen": "Leave setup",
     "Einrichtung verlassen und ein normaler Neustart löschen keine Daten.": "Leaving setup and a normal restart do not erase data.",
-    "Datum und Uhrzeit": "Date and time"
+    "Datum und Uhrzeit": "Date and time",
+    "Vollständiges Berliner Datum und Uhrzeit eingeben; mehrdeutige oder fehlende Sommerzeitminuten sind ungültig.": "Enter a full Berlin date and time; ambiguous/nonexistent DST minutes are rejected."
   },
   "web_dynamic": {
     "Gerät: {0}": "Device: {0}",

@@ -271,7 +271,8 @@
     "Einrichtung aktiv: Mesh pausiert. Speichern oder Einrichtung verlassen startet den Normalbetrieb neu.": "الإعداد نشط: الشبكة المتداخلة متوقفة مؤقتاً. الحفظ أو الخروج يعيد التشغيل العادي.",
     "Einrichtung verlassen": "الخروج من الإعداد",
     "Einrichtung verlassen und ein normaler Neustart löschen keine Daten.": "الخروج من الإعداد وإعادة التشغيل العادية لا يمحوان البيانات.",
-    "Datum und Uhrzeit": "التاريخ والوقت"
+    "Datum und Uhrzeit": "التاريخ والوقت",
+    "Vollständiges Berliner Datum und Uhrzeit eingeben; mehrdeutige oder fehlende Sommerzeitminuten sind ungültig.": "أدخل تاريخ ووقت برلين بالكامل؛ تُرفض الدقائق الملتبسة أو غير الموجودة."
   },
   "web_dynamic": {
     "Gerät: {0}": "الجهاز: {0}",

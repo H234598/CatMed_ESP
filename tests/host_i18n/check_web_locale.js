@@ -146,7 +146,7 @@ assert.equal(nodes[1].nodeValue, "My own alarm text");
   /* Exercise the actual runtime Setup status producer, then change language
    * while the Settings page stays open. Static DOM translation alone passes. */
   setupReplies.push({configured: false, mode: 2, setup_open: true,
-    revision: "synthetic-setup-r1"});
+    revision: "synthetic-setup-r1", time_source: ""});
   await window.__loadRuntimeSetup();
   assert.match(element("runtime-setup-state").textContent, /Ersteinrichtung/);
   window.__applyLocale("fr");
@@ -177,7 +177,7 @@ assert.equal(nodes[1].nodeValue, "My own alarm text");
   assert.equal(nodes[1].nodeValue, "My own alarm text");
 
   setupReplies.push({configured: true, mode: 0, setup_open: true,
-    revision: "synthetic-setup-r2"});
+    revision: "synthetic-setup-r2", time_source: "time.test"});
   await window.__loadRuntimeSetup();
   window.__applyLocale("fr");
   assert.equal(element("runtime-setup-state").textContent,
@@ -188,7 +188,7 @@ assert.equal(nodes[1].nodeValue, "My own alarm text");
    * The synthetic config error leaves state.config null; no new endpoint is
    * modeled and the successful language PUT uses the existing response shape. */
   setupReplies.push({configured: true, mode: 0, setup_open: true,
-    revision: "synthetic-setup-r3"});
+    revision: "synthetic-setup-r3", time_source: "time.test"});
   await assert.rejects(window.__applyBootstrap({setup_required: false,
     authenticated: true, device_name: "Synthetic device", csrf_token: "fixture"}),
   (error) => error.status === 503);
@@ -222,7 +222,7 @@ assert.equal(nodes[1].nodeValue, "My own alarm text");
   /* A valid already loaded configuration is the control for the known Wi-Fi
    * 503 after language save: renderConfig re-localizes the dynamic fallback. */
   window.__renderConfig({revision: "synthetic-config-r1", medication_hours: "12",
-    image_hours: "6", next_due_hhmm: "08:30", next_due_state: "active",
+    image_hours: "6", system_datetime: null, next_due_hhmm: "08:30", next_due_state: "active",
     restore_status: "none", clock_style: "digital_large", orientation: 0,
     rotation: "name_order", brightness: "70", night_enabled: "off",
     night_start: "22:00", night_end: "06:00",

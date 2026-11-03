@@ -271,7 +271,8 @@
     "Einrichtung aktiv: Mesh pausiert. Speichern oder Einrichtung verlassen startet den Normalbetrieb neu.": "Налаштування активне: mesh призупинено. Збереження або вихід перезапускає звичайну роботу.",
     "Einrichtung verlassen": "Вийти з налаштування",
     "Einrichtung verlassen und ein normaler Neustart löschen keine Daten.": "Вихід із налаштування та звичайний перезапуск не стирають дані.",
-    "Datum und Uhrzeit": "Дата й час"
+    "Datum und Uhrzeit": "Дата й час",
+    "Vollständiges Berliner Datum und Uhrzeit eingeben; mehrdeutige oder fehlende Sommerzeitminuten sind ungültig.": "Введіть повну дату й час Берліна; неоднозначні або відсутні хвилини відхиляються."
   },
   "web_dynamic": {
     "Gerät: {0}": "Пристрій: {0}",

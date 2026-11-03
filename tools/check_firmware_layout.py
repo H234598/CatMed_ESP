@@ -14,6 +14,8 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+DEFAULT_APP_IMAGE = "katmed_foundation.bin"
+
 
 def require_app_project_role(app: Path, app_bytes: int, expected: str) -> None:
     # IDF 6.1 places esp_app_desc_t at the start of the first DROM segment.
@@ -153,10 +155,10 @@ def require_old_c3_app(app: Path) -> None:
 
 
 def check_layout(repo: Path, board: str, build: Path, security_profile: bool = False,
-                 app_image: str = "katmed_foundation.bin", *,
+                 app_image: str = DEFAULT_APP_IMAGE, *,
                  old_c3_development001: bool = False) -> dict:
     if old_c3_development001 and (board != "c3" or not security_profile or
-                                  app_image != "katmed_foundation.bin"):
+                                  app_image != DEFAULT_APP_IMAGE):
         raise ValueError("The old-C3 Development001 gate requires the C3 security profile")
     if app_image == "katmed_appmaint_c6.bin" and (board != "c6" or not security_profile):
         raise ValueError("AppStore maintenance image requires C6 security profile")
@@ -309,8 +311,8 @@ def main() -> None:
     parser.add_argument("--security-profile", action="store_true")
     parser.add_argument("--old-c3-development001", action="store_true",
                         help="Require the distinct old-C3 Development001 security contract")
-    parser.add_argument("--app-image", choices=("katmed_foundation.bin", "katmed_appmaint_c6.bin"),
-                        default="katmed_foundation.bin")
+    parser.add_argument("--app-image", choices=(DEFAULT_APP_IMAGE, "katmed_appmaint_c6.bin"),
+                        default=DEFAULT_APP_IMAGE)
     args = parser.parse_args()
     repo = Path(__file__).resolve().parents[1]
     build = args.build_dir or repo / "firmware" / f"build-{args.board}"

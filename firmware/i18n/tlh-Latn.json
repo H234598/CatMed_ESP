@@ -371,6 +371,7 @@
     "Einrichtung aktiv: Mesh pausiert. Speichern oder Einrichtung verlassen startet den Normalbetrieb neu.": "chermeH mIw QaptaH: mesh mevtaH. pol pagh mejDI' motlh mIw taghqa'.",
     "Einrichtung verlassen": "chermeH mIw yImej",
     "Einrichtung verlassen und ein normaler Neustart löschen keine Daten.": "chermeH mIw meJlu'DI' motlh taghqa'DI' je De' Qaw'lu'be'.",
-    "Datum und Uhrzeit": "jaj poH je"
+    "Datum und Uhrzeit": "jaj poH je",
+    "Vollständiges Berliner Datum und Uhrzeit eingeben; mehrdeutige oder fehlende Sommerzeitminuten sind ungültig.": "Berlin jaj poH je yIghItlh; poH muj yIlajQo'."
   }
 }

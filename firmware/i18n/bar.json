@@ -271,7 +271,8 @@
     "Einrichtung aktiv: Mesh pausiert. Speichern oder Einrichtung verlassen startet den Normalbetrieb neu.": "Einrichtung aktiv: Mesh pausiert. Speichern oder Verlassen startet den Normalbetrieb neu.",
     "Einrichtung verlassen": "Einrichtung verlassen",
     "Einrichtung verlassen und ein normaler Neustart löschen keine Daten.": "Einrichtung verlassen und normal neu starten löscht keine Daten.",
-    "Datum und Uhrzeit": "Datum und Uhrzeit"
+    "Datum und Uhrzeit": "Datum und Uhrzeit",
+    "Vollständiges Berliner Datum und Uhrzeit eingeben; mehrdeutige oder fehlende Sommerzeitminuten sind ungültig.": "Berliner Datum und Uhrzeit eingeben; doppelte oder fehlende Sommerzeitminuten sind ungültig."
   },
   "web_dynamic": {
     "Gerät: {0}": "Gerät: {0}",
