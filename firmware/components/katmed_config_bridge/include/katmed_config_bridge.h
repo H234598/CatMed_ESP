@@ -28,7 +28,8 @@ typedef enum {
     KATMED_CONFIG_CLOCK_STYLE,
     KATMED_CONFIG_ORIENTATION,
     KATMED_CONFIG_ROTATION, KATMED_CONFIG_BRIGHTNESS, KATMED_CONFIG_NIGHT_ENABLED,
-    KATMED_CONFIG_NIGHT_START, KATMED_CONFIG_NIGHT_END, KATMED_CONFIG_COPY_NIGHT
+    KATMED_CONFIG_NIGHT_START, KATMED_CONFIG_NIGHT_END, KATMED_CONFIG_COPY_NIGHT,
+    KATMED_CONFIG_SYSTEM_DATETIME
 } KatmedConfigField;
 
 typedef enum {
@@ -102,6 +103,7 @@ typedef struct {
 typedef struct {
     char medication_hours[24];
     char image_hours[24];
+    char system_datetime[17]; /* Current Berlin minute; empty when clock unavailable. */
     char next_due_hhmm[6];
     KatmedDueState next_due_state;
     KatmedRestoreStatus restore_status;

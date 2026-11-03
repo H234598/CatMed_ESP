@@ -1228,8 +1228,71 @@ static void test_emergency_owner(void)
 
 #endif
 
+static void test_independent_system_datetime(void)
+{
+    committed_length=0;fail_commit=false;fake_microseconds=1000000;fake_wall_sets=0;
+    initialize_runtime();katmed_time_init(&runtime.time,runtime.boot_domain);
+    StoreProvision online={.configured=true,.network_mode=STORE_NETWORK_ONLINE,
+        .group={1},.secret={2},.ssid="synthetic",.ssid_length=9,
+        .password="test-only",.password_length=9,.time_source="time.test",.time_source_length=9};
+    assert(store_save_setup(&runtime.store,&online)==STORE_OK);
+    const StoreRecord original=runtime.store.record;
+    const uint32_t medication=runtime.state.settings.medication_seconds;
+    const uint32_t images=runtime.state.settings.image_seconds;
+    const unsigned shared_calls=fake_shared_calls,mesh_calls=fake_mesh_start_calls;
+    const unsigned ap_calls=setup_config_calls,web_calls=fake_web_policy_calls;
+    KatmedConfigRequest get={.operation=KATMED_CONFIG_GET};
+    KatmedConfigResponse reply={0};config_execute(&runtime,&get,&reply);
+    assert(reply.status==KATMED_CONFIG_OK && !reply.snapshot.system_datetime[0]);
+    KatmedConfigRequest set={.operation=KATMED_CONFIG_SAVE,.field=KATMED_CONFIG_SYSTEM_DATETIME};
+    snprintf(set.revision,sizeof(set.revision),"%s",reply.snapshot.revision);
+    const char *invalid[]={"2026-03-29T02:30","2026-10-25T02:30","2026-02-30T12:00","14:25"};
+    const unsigned before_invalid=writes;
+    for(unsigned i=0;i<sizeof(invalid)/sizeof(invalid[0]);++i) {
+        snprintf(set.value,sizeof(set.value),"%s",invalid[i]);
+        config_execute(&runtime,&set,&reply);
+        assert(reply.status==KATMED_CONFIG_INVALID && fake_wall_sets==0 && writes==before_invalid);
+    }
+    snprintf(set.value,sizeof(set.value),"2026-10-23T14:25");
+    config_execute(&runtime,&set,&reply);
+    assert(reply.status==KATMED_CONFIG_OK && fake_wall_sets==1 &&
+           !strcmp(reply.snapshot.system_datetime,set.value) && writes>before_invalid);
+    assert(runtime.utc_source==3 && !time_shareable(&runtime) &&
+           clock_sample(runtime.boot_domain).quality==CLOCK_HOLDOVER);
+    const unsigned before_stale=writes;
+    config_execute(&runtime,&set,&reply);
+    assert(reply.status==KATMED_CONFIG_STALE && fake_wall_sets==1 && writes==before_stale);
+    fake_microseconds+=INT64_C(60000000);
+    config_execute(&runtime,&get,&reply);
+    assert(reply.status==KATMED_CONFIG_OK && !strcmp(reply.snapshot.system_datetime,"2026-10-23T14:26"));
+    snprintf(set.revision,sizeof(set.revision),"%s",reply.snapshot.revision);
+    snprintf(set.value,sizeof(set.value),"2026-10-23T15:00");
+    config_execute(&runtime,&set,&reply);
+    assert(reply.status==KATMED_CONFIG_OK && fake_wall_sets==2);
+    config_execute(&runtime,&set,&reply);
+    assert(reply.status==KATMED_CONFIG_STALE && fake_wall_sets==2);
+    assert(!memcmp(&original.provision,&runtime.store.record.provision,sizeof(original.provision)) &&
+           !memcmp(original.wifi_profiles,runtime.store.record.wifi_profiles,sizeof(original.wifi_profiles)) &&
+           !memcmp(&original.local,&runtime.store.record.local,sizeof(original.local)) &&
+           !memcmp(&original.display,&runtime.store.record.display,sizeof(original.display)) &&
+           !memcmp(&original.last_confirmation,&runtime.store.record.last_confirmation,sizeof(original.last_confirmation)));
+    assert(runtime.state.start_reason==START_BOOT && runtime.state.alarm_active &&
+           !runtime.store.record.last_confirmation.valid &&
+           runtime.state.settings.medication_seconds==medication && runtime.state.settings.image_seconds==images);
+    assert(!runtime.reboot_required && !runtime.setup_ap && fake_shared_calls==shared_calls &&
+           fake_mesh_start_calls==mesh_calls && setup_config_calls==ap_calls && fake_web_policy_calls==web_calls);
+    config_execute(&runtime,&get,&reply);
+    snprintf(set.revision,sizeof(set.revision),"%s",reply.snapshot.revision);
+    snprintf(set.value,sizeof(set.value),"2026-10-23T16:00");
+    const KatmedTime previous=runtime.time;
+    fail_commit=true;config_execute(&runtime,&set,&reply);fail_commit=false;
+    assert(reply.status!=KATMED_CONFIG_OK && !memcmp(&previous,&runtime.time,sizeof(previous)));
+    puts("independent system datetime: owner/CAS/getter/DST/failure/profile isolation passed; wall clock is fake");
+}
+
 int main(int argc, char **argv)
 {
+    if(argc==2 && !strcmp(argv[1],"system_datetime")){test_independent_system_datetime();return 0;}
 #ifdef KATMED_TEST_EMERGENCY_UI
     if(argc==2 && !strcmp(argv[1],"emergency_owner")){test_emergency_owner();return 0;}
 #endif

@@ -98,7 +98,65 @@ async function submit(id) {
 
 (async () => {
   await window.__testStartup;
+  if (process.argv[2] === "system_datetime") {
+    window.__testState.bootstrap = {csrf_token: "synthetic-csrf"};
+    const config = {revision: "synthetic-before", medication_hours: "6", image_hours: "8",
+      next_due_hhmm: null, next_due_state: "none", restore_status: "none",
+      clock_style: "digital_large", orientation: 0, rotation: "off",
+      orientation_auto_supported: true, orientation_automatic: true,
+      brightness: "40", night_enabled: "off", night_start: "22:00", night_end: "07:00",
+      system_datetime: "2026-11-01T12:00",
+      night_copy: {local_saved: false, active: false, finished: false,
+        membership_known: false, expected: 0, acknowledged: 0, rejected: 0}};
+    window.__renderConfig(config);
+    const input = element("system-datetime");
+    input.value = "2026-11-01T12:34";
+    const button = {disabled: false};
+    const form = {dataset: {field: "system_datetime"},
+      elements: {namedItem: () => input}, reportValidity: () => true,
+      querySelectorAll: () => [button]};
+    const before = calls.length;
+    replies.push({status: 200, body: {...config, revision: "synthetic-after",
+      system_datetime: "2026-11-01T12:34", accepted_system_datetime: input.value}},
+      {status: 200, body: {...config, revision: "synthetic-after", system_datetime: "2026-11-01T12:35"}});
+    await window.__saveField(form);
+    assert.equal(calls.length, before + 2, "independent clock save must reach PUT and current-clock GET");
+    assert.deepEqual(JSON.parse(calls[before].options.body), {
+      field: "system_datetime", value: "2026-11-01T12:34", revision: "synthetic-before"});
+    assert.equal(calls[before].url, "/api/config");
+    assert.equal(calls[before].options.method, "PUT");
+    assert.equal(calls[before].options.headers["X-Katmed-CSRF"], "synthetic-csrf");
+    assert.equal(calls[before + 1].options.method, "GET");
+    assert.equal(element("save-status").textContent, "Gespeichert und bestätigt.");
+    assert.equal(input.value, "2026-11-01T12:35", "readback is the advancing clock, not an input echo");
+    assert.equal(button.disabled, false);
+    for (const badReadback of ["missing-ack", "unknown-clock", "wrong-ack"]) {
+      const current = {...config, revision: "synthetic-after", system_datetime: "2026-11-01T12:35"};
+      window.__renderConfig(current);
+      input.value = "2026-11-01T13:00";
+      const committed = {...current};
+      if (badReadback !== "missing-ack") committed.accepted_system_datetime =
+        badReadback === "wrong-ack" ? "2026-11-01T12:00" : input.value;
+      replies.push({status: 200, body: committed}, {status: 200, body: {
+        ...current, system_datetime: badReadback === "unknown-clock" ? null : current.system_datetime}});
+      await window.__saveField(form);
+      assert.equal(element("save-status").textContent, "Speichern nicht bestätigt.", badReadback);
+      assert.equal(button.disabled, false);
+    }
+    window.__renderConfig({...config, system_datetime: null});
+    assert.equal(input.value, "", "unknown clock must not prefill a guessed time");
+    assert.equal(window.__validConfig({...config, system_datetime: undefined}), false);
+    input.value = "2026-03-29T02:30";
+    replies.push({status: 422, body: {error: "invalid"}});
+    await window.__saveField(form);
+    assert.equal(element("save-status").textContent, "Speichern nicht bestätigt.");
+    assert.equal(input.value, "2026-03-29T02:30");
+    assert.ok(calls.slice(before).every(call => call.url === "/api/config"), "no setup/network/reset endpoint");
+    console.log("independent system datetime: real saveField PUT/current readback passed");
+    return;
+  }
   window.__testState.bootstrap={csrf_token:"synthetic-csrf"};
+  if (process.argv[2] !== "display_contract") {
   replies.push({status:200,body:{identifier:""}});
   await window.__loadAcmeIdentifier();
   assert.equal(element("acme-identifier").value,"");
@@ -138,7 +196,9 @@ async function submit(id) {
   assert.equal(calls.length,identifierCalls+1,"failed reload invalidates the previous token; recover with GET only");
   assert.equal(calls.at(-1).options.method,"GET");
   assert.equal(element("acme-identifier").value,"latest.example.invalid");
+  }
   const config={revision:"synthetic-r1",medication_hours:"6",image_hours:"8",
+    system_datetime:null,
     next_due_hhmm:null,next_due_state:"none",restore_status:"none",
     clock_style:"digital_large",orientation:0,rotation:"off",
     orientation_auto_supported:false,orientation_automatic:false,
@@ -177,6 +237,10 @@ async function submit(id) {
   assert.match(element("save-status").textContent,/Gespeichert/);
   window.__renderConfig(config);
   assert.equal(element("orientation").querySelector('option[value="auto"]'),null);
+  if (process.argv[2] === "display_contract") {
+    console.log("display contract: night copy/local settings/C6-auto/manual selection passed");
+    return;
+  }
   replies.push({ status: 401, body: { error: "denied" } });
   await click("cert-login");
   assert.match(element("notice").textContent, /Anmeldung fehlgeschlagen/);

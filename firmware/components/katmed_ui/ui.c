@@ -13,6 +13,9 @@
 #include "katmed_private_ui_profile.h"
 #endif
 #include "katmed_ui_defaults.h"
+#if defined(KATMED_C3_ALARM_DIAG) && KATMED_C3_ALARM_DIAG
+#include "esp_lvgl_port_c3_alarm_probe.h"
+#endif
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -191,6 +194,28 @@ static void display_metrics_event(lv_event_t *event)
         blink_metrics.flushed_pixels = 0;
         break;
     case LV_EVENT_FLUSH_START:
+#if defined(KATMED_C3_ALARM_DIAG) && KATMED_C3_ALARM_DIAG
+        {
+            const lv_area_t *probe_area = lv_event_get_param(event);
+            if (probe_area && probe_area->x1 <= 5 && probe_area->x2 >= 5 &&
+                probe_area->y1 <= 90 && probe_area->y2 >= 90) {
+                AlarmAnimation probe_animation;
+                const bool eligible = ui.have_state && ui.view == ALARM &&
+                    ui.state.alarm_active && ui.local.orientation == ORIENTATION_0 &&
+                    app_alarm_animation(&ui.state, &ui.clock,
+                                        &probe_animation) == APP_OK &&
+                    (probe_animation.color == ALARM_COLOR_YELLOW ||
+                     probe_animation.color == ALARM_COLOR_RED) &&
+                    probe_animation.phase_permyriad >= 3800u &&
+                    probe_animation.phase_permyriad <= 4200u;
+                const uint16_t expected = eligible ? lv_color_to_u16(lv_color_hex(
+                    probe_animation.color == ALARM_COLOR_RED ? 0xd50000 : 0xffc107)) : 0u;
+                lvgl_port_c3_alarm_probe_render_step(blink_metrics.display,
+                    eligible, eligible ? probe_animation.phase_permyriad : 0u,
+                    expected);
+            }
+        }
+#endif
         if (blink_metrics.rendering) {
             const lv_area_t *area = lv_event_get_param(event);
             if (area && blink_metrics.flush_areas < UINT32_MAX)

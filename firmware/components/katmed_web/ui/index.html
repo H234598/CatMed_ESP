@@ -202,6 +202,12 @@
 <section id="advanced-view" class="panel" aria-labelledby="time-title" hidden>
 <h2 id="time-title">Erweitert</h2>
 <p class="help">Erweiterte Zeit- und Intervallwerte.</p>
+<form class="setting-row" data-field="system_datetime">
+<label for="system-datetime">Datum und Uhrzeit</label>
+<input id="system-datetime" name="value" type="datetime-local" required>
+<p class="help">Vollständiges Berliner Datum und Uhrzeit eingeben; mehrdeutige oder fehlende Sommerzeitminuten sind ungültig.</p>
+<button>Speichern</button>
+</form>
 <form id="language-form" class="setting-row">
 <label for="language-select">Sprache</label>
 <select id="language-select" name="language">

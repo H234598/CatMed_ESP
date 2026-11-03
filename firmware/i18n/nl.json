@@ -270,7 +270,8 @@
     "Noch keine globale Nachtkopie": "Nog geen globale nachtkopie",
     "Einrichtung aktiv: Mesh pausiert. Speichern oder Einrichtung verlassen startet den Normalbetrieb neu.": "Instellen actief: mesh gepauzeerd. Opslaan of afsluiten herstart de normale werking.",
     "Einrichtung verlassen": "Instellen afsluiten",
-    "Einrichtung verlassen und ein normaler Neustart löschen keine Daten.": "Instellen afsluiten en normaal herstarten wissen geen gegevens."
+    "Einrichtung verlassen und ein normaler Neustart löschen keine Daten.": "Instellen afsluiten en normaal herstarten wissen geen gegevens.",
+    "Datum und Uhrzeit": "Datum en tijd"
   },
   "web_dynamic": {
     "Gerät: {0}": "Apparaat: {0}",

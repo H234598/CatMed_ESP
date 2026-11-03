@@ -270,7 +270,8 @@
     "Noch keine globale Nachtkopie": "尚未全局复制夜间模式",
     "Einrichtung aktiv: Mesh pausiert. Speichern oder Einrichtung verlassen startet den Normalbetrieb neu.": "设置进行中：Mesh 已暂停。保存或退出设置后将重启正常运行。",
     "Einrichtung verlassen": "退出设置",
-    "Einrichtung verlassen und ein normaler Neustart löschen keine Daten.": "退出设置和正常重启不会删除数据。"
+    "Einrichtung verlassen und ein normaler Neustart löschen keine Daten.": "退出设置和正常重启不会删除数据。",
+    "Datum und Uhrzeit": "日期和时间"
   },
   "web_dynamic": {
     "Gerät: {0}": "设备：{0}",

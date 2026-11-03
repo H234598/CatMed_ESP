@@ -1329,12 +1329,17 @@ static cJSON *config_object(const KatmedConfigSnapshot *snapshot)
         !rotation_name(snapshot->rotation) || !due_state_name(snapshot->next_due_state) ||
         !restore_status_name(snapshot->restore_status) ||
         orientation_degrees(snapshot->orientation) < 0 ||
-        strnlen(snapshot->revision, sizeof(snapshot->revision)) == sizeof(snapshot->revision))
+        strnlen(snapshot->revision, sizeof(snapshot->revision)) == sizeof(snapshot->revision) ||
+        strnlen(snapshot->system_datetime,sizeof(snapshot->system_datetime))==sizeof(snapshot->system_datetime))
         return NULL;
     cJSON *obj = cJSON_CreateObject();
     if (!obj) return NULL;
     cJSON_AddStringToObject(obj, "medication_hours", snapshot->medication_hours);
     cJSON_AddStringToObject(obj, "image_hours", snapshot->image_hours);
+    if(snapshot->system_datetime[0])
+        cJSON_AddStringToObject(obj,"system_datetime",snapshot->system_datetime);
+    else
+        cJSON_AddNullToObject(obj,"system_datetime");
     if (snapshot->next_due_state == KATMED_DUE_NONE)
         cJSON_AddNullToObject(obj, "next_due_hhmm");
     else
@@ -1502,6 +1507,7 @@ static KatmedConfigField config_field(const char *name, bool *found)
         {"brightness",KATMED_CONFIG_BRIGHTNESS},{"night_enabled",KATMED_CONFIG_NIGHT_ENABLED},
         {"night_start",KATMED_CONFIG_NIGHT_START},{"night_end",KATMED_CONFIG_NIGHT_END},
         {"copy_night",KATMED_CONFIG_COPY_NIGHT},
+        {"system_datetime",KATMED_CONFIG_SYSTEM_DATETIME},
     };
     for (size_t i = 0; i < sizeof(fields) / sizeof(fields[0]); ++i)
         if (strcmp(name, fields[i].name) == 0) {
@@ -1566,7 +1572,10 @@ static esp_err_t config_put(httpd_req_t *req)
                                                        BRIDGE_TIMEOUT_MS);
     if (status != KATMED_CONFIG_OK || response.status != KATMED_CONFIG_OK)
         return bridge_error(req, status != KATMED_CONFIG_OK ? status : response.status);
-    return json_reply(req, "200 OK", config_object(&response.snapshot));
+    cJSON *reply=config_object(&response.snapshot);
+    if(reply && field==KATMED_CONFIG_SYSTEM_DATETIME)
+        cJSON_AddStringToObject(reply,"accepted_system_datetime",request.value);
+    return json_reply(req, "200 OK", reply);
 }
 
 static void local_datetime_text(const LocalDateTime *value, char out[48])

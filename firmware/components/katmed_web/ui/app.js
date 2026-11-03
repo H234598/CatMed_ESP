@@ -73,12 +73,13 @@
     applyLocale(response.language);
   }
   const views = ["setup-view", "login-view", "private-view"];
-  const fields = ["medication_hours", "image_hours", "next_due_hhmm", "clock_style", "orientation", "rotation", "brightness", "night_enabled", "night_start", "night_end"];
+  const fields = ["medication_hours", "image_hours", "next_due_hhmm", "clock_style", "orientation", "rotation", "brightness", "night_enabled", "night_start", "night_end", "system_datetime"];
   const controls = {
     medication_hours: "medication-hours", image_hours: "image-hours",
     next_due_hhmm: "due-time", clock_style: "clock-style",
     orientation: "orientation", rotation: "rotation", brightness:"brightness",
-    night_enabled:"night-enabled", night_start:"night-start", night_end:"night-end"
+    night_enabled:"night-enabled", night_start:"night-start", night_end:"night-end",
+    system_datetime:"system-datetime"
   };
   let advancedTouchStart = null;
   let resetPoll = 0;
@@ -188,6 +189,8 @@
     if (!config || typeof config.revision !== "string" || !config.revision) return false;
     if (!fields.every((field) => Object.prototype.hasOwnProperty.call(config, field))) return false;
     if (typeof config.medication_hours !== "string" || typeof config.image_hours !== "string") return false;
+    if (config.system_datetime !== null && (typeof config.system_datetime !== "string" ||
+        !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(config.system_datetime))) return false;
     if (config.next_due_hhmm !== null && typeof config.next_due_hhmm !== "string") return false;
     if (!["none", "active", "paused_boot"].includes(config.next_due_state)) return false;
     if ((config.next_due_state === "none") !== (config.next_due_hhmm === null)) return false;
@@ -220,6 +223,7 @@
     state.config = config;
     $(controls.medication_hours).value = config.medication_hours;
     $(controls.image_hours).value = config.image_hours;
+    $(controls.system_datetime).value = config.system_datetime || "";
     $(controls.next_due_hhmm).value = config.next_due_hhmm || "";
     $(controls.clock_style).value = config.clock_style;
     const orientation = $(controls.orientation);
@@ -537,6 +541,18 @@
     }catch(error){await handleFailure(error,true);}finally{button.disabled=false;}
   });
 
+  function confirmedSave(committed, readback, field, requestedValue) {
+    if (!validConfig(committed) || !validConfig(readback) ||
+        committed.revision !== readback.revision) return false;
+    if (field === "orientation")
+      return committed.orientation_automatic === readback.orientation_automatic &&
+        (readback.orientation_automatic || committed.orientation === readback.orientation);
+    if (field === "system_datetime")
+      return committed.accepted_system_datetime === requestedValue &&
+        readback.system_datetime !== null;
+    return committed[field] === readback[field];
+  }
+
   async function saveField(form) {
     if (!state.config) return;
     const field = form.dataset.field;
@@ -559,12 +575,7 @@
     try {
       const committed = await api("/api/config", "PUT", request);
       const readback = await api("/api/config");
-      if (!validConfig(committed) || !validConfig(readback) ||
-          committed.revision !== readback.revision ||
-          (field === "orientation" ?
-            (committed.orientation_automatic !== readback.orientation_automatic ||
-             (!readback.orientation_automatic && committed.orientation !== readback.orientation)) :
-            committed[field] !== readback[field]))
+      if (!confirmedSave(committed, readback, field, value))
         throw new Error("Readback differs from committed configuration");
       renderConfig(readback);
       $("save-status").textContent = tr("Gespeichert und bestätigt.");

@@ -1274,6 +1274,19 @@ StoreResult store_get_status(const Store *store, bool *configured,
     return store->open && !store->uncertain ? STORE_OK : STORE_UNAVAILABLE;
 }
 
+static bool c3_probe_word_valid(uint32_t word) {
+    const unsigned phase=word&0x3fffu, state=(word>>14)&7u, pixel=(word>>17)&3u;
+    const bool phase_valid=(word&(1u<<19))!=0;
+    const bool sample_valid=(word&(1u<<20))!=0;
+    const bool completion_valid=(word&(1u<<21))!=0;
+    if ((word>>22)!=0 || phase>10000u || state>5u || pixel>2u) return false;
+    if ((!phase_valid && phase!=0) || (!sample_valid && pixel!=0) ||
+        (sample_valid && pixel==0)) return false;
+    if (completion_valid!=(state==4u)) return false;
+    if (state<5u && (phase_valid!=(state!=0) || sample_valid!=(state>=2u))) return false;
+    return true;
+}
+
 StoreResult store_usb_handle_line_with_wifi_defaults(
     Store *store, const char *line, size_t length,
     const StoreUsbStatusInfo *status,
@@ -1294,19 +1307,23 @@ StoreResult store_usb_handle_line_with_wifi_defaults(
     if (command_length==10 && std::memcmp(line,"KM1 STATUS",10)==0) {
         if (!status || status->device==0 || status->device>UINT64_C(0xFFFFFFFFFFFF) ||
             !token_safe(status->firmware_version) || !token_safe(status->build_id) ||
-            status->clock_quality<CLOCK_UNAVAILABLE || status->clock_quality>CLOCK_SYNCHRONIZED) {
+            status->clock_quality<CLOCK_UNAVAILABLE || status->clock_quality>CLOCK_SYNCHRONIZED ||
+            (status->c3_probe_present && !c3_probe_word_valid(status->c3_probe_word))) {
             make_reply(reply,reply_capacity,"KM1 ERR STATUS\n"); return STORE_INVALID;
         }
         char cat[65]; hex_encode(status->catalog_id,KATMED_CATALOG_BYTES,cat);
         bool configured=false; uint8_t pending=0; StoreResult error=STORE_UNAVAILABLE;
         const StoreResult durable=store_get_status(store,&configured,&pending,&error);
+        char probe_suffix[15]{};
+        if (status->c3_probe_present)
+            std::snprintf(probe_suffix,sizeof(probe_suffix)," c3p1=%08" PRIx32,status->c3_probe_word);
         char text[KATMED_STORE_USB_REPLY_MAX+1];
         const int n=std::snprintf(text,sizeof(text),
             "KM1 OK STATUS configured=%u durable=%u pending=%u clock=%u device=%012" PRIx64
-            " catalog=%s firmware=%s build=%s error=%s\n",
+            " catalog=%s firmware=%s build=%s error=%s%s\n",
             configured?1u:0u,durable==STORE_OK?1u:0u,static_cast<unsigned>(pending),
             static_cast<unsigned>(status->clock_quality),status->device,cat,
-            status->firmware_version,status->build_id,error_token(error));
+            status->firmware_version,status->build_id,error_token(error),probe_suffix);
         if (n<0 || static_cast<size_t>(n)>=sizeof(text) ||
             make_reply(reply,reply_capacity,text)!=STORE_OK) {
             make_reply(reply,reply_capacity,"KM1 ERR OUTPUT\n"); return STORE_FULL;

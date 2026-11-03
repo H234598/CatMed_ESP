@@ -270,7 +270,8 @@
     "Noch keine globale Nachtkopie": "Sin copia global del modo nocturno",
     "Einrichtung aktiv: Mesh pausiert. Speichern oder Einrichtung verlassen startet den Normalbetrieb neu.": "Configuración activa: malla en pausa. Guardar o salir reinicia el funcionamiento normal.",
     "Einrichtung verlassen": "Salir de configuración",
-    "Einrichtung verlassen und ein normaler Neustart löschen keine Daten.": "Salir de configuración y reiniciar normalmente no borra datos."
+    "Einrichtung verlassen und ein normaler Neustart löschen keine Daten.": "Salir de configuración y reiniciar normalmente no borra datos.",
+    "Datum und Uhrzeit": "Fecha y hora"
   },
   "web_dynamic": {
     "Gerät: {0}": "Dispositivo: {0}",

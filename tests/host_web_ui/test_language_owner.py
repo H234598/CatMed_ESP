@@ -78,6 +78,99 @@ class LanguageOwnerHTTP(unittest.TestCase):
             with self.subTest(case=case):
                 execute_tls_callback([str(self.binary), case])
 
+SYSTEM_HTTP_PREFIX = r'''
+#include <assert.h>
+#include <stdbool.h>
+#include <stdio.h>
+#include <stdint.h>
+#include <string.h>
+#include "katmed_config_bridge.h"
+#define ESP_OK 0
+#define KATMED_WEB_TOKEN_HEX 64
+#define BRIDGE_TIMEOUT_MS 1500
+typedef int esp_err_t;
+typedef struct {int unused;} httpd_req_t;
+typedef struct {double valuedouble;int valueint;const char *valuestring;bool string;} cJSON;
+static cJSON object,value={.valuestring="2026-10-23T14:25",.string=true};
+static const char *field_name="system_datetime",*status_text,*error;
+static char acknowledged[KATMED_CONFIG_VALUE_MAX];
+static bool authorized=true,valid_keys=true,preview;
+static unsigned auth_calls,owner_calls;
+static KatmedConfigStatus owner_status=KATMED_CONFIG_OK;
+static KatmedConfigRequest captured;
+static bool require_session(httpd_req_t *r,bool mutate,char *token){(void)r;(void)token;assert(mutate);++auth_calls;return authorized;}
+static cJSON *read_json(httpd_req_t *r){(void)r;return &object;}
+static const char *json_string(cJSON *o,const char *k,size_t n){(void)o;(void)n;
+ if(!strcmp(k,"field"))return field_name;
+ if(!strcmp(k,"revision"))return "synthetic-revision";
+ return preview?"synthetic-preview":NULL;}
+static bool keys_only(cJSON *o,const char *const *k,size_t n){(void)o;(void)k;assert(n==4);return valid_keys;}
+static cJSON *cJSON_GetObjectItemCaseSensitive(cJSON *o,const char *k){(void)o;assert(!strcmp(k,"value"));return &value;}
+static bool cJSON_IsNumber(const cJSON *o){(void)o;return false;}
+static bool cJSON_IsString(const cJSON *o){return o->string;}
+static void wipe_json(cJSON *o){(void)o;}
+static void cJSON_Delete(cJSON *o){(void)o;}
+static int error_reply(httpd_req_t *r,const char *s,const char *e){(void)r;status_text=s;error=e;return 0;}
+static int json_reply(httpd_req_t *r,const char *s,cJSON *o){(void)r;(void)o;status_text=s;return 0;}
+static cJSON *config_object(const KatmedConfigSnapshot *s){(void)s;return &object;}
+static void cJSON_AddStringToObject(cJSON *o,const char *k,const char *v){(void)o;assert(!strcmp(k,"accepted_system_datetime"));snprintf(acknowledged,sizeof(acknowledged),"%s",v);}
+KatmedConfigStatus katmed_config_exchange(const KatmedConfigRequest *r,KatmedConfigResponse *out,uint32_t timeout){
+ assert(timeout==BRIDGE_TIMEOUT_MS && r->operation==KATMED_CONFIG_SAVE);++owner_calls;captured=*r;
+ out->status=owner_status;return KATMED_CONFIG_OK;}
+'''
+
+SYSTEM_HTTP_MAIN = r'''
+int main(int argc,char **argv){
+ assert(argc==2);httpd_req_t req={0};
+ if(!strcmp(argv[1],"denied"))authorized=false;
+ else if(!strcmp(argv[1],"keys"))valid_keys=false;
+ else if(!strcmp(argv[1],"preview"))preview=true;
+ else if(!strcmp(argv[1],"stale"))owner_status=KATMED_CONFIG_STALE;
+ else if(!strcmp(argv[1],"unknown"))owner_status=KATMED_CONFIG_COMMIT_UNKNOWN;
+ else if(!strcmp(argv[1],"pending"))owner_status=KATMED_CONFIG_PENDING;
+ else if(!strcmp(argv[1],"other")){field_name="clock_style";value.valuestring="analog";}
+ else assert(!strcmp(argv[1],"success"));
+ config_put(&req);assert(auth_calls==1);
+ if(!authorized){assert(!owner_calls && !acknowledged[0] && !status_text);return 0;}
+ if(!valid_keys || preview){assert(!owner_calls && !acknowledged[0] && !strcmp(status_text,"422 Unprocessable Entity"));return 0;}
+ assert(owner_calls==1);
+ if(owner_status!=KATMED_CONFIG_OK){assert(!acknowledged[0] && error && strcmp(status_text,"200 OK"));return 0;}
+ assert(!strcmp(status_text,"200 OK"));
+ if(!strcmp(field_name,"system_datetime"))assert(captured.field==KATMED_CONFIG_SYSTEM_DATETIME && !strcmp(captured.value,value.valuestring) && !strcmp(acknowledged,value.valuestring));
+ else assert(captured.field==KATMED_CONFIG_CLOCK_STYLE && !acknowledged[0]);
+ return 0;
+}
+'''
+
+
+class SystemTimeOwnerHTTP(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory(prefix="katmed-149-http-")
+        text = (ROOT / "firmware/components/katmed_web/katmed_web.c").read_text()
+        signatures = ["static esp_err_t bridge_error(httpd_req_t *req, KatmedConfigStatus status)\n{", "static KatmedConfigField config_field(",
+                      "static bool copy_bounded(", "static esp_err_t config_put("]
+        code = SYSTEM_HTTP_PREFIX + "\n".join(function(text, signature) for signature in signatures) + SYSTEM_HTTP_MAIN
+        source = Path(cls.tmp.name) / "system_time.c"
+        source.write_text(code)
+        cls.binary = Path(cls.tmp.name) / "check"
+        original = ROOT.parents[1]
+        execute_tls_callback(["/usr/bin/cc", "-std=c11", "-D_POSIX_C_SOURCE=200809L", "-Wall", "-Wextra", "-Werror",
+                              "-I" + str(ROOT / "firmware/components/katmed_config_bridge/include"),
+                              "-I" + str(original / "firmware/components/katmed_config_bridge/include"),
+                              "-I" + str(original / "firmware/components/katmed_core/include"),
+                              str(source), "-o", str(cls.binary)])
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    def test_real_time_route_requires_positive_owner_ack(self):
+        for case in ["success", "denied", "keys", "preview", "stale", "unknown", "pending", "other"]:
+            with self.subTest(case=case):
+                execute_tls_callback([str(self.binary), case])
+
+
 UI_PREFIX = r'''
 #include <assert.h>
 #include <stdint.h>

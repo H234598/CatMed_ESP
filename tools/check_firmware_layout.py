@@ -7,6 +7,8 @@ import argparse
 import csv
 import hashlib
 import json
+import re
+import shlex
 import struct
 import sys
 from pathlib import Path
@@ -35,8 +37,127 @@ def require_app_project_role(app: Path, app_bytes: int, expected: str) -> None:
         raise ValueError(f"App project role differs from selected image: expected {expected}")
 
 
+def require_old_c3_build(repo: Path, build: Path, config: str, header: str) -> None:
+    """Bind the distinct Development001 profile to resolved compiler inputs."""
+    settings = {
+        "ESP_MAIN_TASK_STACK_SIZE": "11264", "FREERTOS_TIMER_TASK_STACK_DEPTH": "3072",
+        "ESP_CONSOLE_USB_SERIAL_JTAG": "y",
+        "IDF_TARGET": '"esp32c3"', "ESPTOOLPY_FLASHSIZE_4MB": "y",
+        "ESPTOOLPY_FLASHMODE_DIO": "y", "APP_RETRIEVE_LEN_ELF_SHA": "24",
+        "PARTITION_TABLE_OFFSET": "0x10000", "SECURE_FLASH_ENC_ENABLED": "y",
+        "SECURE_FLASH_ENCRYPTION_KEY_SOURCE_EFUSES": "y",
+        "SECURE_FLASH_ENCRYPTION_MODE_DEVELOPMENT": "y",
+        "SECURE_FLASH_REQUIRE_ALREADY_ENABLED": "y", "SECURE_ENABLE_SECURE_ROM_DL_MODE": "y",
+        "SOC_FLASH_ENCRYPTION_XTS_AES_128": "y", "NVS_ENCRYPTION": "y",
+        "NVS_SEC_KEY_PROTECT_USING_FLASH_ENC": "y",
+        "PARTITION_TABLE_CUSTOM_FILENAME": '"boards/c3.security.partitions.csv"',
+    }
+    for name, value in settings.items():
+        resolved = [line for line in config.splitlines() if
+                    line.startswith(f"CONFIG_{name}=") or line == f"# CONFIG_{name} is not set"]
+        if resolved != [f"CONFIG_{name}={value}"]:
+            raise ValueError(f"Resolved old-C3 setting differs: {name}")
+        if header_directives(header, name) != [f"#define CONFIG_{name} {1 if value == 'y' else value}"]:
+            raise ValueError(f"Compiled old-C3 setting differs: {name}")
+    for name in ("SECURE_BOOT", "SECURE_FLASH_ENCRYPTION_MODE_RELEASE"):
+        if any(line.startswith(f"CONFIG_{name}=") for line in config.splitlines()) or header_directives(header, name):
+            raise ValueError(f"Forbidden old-C3 setting: {name}")
+    require_old_c3_compiler(repo, build)
+
+
+def header_directives(header: str, name: str) -> list[str]:
+    # Inspect canonical generated definitions, not a general C preprocessor.
+    return re.findall(r"^[ \t]*#[ \t]*(?:define|undef)[ \t]+CONFIG_" + re.escape(name) + r"\b[^\n]*",
+                      header, re.MULTILINE)
+
+
+def require_old_c3_compiler(repo: Path, build: Path) -> None:
+    modes = {"KATMED_FULL_STACK": True, "KATMED_WITH_CORE": True,
+             "KATMED_C3_ALARM_DIAG": True, "KATMED_APPSTORE_MAINTENANCE": False,
+             "KATMED_ACME_RESOURCE_PROBE": False, "KATMED_ACME_RESOURCE_CLIENT": False}
+    cache = (build / "CMakeCache.txt").read_text().splitlines()
+    for name, enabled in modes.items():
+        values = [line for line in cache if line.startswith(f"{name}:")]
+        if values != [f"{name}:BOOL={'ON' if enabled else 'OFF'}"]:
+            raise ValueError(f"Compiler CMake mode differs: {name}")
+    commands = json.loads((build / "compile_commands.json").read_text())
+    main = (repo / "firmware/main/main.c").resolve()
+    entries = [entry for entry in commands if
+               (Path(entry["directory"]) / entry["file"]).resolve() == main]
+    if len(entries) != 1:
+        raise ValueError("Compiler main.c binding must be unique")
+    entry = entries[0]
+    arguments = entry.get("arguments") or shlex.split(entry["command"])
+    require_compiler_definitions(arguments, modes)
+    require_compiler_config_include(arguments, Path(entry["directory"]), build)
+
+
+def require_compiler_definitions(arguments: list[str], modes: dict[str, bool]) -> None:
+    definitions = []
+    iterator = iter(arguments)
+    for arg in iterator:
+        if arg in ("-D", "-U"):
+            arg += next(iterator, "")
+        if arg.startswith(("-D", "-U")):
+            definitions.append(arg)
+    for name, enabled in modes.items():
+        values = [arg for arg in definitions if arg[2:].split("=", 1)[0] == name]
+        if values != [f"-D{name}={int(enabled)}"]:
+            raise ValueError(f"Compiler definition differs: {name}")
+
+
+def require_compiler_config_include(arguments: list[str], directory: Path, build: Path) -> None:
+    # The fixed profile include may precede IDF's config, but must not shadow it.
+    includes = []
+    for index, arg in enumerate(arguments):
+        if arg == "-I":
+            includes.append(arguments[index + 1])
+        elif arg.startswith("-I"):
+            includes.append(arg[2:])
+    generated = build / "generated"
+    if includes and (directory / includes[0]).resolve() == generated.resolve():
+        shadow = generated / "sdkconfig.h"
+        if generated.is_symlink() or not generated.is_dir() or shadow.exists() or shadow.is_symlink():
+            raise ValueError("Compiler generated sdkconfig.h binding differs")
+        includes = includes[1:]
+    if not includes or (directory / includes[0]).resolve() != (build / "config").resolve():
+        raise ValueError("Compiler generated sdkconfig.h binding differs")
+
+
+def require_old_c3_app(app: Path) -> None:
+    """Check SDK parser results explicitly; parsing alone is not validation."""
+    from esptool.bin_image import LoadFirmwareImage
+    from esptool.cmds import _parse_app_info
+    from esptool.util import FatalError
+
+    data = app.read_bytes()
+    try:
+        image = LoadFirmwareImage("esp32c3", data)
+    except (FatalError, struct.error, IndexError, TypeError) as error:
+        raise ValueError("Invalid old-C3 app container") from error
+    if (image.chip_id, image.min_rev, image.min_rev_full, image.max_rev_full) != (5, 3, 3, 199):
+        raise ValueError("Old-C3 app chip/revision differs")
+    if image.flash_mode != 2 or image.flash_size_freq >> 4 != 2:
+        raise ValueError("Old-C3 app must use DIO and 4 MiB")
+    if image.calculate_checksum() != image.checksum:
+        raise ValueError("Old-C3 app checksum differs")
+    if (not image.append_digest or len(image.stored_digest) != 32 or
+            image.stored_digest != image.calc_digest or image.data_length + 32 != len(data)):
+        raise ValueError("Old-C3 app footer missing, incomplete or different")
+    if not image.segments or len(image.segments[0].data) < 256:
+        raise ValueError("Old-C3 app descriptor missing")
+    descriptor = _parse_app_info(image.segments[0].data)
+    if (descriptor is None or descriptor["project_name"] != "katmed_foundation" or
+            descriptor["secure_version"] != 0):
+        raise ValueError("Old-C3 app descriptor/security version differs")
+
+
 def check_layout(repo: Path, board: str, build: Path, security_profile: bool = False,
-                 app_image: str = "katmed_foundation.bin") -> dict:
+                 app_image: str = "katmed_foundation.bin", *,
+                 old_c3_development001: bool = False) -> dict:
+    if old_c3_development001 and (board != "c3" or not security_profile or
+                                  app_image != "katmed_foundation.bin"):
+        raise ValueError("The old-C3 Development001 gate requires the C3 security profile")
     if app_image == "katmed_appmaint_c6.bin" and (board != "c6" or not security_profile):
         raise ValueError("AppStore maintenance image requires C6 security profile")
     # Existing target-local sdkconfig files survive a defaults change. Verify
@@ -65,7 +186,9 @@ def check_layout(repo: Path, board: str, build: Path, security_profile: bool = F
         "CONFIG_NVS_ENCRYPTION=y",
         "CONFIG_NVS_SEC_KEY_PROTECT_USING_FLASH_ENC=y",
     )
-    if security_profile:
+    if old_c3_development001:
+        require_old_c3_build(repo, build, config, header)
+    elif security_profile:
         if "CONFIG_PARTITION_TABLE_OFFSET=0x10000" not in config.splitlines():
             raise ValueError("Security profile partition table must start at 0x10000")
         for setting in required:
@@ -152,6 +275,8 @@ def check_layout(repo: Path, board: str, build: Path, security_profile: bool = F
         raise ValueError(f"App size {app_bytes} exceeds budget {app_budget}")
     expected_project = "katmed_appmaint_c6" if app_image == "katmed_appmaint_c6.bin" else "katmed_foundation"
     require_app_project_role(app, app_bytes, expected_project)
+    if old_c3_development001:
+        require_old_c3_app(app)
     if "images" in partitions:
         raise ValueError("Obsolete separate image partition")
     image_partition = partitions["user_images"]
@@ -168,6 +293,7 @@ def check_layout(repo: Path, board: str, build: Path, security_profile: bool = F
     if not seed.is_file() or seed.stat().st_size != image_partition[1]:
         raise ValueError("Built image filesystem size differs from partition")
     return {"board": board, "security_profile": security_profile, "app_image": app_image,
+            "old_c3_development001": old_c3_development001,
             "bootloader_bytes": bootloader_bytes,
             "app_bytes": app_bytes, "app_budget": app_budget,
             "app_free": app_budget - app_bytes, "image_bytes": image_bytes,
@@ -181,13 +307,15 @@ def main() -> None:
     parser.add_argument("board", choices=("c3", "c6"))
     parser.add_argument("--build-dir", type=Path)
     parser.add_argument("--security-profile", action="store_true")
+    parser.add_argument("--old-c3-development001", action="store_true",
+                        help="Require the distinct old-C3 Development001 security contract")
     parser.add_argument("--app-image", choices=("katmed_foundation.bin", "katmed_appmaint_c6.bin"),
                         default="katmed_foundation.bin")
     args = parser.parse_args()
     repo = Path(__file__).resolve().parents[1]
     build = args.build_dir or repo / "firmware" / f"build-{args.board}"
     print(json.dumps(check_layout(repo, args.board, build, args.security_profile,
-                                  args.app_image), indent=2))
+                                  args.app_image, old_c3_development001=args.old_c3_development001), indent=2))
 
 
 if __name__ == "__main__":

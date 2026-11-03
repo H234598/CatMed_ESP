@@ -384,6 +384,45 @@ def exchange(port: SerialPort, request: bytes, expected: str,
     raise SetupError("Unerwartete USB-Antwort")
 
 
+def _c3_probe_shape_valid(word: int, phase: int, state: int, pixel: int,
+                         phase_valid: bool, sample_valid: bool, completion_valid: bool) -> bool:
+    if word >> 22 or phase > 10000 or state > 5 or pixel > 2:
+        return False
+    if ((not phase_valid and phase != 0) or (not sample_valid and pixel != 0) or
+            (sample_valid and pixel == 0)):
+        return False
+    if completion_valid != (state == 4):
+        return False
+    if state < 5 and (phase_valid != (state != 0) or sample_valid != (state >= 2)):
+        return False
+    return True
+
+
+def decode_c3_probe(token: str) -> dict[str, int | bool | None]:
+    """Decode only the fixed nonprivate schema-1 snapshot word."""
+    if type(token) is not str or re.fullmatch(r"[0-9a-f]{8}", token) is None:
+        raise SetupError("Status enthält eine ungültige C3-Probe")
+    word = int(token, 16)
+    phase, state, pixel = word & 0x3fff, (word >> 14) & 7, (word >> 17) & 3
+    phase_valid, sample_valid, completion_valid = (bool(word & (1 << bit)) for bit in (19, 20, 21))
+    if not _c3_probe_shape_valid(word, phase, state, pixel,
+                               phase_valid, sample_valid, completion_valid):
+        raise SetupError("Status enthält eine ungültige C3-Probe")
+    return {"probe_present": True, "probe_state": state,
+            "probe_pixel_class": pixel if sample_valid else None,
+            "probe_phase_permyriad": phase if phase_valid else None,
+            "probe_phase_valid": phase_valid, "probe_sample_valid": sample_valid,
+            "probe_completion_valid": completion_valid}
+
+
+def _check_status_keys(fields: dict[str, str]) -> None:
+    required = {"configured", "durable", "pending", "clock", "device", "catalog", "firmware", "build", "error"}
+    if set(fields) not in (required, required | {"c3p1"}):
+        raise SetupError("Status enthält nicht die vereinbarten Felder")
+    if "c3p1" in fields:
+        decode_c3_probe(fields["c3p1"])
+
+
 def read_status(port: SerialPort,
                 reader: Callable[[SerialPort], str] = _read_protocol_line) -> dict[str, str]:
     reply = exchange(port, b"KM1 STATUS\n", "KM1 OK STATUS ", reader)
@@ -395,9 +434,7 @@ def read_status(port: SerialPort,
         if key in fields or not TOKEN_RE.fullmatch(value):
             raise SetupError("Status enthält ein doppeltes oder ungültiges Feld")
         fields[key] = value
-    required = {"configured", "durable", "pending", "clock", "device", "catalog", "firmware", "build", "error"}
-    if set(fields) != required:
-        raise SetupError("Status enthält nicht die vereinbarten Felder")
+    _check_status_keys(fields)
     if fields["configured"] not in {"0", "1"} or fields["durable"] not in {"0", "1"}:
         raise SetupError("Status enthält ungültige Zustandswerte")
     if fields["clock"] not in {"0", "1", "2"}:

@@ -270,7 +270,8 @@
     "Noch keine globale Nachtkopie": "Глобальної копії нічного режиму ще немає",
     "Einrichtung aktiv: Mesh pausiert. Speichern oder Einrichtung verlassen startet den Normalbetrieb neu.": "Налаштування активне: mesh призупинено. Збереження або вихід перезапускає звичайну роботу.",
     "Einrichtung verlassen": "Вийти з налаштування",
-    "Einrichtung verlassen und ein normaler Neustart löschen keine Daten.": "Вихід із налаштування та звичайний перезапуск не стирають дані."
+    "Einrichtung verlassen und ein normaler Neustart löschen keine Daten.": "Вихід із налаштування та звичайний перезапуск не стирають дані.",
+    "Datum und Uhrzeit": "Дата й час"
   },
   "web_dynamic": {
     "Gerät: {0}": "Пристрій: {0}",

@@ -17,6 +17,9 @@
 #include "esp_random.h"
 #include "esp_timer.h"
 #include "esp_lvgl_port.h"
+#if KATMED_C3_ALARM_DIAG && CONFIG_IDF_TARGET_ESP32C3
+#include "esp_lvgl_port_c3_alarm_probe.h"
+#endif
 #include "esp_mesh_lite.h"
 #include "esp_netif.h"
 #include "esp_wifi.h"
@@ -1102,6 +1105,9 @@ static void config_revision(const Runtime *rt, char out[KATMED_CONFIG_REVISION_M
         hash=config_mix(hash,d.night_start);hash=config_mix(hash,d.night_end);}
     hash = config_mix(hash, (uint64_t)rt->local.clock_style);
     hash = config_mix(hash, (uint64_t)rt->store.record.manual_intent.pending);
+    hash = config_mix(hash, rt->time.utc_known);
+    hash = config_mix(hash, rt->time.anchor_monotonic_ms);
+    hash = config_mix(hash, (uint64_t)rt->time.anchor_utc_ms);
     (void)snprintf(out, KATMED_CONFIG_REVISION_MAX, "%016" PRIx64, hash);
 }
 
@@ -1143,6 +1149,13 @@ static void config_snapshot(const Runtime *rt, KatmedConfigSnapshot *out)
     *out=(KatmedConfigSnapshot){0};
     config_hours(out->medication_hours,rt->state.settings.medication_seconds);
     config_hours(out->image_hours,rt->state.settings.image_seconds);
+    const ClockSample clock=katmed_time_sample(&rt->time,monotonic_ms());
+    LocalDateTime civil;
+    if(clock.utc_valid && app_berlin_local_time(clock.utc_ms,&civil)==APP_OK &&
+       civil.year>0 && civil.year<=9999)
+        (void)snprintf(out->system_datetime,sizeof(out->system_datetime),
+                       "%04d-%02u-%02uT%02u:%02u",civil.year,civil.month,civil.day,
+                       civil.hour,civil.minute);
     out->clock_style=rt->local.clock_style;
     out->orientation=rt->local.orientation;
     out->orientation_auto_supported=orientation_auto_supported();
@@ -1389,6 +1402,14 @@ static void config_execute(void *context, const KatmedConfigRequest *request,
             else if (strcmp(request->value,"digital_date")==0) ui_request.value.clock_style=DIGITAL_DATE;
             else if (strcmp(request->value,"analog")==0) ui_request.value.clock_style=ANALOG;
             else { response->status=KATMED_CONFIG_INVALID; return; }
+            break;
+        case KATMED_CONFIG_SYSTEM_DATETIME:
+            if(strlen(request->value)!=sizeof(ui_request.value.local_datetime)-1u) {
+                response->status=KATMED_CONFIG_INVALID;return;
+            }
+            ui_request.kind=UI_REQUEST_SET_SYSTEM_TIME;
+            memcpy(ui_request.value.local_datetime,request->value,
+                   sizeof(ui_request.value.local_datetime));
             break;
         case KATMED_CONFIG_BRIGHTNESS: {
             unsigned value=0;size_t length=strlen(request->value);
@@ -2040,6 +2061,25 @@ static void witness_catalog(const uint8_t bytes[KATMED_CATALOG_BYTES], char text
     text[64] = '\0';
 }
 
+#if KATMED_C3_ALARM_DIAG && CONFIG_IDF_TARGET_ESP32C3
+static uint32_t c3_probe_status_word(void)
+{
+    lvgl_c3_alarm_probe_result_t probe;
+    if (!lvgl_port_c3_alarm_probe_snapshot(&probe) ||
+        (unsigned)probe.state > LVGL_C3_ALARM_PROBE_UNKNOWN ||
+        (unsigned)probe.pixel_class > LVGL_C3_ALARM_PIXEL_OUTSIDE_FILL_HULL ||
+        (probe.phase_valid && probe.phase_permyriad > 10000u)) {
+        return UINT32_MAX; /* The formatter rejects an invalid snapshot. */
+    }
+    return (probe.phase_valid ? (uint32_t)probe.phase_permyriad : 0u) |
+           ((uint32_t)probe.state << 14) |
+           ((probe.sample_valid ? (uint32_t)probe.pixel_class : 0u) << 17) |
+           ((uint32_t)probe.phase_valid << 19) |
+           ((uint32_t)probe.sample_valid << 20) |
+           ((uint32_t)probe.completion_valid << 21);
+}
+#endif
+
 static void process_usb(Runtime *rt, const ClockSample *now)
 {
     static const uint8_t build_wifi_ssid[] = KATMED_WIFI_DEFAULT_SSID;
@@ -2067,6 +2107,10 @@ static void process_usb(Runtime *rt, const ClockSample *now)
             .device = rt->boot.device,
             .clock_quality = now->quality,
         };
+#if KATMED_C3_ALARM_DIAG && CONFIG_IDF_TARGET_ESP32C3
+        status.c3_probe_present = true;
+        status.c3_probe_word = c3_probe_status_word();
+#endif
         memcpy(status.catalog_id, katmed_images_catalog_sha256(),
                sizeof(status.catalog_id));
         char reply[KATMED_STORE_USB_REPLY_MAX] = {0};
@@ -2863,6 +2907,26 @@ void app_main(void)
         katmed_config_owner_phase(KATMED_CONFIG_OWNER_PHASE_RENDER_CALL);
         const bool rendered=render_ui(&runtime.state, &runtime.local, &now, NULL,
                                       false, render_due);
+#if KATMED_C3_ALARM_DIAG && CONFIG_IDF_TARGET_ESP32C3
+        static bool c3_alarm_probe_reported;
+        lvgl_c3_alarm_probe_result_t c3_alarm_probe;
+        if (!c3_alarm_probe_reported &&
+            lvgl_port_c3_alarm_probe_snapshot(&c3_alarm_probe) &&
+            (c3_alarm_probe.state == LVGL_C3_ALARM_PROBE_COMPLETED ||
+             c3_alarm_probe.state == LVGL_C3_ALARM_PROBE_UNKNOWN)) {
+            ESP_LOGI("katmed_alarm", "c3_spi_probe state=%u phase_valid=%u"
+                     " phase=%u sample_valid=%u pixel_class=%u completion=%u"
+                     " logical_x=5 logical_y=90",
+                     (unsigned)c3_alarm_probe.state,
+                     (unsigned)c3_alarm_probe.phase_valid,
+                     (unsigned)(c3_alarm_probe.phase_valid ?
+                                c3_alarm_probe.phase_permyriad : 0u),
+                     (unsigned)c3_alarm_probe.sample_valid,
+                     (unsigned)c3_alarm_probe.pixel_class,
+                     (unsigned)c3_alarm_probe.completion_valid);
+            c3_alarm_probe_reported = true;
+        }
+#endif
         katmed_config_owner_phase(KATMED_CONFIG_OWNER_PHASE_OTHER);
         finish_render_owner();
         if (rendered && render_due) {

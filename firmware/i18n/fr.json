@@ -270,7 +270,8 @@
     "Noch keine globale Nachtkopie": "Aucune copie globale du mode nuit",
     "Einrichtung aktiv: Mesh pausiert. Speichern oder Einrichtung verlassen startet den Normalbetrieb neu.": "Configuration active : maillage en pause. Enregistrer ou quitter redémarre le fonctionnement normal.",
     "Einrichtung verlassen": "Quitter la configuration",
-    "Einrichtung verlassen und ein normaler Neustart löschen keine Daten.": "Quitter la configuration et redémarrer normalement n’efface aucune donnée."
+    "Einrichtung verlassen und ein normaler Neustart löschen keine Daten.": "Quitter la configuration et redémarrer normalement n’efface aucune donnée.",
+    "Datum und Uhrzeit": "Date et heure"
   },
   "web_dynamic": {
     "Gerät: {0}": "Appareil : {0}",
