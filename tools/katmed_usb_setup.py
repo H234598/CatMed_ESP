@@ -528,7 +528,7 @@ C3_TOUCH_KEYS = (
 def _c3_touch_line(raw: bytes) -> dict[str, int] | None:
     if len(raw) > MAX_DIAG_CHARS:
         return None
-    match = re.fullmatch(rb"I \([0-9]{1,10}\) katmed_c3_touch: (.+)", raw)
+    match = re.fullmatch(rb"I \(\d{1,10}\) katmed_c3_touch: (.+)", raw)
     if match is None:
         return None
     tokens = match.group(1).split(b" ")
@@ -540,7 +540,7 @@ def _c3_touch_line(raw: bytes) -> dict[str, int] | None:
         if not token.startswith(prefix):
             return None
         value = token[len(prefix):]
-        if re.fullmatch(rb"[0-9]{1,20}", value) is None:
+        if re.fullmatch(rb"\d{1,20}", value) is None:
             return None
         number = int(value)
         limit = 0xffffffffffffffff if key in ("sample_seq", "uptime_ms", "boot_domain") else 0xffffffff

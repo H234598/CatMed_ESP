@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 
@@ -172,9 +173,17 @@ def _validate_override_lock(lock: Path, target: str, allowed: Path, originals: t
             raise ValueError("Override lock aliases an original registry lock")
 
 
+def _git_executable() -> str:
+    executable = shutil.which("git")
+    if executable is None:
+        raise RuntimeError("Git is required to validate the SDK checkout")
+    return os.path.abspath(executable)
+
+
 def _git_status(path: Path) -> set[str]:
-    output = subprocess.check_output(
-        ["git", "-C", str(path), "status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=none"],
+    # The repository path is a separate argument to a fixed status command.
+    output = subprocess.check_output(  # nosec B603
+        [_git_executable(), "-C", str(path), "status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=none"],
         env={**os.environ, "GIT_OPTIONAL_LOCKS": "0"},
     )
     return set(output.decode("utf-8").rstrip("\0").split("\0")) if output else set()
@@ -195,7 +204,8 @@ def _validate_sdk_worktree(idf: Path) -> None:
     framework = mbedtls / "framework"
     if not framework.is_symlink() or framework.resolve(strict=True) != (mbedtls / "tf-psa-crypto/framework").resolve(strict=True):
         raise ValueError("Unexpected mbedTLS framework link")
-    status = subprocess.check_output(["git", "-C", str(idf), "submodule", "status", "--recursive"], text=True,
+    # The checkout is already validated; only Git status is read.
+    status = subprocess.check_output([_git_executable(), "-C", str(idf), "submodule", "status", "--recursive"], text=True,  # nosec B603
                                      env={**os.environ, "GIT_OPTIONAL_LOCKS": "0"})
     if any(not line.startswith(" ") for line in status.splitlines()):
         raise ValueError("Unexpected uninitialized, conflicted or changed SDK submodule revision")
@@ -225,11 +235,13 @@ def verify_override_end_state(root: Path, idf: Path, target: str, lock: Path, *,
         raise ValueError("IDF 6.1 lwIP patched end state required")
     # The checked-in patch uses seven-digit object IDs; Git's automatic
     # abbreviation length varies with the SDK repository's object count.
-    diff = subprocess.check_output(["git", "-C", str(lwip), "diff", "--binary", "--abbrev=7"])
+    # The SDK path was validated above, and the diff switches are fixed.
+    diff = subprocess.check_output([_git_executable(), "-C", str(lwip), "diff", "--binary", "--abbrev=7"])  # nosec B603
     if hashlib.sha256(diff).hexdigest() != manifest["patch_sha256"]:
         raise ValueError("Unexpected lwIP working-tree diff")
     mbedtls = _validate_idf_scope(idf) / "components/mbedtls/mbedtls"
-    commit = subprocess.check_output(["git", "-C", str(mbedtls), "rev-parse", "HEAD"], text=True).strip()
+    # The Git revision query uses a fixed ref in the validated SDK checkout.
+    commit = subprocess.check_output([_git_executable(), "-C", str(mbedtls), "rev-parse", "HEAD"], text=True).strip()  # nosec B603
     if commit != manifest["mbedtls_commit"]:
         raise ValueError("mbedTLS revision differs from reviewed IDF binding")
 
@@ -284,9 +296,99 @@ def prepare_override_root(root: Path, idf: Path, target: str, lock: Path) -> Non
     verify_override_end_state(root, idf, target, lock)
 
 
-def verify_override_graph(root: Path, target: str, lock: Path, build: Path, *, allow_missing_config: bool = False) -> None:
+def _verify_dependency_checkout(name, current, initial, root, firmware, graph, lock):
     from idf_component_tools.hash_tools.validate import validate_hash_eq_hashfile, validate_hashfile_eq_hashdir
+
+    component = name.replace("/", "__")
+    if component in OVERRIDE_TREE_HASHES:
+        path = (root / component).resolve()
+        if current["source"].get("type") != "local" or (lock.parent / current["source"]["path"]).resolve() != path:
+            raise ValueError(f"Override lock path differs: {name}")
+        if Path(graph[component]["dir"]).resolve() != path:
+            raise ValueError(f"Override graph path differs: {name}")
+    else:
+        if initial["component_hash"] != current.get("component_hash") or current["source"].get("type") != "service":
+            raise ValueError(f"Registry lock binding differs: {name}")
+        if initial["source"]["registry_url"].rstrip("/") != current["source"]["registry_url"].rstrip("/"):
+            raise ValueError(f"Registry URL differs: {name}")
+        path = (firmware / "managed_components" / component).resolve()
+        validate_hash_eq_hashfile(path, initial["component_hash"])
+        validate_hashfile_eq_hashdir(path)
+        if name == "bblanchon/arduinojson":
+            if str(path / "src") not in graph["arduinojson"]["include_dirs"]:
+                raise ValueError("ArduinoJson forwarding path differs")
+        elif Path(graph[component]["dir"]).resolve() != path:
+            raise ValueError(f"Registry graph path differs: {name}")
+
+
+def _edge_bindings(entry):
+    return sorted((edge["name"], str(edge["version"]),
+                   tuple(rule["if"] for rule in edge.get("rules", [])))
+                  for edge in entry.get("dependencies", []))
+
+
+def _verify_resolved_components(old, new, root, firmware, graph, lock):
+    for name, initial in old.items():
+        current = new[name]
+        if initial["version"] != current["version"]:
+            raise ValueError(f"Version changed: {name}")
+        if _edge_bindings(initial) != _edge_bindings(current):
+            raise ValueError(f"Dependency constraints changed: {name}")
+        if name == "idf":
+            continue
+        _verify_dependency_checkout(name, current, initial, root, firmware, graph, lock)
+
+
+def _verified_config(build, allow_missing_config):
+    config_path = Path(json.loads((build / "project_description.json").read_text())["config_file"])
+    try:
+        config = config_path.read_text()
+    except FileNotFoundError:
+        if not allow_missing_config:
+            raise
+        config = None
+    if config is not None:
+        for symbol in ("FREETYPE", "LIBJPEG_TURBO", "LIBPNG", "LZ4"):
+            name = f"CONFIG_LV_USE_{symbol}"
+            matches = [line for line in config.splitlines() if line.startswith(name + "=") or line == f"# {name} is not set"]
+            if matches != [f"# {name} is not set"]:
+                raise ValueError(f"Original inactive dependency condition changed: {symbol}")
+    return config
+
+
+def _verify_graph_edges(firmware, graph, old, config):
+    import yaml
     from idf_component_tools.semver import SimpleSpec, Version
+
+    active = {"target not in [esp32s2, esp32s3]": True,
+              "target in [esp32s2, esp32s3]": False, "idf_version >=5.1.4": True}
+    for symbol in ("FREETYPE", "LIBJPEG_TURBO", "LIBPNG"):
+        active[f"idf_version >=5.5 && $CONFIG{{LV_USE_{symbol}}} == True"] = False
+    active["idf_version >=5.5 && $CONFIG{LV_USE_LZ4} == True && $CONFIG{LV_USE_LZ4_INTERNAL} == False"] = False
+    def check_edge(source, name, spec):
+        if name not in old or Version(old[name]["version"]) not in SimpleSpec(str(spec)):
+            raise ValueError(f"Original version edge differs: {source} -> {name}: {spec}")
+    manifest = yaml.safe_load((firmware / "main/idf_component.yml").read_text())
+    for name, entry in manifest["dependencies"].items():
+        check_edge("main", name, entry if isinstance(entry, str) else entry["version"])
+    for source, entry in old.items():
+        _verify_dependency_edges(source, entry, active, graph, check_edge)
+
+
+def _verify_dependency_edges(source, entry, active, graph, check_edge):
+    for edge in entry.get("dependencies", []):
+        conditions = [rule["if"] for rule in edge.get("rules", [])]
+        if any(condition not in active for condition in conditions):
+            raise ValueError(f"Unknown original dependency condition: {conditions}")
+        if all(active[condition] for condition in conditions):
+            check_edge(source, edge["name"], edge["version"])
+            parent, child = source.replace("/", "__"), edge["name"].replace("/", "__")
+            if edge["name"] != "idf" and parent in graph:
+                if child not in graph[parent].get("reqs", []) + graph[parent].get("priv_reqs", []):
+                    raise ValueError(f"Original active graph edge missing: {source} -> {edge['name']}")
+
+
+def verify_override_graph(root: Path, target: str, lock: Path, build: Path, *, allow_missing_config: bool = False) -> None:
     import yaml
 
     repo = Path(__file__).resolve().parents[1]
@@ -308,75 +410,11 @@ def verify_override_graph(root: Path, target: str, lock: Path, build: Path, *, a
         component = "arduinojson" if name == "bblanchon/arduinojson" else name.replace("/", "__")
         if component not in main_edges:
             raise ValueError(f"Direct graph edge missing: main -> {name}")
-    for name, initial in old.items():
-        current = new[name]
-        if initial["version"] != current["version"]:
-            raise ValueError(f"Version changed: {name}")
-        def edge_bindings(entry):
-            return sorted((edge["name"], str(edge["version"]),
-                           tuple(rule["if"] for rule in edge.get("rules", [])))
-                          for edge in entry.get("dependencies", []))
-        if edge_bindings(initial) != edge_bindings(current):
-            raise ValueError(f"Dependency constraints changed: {name}")
-        if name == "idf":
-            continue
-        component = name.replace("/", "__")
-        if component in OVERRIDE_TREE_HASHES:
-            path = (root / component).resolve()
-            if current["source"].get("type") != "local" or (lock.parent / current["source"]["path"]).resolve() != path:
-                raise ValueError(f"Override lock path differs: {name}")
-            if Path(graph[component]["dir"]).resolve() != path:
-                raise ValueError(f"Override graph path differs: {name}")
-        else:
-            if initial["component_hash"] != current.get("component_hash") or current["source"].get("type") != "service":
-                raise ValueError(f"Registry lock binding differs: {name}")
-            if initial["source"]["registry_url"].rstrip("/") != current["source"]["registry_url"].rstrip("/"):
-                raise ValueError(f"Registry URL differs: {name}")
-            path = (firmware / "managed_components" / component).resolve()
-            validate_hash_eq_hashfile(path, initial["component_hash"])
-            validate_hashfile_eq_hashdir(path)
-            if name == "bblanchon/arduinojson":
-                if str(path / "src") not in graph["arduinojson"]["include_dirs"]:
-                    raise ValueError("ArduinoJson forwarding path differs")
-            elif Path(graph[component]["dir"]).resolve() != path:
-                raise ValueError(f"Registry graph path differs: {name}")
+    _verify_resolved_components(old, new, root, firmware, graph, lock)
     if "espressif__iot_bridge" not in graph["espressif__mesh_lite"]["priv_reqs"] or "lvgl__lvgl" not in graph["espressif__esp_lvgl_port"]["reqs"]:
         raise ValueError("Original transitive override edges missing")
-    config_path = Path(json.loads((build / "project_description.json").read_text())["config_file"])
-    try:
-        config = config_path.read_text()
-    except FileNotFoundError:
-        if not allow_missing_config:
-            raise
-        config = None
-    if config is not None:
-        for symbol in ("FREETYPE", "LIBJPEG_TURBO", "LIBPNG", "LZ4"):
-            name = f"CONFIG_LV_USE_{symbol}"
-            matches = [line for line in config.splitlines() if line.startswith(name + "=") or line == f"# {name} is not set"]
-            if matches != [f"# {name} is not set"]:
-                raise ValueError(f"Original inactive dependency condition changed: {symbol}")
-    active = {"target not in [esp32s2, esp32s3]": True,
-              "target in [esp32s2, esp32s3]": False, "idf_version >=5.1.4": True}
-    for symbol in ("FREETYPE", "LIBJPEG_TURBO", "LIBPNG"):
-        active[f"idf_version >=5.5 && $CONFIG{{LV_USE_{symbol}}} == True"] = False
-    active["idf_version >=5.5 && $CONFIG{LV_USE_LZ4} == True && $CONFIG{LV_USE_LZ4_INTERNAL} == False"] = False
-    def check_edge(source, name, spec):
-        if name not in old or Version(old[name]["version"]) not in SimpleSpec(str(spec)):
-            raise ValueError(f"Original version edge differs: {source} -> {name}: {spec}")
-    manifest = yaml.safe_load((firmware / "main/idf_component.yml").read_text())
-    for name, entry in manifest["dependencies"].items():
-        check_edge("main", name, entry if isinstance(entry, str) else entry["version"])
-    for source, entry in old.items():
-        for edge in entry.get("dependencies", []):
-            conditions = [rule["if"] for rule in edge.get("rules", [])]
-            if any(condition not in active for condition in conditions):
-                raise ValueError(f"Unknown original dependency condition: {conditions}")
-            if all(active[condition] for condition in conditions):
-                check_edge(source, edge["name"], edge["version"])
-                parent, child = source.replace("/", "__"), edge["name"].replace("/", "__")
-                if edge["name"] != "idf" and parent in graph:
-                    if child not in graph[parent].get("reqs", []) + graph[parent].get("priv_reqs", []):
-                        raise ValueError(f"Original active graph edge missing: {source} -> {edge['name']}")
+    config = _verified_config(build, allow_missing_config)
+    _verify_graph_edges(firmware, graph, old, config)
 
 
 if __name__ == "__main__":

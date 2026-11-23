@@ -53,6 +53,20 @@ def converter_path():
     return cached[-1]
 
 
+def _download_cjk(output) -> None:
+    digest = hashlib.sha256()
+    size = 0
+    with urlopen(CJK_URL, timeout=90) as response:  # nosec B310  # Fixed HTTPS; size and SHA256 verified.
+        while data := response.read(min(1024 * 1024, CJK_SIZE - size + 1)):
+            size += len(data)
+            if size > CJK_SIZE:
+                raise RuntimeError('unexpected Noto Sans CJK SC font size')
+            digest.update(data)
+            output.write(data)
+    if size != CJK_SIZE or digest.hexdigest() != CJK_SHA256:
+        raise RuntimeError('unexpected Noto Sans CJK SC font version')
+
+
 def ensure_cjk():
     # The cache directory and its writers must be trusted: checks here cannot
     # prevent a later path replacement before the converter opens the font.
@@ -62,20 +76,10 @@ def ensure_cjk():
         CJK.parent.mkdir(parents=True, exist_ok=True)
         temporary = None
         try:
-            digest = hashlib.sha256()
-            size = 0
             with tempfile.NamedTemporaryFile(dir=CJK.parent, prefix='.cjk-', delete=False) as output:
                 temporary = Path(output.name)
                 # Fixed HTTPS source; size and digest are checked before use.
-                with urlopen(CJK_URL, timeout=90) as response:  # nosec B310  # Fixed HTTPS; size and SHA256 verified.
-                    while data := response.read(min(1024 * 1024, CJK_SIZE - size + 1)):
-                        size += len(data)
-                        if size > CJK_SIZE:
-                            raise RuntimeError('unexpected Noto Sans CJK SC font size')
-                        digest.update(data)
-                        output.write(data)
-            if size != CJK_SIZE or digest.hexdigest() != CJK_SHA256:
-                raise RuntimeError('unexpected Noto Sans CJK SC font version')
+                _download_cjk(output)
             if CJK.is_symlink():
                 raise RuntimeError('font cache entry must not be a symlink')
             os.replace(temporary, CJK)

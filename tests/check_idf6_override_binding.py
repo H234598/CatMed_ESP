@@ -3,10 +3,28 @@
 import importlib.util
 import os
 from pathlib import Path
-import subprocess
+import shutil
+# The test invokes Git and Ninja directly with fixed argument vectors.
+import subprocess  # nosec B404
 import sys
 import tempfile
 from unittest.mock import patch
+
+def require(condition: bool, message: str = "Override binding expectations failed") -> None:
+    if not condition:
+        raise AssertionError(message)
+
+
+def git_executable() -> str:
+    executable = shutil.which("git")
+    if executable is None:
+        raise RuntimeError("Git is required for the override binding checks")
+    return os.path.abspath(executable)
+
+
+ESP32C3 = "esp32c3"
+ESP32C6 = "esp32c6"
+
 
 repo = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(repo / "tools"))
@@ -15,7 +33,7 @@ compat = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(compat)
 build = Path(os.environ["KATMED_IDF_BUILD"]).resolve()
 selected_target = os.environ["KATMED_IDF_TARGET"]
-assert selected_target in ("esp32c3", "esp32c6")
+require(selected_target in (ESP32C3, ESP32C6))
 root = build / "katmed-overrides"
 idf = Path(os.environ["IDF_PATH"])
 original_read = Path.read_bytes
@@ -48,8 +66,9 @@ for name in compat.OVERRIDE_TREE_HASHES:
     print(name, "changed complete tree rejected")
 
 lwip = idf / "components/lwip/lwip"
+# The argv selects a fixed SDK object from the fixture checkout.
 source = lwip / "src/core/ipv4/ip4_napt.c"
-old = subprocess.check_output(["git", "-C", str(lwip), "show", "HEAD:src/core/ipv4/ip4_napt.c"])
+old = subprocess.check_output([git_executable(), "-C", str(lwip), "show", "HEAD:src/core/ipv4/ip4_napt.c"])  # nosec B603
 rejects(source, old)
 print("unpatched lwIP state rejected")
 
@@ -60,7 +79,7 @@ with patch.object(compat, "_inventory_hash", wraps=compat._inventory_hash) as in
         pass
     else:
         raise AssertionError("Unsupported target accepted")
-    assert not inventory.called
+    require(not inventory.called)
 print("unsupported target rejected before inventory")
 
 original_command = subprocess.check_output
@@ -75,7 +94,7 @@ with patch.object(compat.subprocess, "check_output", changed_diff):
     try:
         compat.verify_override_end_state(root, idf, selected_target, lock_for(selected_target))
     except ValueError as error:
-        assert "diff" in str(error)
+        require("diff" in str(error))
     else:
         raise AssertionError("Unexpected lwIP diff accepted")
 print("unexpected lwIP diff rejected")
@@ -85,10 +104,10 @@ with tempfile.TemporaryDirectory(prefix="override-inventory-") as tmp:
     (tree / "a").write_bytes(b"a")
     before = compat._inventory_hash(tree)
     (tree / "b").write_bytes(b"b")
-    assert compat._inventory_hash(tree) != before
+    require(compat._inventory_hash(tree) != before)
     (tree / "b").unlink()
     (tree / "a").unlink()
-    assert compat._inventory_hash(tree) != before
+    require(compat._inventory_hash(tree) != before)
     (tree / "link").symlink_to("missing")
     try:
         compat._inventory_hash(tree)
@@ -109,9 +128,9 @@ with tempfile.TemporaryDirectory(prefix="override-lock-") as tmp:
     task.mkdir()
     candidate = task / "override-c3.lock"
     originals = (original_c3, original_c6)
-    compat._validate_override_lock(candidate, "esp32c3", task, originals)
+    compat._validate_override_lock(candidate, ESP32C3, task, originals)
     candidate.write_bytes(b"own")
-    compat._validate_override_lock(candidate, "esp32c3", task, originals)
+    compat._validate_override_lock(candidate, ESP32C3, task, originals)
     candidate.unlink()
     for original in originals:
         for kind in ("symlink", "hardlink"):
@@ -120,7 +139,7 @@ with tempfile.TemporaryDirectory(prefix="override-lock-") as tmp:
             else:
                 os.link(original, candidate)
             try:
-                compat._validate_override_lock(candidate, "esp32c3", task, originals)
+                compat._validate_override_lock(candidate, ESP32C3, task, originals)
             except ValueError:
                 pass
             else:
@@ -128,7 +147,7 @@ with tempfile.TemporaryDirectory(prefix="override-lock-") as tmp:
             candidate.unlink()
     for wrong in (original_c3, original_c6, task / "other.lock", base / "override-c3.lock"):
         try:
-            compat._validate_override_lock(wrong, "esp32c3", task, originals)
+            compat._validate_override_lock(wrong, ESP32C3, task, originals)
         except ValueError:
             pass
         else:
@@ -136,15 +155,15 @@ with tempfile.TemporaryDirectory(prefix="override-lock-") as tmp:
     alias = base / "alias"
     alias.symlink_to(task, target_is_directory=True)
     try:
-        compat._validate_override_lock(alias / "override-c3.lock", "esp32c3", alias, originals)
+        compat._validate_override_lock(alias / "override-c3.lock", ESP32C3, alias, originals)
     except ValueError:
         pass
     else:
         raise AssertionError("Symlink lock parent accepted")
 print("lock target, both originals, symlink, hardlink and parent alias cases PASS")
 
-for target in ("esp32c3", "esp32c6"):
-    for original_target in ("esp32c3", "esp32c6"):
+for target in (ESP32C3, ESP32C6):
+    for original_target in (ESP32C3, ESP32C6):
         original = repo / "firmware" / f"dependencies.{original_target}.lock"
         with patch.object(compat, "_inventory_hash", wraps=compat._inventory_hash) as inventory:
             try:
@@ -153,7 +172,7 @@ for target in ("esp32c3", "esp32c6"):
                 pass
             else:
                 raise AssertionError("Caller accepted original lock as override output")
-            assert not inventory.called
+            require(not inventory.called)
 print("caller rejects both original lock paths for both targets before inventory")
 
 idf_real = idf.resolve()
@@ -198,7 +217,7 @@ print("staged/untracked SDK, framework and changed submodule rejected")
 compat.verify_override_graph(root, selected_target, lock_for(selected_target), build)
 partition = build / 'partition_table/partition-table.bin'
 backup = build / 'partition_table/partition-table.bin.binding-test-backup'
-assert partition.is_file() and not backup.exists()
+require(partition.is_file() and not backup.exists())
 ninja = os.environ.get('KATMED_NINJA', 'ninja')
 lock = lock_for(selected_target)
 manifest = root / 'lvgl__lvgl/idf_component.yml'
@@ -206,7 +225,8 @@ lock_bytes, manifest_bytes = lock.read_bytes(), manifest.read_bytes()
 original_partition = partition.read_bytes()
 
 def consume(environment=None):
-    return subprocess.run([ninja, '-C', str(build), 'partition_table_bin'],
+    # Ninja comes from the configured build tools; all switches are fixed.
+    return subprocess.run([ninja, '-C', str(build), 'partition_table_bin'],  # nosec B603
                           env=environment, stdout=subprocess.PIPE,
                           stderr=subprocess.STDOUT, text=True)
 
@@ -221,18 +241,18 @@ try:
                 manifest.write_bytes(manifest_bytes + b'\n')
             else:
                 shim = Path(tmp) / 'git'
-                real_git = subprocess.check_output(['which', 'git'], text=True).strip()
+                real_git = git_executable()
                 shim.write_text('#!/bin/sh\ncase " $* " in *" status "*) printf "?? injected-sdk-change\\n"; exit 0;; esac\nexec "' + real_git + '" "$@"\n')
                 shim.chmod(0o700)
                 env['PATH'] = tmp + os.pathsep + env.get('PATH', '')
             result = consume(env)
-            assert result.returncode != 0 and not partition.exists(), (subject, result.stdout[-2000:])
+            require(result.returncode != 0 and not partition.exists(), (subject, result.stdout[-2000:]))
             lock.write_bytes(lock_bytes)
             manifest.write_bytes(manifest_bytes)
             print(subject, 'rejected before pending partition consumer')
     result = consume()
-    assert result.returncode == 0 and partition.is_file(), result.stdout[-2000:]
-    assert partition.read_bytes() == original_partition
+    require(result.returncode == 0 and partition.is_file(), result.stdout[-2000:])
+    require(partition.read_bytes() == original_partition)
     print('restored partition consumer passed with identical bytes')
 finally:
     lock.write_bytes(lock_bytes)
@@ -244,29 +264,34 @@ finally:
 
 # Kill only our child after one real locked fetch. An interrupted private
 # staging tree must not prevent reuse of the same destination on retry.
-from idf_component_tools.sources.fetcher import ComponentFetcher
-with tempfile.TemporaryDirectory(prefix='katmed-fetch-recovery-') as tmp:
-    scratch = Path(tmp)
-    pending_root = scratch / 'katmed-overrides'
-    pending_lock = scratch / ('override-' + selected_target.removeprefix('esp32') + '.lock')
-    sys.stdout.flush()
-    sys.stderr.flush()
-    pid = os.fork()
-    if pid == 0:
-        download = ComponentFetcher.download
-        count = [0]
-        def interrupted(fetcher, *args, **kwargs):
-            count[0] += 1
-            if count[0] == 2:
-                os._exit(73)
-            return download(fetcher, *args, **kwargs)
-        with patch.object(ComponentFetcher, 'download', interrupted):
-            compat.prepare_override_root(pending_root, idf, selected_target, pending_lock)
-        os._exit(74)
-    _, status = os.waitpid(pid, 0)
-    assert os.waitstatus_to_exitcode(status) == 73 and not pending_root.exists()
-    assert list(scratch.glob('.katmed-overrides-*'))
-    compat.prepare_override_root(pending_root, idf, selected_target, pending_lock)
-    with patch.object(ComponentFetcher, 'download', side_effect=AssertionError('unexpected fetch')):
+def check_component_fetcher_rebinding() -> None:
+    from idf_component_tools.sources.fetcher import ComponentFetcher
+
+    with tempfile.TemporaryDirectory(prefix='katmed-fetch-recovery-') as tmp:
+        scratch = Path(tmp)
+        pending_root = scratch / 'katmed-overrides'
+        pending_lock = scratch / ('override-' + selected_target.removeprefix('esp32') + '.lock')
+        sys.stdout.flush()
+        sys.stderr.flush()
+        pid = os.fork()
+        if pid == 0:
+            download = ComponentFetcher.download
+            count = [0]
+            def interrupted(fetcher, *args, **kwargs):
+                count[0] += 1
+                if count[0] == 2:
+                    os._exit(73)
+                return download(fetcher, *args, **kwargs)
+            with patch.object(ComponentFetcher, 'download', interrupted):
+                compat.prepare_override_root(pending_root, idf, selected_target, pending_lock)
+            os._exit(74)
+        _, status = os.waitpid(pid, 0)
+        assert os.waitstatus_to_exitcode(status) == 73 and not pending_root.exists()
+        assert list(scratch.glob('.katmed-overrides-*'))
         compat.prepare_override_root(pending_root, idf, selected_target, pending_lock)
+        with patch.object(ComponentFetcher, 'download', side_effect=AssertionError('unexpected fetch')):
+            compat.prepare_override_root(pending_root, idf, selected_target, pending_lock)
+
+
+check_component_fetcher_rebinding()
 print('interrupted fetch recovered in the same build path')

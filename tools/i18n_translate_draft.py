@@ -23,6 +23,29 @@ SEPARATOR = "\n<<<00987654321>>>\n"
 BREAK = "<<<00987654322>>>"
 
 
+def _decode_translation(payload: bytes, batch: list[str]) -> list[str]:
+    if len(payload) > MAX_RESPONSE_BYTES:
+        raise ValueError("translation response too large")
+    try:
+        data = json.loads(payload)
+    except ValueError:
+        raise ValueError("invalid translation response JSON") from None
+    if (not isinstance(data, list) or not data or not isinstance(data[0], list) or not data[0]
+            or not all(isinstance(fragment, list) and fragment
+                       and isinstance(fragment[0], str) for fragment in data[0])):
+        raise ValueError("invalid translation response structure")
+    result = "".join(fragment[0] for fragment in data[0])
+    parts = re.split(r"\s*<<<\s*00987654321\s*>>>\s*", result)
+    if len(parts) != len(batch):
+        raise ValueError(f"translated {len(parts)} of {len(batch)} entries")
+    parts = [re.sub(r"<<<\s*00987654322\s*>>>", "\n", part)
+             for part in parts]
+    for source, target in zip(batch, parts):
+        if sorted(PLACEHOLDERS.findall(source)) != sorted(PLACEHOLDERS.findall(target)):
+            raise ValueError("format placeholder changed")
+    return parts
+
+
 def translate(batch, language):
     text = SEPARATOR.join(item.replace("\n", BREAK) for item in batch)
     params = urllib.parse.urlencode({"client": "gtx", "sl": "de", "tl": LANGS[language],
@@ -36,26 +59,7 @@ def translate(batch, language):
                     payload = response.read(MAX_RESPONSE_BYTES + 1)
             except http.client.IncompleteRead:
                 raise ValueError("incomplete translation response") from None
-            if len(payload) > MAX_RESPONSE_BYTES:
-                raise ValueError("translation response too large")
-            try:
-                data = json.loads(payload)
-            except ValueError:
-                raise ValueError("invalid translation response JSON") from None
-            if (not isinstance(data, list) or not data or not isinstance(data[0], list) or not data[0]
-                    or not all(isinstance(fragment, list) and fragment
-                               and isinstance(fragment[0], str) for fragment in data[0])):
-                raise ValueError("invalid translation response structure")
-            result = "".join(fragment[0] for fragment in data[0])
-            parts = re.split(r"\s*<<<\s*00987654321\s*>>>\s*", result)
-            if len(parts) != len(batch):
-                raise ValueError(f"translated {len(parts)} of {len(batch)} entries")
-            parts = [re.sub(r"<<<\s*00987654322\s*>>>", "\n", part)
-                     for part in parts]
-            for source, target in zip(batch, parts):
-                if sorted(PLACEHOLDERS.findall(source)) != sorted(PLACEHOLDERS.findall(target)):
-                    raise ValueError("format placeholder changed")
-            return parts
+            return _decode_translation(payload, batch)
         except (OSError, ValueError, IndexError):
             if attempt == 3:
                 raise

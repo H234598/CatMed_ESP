@@ -104,7 +104,7 @@ class TranslationTests(unittest.TestCase):
                  json.dumps([[[marker]]]).encode()]
         for payload in cases:
             with self.subTest(length=len(payload)), \
-                    patch.object(draft.urllib.request, 'urlopen', side_effect=lambda *a, **k: io.BytesIO(payload)) as call, \
+                    patch.object(draft.urllib.request, 'urlopen', side_effect=lambda *a, payload=payload, **k: io.BytesIO(payload)) as call, \
                     patch.object(draft.time, 'sleep') as sleep:
                 with self.assertRaises(ValueError) as error:
                     draft.translate(['source %s', 'other'], 'en')
