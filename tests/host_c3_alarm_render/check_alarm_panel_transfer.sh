@@ -49,6 +49,6 @@ g++ "${build_dir}/check_alarm_panel_transfer.o" "${objects[@]}" \
     -Wl,--wrap=lv_malloc_core -Wl,--wrap=lv_realloc_core \
     -Wl,--wrap=lv_free_core -o "${build_dir}/check_alarm_panel_transfer"
 timeout 20s "${build_dir}/check_alarm_panel_transfer"
-for panel_case in c3 c3-coalesced c6; do
+for panel_case in c3 c3-coalesced c3-single c3-single-coalesced c6; do
     timeout 20s "${build_dir}/check_alarm_panel_transfer" "${panel_case}"
 done

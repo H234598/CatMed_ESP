@@ -4,18 +4,24 @@
 #define main existing_surface_main
 #include "../check_ui_surface.c"
 #undef main
+#include "../../firmware/components/board/include/board_display_budget.h"
 
 static bool drop_one_transfer;
 static unsigned dropped_transfers;
 static unsigned submitted_transfers;
 static lv_area_t lost_area;
 static bool flush_starts_at_row[320];
+static const uint16_t *single_buffer;
 
 static void panel_flush(lv_display_t *display, const lv_area_t *area,
                         uint8_t *pixels)
 {
     ++submitted_transfers;
     assert(area->y1 >= 0 && area->y1 < 320);
+    if (single_buffer) {
+        assert(pixels == (const uint8_t *)single_buffer);
+        assert(lv_area_get_size(area) <= 240u * 80u);
+    }
     flush_starts_at_row[area->y1] = true;
     if (drop_one_transfer && area->y1 <= 90 && area->y2 >= 90) {
         drop_one_transfer = false;
@@ -50,7 +56,7 @@ typedef struct {
 } BarSample;
 
 static void check_phase_pixels(Host *host, AppState *state, LocalSettings *local,
-                               ClockSample *clock, bool coalesce)
+                               ClockSample *clock, bool coalesce, bool single)
 {
     /* Boot-relative fixtures, with the first and last covered rows set from
      * the alarm timing and panel geometry. End rows are exclusive. No phase
@@ -79,7 +85,9 @@ static void check_phase_pixels(Host *host, AppState *state, LocalSettings *local
         draw();
         const int top = c3 ? sample->c3_top : sample->c6_top;
         const int end = c3 ? sample->c3_end : sample->c6_end;
-        if (i % 2 != 0) {
+        /* The 16-line profile must split these transitions. With 80 lines,
+         * the changed band can fit in a tile; the initial frame checks splits. */
+        if (!single && i % 2 != 0) {
             const BarSample *previous = sample - 1;
             const int from = i % 4 == 1 ?
                 (c3 ? previous->c3_end : previous->c6_end) :
@@ -121,23 +129,31 @@ static void check_phase_pixels(Host *host, AppState *state, LocalSettings *local
             }
         }
     }
-    printf("alarm_pixels panel=%s coalesced=%u checked=%u\n",
-           c3 ? "C3" : "C6", coalesce, checked);
+    printf("alarm_pixels panel=%s single80=%u coalesced=%u checked=%u\n",
+           c3 ? "C3" : "C6", single, coalesce, checked);
 }
 
 static int run_alarm_panel_test(int argc, char **argv)
 {
     const bool c6 = argc == 2 && strcmp(argv[1], "c6") == 0;
-    const bool coalesce = argc == 2 && strcmp(argv[1], "c3-coalesced") == 0;
+    const bool single_coalesced = argc == 2 && strcmp(argv[1], "c3-single-coalesced") == 0;
+    const bool single = single_coalesced || (argc == 2 && strcmp(argv[1], "c3-single") == 0);
+    const bool coalesce = single_coalesced || (argc == 2 && strcmp(argv[1], "c3-coalesced") == 0);
     const bool pixel_test = argc == 2 && strcmp(argv[1], "c3") == 0;
-    assert(argc == 1 || c6 || coalesce || pixel_test);
+    assert(argc == 1 || c6 || single || coalesce || pixel_test);
     Host host = {.width = c6 ? 172 : 240, .height = c6 ? 320 : 240,
                  .result = UI_SUBMIT_COMMITTED};
-    const size_t pixels_per_buffer = (size_t)host.height * 16u;
+    size_t pixels_per_buffer = (size_t)host.height * 16u;
+    if (single) {
+        const BoardC3DisplayPlan plan = board_c3_display_plan(host.width, 64u * 1024u);
+        assert(plan.lines == 80 && !plan.double_buffer);
+        pixels_per_buffer = (size_t)host.height * plan.lines;
+    }
     host.frame = calloc((size_t)host.width * host.height, sizeof(*host.frame));
     uint16_t *first = calloc(pixels_per_buffer, sizeof(*first));
-    uint16_t *second = calloc(pixels_per_buffer, sizeof(*second));
-    assert(host.frame && first && second);
+    uint16_t *second = single ? NULL : calloc(pixels_per_buffer, sizeof(*second));
+    assert(host.frame && first && (single || second));
+    if (single) single_buffer = first;
     lv_init();
     lv_display_t *display = lv_display_create(host.width, host.height);
     assert(display);
@@ -162,8 +178,12 @@ static int run_alarm_panel_test(int argc, char **argv)
     quiet.alarm_active = false;
     ui_render(&quiet, &local, BACKGROUND, &clock);
     draw();
-    if (c6 || coalesce || pixel_test) {
-        check_phase_pixels(&host, &state, &local, &clock, coalesce);
+    if (single) {
+        assert(flush_starts_at_row[0] && flush_starts_at_row[80] && flush_starts_at_row[160]);
+        printf("alarm_flush panel=C3 single80=1 initial_tile_starts=0,80,160\n");
+    }
+    if (c6 || single || coalesce || pixel_test) {
+        check_phase_pixels(&host, &state, &local, &clock, coalesce, single);
         lv_display_delete(display);
         lv_deinit();
         free(second);

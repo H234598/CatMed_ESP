@@ -318,6 +318,9 @@ foreach(format IN ITEMS "240;240" "172;320" "320;172")
     add_test(NAME alarm_render_${width}x${height} COMMAND check_alarm_render ${width} ${height} "${CMAKE_CURRENT_BINARY_DIR}/c3_image_stream_fixture.bin")
 endforeach()
 
+add_test(NAME alarm_render_c3_single80 COMMAND check_alarm_render 240 240
+    "${CMAKE_CURRENT_BINARY_DIR}/c3_image_stream_fixture.bin" single80)
+
 # Neutral, unprovisioned/no-UTC settings must save through the real main/store.
 get_target_property(UNCONFIGURED_SOURCES check_settings_values SOURCES)
 list(REMOVE_ITEM UNCONFIGURED_SOURCES "${ROOT}/tests/host_store/check_settings_values.c")

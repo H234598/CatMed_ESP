@@ -258,16 +258,19 @@ int main(int argc, char **argv)
     assert(argc == 4 || argc == 5);
     Host host = {.width = atoi(argv[1]), .height = atoi(argv[2]),
                  .result = UI_SUBMIT_COMMITTED};
+    const bool single80 = argc == 5 && strcmp(argv[4], "single80") == 0;
+    assert(!single80 || (host.width == 240 && host.height == 240));
+    const size_t buffer_pixels = (size_t)host.width * (single80 ? 80u : 16u);
     size_t count = (size_t)host.width * host.height;
     host.frame = calloc(count, sizeof(*host.frame));
-    uint16_t *buffer = calloc((size_t)host.width * 16, sizeof(*buffer));
+    uint16_t *buffer = calloc(buffer_pixels, sizeof(*buffer));
     uint16_t *baseline = calloc(count, sizeof(*baseline));
     uint16_t *incremental = calloc(count, sizeof(*incremental));
     assert(host.frame && buffer && baseline && incremental);
     lv_init();
     lv_display_t *display = lv_display_create(host.width, host.height);
     lv_display_set_color_format(display, LV_COLOR_FORMAT_RGB565);
-    lv_display_set_buffers(display, buffer, NULL, (uint32_t)host.width * 32,
+    lv_display_set_buffers(display, buffer, NULL, buffer_pixels * sizeof(*buffer),
                            LV_DISPLAY_RENDER_MODE_PARTIAL);
     lv_display_set_flush_cb(display, flush);
     lv_display_set_user_data(display, &host);
@@ -275,7 +278,7 @@ int main(int argc, char **argv)
     FILE *pack=fopen(argv[3],"rb");assert(pack);source_file=pack;
     KatmedStorage storage={pack,katmed_generated_catalog.pack_bytes,alarm_pack_read,NULL};
     assert(katmed_images_mount_storage(storage)==KATMED_IMAGE_OK);
-    if(argc==5) {
+    if(argc==5 && !single80) {
         check_jpeg_diagnostics(host.width>host.height?ORIENTATION_90:ORIENTATION_0);
         lv_display_delete(display);katmed_images_unmount();fclose(pack);lv_deinit();
         free(incremental);free(baseline);free(buffer);free(host.frame);return 0;
