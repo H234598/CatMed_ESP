@@ -300,13 +300,7 @@ def _verify_dependency_checkout(name, current, initial, root, firmware, graph, l
     from idf_component_tools.hash_tools.validate import validate_hash_eq_hashfile, validate_hashfile_eq_hashdir
 
     component = name.replace("/", "__")
-    if component in OVERRIDE_TREE_HASHES:
-        path = (root / component).resolve()
-        if current["source"].get("type") != "local" or (lock.parent / current["source"]["path"]).resolve() != path:
-            raise ValueError(f"Override lock path differs: {name}")
-        if Path(graph[component]["dir"]).resolve() != path:
-            raise ValueError(f"Override graph path differs: {name}")
-    else:
+    if not (component in OVERRIDE_TREE_HASHES):
         if initial["component_hash"] != current.get("component_hash") or current["source"].get("type") != "service":
             raise ValueError(f"Registry lock binding differs: {name}")
         if initial["source"]["registry_url"].rstrip("/") != current["source"]["registry_url"].rstrip("/"):
@@ -319,6 +313,13 @@ def _verify_dependency_checkout(name, current, initial, root, firmware, graph, l
                 raise ValueError("ArduinoJson forwarding path differs")
         elif Path(graph[component]["dir"]).resolve() != path:
             raise ValueError(f"Registry graph path differs: {name}")
+        return
+
+    path = (root / component).resolve()
+    if current["source"].get("type") != "local" or (lock.parent / current["source"]["path"]).resolve() != path:
+        raise ValueError(f"Override lock path differs: {name}")
+    if Path(graph[component]["dir"]).resolve() != path:
+        raise ValueError(f"Override graph path differs: {name}")
 
 
 def _edge_bindings(entry):
@@ -356,7 +357,7 @@ def _verified_config(build, allow_missing_config):
     return config
 
 
-def _verify_graph_edges(firmware, graph, old, config):
+def _verify_graph_edges(firmware, graph, old):
     import yaml
     from idf_component_tools.semver import SimpleSpec, Version
 
@@ -413,8 +414,8 @@ def verify_override_graph(root: Path, target: str, lock: Path, build: Path, *, a
     _verify_resolved_components(old, new, root, firmware, graph, lock)
     if "espressif__iot_bridge" not in graph["espressif__mesh_lite"]["priv_reqs"] or "lvgl__lvgl" not in graph["espressif__esp_lvgl_port"]["reqs"]:
         raise ValueError("Original transitive override edges missing")
-    config = _verified_config(build, allow_missing_config)
-    _verify_graph_edges(firmware, graph, old, config)
+    _verified_config(build, allow_missing_config)
+    _verify_graph_edges(firmware, graph, old)
 
 
 if __name__ == "__main__":

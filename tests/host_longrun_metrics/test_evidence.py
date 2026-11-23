@@ -9,6 +9,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from typing import cast
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -49,18 +50,22 @@ def c3_touch(uptime: int, seq: int, *, domain=7, period=1, coverage=1):
             " ".join(f"{k}={values[k]}" for k in usb.C3_TOUCH_KEYS) + "\n").encode()
 
 
+def _record_bounded_history_step(i, result, mismatched_health, missing_health, rollback):
+    uptime = 100_000 + i * 10_000
+    result.extend([(0 if i == 0 else 10, metric(uptime)),
+                   (0, state(uptime, i + 1,
+                             round_sequence=2 if i < 2 else 3,
+                             due=200_000 if i < 2 else 250_000))])
+    if not (missing_health and i == 1):
+        result.append((0, health(uptime + (1 if mismatched_health and i == 1 else 0),
+                                 i + 1, image_fail=(0 if i == 0 else
+                                                   (0 if rollback and i == 2 else 1)))))
+
+
 def schedule(*, mismatched_health=False, missing_health=False, rollback=False):
     result = []
     for i in range(4):
-        uptime = 100_000 + i * 10_000
-        result.extend([(0 if i == 0 else 10, metric(uptime)),
-                       (0, state(uptime, i + 1,
-                                 round_sequence=2 if i < 2 else 3,
-                                 due=200_000 if i < 2 else 250_000))])
-        if not (missing_health and i == 1):
-            result.append((0, health(uptime + (1 if mismatched_health and i == 1 else 0),
-                                     i + 1, image_fail=(0 if i == 0 else
-                                                       (0 if rollback and i == 2 else 1)))))
+        _record_bounded_history_step(i, result, mismatched_health, missing_health, rollback)
     return result
 
 
@@ -126,7 +131,7 @@ class EvidenceTests(unittest.TestCase):
                 clock = Clock()
                 args = argparse.Namespace(expect_device=DEVICE, expect_firmware=FIRMWARE,
                     expect_build=BUILD, duration_seconds=30)
-                port = mock.create_autospec(usb.SerialPort, instance=True, spec_set=True)
+                port = cast(usb.SerialPort, mock.create_autospec(usb.SerialPort, instance=True, spec_set=True))
                 recorder = longrun.Recorder(args, port, Path(root), clock.mono, clock.wall)
                 recorder.last_status_mono = 0
                 for delay, line in lines:
@@ -151,20 +156,21 @@ class EvidenceTests(unittest.TestCase):
 
     @staticmethod
     def append_interval_sample(lines, variant, seq, uptime):
+        case = variant, seq
         value = 10 if seq <= 3 else 11
-        if variant == "rollback" and seq == 4:
+        if case == ("rollback", 4):
             value = 9
-        period = 2 if variant == "period" and seq == 4 else 1
-        coverage = 0 if ((variant == "coverage_before" and seq == 3) or
-                         (variant == "coverage_after" and seq == 4)) else 1
-        domain = 8 if variant == "boot" and seq == 4 else 7
-        sample_seq = seq - 1 if variant == "sequence" and seq == 4 else seq
-        sample_time = uptime - 1 if variant == "uptime" and seq == 4 else uptime
+        period = 2 if case == ("period", 4) else 1
+        coverage = 0 if ((case == ("coverage_before", 3)) or
+                         (case == ("coverage_after", 4))) else 1
+        domain = 8 if case == ("boot", 4) else 7
+        sample_seq = seq - 1 if case == ("sequence", 4) else seq
+        sample_time = uptime - 1 if case == ("uptime", 4) else uptime
         line = c3_touch(sample_time, sample_seq, domain=domain,
                         period=period, coverage=coverage)
         line = line.replace(b"clean_release=2", f"clean_release={value}".encode())
-        if ((variant == "saturated_before" and seq == 3) or
-                (variant == "saturated_after" and seq == 4)):
+        if ((case == ("saturated_before", 3)) or
+                (case == ("saturated_after", 4))):
             line = line.replace(f"clean_release={value}".encode(),
                                 b"clean_release=4294967295")
         lines.append((0, line))

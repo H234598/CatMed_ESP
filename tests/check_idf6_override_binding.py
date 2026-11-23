@@ -10,7 +10,7 @@ import sys
 import tempfile
 from unittest.mock import patch
 
-def require(condition: bool, message: str = "Override binding expectations failed") -> None:
+def require(condition: bool, message: object = "Override binding expectations failed") -> None:
     if not condition:
         raise AssertionError(message)
 
@@ -24,6 +24,7 @@ def git_executable() -> str:
 
 ESP32C3 = "esp32c3"
 ESP32C6 = "esp32c6"
+BINDING_FIXTURE_DIR = "override-c3.lock"
 
 
 repo = Path(__file__).resolve().parents[1]
@@ -126,7 +127,7 @@ with tempfile.TemporaryDirectory(prefix="override-lock-") as tmp:
     original_c6.write_bytes(b"c6")
     task = base / "task"
     task.mkdir()
-    candidate = task / "override-c3.lock"
+    candidate = task / BINDING_FIXTURE_DIR
     originals = (original_c3, original_c6)
     compat._validate_override_lock(candidate, ESP32C3, task, originals)
     candidate.write_bytes(b"own")
@@ -145,7 +146,7 @@ with tempfile.TemporaryDirectory(prefix="override-lock-") as tmp:
             else:
                 raise AssertionError(f"{kind} to original lock accepted")
             candidate.unlink()
-    for wrong in (original_c3, original_c6, task / "other.lock", base / "override-c3.lock"):
+    for wrong in (original_c3, original_c6, task / "other.lock", base / BINDING_FIXTURE_DIR):
         try:
             compat._validate_override_lock(wrong, ESP32C3, task, originals)
         except ValueError:
@@ -155,7 +156,7 @@ with tempfile.TemporaryDirectory(prefix="override-lock-") as tmp:
     alias = base / "alias"
     alias.symlink_to(task, target_is_directory=True)
     try:
-        compat._validate_override_lock(alias / "override-c3.lock", ESP32C3, alias, originals)
+        compat._validate_override_lock(alias / BINDING_FIXTURE_DIR, ESP32C3, alias, originals)
     except ValueError:
         pass
     else:
@@ -286,8 +287,8 @@ def check_component_fetcher_rebinding() -> None:
                 compat.prepare_override_root(pending_root, idf, selected_target, pending_lock)
             os._exit(74)
         _, status = os.waitpid(pid, 0)
-        assert os.waitstatus_to_exitcode(status) == 73 and not pending_root.exists()
-        assert list(scratch.glob('.katmed-overrides-*'))
+        require(os.waitstatus_to_exitcode(status) == 73 and not pending_root.exists())
+        require(bool(list(scratch.glob('.katmed-overrides-*'))))
         compat.prepare_override_root(pending_root, idf, selected_target, pending_lock)
         with patch.object(ComponentFetcher, 'download', side_effect=AssertionError('unexpected fetch')):
             compat.prepare_override_root(pending_root, idf, selected_target, pending_lock)
