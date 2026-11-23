@@ -9,6 +9,7 @@ import shutil
 import subprocess  # nosec B404
 import sys
 import tempfile
+from functools import partial
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -21,11 +22,12 @@ import prepare_iot_bridge_compat as compat  # noqa: E402
 
 TARGET = "esp32c3"
 PORT = "espressif/esp_lvgl_port"
+PROJECT_DESCRIPTION = "project_description.json"
 DEFAULTS = "sdkconfig.defaults;boards/c3.defaults;security.defaults;boards/c3.security.defaults;boards/c3.development001.defaults"
 
 
 def check_callers(build: Path) -> None:
-    description = json.loads((build / "project_description.json").read_text())
+    description = json.loads((build / PROJECT_DESCRIPTION).read_text())
     graph = description["build_component_info"]
     commands = json.loads((build / "compile_commands.json").read_text())
     provider = Path(graph["espressif__esp_lvgl_port"]["dir"])
@@ -74,7 +76,7 @@ def rejected(operation, message: str) -> None:
 def check_inputs(build: Path) -> None:
     root = build / "katmed-overrides"
     lock = build / "override-c3.lock"
-    idf = Path(json.loads((build / "project_description.json").read_text())["idf_path"])
+    idf = Path(json.loads((build / PROJECT_DESCRIPTION).read_text())["idf_path"])
     provider = root / compat.DIAGNOSTIC_PORT
     header = provider / "include/esp_lvgl_port_c3_alarm_probe.h"
 
@@ -97,13 +99,13 @@ def check_inputs(build: Path) -> None:
     registry = yaml.safe_load((REPO / "firmware/dependencies.esp32c3.lock").read_text())["dependencies"][PORT]
     for version, digest in (("2.9.1", registry["component_hash"]), (registry["version"], "0" * 64)):
         component = SimpleNamespace(version=version, component_hash=digest)
-        rejected(lambda: compat._prepare_diagnostic_port(provider, component), "registry version or component hash")
+        rejected(partial(compat._prepare_diagnostic_port, provider, component), "registry version or component hash")
 
 
 def check_graph_mutations(build: Path) -> None:
     root = build / "katmed-overrides"
     lock = build / "override-c3.lock"
-    description = build / "project_description.json"
+    description = build / PROJECT_DESCRIPTION
     read = Path.read_text
 
     def verify():
@@ -133,10 +135,11 @@ def check_rejected_setup() -> None:
     cmake = shutil.which("cmake")
     if cmake is None:
         raise ValueError("CMake is required")
+    profile_required = "requires the complete C3 Development001 profile"
     cases = (
-        ("esp32c6", DEFAULTS, "ON", "ON", "requires the complete C3 Development001 profile"),
-        (TARGET, "sdkconfig.defaults;boards/c3.defaults", "ON", "ON", "requires the complete C3 Development001 profile"),
-        (TARGET, DEFAULTS, "ON", "OFF", "requires the complete C3 Development001 profile"),
+        ("esp32c6", DEFAULTS, "ON", "ON", profile_required),
+        (TARGET, "sdkconfig.defaults;boards/c3.defaults", "ON", "ON", profile_required),
+        (TARGET, DEFAULTS, "ON", "OFF", profile_required),
         (TARGET, DEFAULTS, "OFF", "ON", "requires its diagnostic port"),
     )
     with tempfile.TemporaryDirectory(prefix="katmed-development001-rejections-") as directory:

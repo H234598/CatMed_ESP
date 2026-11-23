@@ -271,6 +271,10 @@ def verify_override_end_state(root: Path, idf: Path, target: str, lock: Path, *,
         for name, expected in hashes.items():
             if _inventory_hash(root / name) != expected:
                 raise ValueError(f"Override end tree differs: {name}")
+    _verify_sdk_end_state(repo, idf)
+
+
+def _verify_sdk_end_state(repo: Path, idf: Path) -> None:
     _prepare_idf6_napt(idf, check_only=True)
     _validate_sdk_worktree(idf)
     lwip = _validate_idf_scope(idf) / "components/lwip/lwip"
@@ -342,24 +346,28 @@ def prepare_override_root(root: Path, idf: Path, target: str, lock: Path, *, dev
     verify_override_end_state(root, idf, target, lock, development001=development001)
 
 
-def _verify_dependency_checkout(name, current, initial, root, firmware, graph, lock, development001):
+def _verify_registry_checkout(name, component, current, initial, firmware, graph):
     from idf_component_tools.hash_tools.validate import validate_hash_eq_hashfile, validate_hashfile_eq_hashdir
 
+    if initial["component_hash"] != current.get("component_hash") or current["source"].get("type") != "service":
+        raise ValueError(f"Registry lock binding differs: {name}")
+    if initial["source"]["registry_url"].rstrip("/") != current["source"]["registry_url"].rstrip("/"):
+        raise ValueError(f"Registry URL differs: {name}")
+    path = (firmware / "managed_components" / component).resolve()
+    validate_hash_eq_hashfile(path, initial["component_hash"])
+    validate_hashfile_eq_hashdir(path)
+    if name == "bblanchon/arduinojson":
+        if str(path / "src") not in graph["arduinojson"]["include_dirs"]:
+            raise ValueError("ArduinoJson forwarding path differs")
+    elif Path(graph[component]["dir"]).resolve() != path:
+        raise ValueError(f"Registry graph path differs: {name}")
+
+
+def _verify_dependency_checkout(name, current, initial, root, firmware, graph, lock, development001):
     component = name.replace("/", "__")
     diagnostic = component == DIAGNOSTIC_PORT and development001
     if component not in OVERRIDE_TREE_HASHES and not diagnostic:
-        if initial["component_hash"] != current.get("component_hash") or current["source"].get("type") != "service":
-            raise ValueError(f"Registry lock binding differs: {name}")
-        if initial["source"]["registry_url"].rstrip("/") != current["source"]["registry_url"].rstrip("/"):
-            raise ValueError(f"Registry URL differs: {name}")
-        path = (firmware / "managed_components" / component).resolve()
-        validate_hash_eq_hashfile(path, initial["component_hash"])
-        validate_hashfile_eq_hashdir(path)
-        if name == "bblanchon/arduinojson":
-            if str(path / "src") not in graph["arduinojson"]["include_dirs"]:
-                raise ValueError("ArduinoJson forwarding path differs")
-        elif Path(graph[component]["dir"]).resolve() != path:
-            raise ValueError(f"Registry graph path differs: {name}")
+        _verify_registry_checkout(name, component, current, initial, firmware, graph)
         return
 
     path = root / component
@@ -458,6 +466,16 @@ def _verify_diagnostic_graph(firmware, graph, development001):
             raise ValueError(f"Development001 graph edge missing: {parent} -> {dependency}")
 
 
+def _verify_direct_graph_edges(graph, direct_dependencies):
+    main_edges = graph["main"].get("reqs", []) + graph["main"].get("priv_reqs", [])
+    for name in direct_dependencies:
+        if name == "idf":
+            continue
+        component = "arduinojson" if name == "bblanchon/arduinojson" else name.replace("/", "__")
+        if component not in main_edges:
+            raise ValueError(f"Direct graph edge missing: main -> {name}")
+
+
 def verify_override_graph(root: Path, target: str, lock: Path, build: Path, *,
                           allow_missing_config: bool = False, development001: bool = False) -> None:
     import yaml
@@ -476,13 +494,7 @@ def verify_override_graph(root: Path, target: str, lock: Path, build: Path, *,
     if set(resolved["direct_dependencies"]) != set(original["direct_dependencies"]) | {"espressif/iot_bridge"}:
         raise ValueError("Override lock direct dependency set differs")
     graph = json.loads((build / "project_description.json").read_text())["build_component_info"]
-    main_edges = graph["main"].get("reqs", []) + graph["main"].get("priv_reqs", [])
-    for name in resolved["direct_dependencies"]:
-        if name == "idf":
-            continue
-        component = "arduinojson" if name == "bblanchon/arduinojson" else name.replace("/", "__")
-        if component not in main_edges:
-            raise ValueError(f"Direct graph edge missing: main -> {name}")
+    _verify_direct_graph_edges(graph, resolved["direct_dependencies"])
     _verify_resolved_components(old, new, root, firmware, graph, lock, development001)
     if "espressif__iot_bridge" not in graph["espressif__mesh_lite"]["priv_reqs"] or "lvgl__lvgl" not in graph["espressif__esp_lvgl_port"]["reqs"]:
         raise ValueError("Original transitive override edges missing")
