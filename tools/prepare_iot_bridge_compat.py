@@ -300,7 +300,7 @@ def _verify_dependency_checkout(name, current, initial, root, firmware, graph, l
     from idf_component_tools.hash_tools.validate import validate_hash_eq_hashfile, validate_hashfile_eq_hashdir
 
     component = name.replace("/", "__")
-    if not (component in OVERRIDE_TREE_HASHES):
+    if component not in OVERRIDE_TREE_HASHES:
         if initial["component_hash"] != current.get("component_hash") or current["source"].get("type") != "service":
             raise ValueError(f"Registry lock binding differs: {name}")
         if initial["source"]["registry_url"].rstrip("/") != current["source"]["registry_url"].rstrip("/"):

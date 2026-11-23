@@ -57,9 +57,14 @@ def _record_bounded_history_step(i, result, mismatched_health, missing_health, r
                              round_sequence=2 if i < 2 else 3,
                              due=200_000 if i < 2 else 250_000))])
     if not (missing_health and i == 1):
+        if i == 0:
+            sample_domain = 0
+        elif rollback and i == 2:
+            sample_domain = 0
+        else:
+            sample_domain = 1
         result.append((0, health(uptime + (1 if mismatched_health and i == 1 else 0),
-                                 i + 1, image_fail=(0 if i == 0 else
-                                                   (0 if rollback and i == 2 else 1)))))
+                                 i + 1, image_fail=(sample_domain))))
 
 
 def schedule(*, mismatched_health=False, missing_health=False, rollback=False):
@@ -202,11 +207,6 @@ class EvidenceTests(unittest.TestCase):
                 rows.append(line)
 
     def test_bound_reader_c3_binding(self):
-        class Port:
-            def __init__(self, lines):
-                self.lines = list(lines)
-            def read_until(self, _end, _size):
-                return self.lines.pop(0) if self.lines else b""
         base = {"configured": 1, "durable": 1, "uptime_ms": 1, "domain": 7}
         for variant in ("good", "legacy", "duplicate", "sequence", "domain", "broken"):
             rows = [metric(100_000)]
@@ -216,7 +216,10 @@ class EvidenceTests(unittest.TestCase):
                   mock.patch.object(usb, "_bound_exchange", return_value="unused"),
                   mock.patch.object(usb, "_bound_fields", return_value=dict(base))):
                 def call():
-                    return usb.read_boot_pair(Port(rows), expect_device=DEVICE,
+                    pending = list(rows)
+                    port = mock.create_autospec(usb.SerialPort, instance=True)
+                    port.read_until.side_effect = lambda *args: pending.pop(0) if pending else b""
+                    return usb.read_boot_pair(cast(usb.SerialPort, port), expect_device=DEVICE,
                         expect_firmware=FIRMWARE, expect_build=BUILD, expect_catalog="a" * 64,
                         nonce_factory=lambda: "a" * 32, monotonic=lambda: 0)
 
