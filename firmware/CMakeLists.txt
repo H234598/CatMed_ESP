@@ -2,12 +2,24 @@ cmake_minimum_required(VERSION 3.20)
 set(COMPONENTS main)
 option(KATMED_FULL_STACK "Compile and link the complete dependency probe" ON)
 option(KATMED_WITH_CORE "Link the host-tested reducer" ON)
-option(KATMED_C3_ALARM_DIAG "One C3 alarm SPI diagnostic sample" OFF)
-if(KATMED_C3_ALARM_DIAG AND (NOT IDF_TARGET STREQUAL "esp32c3" OR
-                              NOT KATMED_FULL_STACK OR NOT KATMED_WITH_CORE))
-    message(FATAL_ERROR "C3 alarm diagnostic requires the complete C3 app")
-endif()
+option(KATMED_C3_ALARM_DIAG "One C3 alarm SPI diagnostic sample in Development001" OFF)
 option(KATMED_APPSTORE_MAINTENANCE "Private C6 AppStore maintenance image" OFF)
+option(KATMED_ACME_RESOURCE_PROBE "Enable the isolated ACME resource source probe" OFF)
+option(KATMED_ACME_RESOURCE_CLIENT "Run the real client in the isolated resource probe" OFF)
+set(KATMED_DIAGNOSTIC_ARGS)
+set(KATMED_DEVELOPMENT001_DEFAULTS
+    "sdkconfig.defaults;boards/c3.defaults;security.defaults;boards/c3.security.defaults;boards/c3.development001.defaults")
+if(KATMED_C3_ALARM_DIAG)
+    if(NOT IDF_TARGET STREQUAL "esp32c3" OR NOT KATMED_FULL_STACK OR NOT KATMED_WITH_CORE OR
+       KATMED_APPSTORE_MAINTENANCE OR KATMED_ACME_RESOURCE_PROBE OR KATMED_ACME_RESOURCE_CLIENT OR
+       NOT SDKCONFIG_DEFAULTS STREQUAL KATMED_DEVELOPMENT001_DEFAULTS)
+        message(FATAL_ERROR "C3 alarm diagnostic requires the complete C3 Development001 profile")
+    endif()
+    list(APPEND EXTRA_COMPONENT_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/compat/katmed_c3_diagnostic_port")
+    list(APPEND KATMED_DIAGNOSTIC_ARGS --development001)
+elseif("boards/c3.development001.defaults" IN_LIST SDKCONFIG_DEFAULTS)
+    message(FATAL_ERROR "C3 Development001 requires its diagnostic port")
+endif()
 if(KATMED_APPSTORE_MAINTENANCE)
     if(NOT KATMED_FULL_STACK OR NOT KATMED_WITH_CORE)
         message(FATAL_ERROR "AppStore maintenance requires the full C6 UI and core")
@@ -56,8 +68,6 @@ if(KATMED_APPSTORE_MAINTENANCE)
     unset(KATMED_APPSTORE_MAC48)
     set(PROJECT_VER "appmaint-r2-20261025")
 endif()
-option(KATMED_ACME_RESOURCE_PROBE "Enable the isolated ACME resource source probe" OFF)
-option(KATMED_ACME_RESOURCE_CLIENT "Run the real client in the isolated resource probe" OFF)
 set(KATMED_ACME_RESOURCE_SERVER "http://127.0.0.1:17171/directory" CACHE STRING
     "Isolated fixture directory for the resource probe")
 if(KATMED_ACME_RESOURCE_CLIENT AND NOT KATMED_ACME_RESOURCE_PROBE)
@@ -81,6 +91,7 @@ set(DEPENDENCIES_LOCK "${KATMED_BUILD_REAL}/override-${KATMED_TARGET_SUFFIX}.loc
 execute_process(COMMAND "${PYTHON}" "${CMAKE_CURRENT_SOURCE_DIR}/../tools/prepare_iot_bridge_compat.py"
     --prepare-override-root "${KATMED_OVERRIDE_ROOT}" --target "${IDF_TARGET}"
     --override-lock "${DEPENDENCIES_LOCK}" --idf "$ENV{IDF_PATH}"
+    ${KATMED_DIAGNOSTIC_ARGS}
     RESULT_VARIABLE KATMED_PREPARE_RESULT)
 if(NOT KATMED_PREPARE_RESULT STREQUAL "0")
     message(FATAL_ERROR "Override original/end state or SDK validation failed")
@@ -92,7 +103,7 @@ if(EXISTS "${DEPENDENCIES_LOCK}")
     execute_process(COMMAND "${PYTHON}" "${CMAKE_CURRENT_SOURCE_DIR}/../tools/prepare_iot_bridge_compat.py"
         --verify-override-root "${KATMED_OVERRIDE_ROOT}" --target "${IDF_TARGET}"
         --override-lock "${DEPENDENCIES_LOCK}" --idf "$ENV{IDF_PATH}" --verify-graph "${CMAKE_BINARY_DIR}"
-        --allow-missing-config
+        --allow-missing-config ${KATMED_DIAGNOSTIC_ARGS}
         RESULT_VARIABLE KATMED_GRAPH_RESULT)
     if(NOT KATMED_GRAPH_RESULT STREQUAL "0")
         message(FATAL_ERROR "Existing override lock or graph validation failed")
@@ -110,7 +121,7 @@ endif()
         COMMAND "${PYTHON}" "${CMAKE_CURRENT_SOURCE_DIR}/../tools/prepare_iot_bridge_compat.py"
             --verify-override-root "${KATMED_OVERRIDE_ROOT}" --target "${IDF_TARGET}"
             --override-lock "${DEPENDENCIES_LOCK}" --idf "$ENV{IDF_PATH}"
-            --verify-graph "${CMAKE_BINARY_DIR}"
+            --verify-graph "${CMAKE_BINARY_DIR}" ${KATMED_DIAGNOSTIC_ARGS}
         VERBATIM)
     idf_build_get_property(katmed_build_components BUILD_COMPONENTS)
     foreach(component IN LISTS katmed_build_components)

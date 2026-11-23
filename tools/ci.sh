@@ -78,6 +78,19 @@ elif [[ "$mode" == dependencies || "$mode" == firmware ]]; then
         "firmware/build-$board/littlefs_py_venv/bin/python" tools/check_image_seed.py \
             --target "$board" --manifest assets/generated/manifest.json \
             --image "firmware/build-$board/user_images.bin" --size "$size"
+        if [[ "$board" == c3 ]]; then
+            diagnostic="$repo/firmware/build-c3-development001"
+            python tools/private_wifi_defaults.py \
+                --output "$diagnostic/generated/private_wifi_defaults.h" \
+                --ui-profile-output "$diagnostic/generated/katmed_private_ui_profile.h"
+            defaults='sdkconfig.defaults;boards/c3.defaults;security.defaults;boards/c3.security.defaults;boards/c3.development001.defaults'
+            (cd firmware && idf.py -B "$diagnostic" -D "IDF_TARGET=$target" \
+                -D "SDKCONFIG=$diagnostic/sdkconfig" -D "SDKCONFIG_DEFAULTS=$defaults" \
+                -D KATMED_C3_ALARM_DIAG=ON build)
+            python tools/check_firmware_layout.py c3 --build-dir "$diagnostic" \
+                --security-profile --old-c3-development001
+            python tests/check_c3_diagnostic_port.py "$diagnostic"
+        fi
     fi
 elif [[ "$mode" == host ]]; then
     : "${IDF_PATH:?Use the ESP-IDF 6.1 runner environment}"
