@@ -6,12 +6,14 @@ repo_dir="$(cd -- "$(dirname -- "$0")/../.." && pwd)"
 tool_dir="${KATMED_TOOLS_DIR:-${HOME}/.local/share/katmed-tools}"
 cmake_bin="${tool_dir}/bootstrap/bin/cmake"
 ninja_bin="${tool_dir}/bootstrap/bin/ninja"
-build_dir="${repo_dir}/build-ui-host"
+build_dir="${KATMED_MAIN_CONTACT_BUILD_DIR:-${repo_dir}/build-ui-host}"
 out_dir="${build_dir}/main-contact"
 
 "${cmake_bin}" -S "${repo_dir}/firmware/components/katmed_ui/host" \
     -B "${build_dir}" -G Ninja -DCMAKE_MAKE_PROGRAM="${ninja_bin}" \
-    -DCMAKE_C_COMPILER=/usr/bin/gcc -DCMAKE_CXX_COMPILER=/usr/bin/g++
+    -DCMAKE_C_COMPILER=/usr/bin/gcc -DCMAKE_CXX_COMPILER=/usr/bin/g++ \
+    -DKATMED_UI_HOST_LVGL_SOURCE="${KATMED_HOST_LVGL_SOURCE:-${repo_dir}/firmware/build-a61-c3/katmed-overrides/lvgl__lvgl}" \
+    -DKATMED_HOST_CONFIG_DIR="${KATMED_HOST_CONFIG_DIR:-${repo_dir}/firmware/build-a61-c3/config}"
 "${cmake_bin}" --build "${build_dir}" --target check_ui_surface -j 8
 mkdir -p "${out_dir}"
 
@@ -35,7 +37,7 @@ flags=(-std=c11 -Wall -Wextra -Werror -Wno-unused-variable
     "-I${repo_dir}/firmware/components/katmed_acme/include"
     "-I${repo_dir}/firmware/components/katmed_security/include"
     "-I${repo_dir}/firmware/components/katmed_import/include"
-    "-I${repo_dir}/firmware/managed_components/lvgl__lvgl")
+    "-I${KATMED_HOST_LVGL_SOURCE:-${repo_dir}/firmware/build-a61-c3/katmed-overrides/lvgl__lvgl}")
 cc "${flags[@]}" -c "${repo_dir}/firmware/components/katmed_ui/ui.c" -o "${out_dir}/ui.o"
 cc "${flags[@]}" -c "${repo_dir}/tests/host_main/main_contact_regression.c" \
     -o "${out_dir}/main_contact_regression.o"

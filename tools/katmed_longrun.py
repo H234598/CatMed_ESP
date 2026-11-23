@@ -113,6 +113,8 @@ class Recorder:
         self.pending_metric_uptime: int | None = None
         self.pending_state: dict[str, int] | None = None
         self.pending_health: dict[str, int] | None = None
+        self.pending_c3: dict[str, int] | None = None
+        self.c3_invalid = False
         self.phase_pending: dict[str, int] | None = None
         self.phase_highest: dict[str, int] | None = None
         self.phase_rejection_class: str | None = None
@@ -148,6 +150,9 @@ class Recorder:
             "ack_evidence": "unknown",
             "evidence_missing_pairs": 0, "evidence_last_state": None,
             "evidence_last_health": None, "evidence_boot_domain": None,
+            "c3_touch_coverage": "unknown", "c3_touch_last": None,
+            "c3_touch_before": None, "c3_touch_delta": None,
+            "c3_touch_interval": "unknown",
             "evidence_unavailable_samples": 0,
             "phase_coverage": "legacy_missing",
             "phase_prestatus_unverified": None,
@@ -269,12 +274,17 @@ class Recorder:
         self.pending_state = None
         self.pending_health = None
         if state is None or health is None:
-            first_missing = self.summary["evidence_missing_pairs"] == 0
+            self.summary["c3_touch_coverage"] = "unknown"
+            self.summary["c3_touch_last"] = None
+            self.summary["c3_touch_before"] = None
+            self.summary["c3_touch_delta"] = None
+            self.summary["c3_touch_interval"] = "unknown"
+            self.pending_c3 = None
+            self.c3_invalid = False
             self.summary["evidence_missing_pairs"] += 1
             if self.summary["evidence_samples"]:
                 self.summary["evidence_coverage"] = "incomplete"
-            if first_missing:
-                _save(self.directory, self.summary)
+            _save(self.directory, self.summary)
             return
         seq, uptime, domain = state["sample_seq"], state["uptime_ms"], state["boot_domain"]
         if self.evidence_domain is None:
@@ -287,6 +297,29 @@ class Recorder:
             self.summary["phase_coverage"] = "verified_sample"
             self.phase_pending = None
         self.last_evidence_seq = seq
+        c3 = self.pending_c3
+        before = self.summary["c3_touch_last"]
+        counters = ("clean_release", "interrupted", "invalid", "stale", "overflow", "discard")
+        bound = (not self.c3_invalid and c3 is not None and
+                 all(c3[key] == state[key] for key in ("sample_seq", "uptime_ms", "boot_domain")))
+        usable = (bound and c3["coverage"] == 1 and c3["period"] not in (0, 0xffffffff) and
+                  all(c3[key] < 0xffffffff for key in counters))
+        comparable = (usable and before is not None and before["coverage"] == 1 and
+                      before["period"] not in (0, 0xffffffff) and
+                      before["boot_domain"] == c3["boot_domain"] and
+                      before["period"] == c3["period"] and
+                      before["sample_seq"] < c3["sample_seq"] and
+                      before["uptime_ms"] < c3["uptime_ms"] and
+                      all(before[key] < 0xffffffff and before[key] <= c3[key]
+                          for key in counters))
+        self.summary["c3_touch_interval"] = "valid" if comparable else "unknown"
+        self.summary["c3_touch_before"] = before if comparable else None
+        self.summary["c3_touch_delta"] = (
+            {key: c3[key] - before[key] for key in counters} if comparable else None)
+        self.summary["c3_touch_last"] = c3 if bound else None
+        self.summary["c3_touch_coverage"] = "snapshot" if usable else "unknown"
+        self.pending_c3 = None
+        self.c3_invalid = False
         previous = self.summary["evidence_last_health"]
         counters = ("image_fail", "store_read", "store_load", "store_commit",
                     "mesh_send", "mesh_queue", "mesh_level", "mesh_ip_got",
@@ -381,6 +414,23 @@ class Recorder:
             return
         if b"katmed_usb_phase:" in body:
             raise LongrunError("Numerischer KM1-Phasenbeleg ist beschädigt")
+        if b"katmed_c3_touch:" in body:
+            c3 = usb._c3_touch_line(body)
+            if (c3 is None or self.pending_c3 is not None or self.pending_metric_uptime is None or
+                    c3["uptime_ms"] != self.pending_metric_uptime or self.pending_state is not None or
+                    (self.evidence_domain is not None and c3["boot_domain"] != self.evidence_domain) or
+                    (self.last_evidence_seq is not None and c3["sample_seq"] <= self.last_evidence_seq)):
+                self.c3_invalid = True
+                self.pending_c3 = None
+                self.summary["c3_touch_coverage"] = "unknown"
+                self.summary["c3_touch_last"] = None
+                self.summary["c3_touch_before"] = None
+                self.summary["c3_touch_delta"] = None
+                self.summary["c3_touch_interval"] = "unknown"
+                _save(self.directory, self.summary)
+            else:
+                self.pending_c3 = c3
+            return
         evidence = usb._evidence_line(body)
         if evidence is not None:
             self._evidence(evidence)
@@ -397,6 +447,8 @@ class Recorder:
             return  # A metric before verified STATUS has no trusted device identity.
         line, uptime = parsed
         self._finish_evidence_pair()
+        self.pending_c3 = None
+        self.c3_invalid = False
         if self.last_uptime is not None and uptime < self.last_uptime:
             raise LongrunError("Gerätelaufzeit sprang zurück; Lauf beendet")
         now = self.monotonic()

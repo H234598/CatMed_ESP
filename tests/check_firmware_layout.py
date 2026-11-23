@@ -530,7 +530,8 @@ class OldC3Development001NoIO(guard_fixture.BuildIdContractNoIO):
         self.assertEqual(self.cfg.resolve(), self.cfg)
         self.assertTrue(LAYOUT_TOOL.is_file())
         import socket
-        import subprocess
+        # The fixture replaces process creation with a rejecting mock.
+        import subprocess  # nosec B404
         import serial
         from esptool.loader import ESPLoader
         for action in (lambda: open(REPO / "CMakeLists.txt"),
@@ -547,8 +548,9 @@ class OldC3Development001NoIO(guard_fixture.BuildIdContractNoIO):
                        lambda: socket.getaddrinfo("synthetic.invalid", 80),
                        lambda: socket.socket(),
                        lambda: socket.create_connection(("127.0.0.1", 1)),
-                       lambda: subprocess.Popen(["synthetic-command"]),
-                       lambda: os.system("synthetic-command"),
+                       # Both process calls are replaced by the fixture's rejecting mock.
+                       lambda: subprocess.Popen(["synthetic-command"]),  # nosec B603, B607
+                       lambda: os.system("synthetic-command"),  # nosec B605, B607
                        lambda: serial.Serial("synthetic-port"),
                        lambda: serial.serial_for_url("synthetic-port"),
                        lambda: ESPLoader.connect(None)):

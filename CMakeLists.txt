@@ -3,6 +3,7 @@ project(katmed_host LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 add_library(katmed_core firmware/components/katmed_core/katmed_core.cpp)
+set(KATMED_HOST_CONFIG_DIR "${CMAKE_CURRENT_SOURCE_DIR}/firmware/build-a61-c3/config" CACHE PATH "Generated C3 SDK config for host checks")
 target_include_directories(katmed_core PUBLIC firmware/components/katmed_core/include)
 target_compile_options(katmed_core PRIVATE -Wall -Wextra -Wpedantic -Werror)
 enable_testing()
@@ -53,21 +54,22 @@ set(ENABLE_TESTING OFF CACHE BOOL "" FORCE)
 set(MBEDTLS_FATAL_WARNINGS OFF CACHE BOOL "" FORCE)
 # Mirror ESP-IDF's component-level public include directory for the pinned port.
 include_directories("${KATMED_MBEDTLS_SOURCE}/../port/include"
-    "${CMAKE_CURRENT_SOURCE_DIR}/firmware/build-c3/config")
+    "${KATMED_HOST_CONFIG_DIR}")
 add_subdirectory("${KATMED_MBEDTLS_SOURCE}" "${CMAKE_CURRENT_BINARY_DIR}/mbedtls" EXCLUDE_FROM_ALL)
 target_include_directories(tfpsacrypto PUBLIC "${KATMED_MBEDTLS_SOURCE}/../port/include")
 set(LV_BUILD_CONF_PATH "${KATMED_IMAGE_COMPONENT}/host/lv_conf.h" CACHE PATH "" FORCE)
 set(CONFIG_LV_BUILD_DEMOS OFF CACHE BOOL "" FORCE)
 set(CONFIG_LV_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(CONFIG_LV_USE_THORVG_INTERNAL OFF CACHE BOOL "" FORCE)
-execute_process(
-    COMMAND /usr/bin/python3 "${CMAKE_CURRENT_SOURCE_DIR}/tools/prepare_lvgl_compat.py"
-            "${CMAKE_CURRENT_SOURCE_DIR}/firmware/managed_components/lvgl__lvgl"
+set(KATMED_HOST_LVGL_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/firmware/build-a61-c3/katmed-overrides/lvgl__lvgl" CACHE PATH
+    "Verified prepared LVGL tree from a C3 dependency build")
+execute_process(COMMAND /usr/bin/python3 "${CMAKE_CURRENT_SOURCE_DIR}/tools/prepare_iot_bridge_compat.py"
+    --verify-host-lvgl "${KATMED_HOST_LVGL_SOURCE}"
     RESULT_VARIABLE KATMED_LVGL_COMPAT_RESULT)
 if(NOT KATMED_LVGL_COMPAT_RESULT EQUAL 0)
-    message(FATAL_ERROR "Pinned LVGL TJpgD compatibility check failed")
+    message(FATAL_ERROR "Prepared host LVGL tree failed verification")
 endif()
-add_subdirectory(firmware/managed_components/lvgl__lvgl "${CMAKE_CURRENT_BINARY_DIR}/lvgl")
+add_subdirectory("${KATMED_HOST_LVGL_SOURCE}" "${CMAKE_CURRENT_BINARY_DIR}/lvgl")
 
 add_custom_target(verify_image_assets
     COMMAND "${KATMED_CATALOG_PYTHON}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/prepare_images.py" --verify-only
@@ -128,5 +130,7 @@ add_test(NAME shared_image_store_contract
     COMMAND /usr/bin/python3 "${CMAKE_CURRENT_SOURCE_DIR}/tests/host_image_store/check_real_catalog_import.py")
 add_test(NAME firmware_catalog_contract
     COMMAND /usr/bin/python3 "${CMAKE_CURRENT_SOURCE_DIR}/tests/check_firmware_catalog.py")
+set(KATMED_LAYOUT_PYTHON "/usr/bin/python3" CACHE FILEPATH
+    "Python interpreter with the ESP-IDF image parser for the layout contract")
 add_test(NAME firmware_layout_contract
-    COMMAND /usr/bin/python3 "${CMAKE_CURRENT_SOURCE_DIR}/tests/check_firmware_layout.py")
+    COMMAND "${KATMED_LAYOUT_PYTHON}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/check_firmware_layout.py")

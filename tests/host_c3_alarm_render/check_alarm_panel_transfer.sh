@@ -10,6 +10,8 @@ ui_override="${2:-}"
 "${tool_dir}/bootstrap/bin/cmake" -S "${repo_dir}/firmware/components/katmed_ui/host" \
     -B "${build_dir}" -G Ninja -DCMAKE_MAKE_PROGRAM="${tool_dir}/bootstrap/bin/ninja" \
     -DCMAKE_C_COMPILER=/usr/bin/gcc -DCMAKE_CXX_COMPILER=/usr/bin/g++ \
+    -DKATMED_UI_HOST_LVGL_SOURCE="${KATMED_HOST_LVGL_SOURCE:-${repo_dir}/firmware/build-a61-c3/katmed-overrides/lvgl__lvgl}" \
+    -DKATMED_HOST_CONFIG_DIR="${KATMED_HOST_CONFIG_DIR:-${repo_dir}/firmware/build-a61-c3/config}" \
     -DKATMED_UI_HOST_MEM34=ON >/dev/null
 "${tool_dir}/bootstrap/bin/cmake" --build "${build_dir}" --target check_ui_surface -j 8 >/dev/null
 cc -std=c11 -Wall -Wextra -Werror \
@@ -21,7 +23,7 @@ cc -std=c11 -Wall -Wextra -Werror \
     -I"${repo_dir}/firmware/components/katmed_core/include" \
     -I"${repo_dir}/firmware/components/katmed_reset/include" \
     -I"${repo_dir}/firmware/components/katmed_images/include" \
-    -I"${repo_dir}/firmware/managed_components/lvgl__lvgl" \
+    -I"${KATMED_HOST_LVGL_SOURCE:-${repo_dir}/firmware/build-a61-c3/katmed-overrides/lvgl__lvgl}" \
     -c "${repo_dir}/tests/host_c3_alarm_render/check_alarm_panel_transfer.c" \
     -o "${build_dir}/check_alarm_panel_transfer.o"
 mapfile -d '' objects < <(find "${build_dir}/CMakeFiles/check_ui_surface.dir" \
@@ -35,7 +37,7 @@ if [[ -n "${ui_override}" ]]; then
         -I"${repo_dir}/firmware/components/katmed_core/include" \
         -I"${repo_dir}/firmware/components/katmed_reset/include" \
         -I"${repo_dir}/firmware/components/katmed_images/include" \
-        -I"${repo_dir}/firmware/managed_components/lvgl__lvgl" \
+        -I"${KATMED_HOST_LVGL_SOURCE:-${repo_dir}/firmware/build-a61-c3/katmed-overrides/lvgl__lvgl}" \
         -c "${ui_override}" -o "${build_dir}/ui_override.o"
     objects+=("${build_dir}/ui_override.o")
 else

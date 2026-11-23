@@ -10,8 +10,8 @@ import tempfile
 from pathlib import Path
 
 
-def check(repo: Path) -> None:
-    lvgl = repo / "firmware/managed_components/lvgl__lvgl"
+def check(repo: Path, lvgl_root: Path | None = None) -> None:
+    lvgl = lvgl_root.resolve() if lvgl_root else repo / "firmware/build-a61-c3/katmed-overrides/lvgl__lvgl"
     with tempfile.TemporaryDirectory(prefix="katmed-tjpgd-link-") as temporary:
         root = Path(temporary)
         for name in ("tjpgd.c", "tjpgd.h", "tjpgdcnf.h"):
@@ -76,5 +76,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", type=Path,
                         default=Path(__file__).resolve().parents[2])
+    parser.add_argument("--lvgl-root", type=Path)
     args = parser.parse_args()
-    check(args.repo.resolve())
+    check(args.repo.resolve(), args.lvgl_root)

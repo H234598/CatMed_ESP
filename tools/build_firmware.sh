@@ -120,8 +120,6 @@ else
 fi
 python3 "${repo_dir}/tools/prepare_images.py" --verify-only > /dev/null
 source "${repo_dir}/tools/idf_env.sh"
-python3 "${repo_dir}/tools/prepare_iot_bridge_compat.py" \
-    --component "${repo_dir}/firmware/managed_components/espressif__iot_bridge" --idf "${IDF_PATH}"
 cd "${repo_dir}/firmware"
 # SDK config, CMake state and component lock are target-local. Never reuse a
 # C3 sdkconfig or dependency solution for C6 (or the other way around).

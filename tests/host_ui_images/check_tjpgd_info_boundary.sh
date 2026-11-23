@@ -4,10 +4,12 @@
 set -euo pipefail
 
 repo_dir="$(cd -- "$(dirname -- "$0")/../.." && pwd)"
+lvgl_root="${KATMED_HOST_LVGL_SOURCE:-${repo_dir}/firmware/build-a61-c3/katmed-overrides/lvgl__lvgl}"
 bash "${repo_dir}/tests/host_ui_images/check_ui_real_images.sh"
 
-ui_build="${repo_dir}/build-ui-host-32"
-image_build="${repo_dir}/build-ui-images"
+host_build_root="${KATMED_HOST_BUILD_ROOT:-${repo_dir}}"
+ui_build="${host_build_root}/build-ui-host-32"
+image_build="${host_build_root}/build-ui-images"
 out_dir="${ui_build}/real-images"
 
 mkdir -p "${image_build}"
@@ -20,7 +22,8 @@ flags=(-std=c11 -Wall -Wextra -Werror
     "-I${repo_dir}/firmware/components/katmed_core/include"
     "-I${repo_dir}/firmware/components/katmed_images/include"
     "-I${repo_dir}/firmware/components/katmed_images"
-    "-I${repo_dir}/firmware/managed_components/lvgl__lvgl")
+    "-I${repo_dir}/firmware/components/katmed_reset/include"
+    "-I${lvgl_root}")
 cc "${flags[@]}" -c "${repo_dir}/tests/host_ui_images/check_tjpgd_info_boundary.c" \
     -o "${out_dir}/check_tjpgd_info_boundary.o"
 
@@ -31,8 +34,8 @@ for target in c3 c6; do
         "${image_objects_root}/katmed_images_reader.c.o" \
         "${image_objects_root}/katmed_images_lvgl.c.o" \
         "${image_objects_root}/katmed_images_hash.c.o" \
-        "${ui_build}/lvgl/lib/liblvgl.a" \
-        "${image_build}/mbedtls/library/libmbedcrypto.a" -lm \
+        "${ui_build}/lvgl/liblvgl.a" \
+        "${image_build}/mbedtls/tf-psa-crypto/core/libtfpsacrypto.a" -lm \
         -o "${out_dir}/check_tjpgd_info_boundary_${target}"
 done
 

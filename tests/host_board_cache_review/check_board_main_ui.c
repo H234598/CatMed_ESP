@@ -33,6 +33,7 @@ static unsigned brightness_submits, brightness_previews;
 static uint16_t submitted_brightness;
 static uint8_t preview_brightness_value;
 static uint8_t stored_brightness = 37;
+static unsigned slider_releases, slider_press_losses, slider_resets;
 static uint16_t draw_buffer[320 * 16];
 static unsigned internal_free_reads, dma_free_reads;
 size_t heap_caps_get_free_size(uint32_t caps)
@@ -170,8 +171,7 @@ static void advance_time(void)
     fake_ms += 50;
     lv_tick_inc(50);
 }
-static void step(bool down, int screen_x, int screen_y, bool fail_io,
-                 bool fail_main_lock, bool poll_indev)
+static BoardTouch cache_touch(bool down, int screen_x, int screen_y, bool fail_io)
 {
     advance_time();
     raw_down = down;
@@ -185,6 +185,11 @@ static void step(bool down, int screen_x, int screen_y, bool fail_io,
     BoardTouch sample;
     BoardResult result = board_read_touch(&sample);
     assert(result == (fail_io ? BOARD_IO_ERROR : BOARD_OK));
+    return sample;
+}
+
+static void render_touch(const BoardTouch *sample, bool valid, bool fail_main_lock)
+{
     lock_failure = fail_main_lock;
     const unsigned lock_begin = render_trace_begin[KATMED_RENDER_INNER_LVGL_LOCK];
     const unsigned lock_end = render_trace_end[KATMED_RENDER_INNER_LVGL_LOCK];
@@ -192,8 +197,7 @@ static void step(bool down, int screen_x, int screen_y, bool fail_io,
     ClockSample clock = {.monotonic_ms = fake_ms, .domain = 1,
         .utc_ms = 1791973800000LL, .utc_valid = true,
         .quality = CLOCK_SYNCHRONIZED};
-    assert(render_ui(&state, &local, &clock, &sample,
-        result == BOARD_OK, false) == !fail_main_lock);
+    assert(render_ui(&state, &local, &clock, sample, valid, false) == !fail_main_lock);
     assert(render_trace_begin[KATMED_RENDER_INNER_LVGL_LOCK] == lock_begin + 1);
     assert(render_trace_end[KATMED_RENDER_INNER_LVGL_LOCK] == lock_end + 1);
     assert(!render_trace_open[KATMED_RENDER_INNER_LVGL_LOCK] &&
@@ -204,6 +208,13 @@ static void step(bool down, int screen_x, int screen_y, bool fail_io,
     if (fail_main_lock)
         assert(render_trace_begin[KATMED_RENDER_INNER_UI_RENDER] == ui_begin);
     lock_failure = false;
+}
+
+static void step(bool down, int screen_x, int screen_y, bool fail_io,
+                 bool fail_main_lock, bool poll_indev)
+{
+    BoardTouch sample = cache_touch(down, screen_x, screen_y, fail_io);
+    render_touch(&sample, !fail_io, fail_main_lock);
     if (poll_indev) lv_indev_read(lv_touch);
 }
 static lv_obj_t *find_matrix(lv_obj_t *parent, const char *text, uint32_t *button)
@@ -232,10 +243,30 @@ static lv_obj_t *find_slider(lv_obj_t *parent)
     }
     return NULL;
 }
-static void check_brightness_release(uint16_t target)
+static void observe_slider(lv_event_t *event)
 {
-    lv_obj_t *slider = find_slider(lv_screen_active());
-    assert(slider);
+    switch (lv_event_get_code(event)) {
+    case LV_EVENT_RELEASED: ++slider_releases; break;
+    case LV_EVENT_PRESS_LOST: ++slider_press_losses; break;
+    case LV_EVENT_INDEV_RESET: ++slider_resets; break;
+    default: break;
+    }
+}
+
+/* Choose the intended fraction of the visible track before any input. */
+static int brightness_x(lv_obj_t *slider, unsigned percent)
+{
+    lv_area_t area;
+    lv_obj_get_coords(slider, &area);
+    const int left = lv_obj_get_style_pad_left(slider, LV_PART_MAIN);
+    const int right = lv_obj_get_style_pad_right(slider, LV_PART_MAIN);
+    const int width = lv_obj_get_width(slider) - left - right;
+    assert(width >= 100 && percent >= 1 && percent <= 100);
+    return area.x1 + left + (width * (int)(percent - 1) + 49) / 99;
+}
+
+static int slider_center_y(lv_obj_t *slider)
+{
     lv_obj_update_layout(lv_screen_active());
     lv_area_t area;
     lv_obj_get_coords(slider, &area);
@@ -245,36 +276,74 @@ static void check_brightness_release(uint16_t target)
     lv_obj_get_coords(slider,&area);
     const int y = (area.y1 + area.y2) / 2;
     assert(y > 0 && y < LCD_HEIGHT);
-    const int from = area.x1 + 12;
-    step(false, from, y, false, false, true);
-    step(true, from, y, false, false, true);
-    int x = area.x1;
-    for (; x <= area.x2 + 12; ++x) {
-        step(true, x, y, false, false, true);
-        if (lv_slider_get_value(slider) == target) break;
-    }
-    const uint16_t held = (uint16_t)lv_slider_get_value(slider);
-    assert(x <= area.x2 + 12 && held == target);
+    return y;
+}
+
+static void drag_brightness(lv_obj_t *slider, int y, unsigned target)
+{
+    const int start = brightness_x(slider, 50);
+    step(false, 0, 0, false, false, true);
+    step(true, start, y, false, false, true);
+    step(true, brightness_x(slider, 70), y, false, false, true);
+    step(true, brightness_x(slider, target), y, false, false, true);
+    assert(lv_slider_get_value(slider) == (int32_t)target);
     assert(brightness_submits == 0 && brightness_previews > 0 &&
-           preview_brightness_value == held && shared_writes == 0 && local_writes == 0 &&
+           preview_brightness_value == target && shared_writes == 0 && local_writes == 0 &&
            ui_current_view() == SETTINGS && find_slider(lv_screen_active()) == slider);
-    step(false, x, y, false, false, true);
-    fprintf(stderr, "C%d brightness: held=%u submitted=%u\n",
-#if CONFIG_IDF_TARGET_ESP32C3
-            3,
-#else
-            6,
-#endif
-            held, submitted_brightness);
-    assert(brightness_submits == 1 && submitted_brightness == held &&
+}
+
+static void check_brightness_release(lv_obj_t *slider, int y, unsigned target)
+{
+    const int x = brightness_x(slider, target);
+    const bool changed = target != stored_brightness;
+    drag_brightness(slider, y, target);
+    /* C3 reports count zero. C6 reports Up with unrelated payload bytes. */
+    step(false, 0, 0, false, false, true);
+    assert(slider_releases == 1 && slider_press_losses == 0 && slider_resets == 0);
+    assert(brightness_submits == (unsigned)changed &&
            preview_brightness_value == 0 && shared_writes == 0 && local_writes == 0 &&
            ui_current_view() == SETTINGS && find_slider(lv_screen_active()) == slider);
+    if (changed) assert(submitted_brightness == target);
+    assert(lv_slider_get_value(slider) == (int32_t)target);
     assert(latest_base_x == x && latest_base_y == y);
-    step(false, x, y, false, false, true); /* Repeated valid finger-up keeps the point. */
-    assert(latest_base_x == x && latest_base_y == y && brightness_submits == 1);
-    step(false, x, y, true, false, true); /* Invalid read still cancels the contact. */
-    assert(latest_base_x == 0 && latest_base_y == 0 && indev_gate.quarantined &&
-           brightness_submits == 1);
+    step(false, 0, 0, false, false, true);
+    assert(latest_base_x == x && latest_base_y == y &&
+           brightness_submits == (unsigned)changed && slider_releases == 1);
+}
+
+static void check_brightness_abort(lv_obj_t *slider, int y, const char *mode)
+{
+    drag_brightness(slider, y, 40);
+    if (strcmp(mode, "press-lost") == 0) {
+        /* Ask LVGL to abandon this contact when it next sees physical Up. */
+        lv_indev_wait_release(lv_touch);
+        step(false, 0, 0, false, false, true);
+        assert(slider_press_losses == 1 && slider_resets == 0);
+    } else if (strcmp(mode, "stale-reset") == 0) {
+        /* The active sample ages out while the sampling task supplies no new item. */
+        for (unsigned i = 0; i < 4; ++i) advance_time();
+        lv_indev_read(lv_touch);
+        assert(slider_resets == 1 && indev_gate.quarantined);
+        render_touch(NULL, false, false);
+    } else {
+        BoardTouch invalid = cache_touch(false, 0, 0, true);
+        const bool main_first = strcmp(mode, "io-reset-main-first") == 0;
+        assert(main_first || strcmp(mode, "io-reset-lvgl-first") == 0);
+        if (main_first) render_touch(&invalid, false, false);
+        lv_indev_read(lv_touch);
+        assert(slider_resets == 1 && indev_gate.quarantined &&
+               latest_base_x == 0 && latest_base_y == 0);
+        assert(preview_brightness_value == 0 && lv_slider_get_value(slider) == stored_brightness);
+        if (!main_first) render_touch(&invalid, false, false);
+    }
+    step(false, 0, 0, false, false, true);
+    assert(slider_releases == 0 && brightness_submits == 0);
+    assert(preview_brightness_value == 0);
+    assert(lv_slider_get_value(slider) == stored_brightness);
+    drag_brightness(slider, slider_center_y(slider), 50);
+    step(false, 0, 0, false, false, true);
+    assert(slider_releases == 1 && brightness_submits == 1 &&
+           submitted_brightness == 50 && preview_brightness_value == 0);
 }
 static void button_center(const char *text, int *x, int *y)
 {
@@ -306,6 +375,10 @@ int main(int argc, char **argv)
     const bool shared = strcmp(argv[1], "shared") == 0;
     const bool local_setting = strcmp(argv[1], "local") == 0;
     const bool brightness = strcmp(argv[1], "brightness") == 0;
+    if (brightness && strcmp(argv[2], "factory") == 0)
+        stored_brightness = katmed_display_defaults().brightness;
+    if (brightness && strcmp(argv[2], "stored-minimum") == 0)
+        stored_brightness = 1;
     const bool delayed_poll = strcmp(argv[2], "delayed_poll") == 0;
     const bool failed_lock = strcmp(argv[2], "failed_lock") == 0;
     assert(alarm || shared || local_setting || brightness);
@@ -338,12 +411,34 @@ int main(int argc, char **argv)
     ui_render(&state, &local, alarm ? ALARM : SETTINGS, &clock);
     lv_obj_update_layout(lv_screen_active());
     if (brightness) {
-        const unsigned target = (unsigned)strtoul(argv[2], NULL, 10);
-        assert(target == 1 || target == 40 || target == 50 || target == 100);
-        check_brightness_release((uint16_t)target);
+        lv_obj_t *slider = find_slider(lv_screen_active());
+        assert(slider && lv_slider_get_value(slider) == stored_brightness);
+        lv_obj_add_event_cb(slider, observe_slider, LV_EVENT_ALL, NULL);
+        const int y = slider_center_y(slider);
+        if (strcmp(argv[2], "factory") == 0) {
+            assert(stored_brightness == 100);
+            check_brightness_release(slider, y, 40);
+        } else if (strcmp(argv[2], "stored-minimum") == 0) {
+            check_brightness_release(slider, y, 50);
+        } else if (strcmp(argv[2], "press-lost") == 0 || strcmp(argv[2], "stale-reset") == 0 ||
+                   strcmp(argv[2], "io-reset-main-first") == 0 ||
+                   strcmp(argv[2], "io-reset-lvgl-first") == 0) {
+            check_brightness_abort(slider, y, argv[2]);
+        } else {
+            const unsigned target = (unsigned)strtoul(argv[2], NULL, 10);
+            assert(target == 1 || target == 37 || target == 40 || target == 50 || target == 100);
+            check_brightness_release(slider, y, target);
+        }
         lv_indev_delete(lv_touch);
         lv_display_delete(lv_display);
         lv_deinit();
+        printf("C%d brightness: %s PASS\n",
+#if CONFIG_IDF_TARGET_ESP32C3
+               3,
+#else
+               6,
+#endif
+               argv[2]);
         return 0;
     }
     int x = 90, y = 100;

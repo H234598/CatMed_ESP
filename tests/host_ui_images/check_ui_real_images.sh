@@ -3,12 +3,15 @@
 set -euo pipefail
 
 repo_dir="$(cd -- "$(dirname -- "$0")/../.." && pwd)"
+lvgl_root="${KATMED_HOST_LVGL_SOURCE:-${repo_dir}/firmware/build-a61-c3/katmed-overrides/lvgl__lvgl}"
+host_config="${KATMED_HOST_CONFIG_DIR:-${repo_dir}/firmware/build-a61-c3/config}"
+host_build_root="${KATMED_HOST_BUILD_ROOT:-${repo_dir}}"
 source "${repo_dir}/tools/idf_env.sh"
 tool_dir="${KATMED_TOOLS_DIR:-${HOME}/.local/share/katmed-tools}"
 cmake_bin="${tool_dir}/bootstrap/bin/cmake"
 ninja_bin="${tool_dir}/bootstrap/bin/ninja"
-ui_build="${repo_dir}/build-ui-host-32"
-image_build="${repo_dir}/build-ui-images"
+ui_build="${host_build_root}/build-ui-host-32"
+image_build="${host_build_root}/build-ui-images"
 out_dir="${ui_build}/real-images"
 
 mkdir -p "${image_build}"
@@ -18,11 +21,13 @@ python3 "${repo_dir}/tests/image_stream_fixture.py" c6 "${image_build}/c6_image_
 "${cmake_bin}" -S "${repo_dir}/firmware/components/katmed_ui/host" \
     -B "${ui_build}" -G Ninja -DCMAKE_MAKE_PROGRAM="${ninja_bin}" \
     -DCMAKE_C_COMPILER=/usr/bin/gcc -DCMAKE_CXX_COMPILER=/usr/bin/g++ \
-    -DKATMED_UI_HOST_MEM34=ON
+    -DKATMED_UI_HOST_MEM34=ON -DKATMED_UI_HOST_LVGL_SOURCE="${lvgl_root}" \
+    -DKATMED_HOST_CONFIG_DIR="${host_config}"
 "${cmake_bin}" --build "${ui_build}" --target check_ui_surface -j 8
 "${cmake_bin}" -S "${repo_dir}/firmware/components/katmed_images/host" \
     -B "${image_build}" -G Ninja -DCMAKE_MAKE_PROGRAM="${ninja_bin}" \
-    -DCMAKE_C_COMPILER=/usr/bin/gcc -DCMAKE_CXX_COMPILER=/usr/bin/g++
+    -DCMAKE_C_COMPILER=/usr/bin/gcc -DCMAKE_CXX_COMPILER=/usr/bin/g++ \
+    -DKATMED_HOST_LVGL_SOURCE="${lvgl_root}" -DKATMED_HOST_CONFIG_DIR="${host_config}"
 "${cmake_bin}" --build "${image_build}" \
     --target check_image_reader_c3 check_image_reader_c6 -j 8
 mkdir -p "${out_dir}"
@@ -30,11 +35,13 @@ mkdir -p "${out_dir}"
 flags=(-std=c11 -Wall -Wextra -Werror
     "-DLV_CONF_PATH=\"${repo_dir}/firmware/components/katmed_ui/host/lv_conf_34k.h\""
     -DLV_KCONFIG_IGNORE -DLV_LVGL_H_INCLUDE_SIMPLE
+    "-I${repo_dir}/firmware/boards"
     "-I${repo_dir}/firmware/components/katmed_ui/include"
     "-I${repo_dir}/firmware/components/katmed_core/include"
     "-I${repo_dir}/firmware/components/katmed_images/include"
     "-I${repo_dir}/firmware/components/katmed_images"
-    "-I${repo_dir}/firmware/managed_components/lvgl__lvgl")
+    "-I${repo_dir}/firmware/components/katmed_reset/include"
+    "-I${lvgl_root}")
 cc "${flags[@]}" -c "${repo_dir}/firmware/components/katmed_ui/ui.c" -o "${out_dir}/ui.o"
 cc "${flags[@]}" -c "${repo_dir}/tests/host_ui_images/check_ui_real_images.c" \
     -o "${out_dir}/check_ui_real_images.o"
@@ -44,10 +51,15 @@ ui_objects=(
     "${ui_objects_root}/katmed_ui/navigation.c.o"
     "${ui_objects_root}/katmed_ui/clock_view.c.o"
     "${ui_objects_root}/katmed_ui/morse.c.o"
+    "${ui_objects_root}/katmed_ui/i18n_catalog.c.o"
+    "${ui_objects_root}/katmed_ui/i18n_date.c.o"
+    "${ui_objects_root}/katmed_ui/katmed_font_i18n_12.c.o"
+    "${ui_objects_root}/katmed_ui/katmed_font_i18n_14.c.o"
     "${ui_objects_root}/katmed_ui/katmed_font_10.c.o"
     "${ui_objects_root}/katmed_ui/katmed_font_12.c.o"
     "${ui_objects_root}/katmed_ui/katmed_font_14.c.o"
     "${ui_objects_root}/katmed_ui/katmed_font_26.c.o"
+    "${ui_objects_root}/katmed_reset/katmed_reset_journal.c.o"
     "${ui_objects_root}/katmed_core/katmed_core.cpp.o")
 for target in c3 c6; do
     image_objects_root="${image_build}/CMakeFiles/check_image_reader_${target}.dir${repo_dir}/firmware/components/katmed_images"
@@ -59,8 +71,8 @@ for target in c3 c6; do
         -o "${out_dir}/catalog_${target}.o"
     g++ "${out_dir}/check_ui_real_images.o" "${out_dir}/ui.o" \
         "${out_dir}/catalog_${target}.o" "${ui_objects[@]}" "${image_objects[@]}" \
-        "${ui_build}/lvgl/lib/liblvgl.a" \
-        "${image_build}/mbedtls/library/libmbedcrypto.a" -lm \
+        "${ui_build}/lvgl/liblvgl.a" \
+        "${image_build}/mbedtls/tf-psa-crypto/core/libtfpsacrypto.a" -lm \
         -o "${out_dir}/check_ui_real_images_${target}"
 done
 
@@ -74,8 +86,8 @@ image_objects=(
     "${image_objects_root}/katmed_images_hash.c.o")
 g++ "${out_dir}/check_ui_real_images_120.o" "${out_dir}/ui.o" \
     "${out_dir}/catalog_c3.o" "${ui_objects[@]}" "${image_objects[@]}" \
-    "${ui_build}/lvgl/lib/liblvgl.a" \
-    "${image_build}/mbedtls/library/libmbedcrypto.a" -lm \
+    "${ui_build}/lvgl/liblvgl.a" \
+    "${image_build}/mbedtls/tf-psa-crypto/core/libtfpsacrypto.a" -lm \
     -o "${out_dir}/check_ui_real_images_c3_120"
 
 cc "${flags[@]}" -DDRAW_LINES=80 -c \
@@ -83,8 +95,8 @@ cc "${flags[@]}" -DDRAW_LINES=80 -c \
     -o "${out_dir}/check_ui_real_images_80.o"
 g++ "${out_dir}/check_ui_real_images_80.o" "${out_dir}/ui.o" \
     "${out_dir}/catalog_c3.o" "${ui_objects[@]}" "${image_objects[@]}" \
-    "${ui_build}/lvgl/lib/liblvgl.a" \
-    "${image_build}/mbedtls/library/libmbedcrypto.a" -lm \
+    "${ui_build}/lvgl/liblvgl.a" \
+    "${image_build}/mbedtls/tf-psa-crypto/core/libtfpsacrypto.a" -lm \
     -o "${out_dir}/check_ui_real_images_c3_80"
 
 timeout 20s "${out_dir}/check_ui_real_images_c3" 240 240 heap \

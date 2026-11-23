@@ -8,7 +8,8 @@ import os
 from pathlib import Path
 import socket
 import stat
-import subprocess
+# The fixture replaces process creation with a rejecting mock.
+import subprocess  # nosec B404
 import sys
 import tempfile
 import unittest

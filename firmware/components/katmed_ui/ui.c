@@ -784,6 +784,12 @@ static void brightness_changed(lv_event_t *event)
         return;
     }
     if(code==LV_EVENT_PRESS_LOST){cancel_brightness_preview();sync_brightness_slider();return;}
+    if(code==LV_EVENT_INDEV_RESET){
+        /* The latest touch may expire without a fresh sample reaching Main. */
+        if(ui.brightness_dragging)cancel_brightness_preview();
+        sync_brightness_slider();
+        return;
+    }
     if(code!=LV_EVENT_RELEASED || !ui.brightness_dragging)return;
     ui.brightness_dragging=false;
     const uint16_t value=(uint16_t)lv_slider_get_value(slider);

@@ -14,22 +14,24 @@ set(ENABLE_PROGRAMS OFF CACHE BOOL "" FORCE)
 set(ENABLE_TESTING OFF CACHE BOOL "" FORCE)
 set(MBEDTLS_FATAL_WARNINGS OFF CACHE BOOL "Warnings in pinned SDK code are reported" FORCE)
 set(Python3_EXECUTABLE "/usr/bin/python3" CACHE FILEPATH "Image preparation Python with Pillow" FORCE)
+set(KATMED_HOST_CONFIG_DIR "${KATMED_ROOT}/firmware/build-a61-c3/config" CACHE PATH "Generated C3 SDK config for host checks")
 include_directories("${KATMED_MBEDTLS_SOURCE}/../port/include"
-    "${KATMED_ROOT}/firmware/build-c3/config")
+    "${KATMED_HOST_CONFIG_DIR}")
 add_subdirectory("${KATMED_MBEDTLS_SOURCE}" "${CMAKE_CURRENT_BINARY_DIR}/mbedtls" EXCLUDE_FROM_ALL)
 target_include_directories(tfpsacrypto PUBLIC "${KATMED_MBEDTLS_SOURCE}/../port/include")
 set(LV_BUILD_CONF_PATH "${CMAKE_CURRENT_LIST_DIR}/lv_conf.h" CACHE PATH "" FORCE)
 set(CONFIG_LV_BUILD_DEMOS OFF CACHE BOOL "" FORCE)
 set(CONFIG_LV_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(CONFIG_LV_USE_THORVG_INTERNAL OFF CACHE BOOL "" FORCE)
-execute_process(
-    COMMAND "${Python3_EXECUTABLE}" "${KATMED_ROOT}/tools/prepare_lvgl_compat.py"
-            "${KATMED_ROOT}/firmware/managed_components/lvgl__lvgl"
+set(KATMED_HOST_LVGL_SOURCE "${KATMED_ROOT}/firmware/build-a61-c3/katmed-overrides/lvgl__lvgl" CACHE PATH
+    "Verified prepared LVGL tree from a C3 dependency build")
+execute_process(COMMAND ${Python3_EXECUTABLE} "${KATMED_ROOT}/tools/prepare_iot_bridge_compat.py"
+    --verify-host-lvgl "${KATMED_HOST_LVGL_SOURCE}"
     RESULT_VARIABLE KATMED_LVGL_COMPAT_RESULT)
 if(NOT KATMED_LVGL_COMPAT_RESULT EQUAL 0)
-    message(FATAL_ERROR "Pinned LVGL TJpgD compatibility preparation failed")
+    message(FATAL_ERROR "Prepared host LVGL tree failed verification")
 endif()
-add_subdirectory("${KATMED_ROOT}/firmware/managed_components/lvgl__lvgl" "${CMAKE_CURRENT_BINARY_DIR}/lvgl")
+add_subdirectory("${KATMED_HOST_LVGL_SOURCE}" "${CMAKE_CURRENT_BINARY_DIR}/lvgl")
 set(Python3_EXECUTABLE "/usr/bin/python3" CACHE FILEPATH "Image preparation Python with Pillow" FORCE)
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 

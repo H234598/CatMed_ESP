@@ -138,6 +138,21 @@ static void check_log(void)
     assert(strstr(native_line,"jpeg_pool_v=1 jpeg_pool_free=4294967295 jpeg_pool_largest=4294967295 touch_result=4"));
     assert(strlen(native_line)+32<512);
 
+    KatmedRuntimeMetricInput c3 = {.c3_touch_present=true, .uptime_ms=UINT64_MAX,
+        .c3_period=UINT32_MAX, .c3_coverage=0, .c3_contact_state=2,
+        .c3_clean_release=UINT32_MAX, .c3_interrupted=UINT32_MAX,
+        .c3_invalid=UINT32_MAX, .c3_stale=UINT32_MAX,
+        .c3_overflow=UINT32_MAX, .c3_discard=UINT32_MAX};
+    katmed_runtime_c3_touch_log(&c3, UINT64_MAX, UINT64_MAX);
+    assert(log_count==5 && strcmp(log_tag,"katmed_c3_touch")==0);
+    assert(strstr(log_line,"schema=1 sample_seq=18446744073709551615 ")==log_line);
+    assert(strstr(log_line,"overflow=4294967295 discard=4294967295"));
+    assert(strlen("I (4294967295) katmed_c3_touch: ")+strlen(log_line)<=767);
+    katmed_runtime_c3_touch_log(&c3,0,1);
+    c3.c3_touch_present=false;
+    katmed_runtime_c3_touch_log(&c3,1,1);
+    assert(log_count==5);
+
 }
 
 int main(void)

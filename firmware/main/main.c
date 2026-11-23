@@ -3017,6 +3017,7 @@ void app_main(void)
                     dhcp_diag.resource_dma_free,dhcp_diag.resource_dma_largest,
                     dhcp_diag.resource_result);
 #endif
+                katmed_runtime_c3_touch_log(&metrics,sequence,runtime.boot_domain);
                 katmed_runtime_evidence_log(&state,&health);
             }
         }

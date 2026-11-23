@@ -3,7 +3,8 @@ project(katmed_ui_host LANGUAGES C CXX)
 
 set(ROOT "${CMAKE_CURRENT_LIST_DIR}/../../../../")
 set(UI "${CMAKE_CURRENT_LIST_DIR}/..")
-set(KATMED_UI_HOST_LVGL_SOURCE "${ROOT}/firmware/managed_components/lvgl__lvgl"
+set(KATMED_HOST_CONFIG_DIR "${ROOT}/firmware/build-a61-c3/config" CACHE PATH "Generated C3 SDK config for host checks")
+set(KATMED_UI_HOST_LVGL_SOURCE "${ROOT}/firmware/build-a61-c3/katmed-overrides/lvgl__lvgl"
     CACHE PATH "LVGL source for the existing host tests")
 option(KATMED_UI_HOST_LVGL_ONLY "Build only the LVGL host library" OFF)
 option(KATMED_UI_HOST_MEM34 "Exercise the firmware's 34 KiB LVGL pool" OFF)
@@ -16,6 +17,12 @@ endif()
 set(CONFIG_LV_BUILD_DEMOS OFF CACHE BOOL "" FORCE)
 set(CONFIG_LV_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(CONFIG_LV_USE_THORVG_INTERNAL OFF CACHE BOOL "" FORCE)
+execute_process(COMMAND /usr/bin/python3 "${ROOT}/tools/prepare_iot_bridge_compat.py"
+    --verify-host-lvgl "${KATMED_UI_HOST_LVGL_SOURCE}"
+    RESULT_VARIABLE KATMED_HOST_LVGL_RESULT)
+if(NOT KATMED_HOST_LVGL_RESULT EQUAL 0)
+    message(FATAL_ERROR "Prepared host LVGL tree failed verification")
+endif()
 add_subdirectory("${KATMED_UI_HOST_LVGL_SOURCE}" "${CMAKE_CURRENT_BINARY_DIR}/lvgl")
 if(KATMED_UI_HOST_LVGL_ONLY)
     return()
@@ -146,7 +153,7 @@ set(ENABLE_PROGRAMS OFF CACHE BOOL "" FORCE)
 set(ENABLE_TESTING OFF CACHE BOOL "" FORCE)
 set(MBEDTLS_FATAL_WARNINGS OFF CACHE BOOL "" FORCE)
 include_directories("${KATMED_MBEDTLS_SOURCE}/../port/include"
-    "${ROOT}/firmware/build-c3/config")
+    "${KATMED_HOST_CONFIG_DIR}")
 add_subdirectory("${KATMED_MBEDTLS_SOURCE}" "${CMAKE_CURRENT_BINARY_DIR}/mbedtls" EXCLUDE_FROM_ALL)
 target_include_directories(tfpsacrypto PUBLIC "${KATMED_MBEDTLS_SOURCE}/../port/include")
 add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/refinement_catalog.c"

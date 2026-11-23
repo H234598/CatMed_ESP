@@ -7,7 +7,9 @@ build="${KATMED_BOARD_CACHE_BUILD_DIR:-${repo}/build-board-cache-review}"
 "${tool_dir}/bootstrap/bin/cmake" -S "${repo}/firmware/components/katmed_ui/host" \
     -B "${build}" -G Ninja \
     -DCMAKE_MAKE_PROGRAM="${tool_dir}/bootstrap/bin/ninja" \
-    -DCMAKE_C_COMPILER=/usr/bin/gcc -DCMAKE_CXX_COMPILER=/usr/bin/g++
+    -DCMAKE_C_COMPILER=/usr/bin/gcc -DCMAKE_CXX_COMPILER=/usr/bin/g++ \
+    -DKATMED_UI_HOST_LVGL_SOURCE="${KATMED_HOST_LVGL_SOURCE:-${repo}/firmware/build-a61-c3/katmed-overrides/lvgl__lvgl}" \
+    -DKATMED_HOST_CONFIG_DIR="${KATMED_HOST_CONFIG_DIR:-${repo}/firmware/build-a61-c3/config}"
 "${tool_dir}/bootstrap/bin/cmake" --build "${build}" --target lvgl -j 8
 
 flags=(-std=c11 -D_DEFAULT_SOURCE -Wall -Wextra -Werror -Wno-unused-variable
@@ -32,7 +34,7 @@ flags=(-std=c11 -D_DEFAULT_SOURCE -Wall -Wextra -Werror -Wno-unused-variable
     "-I${repo}/firmware/components/katmed_reset/include"
     "-I${repo}/firmware/components/katmed_mesh/include"
     "-I${repo}/firmware/components/katmed_time/include"
-    "-I${repo}/firmware/managed_components/lvgl__lvgl")
+    "-I${KATMED_HOST_LVGL_SOURCE:-${repo}/firmware/build-a61-c3/katmed-overrides/lvgl__lvgl}")
 
 for source in \
     firmware/components/board/board_indev_gate.c \
@@ -76,7 +78,8 @@ for target in 3 6; do
         done
     fi
 done
-for target in 1 40 50 100; do
-    timeout 20s "${build}/review_c3" brightness "${target}"
-    timeout 20s "${build}/review_c6" brightness "${target}"
+for scenario in 1 37 40 50 100 factory stored-minimum press-lost stale-reset \
+    io-reset-main-first io-reset-lvgl-first; do
+    timeout 20s "${build}/review_c3" brightness "${scenario}"
+    timeout 20s "${build}/review_c6" brightness "${scenario}"
 done

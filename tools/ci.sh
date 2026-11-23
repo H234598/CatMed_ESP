@@ -71,6 +71,8 @@ elif [[ "$mode" == dependencies || "$mode" == firmware ]]; then
         -D "SDKCONFIG=$repo/firmware/build-$board/sdkconfig" \
         -D "SDKCONFIG_DEFAULTS=sdkconfig.defaults;boards/$board.defaults" "$action")
     if [[ "$mode" == firmware ]]; then
+        KATMED_IDF_BUILD="$repo/firmware/build-$board" KATMED_IDF_TARGET="$target" \
+            python tests/check_idf6_override_binding.py
         python tools/check_firmware_layout.py "$board"
         size=$(python -c "import csv; print(next(int(r[4].strip(),0) for r in csv.reader(open('firmware/boards/$board.partitions.csv')) if r and r[0]=='user_images'))")
         "firmware/build-$board/littlefs_py_venv/bin/python" tools/check_image_seed.py \
@@ -79,6 +81,9 @@ elif [[ "$mode" == dependencies || "$mode" == firmware ]]; then
     fi
 elif [[ "$mode" == host ]]; then
     : "${IDF_PATH:?Use the ESP-IDF 6.1 runner environment}"
+    export KATMED_HOST_LVGL_SOURCE="${repo}/firmware/build-c3/katmed-overrides/lvgl__lvgl"
+    export KATMED_HOST_LVGL_INCLUDE="$KATMED_HOST_LVGL_SOURCE"
+    export KATMED_HOST_CONFIG_DIR="${repo}/firmware/build-c3/config"
     mbedtls_source="${IDF_PATH}/components/mbedtls/mbedtls"
     if [[ ! -f "${mbedtls_source}/include/mbedtls/ssl.h" ||
           ! -f "${mbedtls_source}/tf-psa-crypto/include/mbedtls/md.h" ]]; then
@@ -91,11 +96,16 @@ elif [[ "$mode" == host ]]; then
     python3 tests/host_i18n/check_catalog.py
     python3 tools/build_i18n_assets.py display --check
     cmake -S . -B build-ci-host -G Ninja \
-        -DKATMED_MBEDTLS_SOURCE="${mbedtls_source}"
+        -DKATMED_MBEDTLS_SOURCE="${mbedtls_source}" \
+        -DKATMED_HOST_LVGL_SOURCE="${repo}/firmware/build-c3/katmed-overrides/lvgl__lvgl" \
+        -DKATMED_HOST_CONFIG_DIR="${repo}/firmware/build-c3/config" \
+        -DKATMED_LAYOUT_PYTHON="$(command -v python)"
     cmake --build build-ci-host -j 4
     ctest --test-dir build-ci-host --output-on-failure
     cmake -S firmware/components/katmed_ui/host -B build-ci-ui -G Ninja \
         -DKATMED_UI_HOST_MEM34=ON \
+        -DKATMED_UI_HOST_LVGL_SOURCE="${repo}/firmware/build-c3/katmed-overrides/lvgl__lvgl" \
+        -DKATMED_HOST_CONFIG_DIR="${repo}/firmware/build-c3/config" \
         -DKATMED_MBEDTLS_SOURCE="${mbedtls_source}"
     cmake --build build-ci-ui -j 4
     ctest --test-dir build-ci-ui --output-on-failure
@@ -110,6 +120,7 @@ elif [[ "$mode" == host ]]; then
     ln -sf "$(command -v ninja)" "$host_bootstrap/bootstrap/bin/ninja"
     KATMED_TOOLS_DIR="$host_bootstrap" bash tests/host_c3_alarm_render/check_alarm_panel_transfer.sh "$repo/build-ci-c3-alarm-panel-transfer"
     KATMED_TOOLS_DIR="$host_bootstrap" KATMED_BOARD_CACHE_BUILD_DIR="$repo/build-ci-board-cache" KATMED_BOARD_CACHE_ONLY_BRIGHTNESS=1 bash tests/host_board_cache_review/check_board_main_ui.sh
+    KATMED_BOARD_CACHE_BUILD_DIR="$repo/build-ci-board-cache" KATMED_TEST_BUILD_DIR="$repo/build-ci-board-cache/c3-health" bash tests/host_board_cache_review/check_c3_touch_health.sh
     bash tests/host_reset_physical/check.sh
     KATMED_TOOLS_DIR="$host_bootstrap" bash tests/host_reset_physical/check_ui.sh
     KATMED_TOOLS_DIR="$host_bootstrap" bash tests/host_main/check_main_contact.sh

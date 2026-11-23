@@ -749,7 +749,8 @@ static void test_brightness_preview_bridge(void)
     display_ui_poll(&runtime);display_policy_step(&runtime,&now);
     assert(writes==before+1 && applied_brightness==45 && !runtime.brightness_preview);
     UiRequest done;UiSubmitResult result;
-    assert(display_mb_result(&display_mailbox,&done,&result) && result==UI_SUBMIT_COMMITTED);
+    assert(display_mb_result(&display_mailbox,&done,&result) && result==UI_SUBMIT_COMMITTED &&
+           done.kind==UI_REQUEST_SET_BRIGHTNESS && done.value.display_value==45);
     initialize_runtime();assert(runtime.store.record.display.brightness==45); // durable reopen
     display_ui_publish(&runtime);runtime.brightness_applied=45;before=writes;
     assert(brightness_preview(&runtime,60));display_ui_poll(&runtime);display_policy_step(&runtime,&now);
@@ -768,8 +769,29 @@ static void test_brightness_preview_bridge(void)
     assert(submit_ui_dispatch(&runtime,&request)==UI_SUBMIT_QUEUED);display_ui_poll(&runtime);
     assert(display_mb_result(&display_mailbox,&done,&result) && result==UI_SUBMIT_UNAVAILABLE && writes==before);
     fail_brightness=false;
+
+    /* A real minimum is distinguishable from a cancel (zero) and survives reopen. */
+    assert(brightness_preview(&runtime,1));
+    display_ui_poll(&runtime);display_policy_step(&runtime,&now);
+    assert(applied_brightness==1 && writes==before && runtime.store.record.display.brightness==45);
+    request.value.display_value=1;
+    assert(submit_ui_dispatch(&runtime,&request)==UI_SUBMIT_QUEUED);
+    display_ui_poll(&runtime);display_policy_step(&runtime,&now);
+    assert(display_mb_result(&display_mailbox,&done,&result) && result==UI_SUBMIT_COMMITTED &&
+           done.kind==UI_REQUEST_SET_BRIGHTNESS && done.value.display_value==1);
+    KatmedDisplaySettings snapshot;
+    display_settings(&runtime,&snapshot);
+    assert(writes==before+1 && snapshot.brightness==1 && applied_brightness==1 &&
+           !runtime.brightness_preview);
+    initialize_runtime();display_ui_publish(&runtime);
+    assert(runtime.store.record.display.brightness==1);
+    const unsigned after_reopen=writes; // opening the Store persists its boot identity
+    assert(submit_ui_dispatch(&runtime,&request)==UI_SUBMIT_QUEUED);
+    display_ui_poll(&runtime);
+    assert(display_mb_result(&display_mailbox,&done,&result) && result==UI_SUBMIT_COMMITTED &&
+           writes==after_reopen);
     assert(!runtime.display_policy.wake_until_ms && !fake_mesh_notifications);
-    puts("brightness preview: app-loop sole Board/Store owner, coalescing, zero preview writes, one release commit, cancel/reopen/unknown/Board failure rollback PASS");
+    puts("brightness preview: coalescing, zero preview writes, release and minimum commits, reopen, duplicate, Store/Board rollback PASS");
 }
 
 static void test_local_display_settings(void) {

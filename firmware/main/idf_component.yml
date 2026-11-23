@@ -1,11 +1,18 @@
 dependencies:
   idf: "==6.1"
   espressif/mesh_lite: "==1.0.2"
-  lvgl/lvgl: "==9.6.0"
+  lvgl/lvgl:
+    version: "==9.6.0"
+    override_path: "${KATMED_BUILD_OVERRIDES}/lvgl__lvgl"
   espressif/esp_lvgl_port: "==2.9.0"
   espressif/esp_lcd_gc9a01: "==2.0.4"
   espressif/esp_lcd_touch: "==1.2.1"
-  dannybackx/acmeclient: "==1.1.1"
+  dannybackx/acmeclient:
+    version: "==1.1.1"
+    override_path: "${KATMED_BUILD_OVERRIDES}/dannybackx__acmeclient"
+  espressif/iot_bridge:
+    version: "==1.0.1"
+    override_path: "${KATMED_BUILD_OVERRIDES}/espressif__iot_bridge"
   espressif/cjson: "==1.7.19"
   espressif/qrcode: "==0.1.0"
   joltwallet/littlefs: "==1.23.0"

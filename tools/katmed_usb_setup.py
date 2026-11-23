@@ -519,6 +519,41 @@ def _metric_line(raw: bytes) -> tuple[str, int] | None:
     return "Messung " + " ".join(values), uptime
 
 
+C3_TOUCH_KEYS = (
+    "schema", "sample_seq", "uptime_ms", "boot_domain", "period", "coverage",
+    "contact_state", "clean_release", "interrupted", "invalid", "stale", "overflow", "discard",
+)
+
+
+def _c3_touch_line(raw: bytes) -> dict[str, int] | None:
+    if len(raw) > MAX_DIAG_CHARS:
+        return None
+    match = re.fullmatch(rb"I \([0-9]{1,10}\) katmed_c3_touch: (.+)", raw)
+    if match is None:
+        return None
+    tokens = match.group(1).split(b" ")
+    if len(tokens) != len(C3_TOUCH_KEYS):
+        return None
+    fields = {}
+    for key, token in zip(C3_TOUCH_KEYS, tokens):
+        prefix = key.encode("ascii") + b"="
+        if not token.startswith(prefix):
+            return None
+        value = token[len(prefix):]
+        if re.fullmatch(rb"[0-9]{1,20}", value) is None:
+            return None
+        number = int(value)
+        limit = 0xffffffffffffffff if key in ("sample_seq", "uptime_ms", "boot_domain") else 0xffffffff
+        if number > limit:
+            return None
+        fields[key] = number
+    if (fields["schema"] != 1 or not fields["sample_seq"] or not fields["boot_domain"] or
+            fields["coverage"] > 1 or fields["contact_state"] > 2 or
+            (fields["coverage"] and fields["period"] in (0, 0xffffffff))):
+        return None
+    return fields
+
+
 def _evidence_line(raw: bytes) -> tuple[str, dict[str, int]] | None:
     """Parse only the fixed, bounded numeric firmware records."""
     if len(raw) > MAX_DIAG_CHARS:
@@ -1039,6 +1074,7 @@ def read_boot_pair(port: SerialPort, *, expect_device: str,
     state: dict[str, int] | None = None
     count = 0
     total = 0
+    c3_seen = False
     while monotonic() < deadline and count < 64 and total < 32 * 1024:
         try:
             raw = port.read_until(b"\n", MAX_DIAG_CHARS + 2)
@@ -1056,7 +1092,15 @@ def read_boot_pair(port: SerialPort, *, expect_device: str,
         if b"\r" in body or body.startswith(BOOT_MARKERS) or body.startswith(b"KM1 "):
             raise SetupError("Gebundene Diagnose enthält einen Neustart oder Fremdstatus")
         recognized = body.startswith((b"I (",)) and any(
-            tag in body[:64] for tag in (b"katmed_metrics:", b"katmed_state:", b"katmed_health:", b"katmed_net:", b"katmed_dhcp:", b"katmed_txres:"))
+            tag in body[:64] for tag in (b"katmed_metrics:", b"katmed_state:", b"katmed_health:", b"katmed_net:", b"katmed_dhcp:", b"katmed_txres:", b"katmed_c3_touch:"))
+        parsed_c3 = _c3_touch_line(body)
+        if b"katmed_c3_touch:" in body:
+            if (parsed_c3 is None or c3_seen or metric_uptime is None or state is not None or
+                    parsed_c3["uptime_ms"] != metric_uptime or parsed_c3["boot_domain"] != bound["domain"]):
+                raise SetupError("C3-Diagnose ist beschädigt oder nicht zugeordnet")
+            c3_seen = True
+            bound["c3_touch"] = parsed_c3
+            continue
         parsed_metric = _metric_line(body)
         parsed_evidence = _evidence_line(body)
         if recognized and parsed_metric is None and parsed_evidence is None:
@@ -1074,6 +1118,8 @@ def read_boot_pair(port: SerialPort, *, expect_device: str,
             if kind == "state" and state is None:
                 state = fields
             elif kind == "health" and state is not None and fields["sample_seq"] == state["sample_seq"]:
+                if c3_seen and bound["c3_touch"]["sample_seq"] != fields["sample_seq"]:
+                    raise SetupError("C3-Diagnose gehört zu einem anderen Zyklus")
                 bound["pair_uptime_ms"] = metric_uptime
                 bound["pair_sequence"] = fields["sample_seq"]
                 return bound
