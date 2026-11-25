@@ -43,10 +43,11 @@ vm.runInNewContext(script.replace("const state = {", "const state = window.__tes
   .replace("void start();", "window.__testStartup=start();")
   .replace("async function loadRuntimeEinrichtung() {", "window.__loadRuntimeSetup=loadRuntimeEinrichtung; async function loadRuntimeEinrichtung() {")
   .replace("async function loadAcmeIdentifier() {", "window.__loadAcmeIdentifier=loadAcmeIdentifier; async function loadAcmeIdentifier() {")
+  .replace("async function loadWifi() {", "window.__loadWifi=loadWifi; async function loadWifi() {")
   .replace("function renderConfig(config) {", "window.__renderConfig=renderConfig; window.__validConfig=validConfig; window.__saveField=saveField; function renderConfig(config) {")
   .replace("async function applyBootstrap(bootstrap) {", "window.__testApplyBootstrap=applyBootstrap; window.__testApi=api; async function applyBootstrap(bootstrap) {")
   .replace("function cancelResetOnLeave() {", "window.__testShow = show; function cancelResetOnLeave() {"), {
-  document, window, history, location,
+  document, window, history, location, TextEncoder,
   setTimeout: (callback, delay) => { callback.delay = delay; timers.push(callback); },
   fetch: async (url, options) => {
     calls.push({url, options});
@@ -96,8 +97,94 @@ async function submit(id) {
   await form.listeners.submit({ currentTarget: form, preventDefault() {} });
 }
 
+const keptWifi = {id: 1, ssid: "fixture-kept", priority: 1, secured: true};
+const editedWifi = {id: 2, ssid: "fixture-edited", priority: 2, secured: false};
+
+function wifiReply(profiles) {
+  return {status: 200, body: {configured: true, recovery_available: true, profile_limit: 4, profiles}};
+}
+
+async function wifiListAction(action, dataset) {
+  const selector = `button[data-profile-${action}]`;
+  await element("wifi-profile-list").listeners.click({
+    target: {closest: (query) => query === selector ? {dataset} : null}
+  });
+}
+
+async function loadWifiEdit() {
+  window.__testState.bootstrap = {csrf_token: "synthetic-csrf"};
+  replies.push(wifiReply([keptWifi, editedWifi]));
+  await window.__loadWifi();
+  await wifiListAction("edit", {profileEdit: "1"});
+  assert.equal(element("wifi-profile-form").dataset.editId, "2");
+  element("wifi-ssid").value = "fixture-user-edit";
+}
+
+async function checkWifiValidEdit() {
+  await loadWifiEdit();
+  const before = calls.length;
+  replies.push({status: 200, body: {saved: true}}, wifiReply([keptWifi, editedWifi]));
+  await submit("wifi-profile-form");
+  assert.deepEqual(calls.slice(before).map(call => [call.options.method, call.url]),
+    [["PUT", "/api/wifi/profiles"], ["GET", "/api/wifi"]]);
+  assert.deepEqual(JSON.parse(calls[before].options.body).profiles, [
+    {id: 1, ssid: keptWifi.ssid, priority: 1, credential: "keep", password: ""},
+    {id: 2, ssid: "fixture-user-edit", priority: 2, credential: "open", password: ""}
+  ]);
+  assert.equal(calls[before].options.headers["X-Katmed-CSRF"], "synthetic-csrf");
+  assert.equal(element("notice").classList.error, false);
+  console.log("Wi-Fi valid edit preserves target ID, other profile and CSRF: OK");
+}
+
+async function checkWifiStaleEdit() {
+  for (const cause of ["delete", "reload"]) {
+    await loadWifiEdit();
+    const beforeRefresh = calls.length;
+    if (cause === "delete") {
+      replies.push({status: 200, body: {removed: true}}, wifiReply([keptWifi]));
+      await wifiListAction("delete", {profileDelete: "2"});
+      assert.deepEqual(calls.slice(beforeRefresh).map(call => [call.options.method, call.url]),
+        [["DELETE", "/api/wifi/profiles?id=2"], ["GET", "/api/wifi"]]);
+    } else {
+      replies.push(wifiReply([keptWifi]));
+      await window.__loadWifi();
+    }
+    const beforeSubmit = calls.length;
+    // Allow an unchanged-list PUT to succeed on the parent so the oracle sees
+    // the contract violation rather than a missing synthetic reply.
+    replies.push({status: 200, body: {saved: true}}, wifiReply([keptWifi]));
+    await submit("wifi-profile-form");
+    assert.deepEqual(calls.slice(beforeSubmit), [], `stale Wi-Fi edit after ${cause} must not send a request`);
+    assert.equal(element("notice").classList.error, true);
+    assert.equal(element("notice").textContent, "Die Daten haben sich geändert. Aktuelle Werte wurden neu geladen.");
+    assert.equal(element("wifi-profile-form").dataset.editId, undefined);
+    assert.equal(element("wifi-profile-save").textContent, "Profil zur Liste hinzufügen");
+    replies.splice(0, 2);
+  }
+
+  element("wifi-ssid").value = "fixture-deliberate-new";
+  element("wifi-open").checked = true;
+  element("wifi-priority").value = "2";
+  const before = calls.length;
+  replies.push({status: 200, body: {saved: true}}, wifiReply([keptWifi]));
+  await submit("wifi-profile-form");
+  assert.deepEqual(calls.slice(before).map(call => [call.options.method, call.url]),
+    [["PUT", "/api/wifi/profiles"], ["GET", "/api/wifi"]]);
+  assert.deepEqual(JSON.parse(calls[before].options.body).profiles, [
+    {id: 1, ssid: keptWifi.ssid, priority: 1, credential: "keep", password: ""},
+    {ssid: "fixture-deliberate-new", priority: 2, credential: "open", password: ""}
+  ]);
+  assert.equal(element("notice").classList.error, false);
+  assert.equal(replies.length, 0);
+  console.log("Wi-Fi missing edit target after delete/reload rejected, deliberate new action allowed: OK");
+}
+
 (async () => {
   await window.__testStartup;
+  if (process.argv[2] === "wifi_valid_edit") {
+    await checkWifiValidEdit();
+    return;
+  }
   if (process.argv[2] === "setup_time_source") {
     replies.push({status: 200, body: {configured: true, mode: 0, setup_open: false,
       revision: "synthetic-setup", time_source: "ntp-readback-162.example.test"}});
@@ -543,6 +630,8 @@ async function submit(id) {
   assert.equal(element("login-view").hidden,false);
   assert.equal(replies.length,0);
   console.log("confirmed logout hides private view despite follow-up bootstrap failure: OK");
+  await checkWifiValidEdit();
+  await checkWifiStaleEdit();
   console.log("bounded real initial loaders, completion and rejection recovery: OK");
   console.log("async buttons, Advanced scroll restore and physical reset web flow: OK");
 })().catch((error) => { console.error(error); process.exitCode = 1; });

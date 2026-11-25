@@ -831,14 +831,27 @@
     if (password.disabled) password.value = "";
   });
 
+  function resetWifiEditor(form) {
+    form.reset();
+    delete form.dataset.editId;
+    $("wifi-password").disabled = false;
+    $("wifi-priority").value = "1";
+  }
+
   $("wifi-profile-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = event.currentTarget;
+    const editId = form.dataset.editId ? Number(form.dataset.editId) : null;
+    const previous = editId === null ? null : state.wifiProfiles.find((p) => p.id === editId);
+    if (editId !== null && !previous) {
+      resetWifiEditor(form);
+      renderWifiProfiles();
+      notice(errorText({ status: 409 }), true);
+      return;
+    }
     const ssid = $("wifi-ssid").value;
     const password = $("wifi-password").value;
     const isOpen = $("wifi-open").checked;
-    const editId = form.dataset.editId ? Number(form.dataset.editId) : null;
-    const previous = editId === null ? null : state.wifiProfiles.find((p) => p.id === editId);
     const encoder = new TextEncoder();
     const ssidBytes = encoder.encode(ssid);
     const passwordBytes = encoder.encode(password);
@@ -871,10 +884,7 @@
       if (editId) profiles = profiles.map((profile) => profile.id === editId ? candidate : profile);
       else profiles.push(candidate);
       await api("/api/wifi/profiles", "PUT", {profiles});
-      form.reset();
-      delete form.dataset.editId;
-      $("wifi-password").disabled = false;
-      $("wifi-priority").value = "1";
+      resetWifiEditor(form);
       await loadWifi();
       notice(tr("WLAN-Profile dauerhaft gespeichert. Zum Anwenden die Prioritäten bewusst neu bewerten lassen."));
     } catch (error) { await handleFailure(error); }
