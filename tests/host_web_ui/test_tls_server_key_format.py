@@ -75,7 +75,17 @@ static psa_key_id_t last_tls_key_id;
 static void *tls_session_callback, *katmed_web_plain_uri_match, *redirect_get;
 static uint64_t monotonic_ms(void){return 0;}
 static void web_socket_diag_sample(uint64_t now,bool force){(void)now;(void)force;}
-static bool resources_allow(bool post,const char *site){(void)post;(void)site;return true;}
+static bool resources_allow(bool after_start, const char *site, const char *snapshot_stage)
+{
+    if (!after_start)
+        return site && strcmp(site, "start_listeners") == 0 && !snapshot_stage;
+    if (!snapshot_stage)
+        return false;
+    if (strcmp(snapshot_stage, "web_after_redirect_registration") == 0)
+        return site && strcmp(site, "final_admission") == 0;
+    return !site && (strcmp(snapshot_stage, "web_after_https_start") == 0 ||
+                     strcmp(snapshot_stage, "web_after_https_routes") == 0);
+}
 static bool register_routes(void *handle){return handle!=NULL;}
 static void wipe(void *ptr,size_t len){volatile uint8_t *p=ptr;while(len--)*p++=0;}
 static int httpd_ssl_start(void **handle,const httpd_ssl_config_t *cfg){

@@ -82,6 +82,16 @@ def continuous(base=100_000, seconds=60):
                                   for n in range(1, seconds // 10 + 1)]
 
 
+def evidence_sample(uptime, sequence):
+    values = {"schema": 1, "sample_seq": sequence, "uptime_ms": uptime, "boot_domain": 1,
+              "image_v": 1, "store_v": 1, "mesh_v": 1}
+    rows = [(0, metric(uptime))]
+    for kind, keys in (("state", usb.STATE_KEYS), ("health", usb.HEALTH_KEYS)):
+        fields = " ".join(f"{key}={values.get(key, 0)}" for key in keys)
+        rows.append((0, f"I (123) katmed_{kind}: {fields}\n".encode("ascii")))
+    return rows
+
+
 class LongrunTests(unittest.TestCase):
     def invoke(self, port, clock, directory, *, duration=60, emit=lambda _: None):
         args = argparse.Namespace(port="/dev/serial/by-id/fake", expect_device=DEVICE,
@@ -164,6 +174,43 @@ class LongrunTests(unittest.TestCase):
             saved = json.loads((evidence / "summary.json").read_text())
             self.assertEqual("failed", saved["state"])
             self.assertEqual("not_complete", saved["completion_qualification"])
+
+    def test_finishing_reads_delayed_pair_before_success(self):
+        with tempfile.TemporaryDirectory() as root:
+            clock = Clock()
+            final_metric, final_state, final_health = evidence_sample(130_000, 2)
+            schedule = evidence_sample(100_000, 1) + [
+                (10, metric(110_000)), (10, metric(120_000)),
+                (10, final_metric[1]), final_state, (0.5, b""), (0.25, final_health[1]),
+            ]
+            port = FakeSerial(clock, schedule=schedule)
+            result = self.invoke(port, clock, Path(root) / "run", duration=30)
+            self.assertTrue(port.closed)
+            self.assertEqual(30.75, clock.now)
+            self.assertEqual("complete", result["state"])
+            self.assertEqual(2, result["evidence_samples"])
+            self.assertEqual(130_000, result["evidence_last_health"]["uptime_ms"])
+            self.assertEqual([b"KM1 STATUS\n"], port.writes)
+
+    def test_finishing_rejects_unsolicited_status_and_preserves_primary_error(self):
+        with tempfile.TemporaryDirectory() as root:
+            clock = Clock()
+            schedule = evidence_sample(100_000, 1) + [
+                (10, metric(110_000)), (10, metric(120_000)),
+                (10, metric(130_000)), (0, status()),
+            ]
+            port = FakeSerial(clock, schedule=schedule)
+            evidence = Path(root) / "run"
+            emitted = []
+            with mock.patch.object(port, "close", side_effect=OSError("synthetic close failure")) as close:
+                with self.assertRaisesRegex(longrun.LongrunError, "Unerwartete KM1-Antwort außerhalb"):
+                    self.invoke(port, clock, evidence, duration=30, emit=emitted.append)
+            close.assert_called_once_with()
+            self.assertEqual([], emitted)
+            saved = json.loads((evidence / "summary.json").read_text())
+            self.assertEqual("failed", saved["state"])
+            self.assertEqual("not_complete", saved["completion_qualification"])
+            self.assertEqual(1, saved["evidence_samples"])
 
     def test_48_hours_and_uptime_over_49_days(self):
         clock = Clock()

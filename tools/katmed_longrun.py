@@ -555,6 +555,26 @@ class Recorder:
             return "time_uptime_phase_missing"
         return "time_uptime_phase_unverified"
 
+    def _read_diagnostic(self) -> None:
+        body = self._line()
+        if body is None:
+            return
+        if body.startswith(b"KM1 "):
+            raise LongrunError("Unerwartete KM1-Antwort außerhalb einer Statusabfrage")
+        self._metric(body)
+
+    def _finish_measurement(self) -> str:
+        # The legacy line precedes its evidence records. Bound the wait for
+        # this sample before classifying completion, including legacy firmware.
+        pair_deadline = min(self.monotonic() + 2.0,
+                            self.started_mono + self.args.duration_seconds + FINISH_GRACE_SECONDS)
+        while (self.pending_metric_uptime is not None and
+               self.summary["evidence_samples"] > 0 and
+               self.monotonic() < pair_deadline):
+            self._read_diagnostic()
+        self._finish_evidence_pair()
+        return self._completion_qualification()
+
     def run(self) -> str:
         self.status()
         first_deadline = self.monotonic() + DIAG_GAP_SECONDS
@@ -573,32 +593,11 @@ class Recorder:
             if (self.started_mono is not None and
                     self._elapsed() >= self.args.duration_seconds and
                     self.summary["uptime_elapsed_ms"] >= self.args.duration_seconds * 1000):
-                # The legacy line is logged immediately before the two new
-                # records. Give this already observed sample a bounded chance
-                # to finish; an older firmware remains readable but incomplete.
-                pair_deadline = min(self.monotonic() + 2.0,
-                                    self.started_mono + self.args.duration_seconds +
-                                    FINISH_GRACE_SECONDS)
-                while (self.pending_metric_uptime is not None and
-                       self.summary["evidence_samples"] > 0 and
-                       self.monotonic() < pair_deadline):
-                    body = self._line()
-                    if body is None:
-                        continue
-                    if body.startswith(b"KM1 "):
-                        raise LongrunError("Unerwartete KM1-Antwort außerhalb einer Statusabfrage")
-                    self._metric(body)
-                self._finish_evidence_pair()
-                return self._completion_qualification()
+                return self._finish_measurement()
             if self.monotonic() - self.last_status_mono >= STATUS_PERIOD_SECONDS:
                 self.status()
                 continue
-            body = self._line()
-            if body is None:
-                continue
-            if body.startswith(b"KM1 "):
-                raise LongrunError("Unerwartete KM1-Antwort außerhalb einer Statusabfrage")
-            self._metric(body)
+            self._read_diagnostic()
 
     def fail(self, reason: str) -> None:
         self.summary["state"] = "failed"
