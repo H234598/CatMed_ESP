@@ -3,20 +3,20 @@
 from __future__ import annotations
 
 import argparse
+from importlib import import_module
 import json
 from pathlib import Path
 import sys
 import tempfile
 import unittest
 
-ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "tools"))
-
-import katmed_longrun as longrun
-import katmed_usb_setup as usb
 from tests.host_c3_km1_startup_review.test_early_phase_during_drain import (
     Clock, safe_numeric_phase,
 )
+
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "tools"))
+longrun = import_module("katmed_longrun")
 
 
 class ScheduledPort:
@@ -34,7 +34,8 @@ class ScheduledPort:
         self.clock.now += self.tick
         self.reads += 1
         part = self.chunks.pop(0) if self.chunks else b""
-        assert len(part) <= size
+        if len(part) > size:
+            raise AssertionError("Synthetic startup chunk exceeds the read bound")
         return part
 
     def reset_input_buffer(self) -> None:
@@ -45,7 +46,8 @@ class ScheduledPort:
         return len(data)
 
     def flush(self) -> None:
-        pass
+        # The fake records writes immediately and has no output buffer.
+        return None
 
     def read_until(self, expected: bytes = b"\n", size: int | None = None) -> bytes:
         self.clock.now += self.tick
@@ -114,19 +116,37 @@ class StartupPhaseLimits(unittest.TestCase):
             self.assertEqual([], port.writes)
             self.assertTrue(port.closed)
 
-    def test_overlong_known_and_partial_known_lines_fail_closed(self) -> None:
-        for line in (b"X" * 790 + safe_numeric_phase(),
-                     safe_numeric_phase()[:-1]):
-            with self.subTest(length=len(line)):
+    def test_overlong_known_line_fails_closed_with_or_without_lf(self) -> None:
+        overlong = b"X" * 790 + safe_numeric_phase()[:-1]
+        for ending in (b"\n", b""):
+            with self.subTest(ending=ending):
                 clock = Clock()
+                line = overlong + ending
                 chunks = [line[n:n + 256] for n in range(0, len(line), 256)]
                 port = ScheduledPort(clock, chunks)
                 with tempfile.TemporaryDirectory() as root:
                     error, saved = invoke(port, clock, Path(root) / "run")
-                    self.assertIn("KM1-Phasenbeleg", error)
+                    self.assertEqual("Numerischer KM1-Phasenbeleg ist beschädigt", error)
                     self.assertEqual("failed", saved["state"])
+                    self.assertEqual(0, port.reset_count)
                     self.assertEqual([], port.writes)
                     self.assertTrue(port.closed)
+
+    def test_bounded_known_tail_is_discarded_at_fixed_deadline(self) -> None:
+        clock = Clock()
+        port = ScheduledPort(clock, [safe_numeric_phase()[:-1]])
+        with tempfile.TemporaryDirectory() as root:
+            error, saved = invoke(port, clock, Path(root) / "run")
+            self.assertEqual("KM1-Statusantwort fehlt innerhalb von acht Sekunden", error)
+            self.assertEqual(error, saved["reason"])
+            self.assertEqual("failed", saved["state"])
+            self.assertEqual("legacy_missing", saved["phase_coverage"])
+            self.assertIsNone(saved["phase_prestatus_unverified"])
+            self.assertEqual(0, saved["status_count"])
+            self.assertEqual(20, port.reads)  # Fixed 5 s drain with 0.25 s reads.
+            self.assertEqual(1, port.reset_count)
+            self.assertEqual([b"KM1 STATUS\n"], port.writes)
+            self.assertTrue(port.closed)
 
     def test_byte_cap_and_counter_regression_preserve_failure(self) -> None:
         clock = Clock()

@@ -3,20 +3,27 @@ import json
 import pathlib
 import re
 import shutil
-import subprocess
+import subprocess  # nosec B404 - Runs host fixtures and checks the RAM CLI and cleanup results.
 import sys
 import tempfile
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools"))
-import katmed_acme_ram
+import katmed_acme_ram  # noqa: E402 - Direct execution needs the repository tools path first.
 
 
 PHASES = (
     "baseline", "initialization", "order", "challenge",
     "certificate", "error", "recovery", "retry",
 )
+
+
+def host_c_compiler() -> str:
+    compiler = shutil.which("cc")
+    if compiler is None or not pathlib.Path(compiler).is_absolute():
+        raise RuntimeError("an absolute host C compiler path is required")
+    return compiler
 
 
 def metric(uptime: int, minimum: int, largest: int, main: int, lvgl: int) -> str:
@@ -75,7 +82,8 @@ class AcmeRamBenchCheck(unittest.TestCase):
             source = pathlib.Path(temporary) / "fixture.log"
             output = pathlib.Path(temporary) / "summary.json"
             source.write_text(text)
-            result = subprocess.run(
+            # Fixed repository entry point and private temporary fixture paths.
+            result = subprocess.run(  # nosec B603
                 [sys.executable, str(ROOT / "tools/katmed_acme_ram.py"),
                  "--input", str(source), "--output", str(output)],
                 text=True, capture_output=True, check=False,
@@ -96,63 +104,123 @@ def resource_record(cycle: int, seq: int, name: str, *, variant: str = "client",
     )
 
 
+def cpu_records(cycle, variant, first, last):
+    windows = (
+        ('before', first - 12000002, first - 2),
+        ('active', first - 1, last - 2),
+        ('after', last - 1, last + 12000002),
+    )
+    for name, start, end in windows:
+        yield (f'I (1) katmed_acme_cpu: schema=1 variant={variant} cycle={cycle} core=0 cores=1 '
+               f'window={name} start_us={start} end_us={end} idle_start={start//2} idle_end={end//2} '
+               f'idle_delta={end//2-start//2} elapsed_us={end-start} counter_bits=64 timer_hz=1000000 '
+               'tickless=0 idle_priority_shared=1 valid=1')
+
+
+def issuance_events(phase, seq, previous_seq, active, emit):
+    if phase == 'challenge' and 'challenge' not in active:
+        if 'issuance' in active and previous_seq is not None:
+            emit('issuance', 'end', previous_seq, 'error')
+        emit('challenge', 'begin', seq, 'running')
+    if phase == 'issuance':
+        if 'challenge' in active:
+            emit('challenge', 'end', seq, 'ok')
+        if 'issuance' not in active:
+            emit('issuance', 'begin', seq, 'running')
+
+
+def certificate_switch_events(seq, previous_seq, active, emit):
+    if 'download' in active and previous_seq is not None:
+        emit('download', 'end', previous_seq, 'ok')
+    for op in ('issuance', 'renewal'):
+        if op in active:
+            emit(op, 'end', seq, 'ok')
+
+
+def connection_events(phase, seq, active, emit):
+    for interval in ('key', 'connection'):
+        if interval in active and phase != interval:
+            emit(interval, 'end', seq, 'observed')
+    if phase in ('key', 'connection') and phase not in active:
+        emit(phase, 'begin', seq, 'running')
+
+
+def certificate_events(phase, seq, previous_seq, active, attempts, emit):
+    if phase == 'certificate_download' and 'download' not in attempts:
+        emit('download', 'begin', seq, 'running')
+    if phase == 'certificate_switch':
+        certificate_switch_events(seq, previous_seq, active, emit)
+
+
+def operation_records(cycle, variant, samples):
+    records = []
+    active = {}
+    attempts = {}
+    marker_offsets = {}
+
+    def emit(op, event, seq, status):
+        marker_offsets[seq] = marker_offsets.get(seq, 0) + 10
+        stamp = samples[seq - 1][2] + marker_offsets[seq]
+        begin = event == 'begin'
+        if begin:
+            attempts[op] = attempts.get(op, 0) + 1
+            active[op] = seq, stamp
+        start_seq, start = active[op]
+        records.append(
+            f'I (1) katmed_acme_window: schema=1 variant={variant} cycle={cycle} op={op} '
+            f'attempt={attempts[op]} event={event} status={status} start_seq={start_seq} end_seq={seq} '
+            f'start_us={start} end_us={stamp} observations={1 if begin else 5} '
+            f'max_gap_us={0 if begin else stamp-start} period_us=100000 internal_min=50000 '
+            'dma_min=40000 internal_block_observed=30000 dma_block_observed=20000 valid=1'
+        )
+        if not begin:
+            del active[op]
+
+    previous_seq = None
+    for seq, phase, _, _ in samples:
+        connection_events(phase, seq, active, emit)
+        if phase == 'renewal' and 'renewal' not in attempts:
+            emit('renewal', 'begin', seq, 'running')
+        issuance_events(phase, seq, previous_seq, active, emit)
+        certificate_events(phase, seq, previous_seq, active, attempts, emit)
+        previous_seq = seq
+    return records
+
+
+def measurement_order(line, resource_lines):
+    fields = dict(token.split('=') for token in line.split(': ')[1].split())
+    cycle = int(fields['cycle'])
+    if 'katmed_acme_resource:' in line:
+        return cycle, int(fields['seq']) * 10, 0
+    if 'katmed_acme_cpu:' not in line:
+        return cycle, int(fields['end_seq']) * 10 + 1, int(fields['end_us'])
+    if fields['window'] == 'active':
+        last_sample = max(
+            int(dict(token.split('=') for token in sample.split(': ')[1].split())['seq'])
+            for sample in resource_lines if f'cycle={cycle} ' in sample
+        )
+        return cycle, last_sample * 10 - 1, 0
+    return cycle, {'before': -1, 'after': 100000}[fields['window']], 0
+
+
 def with_measurements(raw: bytes) -> bytes:
-    lines=[line for line in raw.decode().splitlines() if 'katmed_acme_resource:' in line]
-    extra=[]
-    for cycle in (1,2,3):
-        samples=[]
-        for line in lines:
-            m=katmed_acme_ram._RESOURCE_RE.fullmatch(line.encode())
-            if m and int(m[2])==cycle: samples.append((int(m[3]),m[4].decode(),int(m[6])*1000,m[1].decode()))
-        if not samples: continue
-        variant=samples[0][3]
-        first,last=samples[0][2],samples[-1][2]
-        cpu_times=[('before',first-12000002,first-2),('active',first-1,last-2),('after',last-1,last+12000002)]
-        for name,start,end in cpu_times:
-            extra.append(f'I (1) katmed_acme_cpu: schema=1 variant={variant} cycle={cycle} core=0 cores=1 window={name} start_us={start} end_us={end} idle_start={start//2} idle_end={end//2} idle_delta={end//2-start//2} elapsed_us={end-start} counter_bits=64 timer_hz=1000000 tickless=0 idle_priority_shared=1 valid=1')
-        if variant=='baseline': continue
-        active={};attempts={}; marker_offsets={}
-        def emit(op,event,seq,stamp,status):
-            marker_offsets[seq]=marker_offsets.get(seq,0)+10
-            stamp=samples[seq-1][2]+marker_offsets[seq]
-            if event=='begin':
-                attempts[op]=attempts.get(op,0)+1
-                active[op]=(seq,stamp)
-            startseq,start=active[op]
-            extra.append(f'I (1) katmed_acme_window: schema=1 variant={variant} cycle={cycle} op={op} attempt={attempts[op]} event={event} status={status} start_seq={startseq} end_seq={seq} start_us={start} end_us={stamp} observations={1 if event=="begin" else 5} max_gap_us={0 if event=="begin" else stamp-start} period_us=100000 internal_min=50000 dma_min=40000 internal_block_observed=30000 dma_block_observed=20000 valid=1')
-            if event=='end':del active[op]
-        previous=None
-        for seq,phase,stamp,_ in samples:
-            for interval in ('key','connection'):
-                if interval in active and phase != interval:emit(interval,'end',seq,stamp+500,'observed')
-            if phase in ('key','connection') and phase not in active:emit(phase,'begin',seq,stamp+501,'running')
-            if phase=='renewal' and 'renewal' not in active and 'renewal' not in attempts:emit('renewal','begin',seq,stamp,'running')
-            if phase=='challenge' and 'challenge' not in active:
-                if 'issuance' in active and previous:
-                    emit('issuance','end',previous[0],previous[2]+500,'error')
-                emit('challenge','begin',seq,stamp,'running')
-            if phase=='issuance':
-                if 'challenge' in active:emit('challenge','end',seq,stamp+500,'ok')
-                if 'issuance' not in active:emit('issuance','begin',seq,stamp+501,'running')
-            if phase=='certificate_download' and 'download' not in active and 'download' not in attempts:emit('download','begin',seq,stamp,'running')
-            if phase=='certificate_switch':
-                if 'download' in active and previous:emit('download','end',previous[0],previous[2]+500,'ok')
-                for op in ('issuance','renewal'):
-                    if op in active:emit(op,'end',seq,stamp+500,'ok')
-            previous=(seq,phase,stamp)
+    lines = [line for line in raw.decode().splitlines() if 'katmed_acme_resource:' in line]
+    by_cycle = {cycle: [] for cycle in (1, 2, 3)}
+    for line in lines:
+        match = katmed_acme_ram._RESOURCE_RE.fullmatch(line.encode())
+        if match and int(match[2]) in by_cycle:
+            by_cycle[int(match[2])].append((int(match[3]), match[4].decode(), int(match[6]) * 1000, match[1].decode()))
+    extra = []
+    for cycle, samples in by_cycle.items():
+        if not samples:
+            continue
+        variant = samples[0][3]
+        extra.extend(cpu_records(cycle, variant, samples[0][2], samples[-1][2]))
+        if variant != 'baseline':
+            extra.extend(operation_records(cycle, variant, samples))
     # Preserve producer order, including end marks after their final sample.
-    def order(line):
-        kv=dict(token.split('=') for token in line.split(': ')[1].split())
-        cycle=int(kv['cycle'])
-        if 'katmed_acme_resource:' in line:
-            return cycle, int(kv['seq'])*10, 0
-        if 'katmed_acme_cpu:' in line:
-            n={'before':-1,'active':99998,'after':100000}[kv['window']]
-            if kv['window']=='active':
-                n=max(int(dict(x.split('=') for x in l.split(': ')[1].split())['seq'])*10 for l in lines if f'cycle={cycle} ' in l)-1
-            return cycle,n,0
-        return cycle,int(kv['end_seq'])*10+1, int(kv['end_us'])
-    return ('\n'.join(sorted(lines+extra,key=order))+'\n').encode()
+    ordered = sorted(lines + extra, key=lambda line: measurement_order(line, lines))
+    return ('\n'.join(ordered) + '\n').encode()
 
 
 def resource_capture(variant: str = "client") -> bytes:
@@ -214,7 +282,8 @@ class AcmeResourceCaptureCheck(unittest.TestCase):
             source = pathlib.Path(temporary) / "capture.log"
             output = pathlib.Path(temporary) / "summary.json"
             source.write_text(text)
-            result = subprocess.run(
+            # Fixed repository entry point and private temporary fixture paths.
+            result = subprocess.run(  # nosec B603
                 [sys.executable, str(ROOT / "tools/katmed_acme_ram.py"),
                  "--mode", "resource", "--variant", "client", "--input", str(source),
                  "--output", str(output)], capture_output=True, text=True, check=False,
@@ -276,14 +345,16 @@ class AcmeSourceContractCheck(unittest.TestCase):
     def test_http01_route_registration_delivery_failure_and_cleanup(self):
         with tempfile.TemporaryDirectory() as temporary:
             binary = pathlib.Path(temporary) / "route_test"
-            subprocess.run([
-                "cc", "-std=c11", "-Wall", "-Wextra", "-Werror", "-O2",
+            # Absolute compiler, fixed in-tree sources and private output path.
+            subprocess.run([  # nosec B603
+                host_c_compiler(), "-std=c11", "-Wall", "-Wextra", "-Werror", "-O2",
                 "-I", str(ROOT / "firmware/components/katmed_web/include"),
                 str(ROOT / "firmware/components/katmed_web/katmed_web_acme_route.c"),
                 str(ROOT / "tests/host_acme_ram/test_acme_route.c"),
                 "-o", str(binary),
             ], check=True, capture_output=True, text=True)
-            subprocess.run([str(binary)], check=True, capture_output=True, text=True)
+            # Execute only the fixture compiled above in the private directory.
+            subprocess.run([str(binary)], check=True, capture_output=True, text=True)  # nosec B603
         web = (ROOT / "firmware/components/katmed_web/katmed_web.c").read_text()
         self.assertIn("plain.max_uri_handlers = 2;", web)
         self.assertIn("plain.uri_match_fn = katmed_web_plain_uri_match;", web)
@@ -312,19 +383,23 @@ class AcmeSourceContractCheck(unittest.TestCase):
                 path.write_text(content)
             obj = root / "atomic.o"
             binary = root / "atomic_test"
-            result = subprocess.run([
-                "cc", "-D_GNU_SOURCE", "-std=c11", "-Wall", "-Wextra", "-Werror",
+            compiler = host_c_compiler()
+            # Absolute compiler and fixed repository source with private stub headers.
+            result = subprocess.run([  # nosec B603
+                compiler, "-D_GNU_SOURCE", "-std=c11", "-Wall", "-Wextra", "-Werror",
                 "-I", str(root), "-Dfsync=fixture_fsync", "-Drename=fixture_rename",
                 "-c", str(ROOT / "firmware/components/katmed_acme/katmed_acme_atomic.c"),
                 "-o", str(obj),
             ], capture_output=True, text=True)
             self.assertEqual(0, result.returncode, result.stderr)
-            subprocess.run([
-                "cc", "-D_GNU_SOURCE", "-std=c11", "-Wall", "-Wextra", "-Werror",
+            # Same absolute compiler, private object and fixed host fixture source.
+            subprocess.run([  # nosec B603
+                compiler, "-D_GNU_SOURCE", "-std=c11", "-Wall", "-Wextra", "-Werror",
                 str(obj), str(ROOT / "tests/host_acme_ram/test_acme_atomic.c"),
                 "-o", str(binary),
             ], check=True, capture_output=True, text=True)
-            subprocess.run([str(binary), str(root / "certificate.pem")],
+            # Fixture binary and synthetic certificate path are both private outputs.
+            subprocess.run([str(binary), str(root / "certificate.pem")],  # nosec B603
                            check=True, capture_output=True, text=True)
 
     def test_resolved_client_patch_is_idempotent_and_propagates_failure(self):

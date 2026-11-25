@@ -27,6 +27,13 @@ def timestamp(value):
         raise InvalidSnapshot("Invalid timestamp") from None
 
 
+def _validate_identity(device: object, boot: object) -> None:
+    if not isinstance(device, str) or re.fullmatch(r"[0-9a-f]{12}", device) is None:
+        raise InvalidSnapshot("Invalid identity")
+    if not isinstance(boot, str) or re.fullmatch(r"[1-9]\d{0,19}", boot, flags=re.ASCII) is None or int(boot) > 2**64 - 1:
+        raise InvalidSnapshot("Invalid boot domain")
+
+
 @dataclass(frozen=True)
 class Snapshot:
     device_id: str
@@ -49,12 +56,7 @@ class Snapshot:
         for key in ("alarm_active", "boot_notice", "last_dose_known"):
             if type(data[key]) is not bool:
                 raise InvalidSnapshot("Invalid boolean")
-        device = data["device_id"]
-        boot = data["boot_id"]
-        if not isinstance(device, str) or re.fullmatch(r"[0-9a-f]{12}", device) is None:
-            raise InvalidSnapshot("Invalid identity")
-        if not isinstance(boot, str) or re.fullmatch(r"[1-9][0-9]{0,19}", boot) is None or int(boot) > 2**64 - 1:
-            raise InvalidSnapshot("Invalid boot domain")
+        _validate_identity(data["device_id"], data["boot_id"])
         seq = data["emergency_button_sequence"]
         if type(seq) is not int or not 0 <= seq <= 2**53 - 1:
             raise InvalidSnapshot("Invalid sequence")

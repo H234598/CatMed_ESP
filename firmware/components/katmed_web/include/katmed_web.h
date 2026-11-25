@@ -3,6 +3,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include "esp_err.h"
 #include "esp_http_server.h"
 #include "katmed_web_wifi.h"
 #include "katmed_web_reset.h"
@@ -38,7 +39,7 @@ typedef struct {
 /* Called once after board, store and mesh initialization. Failure is closed:
  * no HTTP server remains listening if HTTPS or resource admission fails. */
 void katmed_web_set_enabled(bool enabled);
-bool katmed_web_start(const KatmedWebServices *services);
+esp_err_t katmed_web_start(const KatmedWebServices *services);
 /* Called from the main loop; never from the HTTP task. */
 void katmed_web_poll(uint64_t monotonic_ms);
 /* Main loop copies this outside the LVGL lock and displays it under that lock.

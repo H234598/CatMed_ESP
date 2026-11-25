@@ -2783,8 +2783,12 @@ void app_main(void)
                 .cancel_on_display = web_reset_cancel,
             },
         };
-        if (management && !katmed_web_start(&web_services))
-            ESP_LOGE(tag, "HTTPS configuration listener unavailable");
+        if (management) {
+            const esp_err_t error = katmed_web_start(&web_services);
+            if (error != ESP_OK)
+                ESP_LOGE(tag, "HTTPS configuration listener unavailable err=%s (0x%x)",
+                         esp_err_to_name(error), (unsigned)error);
+        }
     }
 
     uint64_t last_render_ms = now.monotonic_ms;

@@ -5,11 +5,11 @@ contains the unmodified MbedTLS sources from that IDF tree; no device is used.
 """
 
 import os
-import subprocess
+import subprocess  # nosec B404 - Runs synthetic fixture setup, the host compiler and the harness.
 import tempfile
 from pathlib import Path
 
-from test_network_startup import function
+from test_network_startup import function, host_tool
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -30,6 +30,10 @@ HOST = r'''
 
 #define ESP_OK 0
 #define ESP_FAIL -1
+#define ESP_ERR_NO_MEM 0x101
+#define ESP_ERR_INVALID_STATE 0x103
+#define ESP_ERR_NOT_SUPPORTED 0x106
+typedef int esp_err_t;
 #define WEB_TAG "test"
 #define ESP_LOGE(...) ((void)0)
 #define ESP_LOGW(...) ((void)0)
@@ -155,7 +159,7 @@ int main(int argc,char **argv){
     mbedtls_x509write_crt_free(&writer);
     mbedtls_pk_free(&writer_key);
     if(psa_destroy_key(writer_id)!=PSA_SUCCESS)return 16;
-    if(!start_listeners()){
+    if(start_listeners()!=ESP_OK){
         fprintf(stderr,"real SDK parser rejected production HTTPS key selection: %d\n",
                 legacy_parse_result);
         return 3;
@@ -171,14 +175,14 @@ int main(int argc,char **argv){
     size_t n=fread(web.identity.key,1,sizeof(web.identity.key),legacy);
     if(fclose(legacy)!=0 || n<=32 || n==sizeof(web.identity.key))return 8;
     web.identity.key_len=n;
-    if(!start_listeners() || legacy_parse_result!=0 || web.tls_key_id!=PSA_KEY_ID_NULL)return 9;
+    if(start_listeners()!=ESP_OK || legacy_parse_result!=0 || web.tls_key_id!=PSA_KEY_ID_NULL)return 9;
     stop_listeners();
     /* Failed listener startup must release an imported key before retry. */
     memset(web.identity.key,0,sizeof(web.identity.key));
     web.identity.key[31]=1;
     web.identity.key_len=32;
     force_https_failure=true;
-    if(start_listeners() || web.tls_key_id!=PSA_KEY_ID_NULL)return 10;
+    if(start_listeners()==ESP_OK || web.tls_key_id!=PSA_KEY_ID_NULL)return 10;
     if(psa_get_key_attributes(last_tls_key_id,&old_key)==PSA_SUCCESS)return 11;
     puts("real SDK key parser and PSA TLS handoff PASS");
     return 0;
@@ -187,22 +191,26 @@ int main(int argc,char **argv){
 
 
 def main():
+    openssl = host_tool("openssl")
+    compiler = host_tool("cc")
     idf = Path(os.environ["IDF_PATH"])
     build = Path(os.environ["KATMED_MBEDTLS_HOST_BUILD"])
     mbedtls = idf / "components/mbedtls/mbedtls"
     text = SOURCE.read_text()
     c = HOST + function(text, "static bool stop_listeners(void)") + "\n" + function(
-        text, "static bool start_listeners(void)"
+        text, "static esp_err_t start_listeners(void)"
     ) + END
     with tempfile.TemporaryDirectory(prefix="katmed-tls-key-") as tmp:
         program = Path(tmp) / "check.c"
         binary = Path(tmp) / "check"
         private_pem = Path(tmp) / "synthetic.pem"
         private_der = Path(tmp) / "synthetic.der"
-        subprocess.run(["openssl", "ecparam", "-name", "prime256v1", "-genkey",
+        # The runner's OpenSSL generates the synthetic fixture in this test's directory.
+        subprocess.run([openssl, "ecparam", "-name", "prime256v1", "-genkey",  # nosec B603
                         "-noout", "-out", str(private_pem)], check=True,
                        stdout=subprocess.DEVNULL)
-        subprocess.run(["openssl", "pkey", "-in", str(private_pem),
+        # The fixed conversion reads and writes only this test's fixture paths.
+        subprocess.run([openssl, "pkey", "-in", str(private_pem),  # nosec B603
                         "-outform", "DER", "-out", str(private_der)],
                        check=True, stdout=subprocess.DEVNULL)
         program.write_text(c)
@@ -227,11 +235,13 @@ def main():
             build / "tf-psa-crypto/extras/libextras.a",
             build / "tf-psa-crypto/utilities/libutilities.a",
         ]
-        cc = ["cc", "-std=gnu11", "-Wall", "-Wextra", "-Werror", "-Wno-unused-function"]
+        cc = [compiler, "-std=gnu11", "-Wall", "-Wextra", "-Werror", "-Wno-unused-function"]
         cc += ["-I" + str(path) for path in includes]
         cc += [str(program), "-Wl,--start-group", *map(str, libraries), "-Wl,--end-group", "-pthread", "-o", str(binary)]
-        subprocess.run(cc, check=True)
-        subprocess.run([str(binary), str(private_der)], check=True)
+        # Compiler arguments name the local fixture and caller-selected host SDK inputs.
+        subprocess.run(cc, check=True)  # nosec B603
+        # Run the freshly built binary on its own synthetic fixture.
+        subprocess.run([str(binary), str(private_der)], check=True)  # nosec B603
 
 
 if __name__ == "__main__":

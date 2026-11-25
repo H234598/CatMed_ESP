@@ -3,16 +3,13 @@
 from __future__ import annotations
 
 import argparse
+from importlib import import_module
 import json
 from pathlib import Path
 import sys
 import tempfile
 import unittest
 
-ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "tools"))
-
-import katmed_longrun as longrun
 from tests.host_c3_km1_startup_review.test_early_phase_during_drain import (
     Clock, safe_numeric_phase,
 )
@@ -21,6 +18,10 @@ from tests.host_longrun.test_longrun import (
     Clock as ValuedClock, FakeSerial as ValuedPort, continuous,
     DEVICE, FIRMWARE, BUILD,
 )
+
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "tools"))
+longrun = import_module("katmed_longrun")
 
 
 class BadClosePort(ScheduledPort):
@@ -46,15 +47,17 @@ class CloseFailurePriority(unittest.TestCase):
 
     def test_startup_error_survives_later_close_failure(self) -> None:
         clock = Clock()
-        port = BadClosePort(clock, [safe_numeric_phase()[:-1]])
+        malformed = safe_numeric_phase().replace(b"task=1", b"task=bad")
+        port = BadClosePort(clock, [malformed])
         with tempfile.TemporaryDirectory() as root:
             error, saved = invoke(port, clock, Path(root) / "run")
-            self.assertEqual("Numerischer KM1-Phasenbeleg ist unvollständig", error)
+            self.assertEqual("Numerischer KM1-Phasenbeleg ist beschädigt", error)
             self.assertEqual(error, saved["reason"])
             self.assertEqual("failed", saved["state"])
             self.assertEqual(0, saved["status_count"])
             self.assertEqual([], port.writes)
             self.assertTrue(port.closed)
+            self.assertNotIn("synthetic-private-close", json.dumps(saved))
 
     def test_close_failure_as_sole_error_still_fails_and_is_saved(self) -> None:
         clock = ValuedClock()

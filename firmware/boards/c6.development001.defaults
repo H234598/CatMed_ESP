@@ -1,0 +1,6 @@
+# App-only test profile for C6 devices already in encrypted development mode
+# with Secure Download enabled. Do not install the generated bootloader.
+CONFIG_SECURE_FLASH_ENCRYPTION_MODE_DEVELOPMENT=y
+CONFIG_SECURE_FLASH_REQUIRE_ALREADY_ENABLED=y
+CONFIG_SECURE_FLASH_CHECK_ENC_EN_IN_APP=y
+CONFIG_SECURE_ENABLE_SECURE_ROM_DL_MODE=y

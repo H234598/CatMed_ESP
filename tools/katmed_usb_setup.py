@@ -36,6 +36,22 @@ STARTUP_DRAIN_SECONDS = 5.0
 MAX_STARTUP_BYTES = 8192
 STARTUP_CHUNK_BYTES = 256
 DEVICE_RE = re.compile(r"[0-9a-fA-F]{12}\Z")
+GIT_FIRMWARE_RE = re.compile(r"[0-9a-fA-F]{7,12}")
+NATIVE_FIRMWARE_RE = re.compile(r"(?:tree-[0-9a-f]{10}|[0-9a-fA-F]{7,12}-dirty)")
+BUILD_RE = re.compile(r"[0-9a-fA-F]{6,24}")
+FIRMWARE_OPTION_ERROR = "--expect-firmware erfordert 7 bis 12 Hexzeichen, tree- plus 10 kleine Hexzeichen oder 7 bis 12 Hexzeichen mit -dirty"
+REPLY_FRAME_ERROR = "USB-Antwort fehlt, ist zu lang oder unvollständig"
+STATUS_REPLY_PREFIX = "KM1 OK STATUS "
+REPLY_BYTE_LIMIT_ERROR = "USB-Antwortbeobachtung erreichte sichere Byte-Grenze"
+USB_LINE_END_ERROR = "USB-Zeile enthält ein ungültiges Ende oder ist zu lang"
+USB_LINE_INCOMPLETE_ERROR = "USB-Zeile ist zu lang oder unvollständig"
+REPLY_LENGTH_ERROR = "KM1-Antwort überschreitet 256 Bytes"
+PHASE_RECORD_ERROR = "Numerischer KM1-Phasenbeleg ist beschädigt"
+WIRE_ERROR_PREFIX = "KM1 ERR "
+WIRE_ERROR_INVALID = "Gerät meldet einen ungültigen Fehlercode"
+WIRE_UNSIGNED_DECIMAL = rb"\d{1,20}"
+WIRE_SIGNED_DECIMAL = rb"-?\d{1,20}"
+CLOSE_ERROR = "USB-Port konnte nicht sicher geschlossen werden"
 HEX32_RE = re.compile(r"[0-9a-fA-F]{32}\Z")
 HEX64_RE = re.compile(r"[0-9a-fA-F]{64}\Z")
 TOKEN_RE = re.compile(r"[A-Za-z0-9_.+-]+\Z")
@@ -188,20 +204,32 @@ def _hex_bytes(value: object, label: str, minimum: int, maximum: int, ascii_only
     return raw.hex()
 
 
-def build_provision_request(config_bytes: bytes) -> bytes:
-    def unique_fields(pairs: list[tuple[str, object]]) -> dict[str, object]:
-        result: dict[str, object] = {}
-        for key, value in pairs:
-            if key in result:
-                raise SetupError("Konfiguration enthält doppelte Felder")
-            result[key] = value
-        return result
+def _provision_wlan_fields(cfg: dict[str, object]) -> tuple[str, str]:
+    ssid, password = cfg["ssid"], cfg["password"]
+    ssid_empty, password_empty = (value == "" for value in (ssid, password))
+    if ssid_empty and password_empty:
+        # An empty pair selects the firmware's private build-time WLAN defaults.
+        return "", ""
+    if ssid_empty or password_empty:
+        raise SetupError("ssid und password müssen beide leer oder beide gesetzt sein")
+    return _hex_bytes(ssid, "ssid", 1, 32), _hex_bytes(password, "password", 8, 63)
 
+
+def _unique_config_fields(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise SetupError("Konfiguration enthält doppelte Felder")
+        result[key] = value
+    return result
+
+
+def build_provision_request(config_bytes: bytes) -> bytes:
     try:
-        cfg = json.loads(config_bytes.decode("utf-8"), object_pairs_hook=unique_fields)
+        cfg = json.loads(config_bytes.decode("utf-8"), object_pairs_hook=_unique_config_fields)
     except SetupError:
         raise
-    except (UnicodeError, ValueError, RecursionError):
+    except (ValueError, RecursionError):
         raise SetupError("Konfigurationsdatei enthält kein gültiges UTF-8-JSON") from None
     if not isinstance(cfg, dict) or set(cfg) != {"group", "secret", "ssid", "password", "time_source"}:
         raise SetupError("Konfiguration benötigt genau group, secret, ssid, password und time_source")
@@ -213,15 +241,7 @@ def build_provision_request(config_bytes: bytes) -> bytes:
         raise SetupError("secret benötigt genau 64 Hexzeichen")
     if int(group, 16) == 0 or int(secret, 16) == 0:
         raise SetupError("group und secret dürfen nicht nur aus Nullen bestehen")
-    if cfg["ssid"] == "" and cfg["password"] == "":
-        # An empty pair asks the firmware's normal PROVISION transaction to
-        # commit its private build-time WLAN defaults.
-        ssid = password = ""
-    elif cfg["ssid"] == "" or cfg["password"] == "":
-        raise SetupError("ssid und password müssen beide leer oder beide gesetzt sein")
-    else:
-        ssid = _hex_bytes(cfg["ssid"], "ssid", 1, 32)
-        password = _hex_bytes(cfg["password"], "password", 8, 63)
+    ssid, password = _provision_wlan_fields(cfg)
     source = _hex_bytes(cfg["time_source"], "time_source", 1, 63, ascii_only=True)
     line = (
         f"KM1 PROVISION group={group.lower()} secret={secret.lower()} "
@@ -230,6 +250,28 @@ def build_provision_request(config_bytes: bytes) -> bytes:
     if len(line) > MAX_REQUEST_BYTES:
         raise SetupError("Einrichtungsanforderung überschreitet 512 Bytes")
     return line
+
+
+def _protocol_payload(raw: bytes) -> bytes:
+    payload = raw[:-1]
+    if payload.endswith(b"\r"):
+        payload = payload[:-1]
+    # Shared console diagnostics can end in CR CR LF. Normalize only the
+    # extra terminal CR of a non-KM1 line; KM1 framing remains strict.
+    if not raw.startswith(b"KM1 ") and payload.endswith(b"\r"):
+        payload = payload[:-1]
+    if b"\r" in payload or len(payload) > MAX_DIAG_CHARS:
+        raise SetupError(USB_LINE_END_ERROR)
+    return payload
+
+
+def _validate_reply_frame(raw: bytes, size: int, remaining: int) -> None:
+    if not isinstance(raw, bytes) or len(raw) > size:
+        raise SetupError(REPLY_FRAME_ERROR)
+    if raw and not raw.endswith(b"\n"):
+        if len(raw) == remaining:
+            raise SetupError(REPLY_BYTE_LIMIT_ERROR)
+        raise SetupError(REPLY_FRAME_ERROR)
 
 
 def _read_protocol_line(port: SerialPort,
@@ -245,35 +287,72 @@ def _read_protocol_line(port: SerialPort,
             raise SetupError("USB-Antwortbeobachtung erreichte sichere Zeitgrenze")
         remaining = MAX_REPLY_OBSERVATION_BYTES - received
         if remaining <= 0:
-            raise SetupError("USB-Antwortbeobachtung erreichte sichere Byte-Grenze")
+            raise SetupError(REPLY_BYTE_LIMIT_ERROR)
         size = min(MAX_DIAG_CHARS + 2, remaining)
         raw = port.read_until(b"\n", size)
-        if not isinstance(raw, bytes) or len(raw) > size:
-            raise SetupError("USB-Antwort fehlt, ist zu lang oder unvollständig")
+        _validate_reply_frame(raw, size, remaining)
         received += len(raw)
         if not raw:
             continue
-        if not raw.endswith(b"\n"):
-            if received == MAX_REPLY_OBSERVATION_BYTES:
-                raise SetupError("USB-Antwortbeobachtung erreichte sichere Byte-Grenze")
-            raise SetupError("USB-Antwort fehlt, ist zu lang oder unvollständig")
-        payload = raw[:-1]
-        if payload.endswith(b"\r"):
-            payload = payload[:-1]
-        # Shared console diagnostics can end in CR CR LF. Normalize only the
-        # extra terminal CR of a non-KM1 line; KM1 framing remains strict.
-        if not raw.startswith(b"KM1 ") and payload.endswith(b"\r"):
-            payload = payload[:-1]
-        if b"\r" in payload or len(payload) > MAX_DIAG_CHARS:
-            raise SetupError("USB-Zeile enthält ein ungültiges Ende oder ist zu lang")
-        if not (raw.startswith(b"KM1 OK ") or raw.startswith(b"KM1 ERR ")):
+        payload = _protocol_payload(raw)
+        if not (raw.startswith((b"KM1 OK ", b"KM1 ERR "))):
             continue
         if len(raw) > MAX_RESPONSE_BYTES:
-            raise SetupError("KM1-Antwort überschreitet 256 Bytes")
+            raise SetupError(REPLY_LENGTH_ERROR)
         try:
             return payload.decode("ascii")
         except UnicodeError:
             raise SetupError("USB-Antwort ist kein ASCII") from None
+
+
+def _read_startup_chunk(port: SerialPort, request_size: int) -> bytes:
+    try:
+        chunk = port.read(request_size)
+    except SetupError:
+        raise
+    except Exception:
+        raise SetupError("USB-Startausgabe konnte nicht sicher verworfen werden") from None
+    if not isinstance(chunk, bytes) or len(chunk) > request_size:
+        raise SetupError("Ungültige USB-Startausgabe")
+    return chunk
+
+
+def _emit_startup_phase(pending: bytearray, overlong: bool,
+                        phase_observer: Callable[[dict[str, int]], None],
+                        rejection_observer: Callable[[str], None] | None) -> None:
+    body = bytes(pending).removesuffix(b"\r")
+    if overlong or b"\r" in body:
+        if rejection_observer is not None:
+            rejection_observer("drain_line_overlong" if overlong else "drain_internal_cr")
+        raise SetupError(PHASE_RECORD_ERROR)
+    phase = _usb_phase_line(body, rejection_observer)
+    if phase is None:
+        raise SetupError(PHASE_RECORD_ERROR)
+    phase_observer(phase)
+
+
+def _scan_startup_phases(chunk: bytes, pending: bytearray, tag_tail: bytearray,
+                         overlong: bool, known_phase: bool,
+                         phase_observer: Callable[[dict[str, int]], None],
+                         rejection_observer: Callable[[str], None] | None) -> tuple[bool, bool]:
+    phase_tag = b"katmed_usb_phase:"
+    for byte in chunk:
+        if byte == 10:
+            if known_phase:
+                _emit_startup_phase(pending, overlong, phase_observer, rejection_observer)
+            pending.clear()
+            tag_tail.clear()
+            overlong = known_phase = False
+            continue
+        tag_tail.append(byte)
+        if len(tag_tail) > len(phase_tag):
+            del tag_tail[0]
+        known_phase = known_phase or tag_tail == phase_tag
+        if not overlong and len(pending) < MAX_DIAG_CHARS + 1:
+            pending.append(byte)
+        else:
+            overlong = True
+    return overlong, known_phase
 
 
 def _drain_startup(port: SerialPort, clock: Callable[[], float] = time.monotonic,
@@ -284,7 +363,6 @@ def _drain_startup(port: SerialPort, clock: Callable[[], float] = time.monotonic
     consumed = 0
     pending = bytearray()
     overlong = False
-    phase_tag = b"katmed_usb_phase:"
     tag_tail = bytearray()
     known_phase = False
     while clock() < deadline:
@@ -297,54 +375,16 @@ def _drain_startup(port: SerialPort, clock: Callable[[], float] = time.monotonic
             time.sleep(max(0.0, deadline - clock()))
             break
         request_size = min(STARTUP_CHUNK_BYTES, remaining)
-        try:
-            chunk = port.read(request_size)
-        except SetupError:
-            raise
-        except Exception:
-            raise SetupError("USB-Startausgabe konnte nicht sicher verworfen werden") from None
-        if not isinstance(chunk, bytes) or len(chunk) > request_size:
-            raise SetupError("Ungültige USB-Startausgabe")
+        chunk = _read_startup_chunk(port, request_size)
         consumed += len(chunk)
         if phase_observer is not None:
-            for byte in chunk:
-                if byte == 10:  # LF ends one bounded diagnostic line.
-                    body = bytes(pending)
-                    if body.endswith(b"\r"):
-                        body = body[:-1]
-                    if known_phase:
-                        if overlong:
-                            if rejection_observer is not None:
-                                rejection_observer("drain_line_overlong")
-                            raise SetupError("Numerischer KM1-Phasenbeleg ist beschädigt")
-                        if b"\r" in body:
-                            if rejection_observer is not None:
-                                rejection_observer("drain_internal_cr")
-                            raise SetupError("Numerischer KM1-Phasenbeleg ist beschädigt")
-                        phase = _usb_phase_line(body, rejection_observer)
-                        if phase is None:
-                            raise SetupError("Numerischer KM1-Phasenbeleg ist beschädigt")
-                        phase_observer(phase)
-                    pending.clear()
-                    overlong = False
-                    tag_tail.clear()
-                    known_phase = False
-                else:
-                    tag_tail.append(byte)
-                    if len(tag_tail) > len(phase_tag):
-                        del tag_tail[0]
-                    if tag_tail == phase_tag:
-                        known_phase = True
-                    if not overlong:
-                        if len(pending) < MAX_DIAG_CHARS + 1:
-                            pending.append(byte)
-                        else:
-                            overlong = True
+            overlong, known_phase = _scan_startup_phases(
+                chunk, pending, tag_tail, overlong, known_phase, phase_observer, rejection_observer)
     if (phase_observer is not None and known_phase and
             (overlong or len(pending) > MAX_DIAG_CHARS + int(pending.endswith(b"\r")))):
         if rejection_observer is not None:
             rejection_observer("drain_line_overlong")
-        raise SetupError("Numerischer KM1-Phasenbeleg ist beschädigt")
+        raise SetupError(PHASE_RECORD_ERROR)
     # The fixed observation deadline can split a valid firmware line. Only LF
     # publishes a phase above; discard this bounded suffix without inventing a
     # witness or losing previously complete phases. Oversize input still fails.
@@ -374,12 +414,12 @@ def exchange(port: SerialPort, request: bytes, expected: str,
         # Serial exceptions can contain the transmitted byte string. Do not
         # surface their arguments on any provisioning/error path.
         raise SetupError("USB-Übertragung fehlgeschlagen") from None
-    if reply.startswith("KM1 ERR "):
-        reason = reply.removeprefix("KM1 ERR ")
+    if reply.startswith(WIRE_ERROR_PREFIX):
+        reason = reply.removeprefix(WIRE_ERROR_PREFIX)
         if reason not in WIRE_ERRORS:
-            raise SetupError("Gerät meldet einen ungültigen Fehlercode")
+            raise SetupError(WIRE_ERROR_INVALID)
         raise SetupError(f"Gerät lehnt die Anforderung ab: {reason}")
-    if reply == expected or (expected == "KM1 OK STATUS " and reply.startswith(expected)):
+    if reply == expected or (expected == STATUS_REPLY_PREFIX and reply.startswith(expected)):
         return reply
     raise SetupError("Unerwartete USB-Antwort")
 
@@ -425,9 +465,9 @@ def _check_status_keys(fields: dict[str, str]) -> None:
 
 def read_status(port: SerialPort,
                 reader: Callable[[SerialPort], str] = _read_protocol_line) -> dict[str, str]:
-    reply = exchange(port, b"KM1 STATUS\n", "KM1 OK STATUS ", reader)
+    reply = exchange(port, b"KM1 STATUS\n", STATUS_REPLY_PREFIX, reader)
     fields: dict[str, str] = {}
-    for token in reply.removeprefix("KM1 OK STATUS ").split(" "):
+    for token in reply.removeprefix(STATUS_REPLY_PREFIX).split(" "):
         if token.count("=") != 1:
             raise SetupError("Status enthält ein ungültiges Feld")
         key, value = token.split("=", 1)
@@ -448,23 +488,64 @@ def read_status(port: SerialPort,
     return fields
 
 
-def _metric_line(raw: bytes) -> tuple[str, int] | None:
-    """Return only the fixed numeric SDK diagnostic, never arbitrary log text."""
-    match = re.fullmatch(rb"I \([0-9]{1,10}\) katmed_metrics: (.+)", raw)
-    if match is None:
-        return None
-    tokens = match.group(1).split(b" ")
-    keys = next((keys for keys in (METRIC_KEYS, LEGACY_METRIC_KEYS, NATIVE_METRIC_KEYS, NATIVE_RESOURCE_METRIC_KEYS)
-                 if len(tokens) == len(keys)), ())
-    if len(tokens) != len(keys):
-        return None
+def _native_metric_valid(fields: dict[str, int]) -> bool:
+    limits = {"jpeg_detail_v": 1, "jpeg_seq": 0xffffffff, "jpeg_stage": 4,
+              "jpeg_result": 10, "jpeg_mcus": 1280, "touch_init": 4, "touch_probe": 2,
+              "touch_seq": 0xffffffff, "touch_transfer": 2, "touch_sample": 4}
+    if any(fields[k] > limit for k, limit in limits.items()):
+        return False
+    if (not fields["jpeg_detail_v"] and any(fields[k] for k in
+            ("jpeg_seq", "jpeg_stage", "jpeg_result", "jpeg_mcus"))):
+        return False
+    if fields["jpeg_detail_v"] and (not fields["jpeg_seq"] or not fields["jpeg_stage"]):
+        return False
+    if fields["jpeg_detail_v"] and fields["jpeg_result"] != (0 if fields["jpeg_stage"] == 4 else 5):
+        return False
+    if fields["jpeg_stage"] == 1 and fields["jpeg_mcus"] != 0:
+        return False
+    if fields["jpeg_stage"] == 4 and fields["jpeg_mcus"] == 0:
+        return False
+    return _touch_metric_valid(fields)
+
+
+def _touch_metric_valid(fields: dict[str, int]) -> bool:
+    if fields["touch_seq"] == 0:
+        if fields["touch_transfer"] or fields["touch_sample"]:
+            return False
+    elif not fields["touch_transfer"] or not fields["touch_sample"]:
+        return False
+    if fields["touch_probe"] and fields["touch_init"] != 4:
+        return False
+    if fields["touch_seq"] and (fields["touch_init"] != 4 or fields["touch_probe"] != 1):
+        return False
+    if ((fields["touch_transfer"] == 2) != (fields["touch_sample"] == 4)):
+        return False
+    return True
+
+
+def _resource_metric_valid(fields: dict[str, int]) -> bool:
+    if (fields["jpeg_pool_v"] > 1 or fields["jpeg_pool_free"] > 0xffffffff or
+            fields["jpeg_pool_largest"] > fields["jpeg_pool_free"] or fields["touch_result"] > 4):
+        return False
+    if not fields["jpeg_pool_v"] and (fields["jpeg_pool_free"] or fields["jpeg_pool_largest"]):
+        return False
+    if fields["jpeg_pool_v"] and not fields["jpeg_detail_v"]:
+        return False
+    if (fields["touch_seq"] == 0) != (fields["touch_result"] == 0):
+        return False
+    if fields["touch_seq"] and ((fields["touch_transfer"] == 1) != (fields["touch_result"] == 1)):
+        return False
+    return True
+
+
+def _metric_values(keys: tuple[str, ...], tokens: list[bytes]) -> list[str] | None:
     values: list[str] = []
     for key, token in zip(keys, tokens):
         expected = key.encode("ascii") + b"="
         if not token.startswith(expected):
             return None
         number = token[len(expected):]
-        pattern = rb"-?[0-9]{1,20}" if key in SIGNED_METRICS else rb"[0-9]{1,20}"
+        pattern = WIRE_SIGNED_DECIMAL if key in SIGNED_METRICS else WIRE_UNSIGNED_DECIMAL
         if re.fullmatch(pattern, number) is None:
             return None
         if key in ("variant_seq", "variant_io_stage", "variant_io_status"):
@@ -472,50 +553,31 @@ def _metric_line(raw: bytes) -> tuple[str, int] | None:
             if int(number) > limit:
                 return None
         values.append(f"{key}={number.decode('ascii')}")
+    return values
+
+
+def _metric_line(raw: bytes) -> tuple[str, int] | None:
+    """Return only the fixed numeric SDK diagnostic, never arbitrary log text."""
+    match = re.fullmatch(rb"I \(\d{1,10}\) katmed_metrics: (.+)", raw)
+    if match is None:
+        return None
+    tokens = match.group(1).split(b" ")
+    keys = next((keys for keys in (METRIC_KEYS, LEGACY_METRIC_KEYS, NATIVE_METRIC_KEYS, NATIVE_RESOURCE_METRIC_KEYS)
+                 if len(tokens) == len(keys)), ())
+    if len(tokens) != len(keys):
+        return None
+    values = _metric_values(keys, tokens)
+    if values is None:
+        return None
     uptime = int(values[0].removeprefix("uptime_ms="))
     if uptime > 0xffffffffffffffff:
         return None
     if keys in (NATIVE_METRIC_KEYS, NATIVE_RESOURCE_METRIC_KEYS):
         fields = {k: int(v.split("=", 1)[1]) for k, v in zip(keys, values)}
-        limits = {"jpeg_detail_v": 1, "jpeg_seq": 0xffffffff, "jpeg_stage": 4,
-                  "jpeg_result": 10, "jpeg_mcus": 1280, "touch_init": 4, "touch_probe": 2,
-                  "touch_seq": 0xffffffff, "touch_transfer": 2, "touch_sample": 4}
-        if any(fields[k] > limit for k, limit in limits.items()):
+        if not _native_metric_valid(fields):
             return None
-        if (not fields["jpeg_detail_v"] and any(fields[k] for k in
-                ("jpeg_seq", "jpeg_stage", "jpeg_result", "jpeg_mcus"))):
+        if keys == NATIVE_RESOURCE_METRIC_KEYS and not _resource_metric_valid(fields):
             return None
-        if fields["jpeg_detail_v"] and (not fields["jpeg_seq"] or not fields["jpeg_stage"]):
-            return None
-        if fields["jpeg_detail_v"] and fields["jpeg_result"] != (0 if fields["jpeg_stage"] == 4 else 5):
-            return None
-        if fields["jpeg_stage"] == 1 and fields["jpeg_mcus"] != 0:
-            return None
-        if fields["jpeg_stage"] == 4 and fields["jpeg_mcus"] == 0:
-            return None
-        if fields["touch_seq"] == 0:
-            if fields["touch_transfer"] or fields["touch_sample"]:
-                return None
-        elif not fields["touch_transfer"] or not fields["touch_sample"]:
-            return None
-        if fields["touch_probe"] and fields["touch_init"] != 4:
-            return None
-        if fields["touch_seq"] and (fields["touch_init"] != 4 or fields["touch_probe"] != 1):
-            return None
-        if ((fields["touch_transfer"] == 2) != (fields["touch_sample"] == 4)):
-            return None
-        if keys == NATIVE_RESOURCE_METRIC_KEYS:
-            if (fields["jpeg_pool_v"] > 1 or fields["jpeg_pool_free"] > 0xffffffff or
-                    fields["jpeg_pool_largest"] > fields["jpeg_pool_free"] or fields["touch_result"] > 4):
-                return None
-            if not fields["jpeg_pool_v"] and (fields["jpeg_pool_free"] or fields["jpeg_pool_largest"]):
-                return None
-            if fields["jpeg_pool_v"] and not fields["jpeg_detail_v"]:
-                return None
-            if (fields["touch_seq"] == 0) != (fields["touch_result"] == 0):
-                return None
-            if fields["touch_seq"] and ((fields["touch_transfer"] == 1) != (fields["touch_result"] == 1)):
-                return None
     return "Messung " + " ".join(values), uptime
 
 
@@ -540,7 +602,7 @@ def _c3_touch_line(raw: bytes) -> dict[str, int] | None:
         if not token.startswith(prefix):
             return None
         value = token[len(prefix):]
-        if re.fullmatch(rb"\d{1,20}", value) is None:
+        if re.fullmatch(WIRE_UNSIGNED_DECIMAL, value) is None:
             return None
         number = int(value)
         limit = 0xffffffffffffffff if key in ("sample_seq", "uptime_ms", "boot_domain") else 0xffffffff
@@ -554,11 +616,83 @@ def _c3_touch_line(raw: bytes) -> dict[str, int] | None:
     return fields
 
 
+def _txres_fields_valid(fields: dict[str, int]) -> bool:
+    if (any(fields[k] > 0xffffffff for k in TXRES_KEYS[4:] if k != "result") or
+            not -(1 << 31) <= fields["result"] < (1 << 31)):
+        return False
+    if not fields["v"]:
+        if any(fields[k] for k in TXRES_KEYS[6:]):
+            return False
+    elif (not fields["task_v"] or fields["count"] == 0 or
+          fields["dhcp_type"] not in (1, 3) or
+          fields["ok"] + fields["nulls"] != fields["calls"]):
+        return False
+    if fields["calls"] != 1 and any(fields[k] for k in
+            ("resource_v", "size", "caps", "dma_free", "dma_largest")):
+        return False
+    if fields["resource_v"] != int(fields["calls"] == 1 and fields["caps"] == 0x80c):
+        return False
+    if not fields["resource_v"] and (fields["dma_free"] or fields["dma_largest"]):
+        return False
+    return True
+
+
+def _dhcp_fields_valid(fields: dict[str, int]) -> bool:
+    if (fields["state"] > 12 or fields["tries"] > 255 or
+            fields["timeout"] > 0xffffffff or
+            any(fields[k] > 0xffffffff for k in DHCP_KEYS[11:] if k not in SIGNED_EVIDENCE) or
+            any(not -(1 << 31) <= fields[k] < (1 << 31) for k in ("udp_error", "tx_error"))):
+        return False
+    if not fields["core_v"] and any(fields[k] for k in DHCP_KEYS[5:11]):
+        return False
+    if not fields["dhcp_v"] and any(fields[k] for k in ("state", "tries", "timeout", "fine")):
+        return False
+    return True
+
+
+def _evidence_number(key: str, value: bytes) -> int | None:
+    signed = key in SIGNED_EVIDENCE
+    if re.fullmatch(WIRE_SIGNED_DECIMAL if signed else WIRE_UNSIGNED_DECIMAL, value) is None:
+        return None
+    number = int(value)
+    if (number < (-1 << 63) if signed else number < 0) or number > ((1 << 63) - 1 if signed else (1 << 64) - 1):
+        return None
+    return number
+
+
+def _numeric_evidence_fields(keys: tuple[str, ...], tokens: list[bytes]) -> dict[str, int] | None:
+    fields: dict[str, int] = {}
+    for key, token in zip(keys, tokens):
+        expected = key.encode("ascii") + b"="
+        if not token.startswith(expected):
+            return None
+        value = token[len(expected):]
+        number = _evidence_number(key, value)
+        if number is None:
+            return None
+        if key in BOOLEAN_EVIDENCE and number not in (0, 1):
+            return None
+        fields[key] = number
+    return fields
+
+
+def _state_or_net_fields_valid(kind: str, fields: dict[str, int]) -> bool:
+    if kind == "state" and (fields["reason"] > 4 or fields["now_q"] > 2 or
+                             fields["utc_source"] > 3 or
+                             (fields["due_local"] and fields["clock_d"] != fields["boot_domain"])):
+        return False
+    if kind == "net" and (fields["sta_dhcp"] > 2 or
+                            (not fields["sta_v"] and any(fields[k] for k in
+                             ("sta_up", "sta_ip", "sta_dhcp")))):
+        return False
+    return True
+
+
 def _evidence_line(raw: bytes) -> tuple[str, dict[str, int]] | None:
     """Parse only the fixed, bounded numeric firmware records."""
     if len(raw) > MAX_DIAG_CHARS:
         return None
-    match = re.fullmatch(rb"I \([0-9]{1,10}\) katmed_(state|health|net|dhcp|txres): (.+)", raw)
+    match = re.fullmatch(rb"I \(\d{1,10}\) katmed_(state|health|net|dhcp|txres): (.+)", raw)
     if match is None:
         return None
     kind = match.group(1).decode("ascii")
@@ -566,66 +700,44 @@ def _evidence_line(raw: bytes) -> tuple[str, dict[str, int]] | None:
     tokens = match.group(2).split(b" ")
     if len(tokens) != len(keys):
         return None
-    fields: dict[str, int] = {}
-    for key, token in zip(keys, tokens):
-        expected = key.encode("ascii") + b"="
-        if not token.startswith(expected):
-            return None
-        value = token[len(expected):]
-        signed = key in SIGNED_EVIDENCE
-        if re.fullmatch(rb"-?[0-9]{1,20}" if signed else rb"[0-9]{1,20}", value) is None:
-            return None
-        number = int(value)
-        if (number < (-1 << 63) if signed else number < 0) or number > ((1 << 63) - 1 if signed else (1 << 64) - 1):
-            return None
-        if key in BOOLEAN_EVIDENCE and number not in (0, 1):
-            return None
-        fields[key] = number
+    fields = _numeric_evidence_fields(keys, tokens)
+    if fields is None:
+        return None
     if (fields["schema"] != 1 or fields["sample_seq"] == 0 or
             fields["boot_domain"] == 0):
         return None
-    if kind == "state" and (fields["reason"] > 4 or fields["now_q"] > 2 or
-                             fields["utc_source"] > 3 or
-                             (fields["due_local"] and fields["clock_d"] != fields["boot_domain"])):
+    if not _state_or_net_fields_valid(kind, fields):
         return None
-    if kind == "net" and (fields["sta_dhcp"] > 2 or
-                            (not fields["sta_v"] and any(fields[k] for k in
-                             ("sta_up", "sta_ip", "sta_dhcp")))):
+    if kind == "txres" and not _txres_fields_valid(fields):
         return None
-    if kind == "txres":
-        if (any(fields[k] > 0xffffffff for k in TXRES_KEYS[4:] if k != "result") or
-                not -(1 << 31) <= fields["result"] < (1 << 31)):
-            return None
-        if not fields["v"]:
-            if any(fields[k] for k in TXRES_KEYS[6:]):
-                return None
-        elif (not fields["task_v"] or fields["count"] == 0 or
-              fields["dhcp_type"] not in (1, 3) or
-              fields["ok"] + fields["nulls"] != fields["calls"]):
-            return None
-        if fields["calls"] != 1 and any(fields[k] for k in
-                ("resource_v", "size", "caps", "dma_free", "dma_largest")):
-            return None
-        if fields["resource_v"] != int(fields["calls"] == 1 and fields["caps"] == 0x80c):
-            return None
-        if not fields["resource_v"] and (fields["dma_free"] or fields["dma_largest"]):
-            return None
-    if kind == "dhcp":
-        if (fields["state"] > 12 or fields["tries"] > 255 or
-                fields["timeout"] > 0xffffffff or
-                any(fields[k] > 0xffffffff for k in DHCP_KEYS[11:] if k not in SIGNED_EVIDENCE) or
-                any(not -(1 << 31) <= fields[k] < (1 << 31) for k in ("udp_error", "tx_error"))):
-            return None
-        if not fields["core_v"] and any(fields[k] for k in DHCP_KEYS[5:11]):
-            return None
-        if not fields["dhcp_v"] and any(fields[k] for k in ("state", "tries", "timeout", "fine")):
-            return None
+    if kind == "dhcp" and not _dhcp_fields_valid(fields):
+        return None
     for key in ("image_fail", "store_read", "store_load", "store_commit",
                 "image_id", "mesh_send", "mesh_queue", "mesh_level", "mesh_ip_got",
                 "mesh_ip_lost", "mesh_up", "mesh_down"):
         if key in fields and fields[key] > 0xffffffff:
             return None
     return kind, fields
+
+
+def _usb_phase_fields(tokens: list[bytes], reject: Callable[[str], None]) -> dict[str, int] | None:
+    fields: dict[str, int] = {}
+    for key, token in zip(USB_PHASE_KEYS, tokens):
+        expected = key.encode("ascii") + b"="
+        if not token.startswith(expected):
+            reject("key_order")
+            return None
+        value = token[len(expected):]
+        if re.fullmatch(WIRE_UNSIGNED_DECIMAL, value) is None:
+            reject("number_syntax")
+            return None
+        number = int(value)
+        limit = 0xffffffff if key in ("schema", "task", "read", *USB_PHASE_COUNTERS) else 0xffffffffffffffff
+        if number > limit:
+            reject("number_range")
+            return None
+        fields[key] = number
+    return fields
 
 
 def _usb_phase_line(raw: bytes, rejection_observer: Callable[[str], None] | None = None) -> dict[str, int] | None:
@@ -637,7 +749,7 @@ def _usb_phase_line(raw: bytes, rejection_observer: Callable[[str], None] | None
     if len(raw) > MAX_DIAG_CHARS:
         reject("envelope")
         return None
-    match = re.fullmatch(rb"I \([0-9]{1,10}\) katmed_usb_phase: (.+)", raw)
+    match = re.fullmatch(rb"I \(\d{1,10}\) katmed_usb_phase: (.+)", raw)
     if match is None:
         reject("envelope")
         return None
@@ -645,22 +757,9 @@ def _usb_phase_line(raw: bytes, rejection_observer: Callable[[str], None] | None
     if len(tokens) != len(USB_PHASE_KEYS):
         reject("field_count")
         return None
-    fields: dict[str, int] = {}
-    for key, token in zip(USB_PHASE_KEYS, tokens):
-        expected = key.encode("ascii") + b"="
-        if not token.startswith(expected):
-            reject("key_order")
-            return None
-        value = token[len(expected):]
-        if re.fullmatch(rb"[0-9]{1,20}", value) is None:
-            reject("number_syntax")
-            return None
-        number = int(value)
-        limit = 0xffffffff if key in ("schema", "task", "read", *USB_PHASE_COUNTERS) else 0xffffffffffffffff
-        if number > limit:
-            reject("number_range")
-            return None
-        fields[key] = number
+    fields = _usb_phase_fields(tokens, reject)
+    if fields is None:
+        return None
     if (fields["schema"] != 1 or fields["phase_seq"] == 0 or
             fields["boot_domain"] == 0):
         reject("schema_or_domain")
@@ -709,22 +808,15 @@ class ObservationSession:
 
     def ensure_complete_line(self) -> None:
         if self._line_buffer:
-            raise SetupError("USB-Zeile ist zu lang oder unvollständig")
+            raise SetupError(USB_LINE_INCOMPLETE_ERROR)
 
     def _line(self) -> bytes | None:
         if self.clock() >= self.deadline:
             self.ensure_complete_line()
             return None
         self._check_measure_silence()
-        try:
-            remaining = MAX_DIAG_CHARS + 2 - len(self._line_buffer)
-            raw = self.port.read_until(b"\n", remaining)
-        except EOFError:
-            raise SetupError("USB-Verbindung ist beendet") from None
-        except Exception:
-            raise SetupError("USB-Lesen fehlgeschlagen") from None
-        if not isinstance(raw, bytes):
-            raise SetupError("Ungültige USB-Ausgabe")
+        remaining = MAX_DIAG_CHARS + 2 - len(self._line_buffer)
+        raw = self._read_fragment(remaining)
         self._check_measure_silence()
         if not raw:
             if self.clock() >= self.deadline:
@@ -736,26 +828,42 @@ class ObservationSession:
         if self.input_bytes > MAX_SESSION_INPUT_BYTES or self.lines > MAX_SESSION_LINES:
             raise SetupError("USB-Ausgabe überschreitet die Sitzungsgrenze")
         if len(raw) > remaining:
-            raise SetupError("USB-Zeile ist zu lang oder unvollständig")
+            raise SetupError(USB_LINE_INCOMPLETE_ERROR)
         self._line_buffer.extend(raw)
         if not self._line_buffer.endswith(b"\n"):
             if len(self._line_buffer) >= MAX_DIAG_CHARS + 2:
-                raise SetupError("USB-Zeile ist zu lang oder unvollständig")
+                raise SetupError(USB_LINE_INCOMPLETE_ERROR)
             if self.clock() >= self.deadline:
                 self.ensure_complete_line()
             return None
         raw = bytes(self._line_buffer)
         self._line_buffer.clear()
+        return self._complete_line(raw)
+
+    def _read_fragment(self, remaining: int) -> bytes:
+        try:
+            raw = self.port.read_until(b"\n", remaining)
+        except EOFError:
+            raise SetupError("USB-Verbindung ist beendet") from None
+        except Exception:
+            raise SetupError("USB-Lesen fehlgeschlagen") from None
+        if not isinstance(raw, bytes):
+            raise SetupError("Ungültige USB-Ausgabe")
+        return raw
+
+    @staticmethod
+    def _complete_line(raw: bytes) -> bytes:
         body = raw[:-1]
         if body.endswith(b"\r"):
             body = body[:-1]
         if b"\r" in body or len(body) > MAX_DIAG_CHARS:
-            raise SetupError("USB-Zeile enthält ein ungültiges Ende oder ist zu lang")
+            raise SetupError(USB_LINE_END_ERROR)
         if body.startswith(BOOT_MARKERS):
             raise SetupError("Geräteneustart erkannt; neue Sitzung mit Geräteabgleich erforderlich")
         if body.startswith(b"KM1 ") and len(raw) > MAX_RESPONSE_BYTES:
-            raise SetupError("KM1-Antwort überschreitet 256 Bytes")
+            raise SetupError(REPLY_LENGTH_ERROR)
         return body
+
 
     def _check_measure_silence(self) -> None:
         if (self.last_measure_time is not None and
@@ -795,8 +903,7 @@ class ObservationSession:
         fields = read_status(self.port, lambda _port: self._status_reply())
         # The generic KM1 parser permits token-safe build/version strings.
         # Observation prints them, so accept only the expected public forms.
-        if (re.fullmatch(r"[0-9a-fA-F]{7,12}", fields["firmware"]) is None or
-                re.fullmatch(r"[0-9a-fA-F]{6,24}", fields["build"]) is None):
+        if not _valid_firmware_label(fields["firmware"]) or not BUILD_RE.fullmatch(fields["build"]):
             raise SetupError("Status enthält keine gültige öffentliche Buildkennung")
         if self.last_measure_time is None:
             self.last_measure_time = self.clock()
@@ -825,6 +932,41 @@ def _stdin_command() -> str | None:
         raise SetupError("Sitzungseingabe ist nicht verfügbar") from None
 
 
+def _valid_firmware_label(value: object) -> bool:
+    return isinstance(value, str) and bool(
+        GIT_FIRMWARE_RE.fullmatch(value) or NATIVE_FIRMWARE_RE.fullmatch(value))
+
+
+def _firmware_matches(actual: str, expected: str) -> bool:
+    if GIT_FIRMWARE_RE.fullmatch(expected):
+        return actual.lower() == expected.lower()
+    return actual == expected
+
+
+def _check_observation_identity(status: dict[str, str], device: str, firmware: str,
+                                *, initial: bool) -> None:
+    if status["device"].lower() != device.lower():
+        message = ("Gerätekennung stimmt nicht mit --expect-device überein" if initial
+                   else "Gerätekennung hat sich während der Sitzung geändert")
+        raise SetupError(message)
+    if not _firmware_matches(status["firmware"], firmware):
+        message = ("Firmwarekennung stimmt nicht mit --expect-firmware überein" if initial
+                   else "Firmwarekennung hat sich während der Sitzung geändert")
+        raise SetupError(message)
+
+
+def _open_observation_serial(path: str) -> SerialPort:
+    return _open_serial(path, timeout=0.25)
+
+
+def _close_serial(port: SerialPort) -> None:
+    try:
+        port.close()
+    except Exception:
+        # Do not expose a transport exception that might include sent bytes.
+        raise SetupError(CLOSE_ERROR) from None
+
+
 def run_observation(args: argparse.Namespace,
                     opener: Callable[[str], SerialPort] | None = None,
                     startup: Callable[[SerialPort], None] = _drain_startup,
@@ -834,23 +976,17 @@ def run_observation(args: argparse.Namespace,
     if not args.expect_device or not DEVICE_RE.fullmatch(args.expect_device):
         raise SetupError("Beobachtung erfordert --expect-device mit 12 Hexzeichen")
     expected_firmware = getattr(args, "expect_firmware", None)
-    if not isinstance(expected_firmware, str) or re.fullmatch(
-            r"[0-9a-fA-F]{7,12}", expected_firmware) is None:
-        raise SetupError("Beobachtung erfordert --expect-firmware mit 7 bis 12 Hexzeichen")
+    if not _valid_firmware_label(expected_firmware):
+        raise SetupError(FIRMWARE_OPTION_ERROR)
     if not 30 <= args.duration_seconds <= MAX_SESSION_SECONDS:
         raise SetupError("Sitzungsdauer muss zwischen 30 und 1800 Sekunden liegen")
-    if opener is None:
-        opener = lambda path: _open_serial(path, timeout=0.25)
-    port = opener(args.port)
+    port = (_open_observation_serial if opener is None else opener)(args.port)
     try:
         startup(port)
         session = ObservationSession(port, clock=clock, emit=emit,
                                      duration_seconds=args.duration_seconds)
         status = session.status()
-        if status["device"].lower() != args.expect_device.lower():
-            raise SetupError("Gerätekennung stimmt nicht mit --expect-device überein")
-        if status["firmware"].lower() != expected_firmware.lower():
-            raise SetupError("Firmwarekennung stimmt nicht mit --expect-firmware überein")
+        _check_observation_identity(status, args.expect_device, expected_firmware, initial=True)
         session.identity_checked = True
         session.emit_status(status)
         session._emit("Eingabe: status oder quit; der Port bleibt bis zum Ende geöffnet.")
@@ -860,10 +996,7 @@ def run_observation(args: argparse.Namespace,
                 return
             if requested == "status":
                 status = session.status()
-                if status["device"].lower() != args.expect_device.lower():
-                    raise SetupError("Gerätekennung hat sich während der Sitzung geändert")
-                if status["firmware"].lower() != expected_firmware.lower():
-                    raise SetupError("Firmwarekennung hat sich während der Sitzung geändert")
+                _check_observation_identity(status, args.expect_device, expected_firmware, initial=False)
                 session.emit_status(status)
             elif requested is not None:
                 session._emit("Nur status oder quit ist zulässig.")
@@ -873,10 +1006,7 @@ def run_observation(args: argparse.Namespace,
     except KeyboardInterrupt:
         return
     finally:
-        try:
-            port.close()
-        except Exception:
-            raise SetupError("USB-Port konnte nicht sicher geschlossen werden") from None
+        _close_serial(port)
 
 
 def _open_serial(port_name: str, *, timeout: float = 3.0) -> SerialPort:
@@ -900,25 +1030,46 @@ def _open_serial(port_name: str, *, timeout: float = 3.0) -> SerialPort:
         raise SetupError("USB-Port konnte nicht geöffnet werden") from None
 
 
-def run_command(args: argparse.Namespace, opener: Callable[[str], SerialPort] = _open_serial,
-                startup: Callable[[SerialPort], None] = _drain_startup) -> str:
-    request: bytes | None = None
-    expected_firmware = getattr(args, "expect_firmware", None)
-    if expected_firmware is not None and (
-            not isinstance(expected_firmware, str) or
-            re.fullmatch(r"[0-9a-fA-F]{7,12}", expected_firmware) is None):
-        raise SetupError("--expect-firmware erfordert 7 bis 12 Hexzeichen")
-    if args.command == "provision":
-        external = getattr(args, "authorize_external_config", None)
-        request = build_provision_request(_private_config_bytes(
-            Path(args.config),
-            authorized_external_path=Path(external) if external is not None else None,
-        ))
+def _command_request(args: argparse.Namespace) -> bytes | None:
     if args.command == "reset-config" and args.confirm_reset != "RESET CONFIG":
         raise SetupError("Reset erfordert --confirm-reset 'RESET CONFIG'")
     if args.command in {"provision", "reset-config"}:
         if not args.expect_device or not DEVICE_RE.fullmatch(args.expect_device):
             raise SetupError("Für Änderungen ist --expect-device mit 12 Hexzeichen erforderlich")
+    if args.command != "provision":
+        return None
+    if not _valid_firmware_label(getattr(args, "expect_firmware", None)):
+        raise SetupError(FIRMWARE_OPTION_ERROR)
+    prefix = getattr(args, "expect_build_prefix", None)
+    if not isinstance(prefix, str) or len(prefix) < 16 or not BUILD_RE.fullmatch(prefix):
+        raise SetupError("--expect-build-prefix erfordert 16 bis 24 Hexzeichen")
+    catalog = getattr(args, "expect_catalog", None)
+    if catalog is not None and (not isinstance(catalog, str) or not HEX64_RE.fullmatch(catalog)):
+        raise SetupError("--expect-catalog erfordert 64 Hexzeichen")
+    external = getattr(args, "authorize_external_config", None)
+    return build_provision_request(_private_config_bytes(
+        Path(args.config),
+        authorized_external_path=Path(external) if external is not None else None,
+    ))
+
+
+def _check_provision_status(status: dict[str, str], build_prefix: str,
+                            expected_catalog: str | None) -> None:
+    build = status["build"]
+    if not BUILD_RE.fullmatch(build) or not build.lower().startswith(build_prefix.lower()):
+        raise SetupError("Buildpräfix stimmt nicht mit --expect-build-prefix überein")
+    if expected_catalog is not None and status["catalog"].lower() != expected_catalog.lower():
+        raise SetupError("Katalogkennung stimmt nicht mit --expect-catalog überein")
+    if status["durable"] != "1" or status["pending"] != "0" or status["error"] != "OK":
+        raise SetupError("Store-Zustand erlaubt keine Einrichtung")
+
+
+def run_command(args: argparse.Namespace, opener: Callable[[str], SerialPort] = _open_serial,
+                startup: Callable[[SerialPort], None] = _drain_startup) -> str:
+    expected_firmware = getattr(args, "expect_firmware", None)
+    if expected_firmware is not None and not _valid_firmware_label(expected_firmware):
+        raise SetupError(FIRMWARE_OPTION_ERROR)
+    request = _command_request(args)
     port = opener(args.port)
     try:
         startup(port)
@@ -926,22 +1077,20 @@ def run_command(args: argparse.Namespace, opener: Callable[[str], SerialPort] = 
         if args.expect_device and status["device"].lower() != args.expect_device.lower():
             raise SetupError("Gerätekennung stimmt nicht mit --expect-device überein")
         if (expected_firmware is not None and
-                status["firmware"].lower() != expected_firmware.lower()):
+                not _firmware_matches(status["firmware"], expected_firmware)):
             raise SetupError("Firmwarekennung stimmt nicht mit --expect-firmware überein")
         if args.command == "status":
             return " ".join(f"{key}={value}" for key, value in status.items())
         if args.command == "provision":
-            assert request is not None
+            if request is None:
+                raise SetupError("Einrichtungsanforderung fehlt")
+            _check_provision_status(status, args.expect_build_prefix, getattr(args, "expect_catalog", None))
             exchange(port, request, "KM1 OK PROVISION")
             return "Einrichtung dauerhaft angenommen."
         exchange(port, b"KM1 RESET CONFIG\n", "KM1 OK RESET_CONFIG")
         return "Nur Gruppenschlüssel, WLAN und Zeitquelle wurden zurückgesetzt; Zustand und Outbox bleiben erhalten."
     finally:
-        try:
-            port.close()
-        except Exception:
-            # Do not expose a transport exception that might include sent bytes.
-            raise SetupError("USB-Port konnte nicht sicher geschlossen werden") from None
+        _close_serial(port)
 
 
 def _bound_nonce(factory: Callable[[], str]) -> str:
@@ -951,9 +1100,7 @@ def _bound_nonce(factory: Callable[[], str]) -> str:
     return value
 
 
-def _bound_fields(reply: str, kind: str, nonce: str,
-                  *, expect_device: str, expect_firmware: str,
-                  expect_build: str, expect_catalog: str) -> dict[str, int]:
+def _bound_tokens(reply: str, kind: str, nonce: str) -> dict[str, str]:
     prefix = f"KM1 OK {kind} "
     if not reply.startswith(prefix):
         raise SetupError("Gebundene USB-Antwort fehlt")
@@ -969,6 +1116,13 @@ def _bound_fields(reply: str, kind: str, nonce: str,
         values[key] = part[len(key) + 1:]
     if values["n"] != nonce:
         raise SetupError("Gebundene USB-Antwort gehört zu einer älteren Anfrage")
+    return values
+
+
+def _bound_fields(reply: str, kind: str, nonce: str,
+                  *, expect_device: str, expect_firmware: str,
+                  expect_build: str, expect_catalog: str) -> dict[str, int]:
+    values = _bound_tokens(reply, kind, nonce)
     if (values["dev"].lower() != expect_device.lower() or
             values["cat"].lower() != expect_catalog.lower() or
             values["fw"].lower() != expect_firmware.lower() or
@@ -976,13 +1130,13 @@ def _bound_fields(reply: str, kind: str, nonce: str,
         raise SetupError("Gebundene USB-Kennung weicht ab")
     if (not DEVICE_RE.fullmatch(values["dev"]) or
             not HEX64_RE.fullmatch(values["cat"]) or
-            re.fullmatch(r"[0-9a-fA-F]{7,12}", values["fw"]) is None or
-            re.fullmatch(r"[0-9a-fA-F]{6,24}", values["b"]) is None):
+            not GIT_FIRMWARE_RE.fullmatch(values["fw"]) or
+            not BUILD_RE.fullmatch(values["b"])):
         raise SetupError("Gebundene USB-Kennung hat ein ungültiges Format")
     result: dict[str, int] = {}
     for key, name in (("e", "epoch"), ("x", "domain"), ("u", "uptime_ms")):
         raw = values[key]
-        if re.fullmatch(r"[0-9]{1,20}", raw) is None or int(raw) > (1 << 64) - 1:
+        if re.fullmatch(r"\d{1,20}", raw, flags=re.ASCII) is None or int(raw) > (1 << 64) - 1:
             raise SetupError("Gebundene USB-Zeitkennung ist ungültig")
         result[name] = int(raw)
     if result["epoch"] == 0 or result["domain"] == 0:
@@ -1007,10 +1161,10 @@ def _bound_exchange(port: SerialPort, request: bytes) -> str:
         raise
     except Exception:
         raise SetupError("Interne USB-Übertragung fehlgeschlagen") from None
-    if reply.startswith("KM1 ERR "):
-        reason = reply.removeprefix("KM1 ERR ")
+    if reply.startswith(WIRE_ERROR_PREFIX):
+        reason = reply.removeprefix(WIRE_ERROR_PREFIX)
         if reason not in WIRE_ERRORS:
-            raise SetupError("Gerät meldet einen ungültigen Fehlercode")
+            raise SetupError(WIRE_ERROR_INVALID)
         raise SetupError(f"Gerät lehnt die interne Anfrage ab: {reason}")
     return reply
 
@@ -1028,8 +1182,8 @@ def run_bound_provision(args: argparse.Namespace,
     expected = (args.expect_device, args.expect_firmware, args.expect_build,
                 args.expect_catalog)
     if (not DEVICE_RE.fullmatch(expected[0] or "") or
-            re.fullmatch(r"[0-9a-fA-F]{7,12}", expected[1] or "") is None or
-            re.fullmatch(r"[0-9a-fA-F]{6,24}", expected[2] or "") is None or
+            not GIT_FIRMWARE_RE.fullmatch(expected[1] or "") or
+            not BUILD_RE.fullmatch(expected[2] or "") or
             not HEX64_RE.fullmatch(expected[3] or "")):
         raise SetupError("Interne erwartete Kennungen sind ungültig")
     nonce = _bound_nonce(nonce_factory)
@@ -1049,94 +1203,136 @@ def run_bound_provision(args: argparse.Namespace,
                              expect_device=expected[0], expect_firmware=expected[1],
                              expect_build=expected[2], expect_catalog=expected[3])
     finally:
-        try:
-            port.close()
-        except Exception:
-            raise SetupError("USB-Port konnte nicht sicher geschlossen werden") from None
+        _close_serial(port)
 
 
-def read_boot_pair(port: SerialPort, *, expect_device: str,
-                   expect_firmware: str, expect_build: str, expect_catalog: str,
-                   nonce_factory: Callable[[], str] = lambda: secrets.token_hex(16),
-                   monotonic: Callable[[], float] = time.monotonic) -> dict[str, int]:
-    """Bind one real BOOT status to the first complete numeric sample, on one port."""
-    nonce = _bound_nonce(nonce_factory)
-    _drain_startup(port, clock=monotonic)
-    reply = _bound_exchange(port, f"KM1 BOOT n={nonce}\n".encode("ascii"))
-    bound = _bound_fields(reply, "BOOT", nonce,
-                          expect_device=expect_device, expect_firmware=expect_firmware,
-                          expect_build=expect_build, expect_catalog=expect_catalog)
-    if bound["configured"] != 1 or bound["durable"] != 1:
-        raise SetupError("Gebundener Bootstatus ist nicht dauerhaft konfiguriert")
-    bound["status_uptime_ms"] = bound.pop("uptime_ms")
+def _read_boot_diagnostic(port: SerialPort) -> bytes:
+    try:
+        raw = port.read_until(b"\n", MAX_DIAG_CHARS + 2)
+    except Exception:
+        raise SetupError("Gebundene Diagnose konnte nicht gelesen werden") from None
+    if not isinstance(raw, bytes):
+        raise SetupError("Gebundene Diagnose ist ungültig")
+    return raw
+
+
+def _boot_diagnostic_body(raw: bytes) -> bytes:
+    if len(raw) > MAX_DIAG_CHARS + 2 or not raw.endswith(b"\n"):
+        raise SetupError("Gebundene Diagnose ist zu lang oder unvollständig")
+    body = raw[:-1].removesuffix(b"\r")
+    if b"\r" in body or body.startswith(BOOT_MARKERS) or body.startswith(b"KM1 "):
+        raise SetupError("Gebundene Diagnose enthält einen Neustart oder Fremdstatus")
+    return body
+
+
+def _match_boot_evidence(evidence: tuple[str, dict[str, int]], metric_uptime: int | None,
+                         state: dict[str, int] | None,
+                         bound: dict[str, int | dict[str, int]]) -> tuple[dict[str, int] | None, bool]:
+    kind, fields = evidence
+    if metric_uptime is None or fields["uptime_ms"] != metric_uptime or fields["boot_domain"] != bound["domain"]:
+        raise SetupError("Diagnosepaar gehört zu einer anderen Zeitdomäne")
+    if kind in ("net", "dhcp", "txres"):
+        return state, False  # These have been checked but are not the core pair.
+    if kind == "state" and state is None:
+        return fields, False
+    if kind == "health" and state is not None and fields["sample_seq"] == state["sample_seq"]:
+        if "c3_touch" in bound and bound["c3_touch"]["sample_seq"] != fields["sample_seq"]:
+            raise SetupError("C3-Diagnose gehört zu einem anderen Zyklus")
+        bound["pair_uptime_ms"] = metric_uptime
+        bound["pair_sequence"] = fields["sample_seq"]
+        return state, True
+    raise SetupError("Erstes Diagnosepaar ist unvollständig oder doppelt")
+
+
+def _bind_c3_sample(body: bytes, metric_uptime: int | None, state: dict[str, int] | None,
+                    bound: dict[str, int | dict[str, int]]) -> None:
+    parsed_c3 = _c3_touch_line(body)
+    if (parsed_c3 is None or "c3_touch" in bound or metric_uptime is None or state is not None or
+            parsed_c3["uptime_ms"] != metric_uptime or parsed_c3["boot_domain"] != bound["domain"]):
+        raise SetupError("C3-Diagnose ist beschädigt oder nicht zugeordnet")
+    bound["c3_touch"] = parsed_c3
+
+
+def _parse_boot_numerics(body: bytes) -> tuple[tuple[str, int] | None, tuple[str, dict[str, int]] | None]:
+    recognized = body.startswith(b"I (") and any(
+        tag in body[:64] for tag in (b"katmed_metrics:", b"katmed_state:", b"katmed_health:",
+                                    b"katmed_net:", b"katmed_dhcp:", b"katmed_txres:"))
+    parsed_metric = _metric_line(body)
+    parsed_evidence = _evidence_line(body)
+    if recognized and parsed_metric is None and parsed_evidence is None:
+        raise SetupError("Gebundene numerische Diagnose ist beschädigt")
+    return parsed_metric, parsed_evidence
+
+
+def _first_boot_metric(uptime: int, previous: int | None, state: dict[str, int] | None,
+                       status_uptime: int) -> int:
+    if previous is not None or state is not None or uptime <= status_uptime:
+        raise SetupError("Erste Diagnose gehört nicht strikt zum gebundenen Status")
+    return uptime
+
+
+def _read_bound_diagnostic_pair(port: SerialPort, monotonic: Callable[[], float], status_uptime: int,
+                               bound: dict[str, int | dict[str, int]]) -> None:
     deadline = monotonic() + 30.0
     metric_uptime: int | None = None
     state: dict[str, int] | None = None
     count = 0
     total = 0
-    c3_seen = False
     while monotonic() < deadline and count < 64 and total < 32 * 1024:
-        try:
-            raw = port.read_until(b"\n", MAX_DIAG_CHARS + 2)
-        except Exception:
-            raise SetupError("Gebundene Diagnose konnte nicht gelesen werden") from None
-        if not isinstance(raw, bytes):
-            raise SetupError("Gebundene Diagnose ist ungültig")
+        raw = _read_boot_diagnostic(port)
         if not raw:
             continue
         count += 1
         total += len(raw)
-        if len(raw) > MAX_DIAG_CHARS + 2 or not raw.endswith(b"\n"):
-            raise SetupError("Gebundene Diagnose ist zu lang oder unvollständig")
-        body = raw[:-1].removesuffix(b"\r")
-        if b"\r" in body or body.startswith(BOOT_MARKERS) or body.startswith(b"KM1 "):
-            raise SetupError("Gebundene Diagnose enthält einen Neustart oder Fremdstatus")
-        recognized = body.startswith((b"I (",)) and any(
-            tag in body[:64] for tag in (b"katmed_metrics:", b"katmed_state:", b"katmed_health:", b"katmed_net:", b"katmed_dhcp:", b"katmed_txres:", b"katmed_c3_touch:"))
-        parsed_c3 = _c3_touch_line(body)
+        body = _boot_diagnostic_body(raw)
         if b"katmed_c3_touch:" in body:
-            if (parsed_c3 is None or c3_seen or metric_uptime is None or state is not None or
-                    parsed_c3["uptime_ms"] != metric_uptime or parsed_c3["boot_domain"] != bound["domain"]):
-                raise SetupError("C3-Diagnose ist beschädigt oder nicht zugeordnet")
-            c3_seen = True
-            bound["c3_touch"] = parsed_c3
+            _bind_c3_sample(body, metric_uptime, state, bound)
             continue
-        parsed_metric = _metric_line(body)
-        parsed_evidence = _evidence_line(body)
-        if recognized and parsed_metric is None and parsed_evidence is None:
-            raise SetupError("Gebundene numerische Diagnose ist beschädigt")
+        parsed_metric, parsed_evidence = _parse_boot_numerics(body)
         if parsed_metric is not None:
-            if metric_uptime is not None or state is not None or parsed_metric[1] <= bound["status_uptime_ms"]:
-                raise SetupError("Erste Diagnose gehört nicht strikt zum gebundenen Status")
-            metric_uptime = parsed_metric[1]
-        elif parsed_evidence is not None:
-            kind, fields = parsed_evidence
-            if metric_uptime is None or fields["uptime_ms"] != metric_uptime or fields["boot_domain"] != bound["domain"]:
-                raise SetupError("Diagnosepaar gehört zu einer anderen Zeitdomäne")
-            if kind in ("net", "dhcp", "txres"):
-                continue  # Validated direct-network evidence is not the core state/health pair.
-            if kind == "state" and state is None:
-                state = fields
-            elif kind == "health" and state is not None and fields["sample_seq"] == state["sample_seq"]:
-                if c3_seen and bound["c3_touch"]["sample_seq"] != fields["sample_seq"]:
-                    raise SetupError("C3-Diagnose gehört zu einem anderen Zyklus")
-                bound["pair_uptime_ms"] = metric_uptime
-                bound["pair_sequence"] = fields["sample_seq"]
-                return bound
-            else:
-                raise SetupError("Erstes Diagnosepaar ist unvollständig oder doppelt")
+            metric_uptime = _first_boot_metric(parsed_metric[1], metric_uptime, state, status_uptime)
+            continue
+        if parsed_evidence is None:
+            continue
+        state, complete = _match_boot_evidence(parsed_evidence, metric_uptime, state, bound)
+        if complete:
+            return
     raise SetupError("Erstes gebundenes Diagnosepaar fehlt innerhalb der Grenze")
+
+
+
+def read_boot_pair(port: SerialPort, *, expect_device: str,
+                   expect_firmware: str, expect_build: str, expect_catalog: str,
+                   nonce_factory: Callable[[], str] = lambda: secrets.token_hex(16),
+                   monotonic: Callable[[], float] = time.monotonic) -> dict[str, int | dict[str, int]]:
+    """Bind one real BOOT status to the first complete numeric sample, on one port."""
+    nonce = _bound_nonce(nonce_factory)
+    _drain_startup(port, clock=monotonic)
+    reply = _bound_exchange(port, f"KM1 BOOT n={nonce}\n".encode("ascii"))
+    status = _bound_fields(reply, "BOOT", nonce,
+                          expect_device=expect_device, expect_firmware=expect_firmware,
+                          expect_build=expect_build, expect_catalog=expect_catalog)
+    if status["configured"] != 1 or status["durable"] != 1:
+        raise SetupError("Gebundener Bootstatus ist nicht dauerhaft konfiguriert")
+    status_uptime = status.pop("uptime_ms")
+    bound: dict[str, int | dict[str, int]] = {**status, "status_uptime_ms": status_uptime}
+    _read_bound_diagnostic_pair(port, monotonic, status_uptime, bound)
+    return bound
 
 
 def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Begrenzte USB-Einrichtung für Katmed (KM1).")
     p.add_argument("--port", required=True, help="Stabiler Pfad unter /dev/serial/by-id/")
     p.add_argument("--expect-device", help="Erwartete 12-stellige Gerätekennung")
-    p.add_argument("--expect-firmware", help="Erwarteter Firmwarekurz-Hash mit 7 bis 12 Hexzeichen")
+    p.add_argument("--expect-firmware", help=FIRMWARE_OPTION_ERROR)
     sub = p.add_subparsers(dest="command", required=True)
     sub.add_parser("status", help="Nicht geheimen Gerätestatus lesen")
     provision = sub.add_parser("provision", help="Private Konfiguration dauerhaft übernehmen")
     provision.add_argument("--config", default=str(DEFAULT_CONFIG), help="JSON-Datei direkt unter .local/")
+    provision.add_argument("--expect-build-prefix", required=True, metavar="HEX",
+                           help="Erwartetes Buildpräfix mit 16 bis 24 Hexzeichen")
+    provision.add_argument("--expect-catalog", metavar="HEX",
+                           help="Optionale erwartete Katalogkennung mit 64 Hexzeichen")
     provision.add_argument("--authorize-external-config", metavar="EXACT_PATH",
                            help="Autorisiert genau die unter --config angegebene externe Datei")
     reset = sub.add_parser("reset-config", help="Nur Einrichtungsdaten löschen")

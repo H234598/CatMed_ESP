@@ -22,7 +22,7 @@ class KatmedConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 return self.async_create_entry(title="Katmed ESP", data=user_input)
             except InvalidAuth:
                 errors["base"] = "invalid_auth"
-            except (OSError, ssl.SSLError, ValueError, CannotConnect):
+            except (OSError, ValueError, CannotConnect):
                 errors["base"] = "cannot_connect"
         return self.async_show_form(step_id="user", data_schema=vol.Schema({
             vol.Required("host"): str,
@@ -54,7 +54,7 @@ class KatmedConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 return self.async_update_reload_and_abort(entry, data_updates=user_input)
             except InvalidAuth:
                 errors["base"] = "invalid_auth"
-            except (OSError, ssl.SSLError, ValueError, CannotConnect):
+            except (OSError, ValueError, CannotConnect):
                 errors["base"] = "cannot_connect"
         return self.async_show_form(step_id="reauth_confirm", data_schema=vol.Schema({
             vol.Required("password"): selector.TextSelector(selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)),

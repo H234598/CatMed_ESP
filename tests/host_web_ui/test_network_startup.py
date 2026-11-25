@@ -7,7 +7,8 @@ listener. No Wi-Fi profiles, real sockets, private keys or devices are used.
 import datetime
 import json
 import time
-import subprocess
+import shutil
+import subprocess  # nosec B404 - Captures host test process exits, timing and stream closure.
 import tempfile
 import unittest
 import os
@@ -16,6 +17,13 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE = Path(os.environ.get("KATMED_WEB_SOURCE", ROOT / "firmware/components/katmed_web/katmed_web.c"))
+
+
+def host_tool(name):
+    executable = shutil.which(name)
+    if executable is None or not Path(executable).is_absolute():
+        raise RuntimeError(f"{name} must resolve to an absolute path in the host test runner's PATH")
+    return executable
 
 
 def function(text, signature):
@@ -31,6 +39,7 @@ def function(text, signature):
 
 PREFIX = r'''
 #include <stdbool.h>
+#include <stdarg.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -38,11 +47,34 @@ PREFIX = r'''
 #include <string.h>
 #define ESP_OK 0
 #define ESP_FAIL -1
+#define ESP_ERR_NO_MEM 0x101
+#define ESP_ERR_INVALID_STATE 0x103
+#define ESP_ERR_NOT_SUPPORTED 0x106
+#define ESP_ERR_HTTPD_ALLOC_MEM 0xb007
+typedef int esp_err_t;
 #define NVS_READWRITE 1
 #define WEB_TAG "test"
-#define ESP_LOGE(...) ((void)0)
-#define ESP_LOGW(...) ((void)0)
-#define ESP_LOGI(...) ((void)0)
+static void startup_log(const char *tag, const char *format, ...){
+ (void)tag;
+ va_list args;
+ va_start(args, format);
+ vprintf(format, args);
+ va_end(args);
+ putchar('\n');
+}
+#define ESP_LOGE(...) startup_log(__VA_ARGS__)
+#define ESP_LOGW(...) startup_log(__VA_ARGS__)
+#define ESP_LOGI(...) startup_log(__VA_ARGS__)
+static const char *esp_err_to_name(esp_err_t error){
+ switch(error){
+ case ESP_ERR_NO_MEM: return "ESP_ERR_NO_MEM";
+ case ESP_ERR_HTTPD_ALLOC_MEM: return "ESP_ERR_HTTPD_ALLOC_MEM";
+ default: return "other";
+ }
+}
+#define MALLOC_CAP_INTERNAL 1u
+#define MALLOC_CAP_8BIT 2u
+#define MALLOC_CAP_DMA 4u
 #define HTTPD_DEFAULT_CONFIG() ((httpd_config_t){.server_port=80,.ctrl_port=32768})
 #define HTTPD_SSL_CONFIG_DEFAULT() ((httpd_ssl_config_t){.httpd=HTTPD_DEFAULT_CONFIG()})
 #define CONFIG_ESP_TLS_SERVER_MIN_AUTH_MODE_OPTIONAL 1
@@ -95,7 +127,10 @@ static struct {
 } web;
 static bool tcpip_ready,init_fails,https_stop_fails;
 static bool https_start_fails,redirect_start_fails,route_fails,post_admission_fails;
-static int https_stops,storage_closes,mutex_deletes;
+static bool redirect_registration_fails,final_admission_fails;
+static bool routes_registered,snapshot_stages;
+static int https_stops,redirect_stops,storage_closes,mutex_deletes;
+static int redirect_registrations,route_heap_reads,final_heap_reads;
 static int listener_attempts,uninitialized_listener_attempts,nvs_opens;
 static httpd_config_t https_httpd_config, redirect_httpd_config;
 static uint64_t monotonic_ms(void){return 0;}
@@ -104,7 +139,29 @@ static int esp_netif_init(void) {
  if(init_fails)return ESP_FAIL;
  tcpip_ready=true;return ESP_OK;
 }
-static bool resources_allow(bool post,const char *site){(void)site;return !post || !post_admission_fails;}
+static size_t heap_caps_get_free_size(uint32_t caps){
+ if(web.redirect){
+  ++final_heap_reads;
+  if(final_admission_fails) return caps & MALLOC_CAP_DMA ? 6100 : 32767;
+  if(snapshot_stages) return caps & MALLOC_CAP_DMA ? 7500 : 37000;
+ }else if(web.https && routes_registered){
+  ++route_heap_reads;
+  if(snapshot_stages) return caps & MALLOC_CAP_DMA ? 6100 : 32767;
+ }
+ if(web.https && post_admission_fails) return 0;
+ return 65536;
+}
+static size_t heap_caps_get_largest_free_block(uint32_t caps){
+ if(web.redirect){
+  ++final_heap_reads;
+  if(final_admission_fails) return caps & MALLOC_CAP_DMA ? 1000 : 12000;
+  if(snapshot_stages) return caps & MALLOC_CAP_DMA ? 3000 : 15000;
+ }else if(web.https && routes_registered){
+  ++route_heap_reads;
+  if(snapshot_stages) return caps & MALLOC_CAP_DMA ? 1000 : 12000;
+ }
+ return 32768;
+}
 static int nvs_open(const char *name,int mode,int *out){(void)name;(void)mode;*out=1;++nvs_opens;return ESP_OK;}
 static bool load_auth(void *state){(void)state;return true;}
 static bool load_identifier(void *state){(void)state;return true;}
@@ -114,6 +171,7 @@ static int httpd_ssl_start(void **handle,const httpd_ssl_config_t *cfg){
  https_httpd_config=cfg->httpd;++listener_attempts;
  if(!tcpip_ready){++uninitialized_listener_attempts;return ESP_FAIL;}
  if(https_start_fails)return ESP_FAIL;
+ routes_registered=false;
  *handle=(void*)2;return ESP_OK;
 }
 static int httpd_start(void **handle,const httpd_config_t *cfg){
@@ -122,9 +180,17 @@ static int httpd_start(void **handle,const httpd_config_t *cfg){
  if(redirect_start_fails)return ESP_FAIL;
  *handle=(void*)3;return ESP_OK;
 }
-static bool register_routes(void *server){return server!=NULL && !route_fails;}
-static int httpd_register_uri_handler(void *server,const httpd_uri_t *uri){(void)uri;return server?ESP_OK:ESP_FAIL;}
-static int httpd_stop(void *server){(void)server;return ESP_OK;}
+static bool register_routes(void *server){
+ routes_registered=server!=NULL && !route_fails;
+ return routes_registered;
+}
+static int httpd_register_uri_handler(void *server,const httpd_uri_t *uri){
+ (void)uri;
+ if(server!=web.redirect || !server)return ESP_FAIL;
+ ++redirect_registrations;
+ return redirect_registration_fails ? ESP_ERR_HTTPD_ALLOC_MEM : ESP_OK;
+}
+static int httpd_stop(void *server){(void)server;++redirect_stops;return ESP_OK;}
 static int httpd_ssl_stop(void *server){(void)server;++https_stops;return https_stop_fails?ESP_FAIL:ESP_OK;}
 static void wipe(void *ptr,size_t len){memset(ptr,0,len);}
 static void nvs_close(int nvs){(void)nvs;++storage_closes;}
@@ -143,30 +209,30 @@ int main(int argc,char **argv){
  if(!strcmp(argv[1],"fresh_without_wifi")){
   /* Fresh Store: no provisioned Mesh, no network/interface/IP or Wi-Fi profile. */
   tcpip_ready=false;
-  CHECK(katmed_web_start(NULL));
+  CHECK(katmed_web_start(NULL)==ESP_OK);
   CHECK(web.started && web.https && web.redirect);
   CHECK(uninitialized_listener_attempts==0);
  }else if(!strcmp(argv[1],"already_initialized_mesh")){
   tcpip_ready=true;
-  CHECK(katmed_web_start(NULL));
+  CHECK(katmed_web_start(NULL)==ESP_OK);
   CHECK(web.started && web.https && web.redirect);
   int existing=listener_attempts;
-  CHECK(katmed_web_start(NULL));CHECK(listener_attempts==existing);
+  CHECK(katmed_web_start(NULL)==ESP_OK);CHECK(listener_attempts==existing);
   CHECK(uninitialized_listener_attempts==0);
  }else if(!strcmp(argv[1],"initialization_failure")){
   init_fails=true;tcpip_ready=false;
-  CHECK(!katmed_web_start(NULL));
+  CHECK(katmed_web_start(NULL)==ESP_FAIL);
   CHECK(!web.started && !web.https && !web.redirect && !web.nvs_open);
   CHECK(listener_attempts==0 && nvs_opens==0);
  }else if(!strcmp(argv[1],"intentional_disabled")){
-  CHECK(katmed_web_start(NULL));int before=listener_attempts;
+  CHECK(katmed_web_start(NULL)==ESP_OK);int before=listener_attempts;
   katmed_web_set_enabled(false);CHECK(!web.started);
   katmed_web_poll(UINT64_C(900000));CHECK(listener_attempts==before);
-  CHECK(!katmed_web_start(NULL));CHECK(listener_attempts==before);
+  CHECK(katmed_web_start(NULL)==ESP_ERR_INVALID_STATE);CHECK(listener_attempts==before);
   katmed_web_set_enabled(true);katmed_web_poll(UINT64_C(900001));
   CHECK(web.started && listener_attempts>before);
  }else if(!strcmp(argv[1],"target_listener_capacity")){
-  CHECK(argc==3);CHECK(katmed_web_start(NULL));
+  CHECK(argc==3);CHECK(katmed_web_start(NULL)==ESP_OK);
   printf("ACTUAL_POLICY https=%d http=%d\n",https_httpd_config.max_open_sockets,redirect_httpd_config.max_open_sockets);
   CHECK(https_httpd_config.max_open_sockets==atoi(argv[2]));
   CHECK(redirect_httpd_config.max_open_sockets==1);
@@ -178,12 +244,31 @@ int main(int argc,char **argv){
   CHECK(argc==3);web.identity.key_len=32;
   https_start_fails=!strcmp(argv[2],"https");redirect_start_fails=!strcmp(argv[2],"redirect");
   route_fails=!strcmp(argv[2],"routes");post_admission_fails=!strcmp(argv[2],"admission");
-  CHECK(!katmed_web_start(NULL));
+  CHECK(katmed_web_start(NULL)==(post_admission_fails ? ESP_ERR_NO_MEM : ESP_FAIL));
   CHECK(!web.https && !web.redirect && web.tls_key_id==PSA_KEY_ID_NULL);
   CHECK(key_destroys==1 && !web.nvs_open && !web.auth_mutex);
+ }else if(!strcmp(argv[1],"snapshot_stages")){
+  snapshot_stages=true;
+  CHECK(katmed_web_start(NULL)==ESP_OK && web.started);
+  CHECK(listener_attempts==2 && redirect_registrations==1);
+  CHECK(route_heap_reads==(CONFIG_IDF_TARGET_ESP32C3 ? 4 : 0));
+  CHECK(final_heap_reads==4);
+ }else if(!strcmp(argv[1],"late_failure_cleanup")){
+  CHECK(argc==3);
+  web.identity.key_len=32;
+  redirect_registration_fails=!strcmp(argv[2],"redirect_uri");
+  final_admission_fails=!strcmp(argv[2],"final_admission");
+  CHECK(redirect_registration_fails != final_admission_fails);
+  app_start_web();
+  CHECK(listener_attempts==2 && redirect_registrations==1);
+  CHECK(final_heap_reads==(final_admission_fails ? 4 : 0));
+  CHECK(redirect_stops==1 && https_stops==1 && key_destroys==1);
+  CHECK(storage_closes==1 && mutex_deletes==1);
+  CHECK(!web.started && !web.https && !web.redirect && !web.nvs_open && !web.auth_mutex);
+  CHECK(web.tls_key_id==PSA_KEY_ID_NULL);
  }else if(!strcmp(argv[1],"fullstack_socket_capacity")){
   CHECK(argc==4);
-  CHECK(katmed_web_start(NULL));
+  CHECK(katmed_web_start(NULL)==ESP_OK);
   CHECK(web.started && listener_attempts==2);
   CHECK(https_httpd_config.max_open_sockets>=1);
   CHECK(redirect_httpd_config.max_open_sockets>=1);
@@ -195,7 +280,7 @@ int main(int argc,char **argv){
              redirect_httpd_config.max_open_sockets;
   CHECK(atoi(argv[2])>=demand);
  }else if(!strcmp(argv[1],"https_stop_failure_retains_state")){
-  CHECK(katmed_web_start(NULL));
+  CHECK(katmed_web_start(NULL)==ESP_OK);
   web.tls_key_id=7;web.tls_key_config.source=ESP_KEY_SOURCE_PSA;
   web.tls_key_config.psa.key_id=7;
   web.identity.key[0]=42;web.auth.record.cert_len=1;
@@ -228,17 +313,40 @@ int main(int argc,char **argv){
 
 
 class NetworkStartup(unittest.TestCase):
+    HTTPS_SAMPLE = (
+        "startup stage=web_after_https_start internal_free=65536 internal_largest=32768 "
+        "dma_free=65536 dma_largest=32768"
+    )
+    ROUTE_SAMPLE = (
+        "startup stage=web_after_https_routes internal_free=65536 internal_largest=32768 "
+        "dma_free=65536 dma_largest=32768"
+    )
+
     @classmethod
     def setUpClass(cls):
         cls.directory = tempfile.TemporaryDirectory()
         text = SOURCE.read_text()
+        main = (ROOT / "firmware/main/main.c").read_text()
+        unavailable = main.index("HTTPS configuration listener unavailable")
+        caller = function(main[main.rindex("if (management", 0, unavailable):], "if (management")
+        caller = ("static void app_start_web(void) {\n"
+                  "const char *tag = WEB_TAG; const bool management = true;\n"
+                  "const KatmedWebServices web_services = {0};\n" + caller + "\n}")
+        resource_limits = "\n".join(re.findall(r"^#define (?:PRE|POST)_.*$", text, re.M))
         c = Path(cls.directory.name) / "startup.c"
-        c.write_text(PREFIX + "\nstatic bool management_enabled=true;\n" + function(text, "static bool stop_listeners(void)" if "static bool stop_listeners(void)" in text else "static void stop_listeners(void)") + "\n" + function(text, "static bool start_listeners(void)") +
-                     "\n" + function(text, "void katmed_web_set_enabled(") + "\n" + function(text, "bool katmed_web_start(") + "\n" + function(text, "void katmed_web_poll(") + "\n" + function(text, "bool katmed_web_stop(void)") + SUFFIX)
+        c.write_text("\n".join([PREFIX, resource_limits, "static bool management_enabled=true;",
+                                function(text, "static bool resources_allow("),
+                                function(text, "static bool stop_listeners(void)"),
+                                function(text, "static esp_err_t start_listeners(void)"),
+                                function(text, "void katmed_web_set_enabled("),
+                                function(text, "esp_err_t katmed_web_start("),
+                                function(text, "void katmed_web_poll("),
+                                function(text, "bool katmed_web_stop(void)"), caller, SUFFIX]))
         cls.executables = {}
+        cc = host_tool("cc")
         for target in ("esp32c3", "esp32c6"):
             binary = Path(cls.directory.name) / target
-            execute_tls_callback(["cc", "-std=c11", "-Wall", "-Wextra", "-Werror",
+            execute_tls_callback([cc, "-std=c11", "-Wall", "-Wextra", "-Werror",
                                   "-Wno-unused-function",
                                   "-DCONFIG_IDF_TARGET_ESP32C6=" + str(int(target == "esp32c6")),
                                   "-DCONFIG_IDF_TARGET_ESP32C3=" + str(int(target == "esp32c3")),
@@ -250,7 +358,7 @@ class NetworkStartup(unittest.TestCase):
         cls.directory.cleanup()
 
     def run_case(self, name, *arguments, target="esp32c3"):
-        execute_tls_callback([str(self.executables[target]), name, *arguments])
+        return execute_tls_callback([str(self.executables[target]), name, *arguments])
 
     def test_c6_preserves_first_connection_with_two_client_slots(self):
         self.run_case("target_listener_capacity", "2", target="esp32c6")
@@ -265,6 +373,69 @@ class NetworkStartup(unittest.TestCase):
         for failure in ("https", "redirect", "routes", "admission"):
             with self.subTest(failure=failure):
                 self.run_case("start_failure_cleanup", failure, target="esp32c6")
+
+    def test_c3_failed_starts_log_only_completed_snapshot_stages(self):
+        for failure, expected in (
+            ("https", []),
+            ("routes", [self.HTTPS_SAMPLE]),
+            ("admission", [
+                "startup stage=web_after_https_start internal_free=0 internal_largest=32768 "
+                "dma_free=0 dma_largest=32768",
+            ]),
+            ("redirect", [self.HTTPS_SAMPLE, self.ROUTE_SAMPLE]),
+        ):
+            with self.subTest(failure=failure):
+                output = self.run_case("start_failure_cleanup", failure)
+                snapshots = [line for line in output.splitlines() if line.startswith("startup stage=")]
+                self.assertEqual(snapshots, expected)
+
+    def test_startup_heap_snapshots_are_ordered_and_observational(self):
+        for target in self.executables:
+            with self.subTest(target=target):
+                snapshots = []
+                if target == "esp32c3":
+                    snapshots = [
+                        self.HTTPS_SAMPLE,
+                        "startup stage=web_after_https_routes internal_free=32767 internal_largest=12000 "
+                        "dma_free=6100 dma_largest=1000",
+                        "startup stage=web_after_redirect_registration internal_free=37000 "
+                        "internal_largest=15000 dma_free=7500 dma_largest=3000",
+                    ]
+                output = self.run_case("snapshot_stages", target=target)
+                self.assertEqual(output.splitlines(), snapshots + [
+                    "HTTPS configuration listener ready",
+                    "production Web startup prerequisite PASS",
+                ])
+
+    def test_redirect_uri_error_survives_cleanup_and_reaches_boot_caller(self):
+        for target in self.executables:
+            with self.subTest(target=target):
+                output = self.run_case("late_failure_cleanup", "redirect_uri", target=target)
+                snapshots = [self.HTTPS_SAMPLE, self.ROUTE_SAMPLE] if target == "esp32c3" else []
+                self.assertEqual(output.splitlines()[:len(snapshots) + 2], snapshots + [
+                    "HTTP redirect URI registration failed stage=redirect_uri "
+                    "err=ESP_ERR_HTTPD_ALLOC_MEM (0xb007)",
+                    "HTTPS configuration listener unavailable err=ESP_ERR_HTTPD_ALLOC_MEM (0xb007)",
+                ])
+
+    def test_final_admission_logs_measured_and_minimum_heap_and_reaches_boot_caller(self):
+        for target in self.executables:
+            with self.subTest(target=target):
+                output = self.run_case("late_failure_cleanup", "final_admission", target=target)
+                snapshots = []
+                if target == "esp32c3":
+                    snapshots = [
+                        self.HTTPS_SAMPLE,
+                        self.ROUTE_SAMPLE,
+                        "startup stage=web_after_redirect_registration internal_free=32767 "
+                        "internal_largest=12000 dma_free=6100 dma_largest=1000",
+                    ]
+                self.assertEqual(output.splitlines()[:len(snapshots) + 2], snapshots + [
+                    "HTTPS resource admission rejected site=final_admission err=ESP_ERR_NO_MEM (0x101) "
+                    "internal_free=32767/32768 internal_largest=12000/12288 "
+                    "dma_free=6100/6144 dma_largest=1000/1024",
+                    "HTTPS configuration listener unavailable err=ESP_ERR_NO_MEM (0x101)",
+                ])
 
     def test_fresh_unprovisioned_without_wifi_starts_both_listeners(self):
         self.run_case("fresh_without_wifi")
@@ -376,8 +547,9 @@ int main(int argc,char **argv){
 def execute_tls_callback(argv):
     start = datetime.datetime.now(datetime.timezone.utc).isoformat()
     mono = time.monotonic_ns()
-    # Callers supply only the fixed compiler argv or this test's fresh synthetic binary.
-    child = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE)  # nosec B603 - no shell or external input.
+    # In-tree callers pass compiler arguments, fresh test binaries or a fixed
+    # repository script with a fixed mode. Popen passes argv directly.
+    child = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE)  # nosec B603
     out, err = child.communicate()
     print(json.dumps({"PID": child.pid, "startUTC": start,
                       "endUTC": datetime.datetime.now(datetime.timezone.utc).isoformat(),
@@ -402,7 +574,7 @@ class TlsSessionDiagnostics(unittest.TestCase):
             raise AssertionError("Both production TLS admission floors are required")
         source.write_text(TLS_DIAGNOSTIC_HOST + "\n".join(floors) + "\n" +
                           function(text, "static void tls_session_callback(") + TLS_DIAGNOSTIC_MAIN)
-        execute_tls_callback(["gcc", "-std=c11", "-Wall", "-Wextra", "-Werror", str(source), "-o", cls.binary])
+        execute_tls_callback([host_tool("gcc"), "-std=c11", "-Wall", "-Wextra", "-Werror", str(source), "-o", cls.binary])
 
     def case(self, event=0, internal=12288, dma=4096, largest=1024,
              server=1, close_return=0, fd_return=0, tls=1):
@@ -579,7 +751,7 @@ class C6CertificateSessionIsolation(unittest.TestCase):
         source += "\n" + function(text, "static bool certificate_on_request(") + CERTIFICATE_SESSION_MAIN
         path = Path(cls.temp.name) / "certificate-session.c"
         path.write_text(source)
-        execute_tls_callback(["cc", "-std=c11", "-Wall", "-Wextra", "-Werror", "-Wno-unused-function", str(path), "-o", cls.binary])
+        execute_tls_callback([host_tool("cc"), "-std=c11", "-Wall", "-Wextra", "-Werror", "-Wno-unused-function", str(path), "-o", cls.binary])
 
     def test_verified_peer_survives_second_password_only_connection(self):
         execute_tls_callback([self.binary, "isolation"])
@@ -672,7 +844,7 @@ class TlsEndpointCorrelation(unittest.TestCase):
         path = Path(cls.temp.name) / "endpoint.c"
         path.write_text(host + "\n" + "\n".join(floors) + "\n" + endpoint_source(text) + "\n" +
                         function(text, "static void tls_session_callback(") + ENDPOINT_MAIN)
-        execute_tls_callback(["cc", "-std=c11", "-Wall", "-Wextra", "-Werror", "-Wno-unused-function", str(path), "-o", cls.binary])
+        execute_tls_callback([host_tool("cc"), "-std=c11", "-Wall", "-Wextra", "-Werror", "-Wno-unused-function", str(path), "-o", cls.binary])
 
     def case(self, mode):
         return execute_tls_callback([self.binary, str(mode)])

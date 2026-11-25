@@ -9,6 +9,7 @@ separate private Store-v5 identity and physical group evidence.
 from __future__ import annotations
 
 import argparse
+from contextlib import suppress
 import hashlib
 import json
 import os
@@ -66,6 +67,7 @@ def _save(directory: Path, summary: dict) -> None:
     temp = directory / ".summary.tmp"
     target = directory / "summary.json"
     fd = None
+    replaced = False
     try:
         fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
         with os.fdopen(fd, "wb", closefd=True) as stream:
@@ -74,12 +76,15 @@ def _save(directory: Path, summary: dict) -> None:
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temp, target)
+        replaced = True
         dir_fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
         try:
             os.fsync(dir_fd)
         finally:
             os.close(dir_fd)
     except OSError:
+        if replaced:
+            raise LongrunError("Private Evidenz wurde ersetzt; ihre Dauerhaftigkeit ist ungeklärt") from None
         raise LongrunError("Private Evidenz konnte nicht dauerhaft geschrieben werden") from None
     finally:
         if fd is not None:
@@ -538,7 +543,19 @@ class Recorder:
         self.summary["status_count"] += 1
         _save(self.directory, self.summary)
 
-    def run(self) -> dict:
+    def _completion_qualification(self) -> str:
+        phase = self.summary["phase_last_verified"]
+        if (phase is not None and phase["task"] == 1 and phase["read"] == 1 and
+                all(phase[key] > 0 for key in
+                    ("status", "queue_ok", "main_take", "reply_ready", "reply_call"))):
+            return "time_uptime_plus_internal_status_path"
+        if phase is not None:
+            return "time_uptime_phase_partial"
+        if self.summary["phase_coverage"] == "legacy_missing":
+            return "time_uptime_phase_missing"
+        return "time_uptime_phase_unverified"
+
+    def run(self) -> str:
         self.status()
         first_deadline = self.monotonic() + DIAG_GAP_SECONDS
         while True:
@@ -572,21 +589,7 @@ class Recorder:
                         raise LongrunError("Unerwartete KM1-Antwort außerhalb einer Statusabfrage")
                     self._metric(body)
                 self._finish_evidence_pair()
-                phase = self.summary["phase_last_verified"]
-                if (phase is not None and phase["task"] == 1 and phase["read"] == 1 and
-                        all(phase[key] > 0 for key in
-                            ("status", "queue_ok", "main_take", "reply_ready", "reply_call"))):
-                    self.summary["completion_qualification"] = "time_uptime_plus_internal_status_path"
-                elif phase is not None:
-                    self.summary["completion_qualification"] = "time_uptime_phase_partial"
-                elif self.summary["phase_coverage"] == "legacy_missing":
-                    self.summary["completion_qualification"] = "time_uptime_phase_missing"
-                else:
-                    self.summary["completion_qualification"] = "time_uptime_phase_unverified"
-                self.summary["state"] = "complete"
-                self.summary["reason"] = "continuous_time_and_uptime_reached"
-                _save(self.directory, self.summary)
-                return self.summary
+                return self._completion_qualification()
             if self.monotonic() - self.last_status_mono >= STATUS_PERIOD_SECONDS:
                 self.status()
                 continue
@@ -599,6 +602,7 @@ class Recorder:
 
     def fail(self, reason: str) -> None:
         self.summary["state"] = "failed"
+        self.summary["completion_qualification"] = "not_complete"
         self.summary["reason"] = reason
         self.summary["last_unix_seconds"] = int(self.wall())
         if self.started_mono is not None:
@@ -611,6 +615,32 @@ def _startup_with_early_phases(recorder: Recorder, port: usb.SerialPort,
     """Retain only valid early phases in the existing private recorder."""
     usb._drain_startup(port, monotonic, phase_observer=recorder._usb_phase,
                        rejection_observer=recorder._phase_rejection)
+
+
+def _measure_and_close(recorder: Recorder, port_path: str, opener, startup, monotonic) -> str:
+    port = None
+    measured = False
+    try:
+        port = usb._open_serial(port_path, timeout=0.25) if opener is None else opener(port_path)
+        recorder.port = port
+        if startup is usb._drain_startup:
+            _startup_with_early_phases(recorder, port, monotonic)
+        else:
+            startup(port)
+        qualification = recorder.run()
+        measured = True
+        return qualification
+    finally:
+        if port is not None:
+            if measured:
+                try:
+                    port.close()
+                except Exception:
+                    raise LongrunError("USB-Port konnte nicht sicher geschlossen werden") from None
+            else:
+                # A cleanup error must not replace the already active failure.
+                with suppress(BaseException):
+                    port.close()
 
 
 def run_longrun(args: argparse.Namespace, *, opener=None, startup=usb._drain_startup,
@@ -627,37 +657,23 @@ def run_longrun(args: argparse.Namespace, *, opener=None, startup=usb._drain_sta
         raise LongrunError("Ungültige Dauerlaufzeit")
     directory = Path(args.evidence_dir).absolute()
     _private_new_directory(directory)
-    if opener is None:
-        opener = lambda path: usb._open_serial(path, timeout=0.25)
-    port = None
     recorder = None
-    first_reason: str | None = None
     try:
         recorder = Recorder(args, None, directory, monotonic, wall)
-        port = opener(args.port)
-        recorder.port = port
-        if startup is usb._drain_startup:
-            _startup_with_early_phases(recorder, port, monotonic)
-        else:
-            startup(port)
-        result = recorder.run()
+        qualification = _measure_and_close(recorder, args.port, opener, startup, monotonic)
+        result = recorder.summary
+        result["state"] = "complete"
+        result["reason"] = "continuous_time_and_uptime_reached"
+        result["completion_qualification"] = qualification
+        _save(directory, result)
         emit("Dauerlauf vollständig: private Metadaten in summary.json")
         return result
     except BaseException as exc:
         reason = str(exc) if isinstance(exc, (LongrunError, usb.SetupError)) else "Abbruch oder unerwarteter Laufzeitfehler"
-        first_reason = reason
         if recorder is not None:
-            recorder.fail(reason)
+            with suppress(BaseException):
+                recorder.fail(reason)
         raise LongrunError(reason) from None
-    finally:
-        if port is not None:
-            try:
-                port.close()
-            except Exception:
-                if first_reason is None:
-                    if recorder is not None:
-                        recorder.fail("USB-Port konnte nicht sicher geschlossen werden")
-                    raise LongrunError("USB-Port konnte nicht sicher geschlossen werden") from None
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -5,7 +5,6 @@ This is an offline build gate. It makes no assertion about runtime free heap.
 """
 import argparse
 import csv
-import hashlib
 import json
 import re
 import shlex
@@ -15,6 +14,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 DEFAULT_APP_IMAGE = "katmed_foundation.bin"
+MAINTENANCE_APP_IMAGE = "katmed_appmaint_c6.bin"
 
 
 def require_app_project_role(app: Path, app_bytes: int, expected: str) -> None:
@@ -39,12 +39,13 @@ def require_app_project_role(app: Path, app_bytes: int, expected: str) -> None:
         raise ValueError(f"App project role differs from selected image: expected {expected}")
 
 
-def require_old_c3_build(repo: Path, build: Path, config: str, header: str) -> None:
+def require_development_build(repo: Path, build: Path, config: str, header: str, board: str) -> None:
     """Bind the distinct Development001 profile to resolved compiler inputs."""
     settings = {
         "ESP_MAIN_TASK_STACK_SIZE": "11264", "FREERTOS_TIMER_TASK_STACK_DEPTH": "3072",
         "ESP_CONSOLE_USB_SERIAL_JTAG": "y",
-        "IDF_TARGET": '"esp32c3"', "ESPTOOLPY_FLASHSIZE_4MB": "y",
+        "IDF_TARGET": f'"esp32{board}"',
+        f"ESPTOOLPY_FLASHSIZE_{'4MB' if board == 'c3' else '8MB'}": "y",
         "ESPTOOLPY_FLASHMODE_DIO": "y", "APP_RETRIEVE_LEN_ELF_SHA": "24",
         "PARTITION_TABLE_OFFSET": "0x10000", "SECURE_FLASH_ENC_ENABLED": "y",
         "SECURE_FLASH_ENCRYPTION_KEY_SOURCE_EFUSES": "y",
@@ -52,19 +53,37 @@ def require_old_c3_build(repo: Path, build: Path, config: str, header: str) -> N
         "SECURE_FLASH_REQUIRE_ALREADY_ENABLED": "y", "SECURE_ENABLE_SECURE_ROM_DL_MODE": "y",
         "SOC_FLASH_ENCRYPTION_XTS_AES_128": "y", "NVS_ENCRYPTION": "y",
         "NVS_SEC_KEY_PROTECT_USING_FLASH_ENC": "y",
-        "PARTITION_TABLE_CUSTOM_FILENAME": '"boards/c3.security.partitions.csv"',
+        "PARTITION_TABLE_CUSTOM_FILENAME": f'"boards/{board}.security.partitions.csv"',
     }
+    forbidden = ("SECURE_BOOT", "SECURE_FLASH_ENCRYPTION_MODE_RELEASE")
+    if board == "c6":
+        settings.update({
+            "ESP32C6_REV_MIN_FULL": "0", "ESP32C6_REV_MAX_FULL": "99",
+            "BOOTLOADER_OFFSET_IN_FLASH": "0x0", "ESPTOOLPY_NO_STUB": "y",
+            "SECURE_FLASH_CHECK_ENC_EN_IN_APP": "y",
+        })
+        forbidden += ("SECURE_DISABLE_ROM_DL_MODE", "SECURE_INSECURE_ALLOW_DL_MODE",
+                      "SECURE_BOOT_ALLOW_JTAG", "SECURE_BOOT_V1_ENABLED", "SECURE_BOOT_V2_ENABLED",
+                      "SECURE_BOOT_FLASH_ENC_KEYS_BURN_TOGETHER", "SECURE_SIGNED_ON_UPDATE_NO_SECURE_BOOT",
+                      "SECURE_FLASH_ENCRYPTION_KEY_SOURCE_KEY_MGR", "EFUSE_VIRTUAL")
+    config_lines = config.splitlines()
+    profile = "old-C3" if board == "c3" else "C6 Development001"
     for name, value in settings.items():
-        resolved = [line for line in config.splitlines() if
+        resolved = [line for line in config_lines if
                     line.startswith(f"CONFIG_{name}=") or line == f"# CONFIG_{name} is not set"]
         if resolved != [f"CONFIG_{name}={value}"]:
-            raise ValueError(f"Resolved old-C3 setting differs: {name}")
+            raise ValueError(f"Resolved {profile} setting differs: {name}")
         if header_directives(header, name) != [f"#define CONFIG_{name} {1 if value == 'y' else value}"]:
-            raise ValueError(f"Compiled old-C3 setting differs: {name}")
-    for name in ("SECURE_BOOT", "SECURE_FLASH_ENCRYPTION_MODE_RELEASE"):
-        if any(line.startswith(f"CONFIG_{name}=") for line in config.splitlines()) or header_directives(header, name):
-            raise ValueError(f"Forbidden old-C3 setting: {name}")
-    require_old_c3_compiler(repo, build)
+            raise ValueError(f"Compiled {profile} setting differs: {name}")
+    for name in forbidden:
+        if any(line.startswith(f"CONFIG_{name}=") for line in config_lines) or header_directives(header, name):
+            raise ValueError(f"Forbidden {profile} setting: {name}")
+    require_development_compiler(repo, build, board)
+
+
+def require_old_c3_build(repo: Path, build: Path, config: str, header: str) -> None:
+    """Validate the C3 compiler profile from the mandatory override graph check."""
+    require_development_build(repo, build, config, header, "c3")
 
 
 def header_directives(header: str, name: str) -> list[str]:
@@ -73,12 +92,15 @@ def header_directives(header: str, name: str) -> list[str]:
                       header, re.MULTILINE)
 
 
-def require_old_c3_compiler(repo: Path, build: Path) -> None:
+def require_development_compiler(repo: Path, build: Path, board: str) -> None:
     modes = {"KATMED_FULL_STACK": True, "KATMED_WITH_CORE": True,
-             "KATMED_C3_ALARM_DIAG": True, "KATMED_APPSTORE_MAINTENANCE": False,
+             "KATMED_C3_ALARM_DIAG": board == "c3", "KATMED_APPSTORE_MAINTENANCE": False,
              "KATMED_ACME_RESOURCE_PROBE": False, "KATMED_ACME_RESOURCE_CLIENT": False}
     cache = (build / "CMakeCache.txt").read_text().splitlines()
-    for name, enabled in modes.items():
+    cache_modes = dict(modes)
+    if board == "c6":
+        cache_modes["KATMED_C6_DEVELOPMENT001"] = True
+    for name, enabled in cache_modes.items():
         values = [line for line in cache if line.startswith(f"{name}:")]
         if values != [f"{name}:BOOL={'ON' if enabled else 'OFF'}"]:
             raise ValueError(f"Compiler CMake mode differs: {name}")
@@ -126,7 +148,7 @@ def require_compiler_config_include(arguments: list[str], directory: Path, build
         raise ValueError("Compiler generated sdkconfig.h binding differs")
 
 
-def require_old_c3_app(app: Path) -> None:
+def require_development_app(app: Path, board: str) -> None:
     """Check SDK parser results explicitly; parsing alone is not validation."""
     from esptool.bin_image import LoadFirmwareImage
     from esptool.cmds import _parse_app_info
@@ -134,34 +156,41 @@ def require_old_c3_app(app: Path) -> None:
 
     data = app.read_bytes()
     try:
-        image = LoadFirmwareImage("esp32c3", data)
+        image = LoadFirmwareImage(f"esp32{board}", data)
     except (FatalError, struct.error, IndexError, TypeError) as error:
-        raise ValueError("Invalid old-C3 app container") from error
-    if (image.chip_id, image.min_rev, image.min_rev_full, image.max_rev_full) != (5, 3, 3, 199):
-        raise ValueError("Old-C3 app chip/revision differs")
-    if image.flash_mode != 2 or image.flash_size_freq >> 4 != 2:
-        raise ValueError("Old-C3 app must use DIO and 4 MiB")
+        raise ValueError("Invalid Development001 app container") from error
+    revisions = (5, 3, 3, 199) if board == "c3" else (13, 0, 0, 99)
+    if (image.chip_id, image.min_rev, image.min_rev_full, image.max_rev_full) != revisions:
+        raise ValueError("Development001 app chip/revision differs")
+    if image.flash_mode != 2 or image.flash_size_freq >> 4 != (2 if board == "c3" else 3):
+        raise ValueError("Development001 app flash mode/size differs")
     if image.calculate_checksum() != image.checksum:
-        raise ValueError("Old-C3 app checksum differs")
+        raise ValueError("Development001 app checksum differs")
     if (not image.append_digest or len(image.stored_digest) != 32 or
             image.stored_digest != image.calc_digest or image.data_length + 32 != len(data)):
-        raise ValueError("Old-C3 app footer missing, incomplete or different")
+        raise ValueError("Development001 app footer missing, incomplete or different")
     if not image.segments or len(image.segments[0].data) < 256:
-        raise ValueError("Old-C3 app descriptor missing")
+        raise ValueError("Development001 app descriptor missing")
     descriptor = _parse_app_info(image.segments[0].data)
     if (descriptor is None or descriptor["project_name"] != "katmed_foundation" or
             descriptor["secure_version"] != 0):
-        raise ValueError("Old-C3 app descriptor/security version differs")
+        raise ValueError("Development001 app descriptor/security version differs")
 
 
-def check_layout(repo: Path, board: str, build: Path, security_profile: bool = False,
-                 app_image: str = DEFAULT_APP_IMAGE, *,
-                 old_c3_development001: bool = False) -> dict:
-    if old_c3_development001 and (board != "c3" or not security_profile or
-                                  app_image != DEFAULT_APP_IMAGE):
-        raise ValueError("The old-C3 Development001 gate requires the C3 security profile")
-    if app_image == "katmed_appmaint_c6.bin" and (board != "c6" or not security_profile):
-        raise ValueError("AppStore maintenance image requires C6 security profile")
+def require_c6_development_offsets(build: Path) -> None:
+    # Offsets are emitted separately from the contents of the partition binary.
+    args = json.loads((build / "flasher_args.json").read_text())
+    expected = {"0x0": "bootloader/bootloader.bin",
+                "0x10000": "partition_table/partition-table.bin",
+                "0x20000": DEFAULT_APP_IMAGE, "0x236000": "user_images.bin"}
+    if not isinstance(args, dict) or args.get("flash_files") != expected:
+        raise ValueError("C6 Development001 generated flash offsets/files differ")
+    entry = args.get("app", {})
+    if not isinstance(entry, dict) or (entry.get("offset"), entry.get("file")) != ("0x20000", DEFAULT_APP_IMAGE):
+        raise ValueError("C6 Development001 generated factory app entry differs")
+
+
+def require_runtime_config(build: Path) -> tuple[str, str]:
     # Existing target-local sdkconfig files survive a defaults change. Verify
     # both the input and the generated header consumed by the compiler.
     config = (build / "sdkconfig").read_text()
@@ -179,6 +208,10 @@ def check_layout(repo: Path, board: str, build: Path, security_profile: bool = F
         raise ValueError("Target sdkconfig lacks the primary USB Serial/JTAG input console")
     if "#define CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG 1" not in header.splitlines():
         raise ValueError("Compiled firmware lacks the primary USB Serial/JTAG input console")
+    return config, header
+
+
+def require_release_config(config: str) -> None:
     required = (
         "CONFIG_SECURE_FLASH_ENC_ENABLED=y",
         "CONFIG_SECURE_FLASH_ENCRYPTION_KEY_SOURCE_EFUSES=y",
@@ -188,19 +221,17 @@ def check_layout(repo: Path, board: str, build: Path, security_profile: bool = F
         "CONFIG_NVS_ENCRYPTION=y",
         "CONFIG_NVS_SEC_KEY_PROTECT_USING_FLASH_ENC=y",
     )
-    if old_c3_development001:
-        require_old_c3_build(repo, build, config, header)
-    elif security_profile:
-        if "CONFIG_PARTITION_TABLE_OFFSET=0x10000" not in config.splitlines():
-            raise ValueError("Security profile partition table must start at 0x10000")
-        for setting in required:
-            if setting not in config.splitlines():
-                raise ValueError(f"Security profile missing resolved setting: {setting}")
-        if "CONFIG_SECURE_BOOT=y" in config.splitlines():
-            raise ValueError("Secure Boot must remain separately controlled")
-    elif "CONFIG_SECURE_FLASH_ENC_ENABLED=y" in config.splitlines():
-        raise ValueError("Neutral build unexpectedly enables flash encryption")
-    flash_bytes = {"c3": 0x400000, "c6": 0x800000}[board]
+    if "CONFIG_PARTITION_TABLE_OFFSET=0x10000" not in config.splitlines():
+        raise ValueError("Security profile partition table must start at 0x10000")
+    for setting in required:
+        if setting not in config.splitlines():
+            raise ValueError(f"Security profile missing resolved setting: {setting}")
+    if "CONFIG_SECURE_BOOT=y" in config.splitlines():
+        raise ValueError("Secure Boot must remain separately controlled")
+
+
+def load_partitions(repo: Path, config: str, board: str, security_profile: bool,
+                    table_offset: int, flash_bytes: int) -> dict:
     rows = []
     partition_file = f"{board}.security.partitions.csv" if security_profile else f"{board}.partitions.csv"
     if f'CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="boards/{partition_file}"' not in config.splitlines():
@@ -209,7 +240,6 @@ def check_layout(repo: Path, board: str, build: Path, security_profile: bool = F
         for row in csv.reader(line for line in src if line.strip() and not line.startswith("#")):
             name, kind, subtype, offset, size, flags = (part.strip() for part in row)
             rows.append((name, int(offset, 0), int(size, 0), kind, subtype, flags))
-    table_offset = 0x10000 if security_profile else 0x8000
     previous_end = table_offset + 0x1000
     partitions = {}
     for name, offset, size, kind, subtype, flags in sorted(rows, key=lambda r: r[1]):
@@ -221,6 +251,10 @@ def check_layout(repo: Path, board: str, build: Path, security_profile: bool = F
         if name in partitions:
             raise ValueError(f"Duplicate partition: {name}")
         partitions[name] = (offset, size, kind, subtype, flags)
+    return partitions
+
+
+def require_built_partitions(build: Path, partitions: dict) -> None:
     # ESP-IDF gen_esp32part.py uses <2sBBLL16sL and bit 1 for readonly.
     # Check the actual binary, so a stale/wrong-target CMake configuration fails.
     binary = (build / "partition_table" / "partition-table.bin").read_bytes()
@@ -244,45 +278,37 @@ def check_layout(repo: Path, board: str, build: Path, security_profile: bool = F
                                  flag_bits[flags])
     if actual != expected_binary:
         raise ValueError("Built partition table does not match board CSV")
-    if security_profile:
-        critical = {
-            "factory": (0x20000, 0x216000, "app", "factory", ""),
-            "nvs": (0x11000, 0x7000, "data", "nvs", ""),
-            "nvs_keys": (0x18000, 0x1000, "data", "nvs_keys", "encrypted"),
-            "nvs_guard": (0x19000, 0x1000, "data", "0x40", ""),
-            "phy_init": (0x1a000, 0x1000, "data", "phy", ""),
-            "user_images": (0x236000, flash_bytes - 0x236000, "data", "littlefs", "encrypted"),
-        }
-        for name, expected in critical.items():
-            if partitions.get(name) != expected:
-                raise ValueError(f"Security partition {name} differs from runtime contract")
-        # Match the KMS3 worst case: 123 images plus all five NVS values. IDF
-        # reserves one 126-entry page before reporting available_entries.
-        nvs_lengths = (4065, 2152, 1112, 1288, 2)
-        stage_length = 16 + sum(nvs_lengths) + 123 * 13
-        required_entries = ((stage_length + 31) // 32 + 4 +
-                            sum((length + 31) // 32 + 4 for length in nvs_lengths) + 24)
-        available_entries = (partitions["nvs"][1] // 0x1000 - 1) * 126
-        if available_entries < required_entries:
-            raise ValueError("Security NVS lacks usable entries for KMS3 maximum")
-    elif "nvs_keys" in partitions:
-        raise ValueError("Neutral profile unexpectedly includes NVS keys")
-    bootloader_bytes = (build / "bootloader" / "bootloader.bin").stat().st_size
-    if bootloader_bytes > table_offset:
-        raise ValueError("Bootloader overlaps partition table")
-    app = build / app_image
-    app_bytes = app.stat().st_size
-    app_budget = partitions["factory"][1]
-    if not 0 < app_bytes <= app_budget:
-        raise ValueError(f"App size {app_bytes} exceeds budget {app_budget}")
-    expected_project = "katmed_appmaint_c6" if app_image == "katmed_appmaint_c6.bin" else "katmed_foundation"
-    require_app_project_role(app, app_bytes, expected_project)
-    if old_c3_development001:
-        require_old_c3_app(app)
+
+
+def require_security_partitions(partitions: dict, flash_bytes: int) -> int:
+    critical = {
+        "factory": (0x20000, 0x216000, "app", "factory", ""),
+        "nvs": (0x11000, 0x7000, "data", "nvs", ""),
+        "nvs_keys": (0x18000, 0x1000, "data", "nvs_keys", "encrypted"),
+        "nvs_guard": (0x19000, 0x1000, "data", "0x40", ""),
+        "phy_init": (0x1a000, 0x1000, "data", "phy", ""),
+        "user_images": (0x236000, flash_bytes - 0x236000, "data", "littlefs", "encrypted"),
+    }
+    for name, expected in critical.items():
+        if partitions.get(name) != expected:
+            raise ValueError(f"Security partition {name} differs from runtime contract")
+    # Match the KMS3 worst case: 123 images plus all five NVS values. IDF
+    # reserves one 126-entry page before reporting available_entries.
+    nvs_lengths = (4065, 2152, 1112, 1288, 2)
+    stage_length = 16 + sum(nvs_lengths) + 123 * 13
+    required_entries = ((stage_length + 31) // 32 + 4 +
+                        sum((length + 31) // 32 + 4 for length in nvs_lengths) + 24)
+    available_entries = (partitions["nvs"][1] // 0x1000 - 1) * 126
+    if available_entries < required_entries:
+        raise ValueError("Security NVS lacks usable entries for KMS3 maximum")
+    return available_entries
+
+
+def require_shared_images(repo: Path, build: Path, board: str, partitions: dict,
+                          expected_image_offset: int, flash_bytes: int) -> tuple[int, int]:
     if "images" in partitions:
         raise ValueError("Obsolete separate image partition")
     image_partition = partitions["user_images"]
-    expected_image_offset = 0x236000 if security_profile else 0x280000
     if image_partition != (expected_image_offset, flash_bytes - expected_image_offset,
                             "data", "littlefs", "encrypted"):
         raise ValueError("Shared image filesystem differs from profile contract")
@@ -294,13 +320,70 @@ def check_layout(repo: Path, board: str, build: Path, security_profile: bool = F
     seed = build / "user_images.bin"
     if not seed.is_file() or seed.stat().st_size != image_partition[1]:
         raise ValueError("Built image filesystem size differs from partition")
+    return image_bytes, image_partition[1]
+
+
+def require_profile_selection(board: str, security_profile: bool, app_image: str,
+                              old_c3_development001: bool, c6_development001: bool) -> None:
+    if old_c3_development001 and (board != "c3" or not security_profile or
+                                  app_image != DEFAULT_APP_IMAGE):
+        raise ValueError("The old-C3 Development001 gate requires the C3 security profile")
+    if c6_development001 and (board != "c6" or not security_profile or
+                             app_image != DEFAULT_APP_IMAGE):
+        raise ValueError("The C6 Development001 gate requires the C6 app security profile")
+    if app_image == MAINTENANCE_APP_IMAGE and (board != "c6" or not security_profile):
+        raise ValueError("AppStore maintenance image requires C6 security profile")
+
+
+def check_layout(repo: Path, board: str, build: Path, security_profile: bool = False,
+                 app_image: str = DEFAULT_APP_IMAGE, *,
+                 old_c3_development001: bool = False, c6_development001: bool = False) -> dict:
+    require_profile_selection(board, security_profile, app_image, old_c3_development001, c6_development001)
+    development001 = old_c3_development001 or c6_development001
+    config, header = require_runtime_config(build)
+    if development001:
+        require_development_build(repo, build, config, header, board)
+    elif security_profile:
+        require_release_config(config)
+    elif "CONFIG_SECURE_FLASH_ENC_ENABLED=y" in config.splitlines():
+        raise ValueError("Neutral build unexpectedly enables flash encryption")
+    flash_bytes = {"c3": 0x400000, "c6": 0x800000}[board]
+    table_offset = 0x10000 if security_profile else 0x8000
+    partitions = load_partitions(repo, config, board, security_profile, table_offset, flash_bytes)
+    require_built_partitions(build, partitions)
+    available_entries = None
+    if security_profile:
+        available_entries = require_security_partitions(partitions, flash_bytes)
+    elif "nvs_keys" in partitions:
+        raise ValueError("Neutral profile unexpectedly includes NVS keys")
+    bootloader_bytes = (build / "bootloader" / "bootloader.bin").stat().st_size
+    if bootloader_bytes > table_offset:
+        raise ValueError("Bootloader overlaps partition table")
+    app = build / app_image
+    app_bytes = app.stat().st_size
+    app_offset, app_budget = partitions["factory"][:2]
+    if not 0 < app_bytes <= app_budget:
+        raise ValueError(f"App size {app_bytes} exceeds budget {app_budget}")
+    expected_project = "katmed_appmaint_c6" if app_image == MAINTENANCE_APP_IMAGE else "katmed_foundation"
+    require_app_project_role(app, app_bytes, expected_project)
+    if development001:
+        require_development_app(app, board)
+    if c6_development001:
+        require_c6_development_offsets(build)
+    image_offset = 0x236000 if security_profile else 0x280000
+    image_bytes, image_budget = require_shared_images(repo, build, board, partitions,
+                                                       image_offset, flash_bytes)
+    app_sector_bytes = (app_bytes + 0xfff) & ~0xfff
     return {"board": board, "security_profile": security_profile, "app_image": app_image,
             "old_c3_development001": old_c3_development001,
+            "c6_development001": c6_development001,
             "bootloader_bytes": bootloader_bytes,
             "app_bytes": app_bytes, "app_budget": app_budget,
+            "app_sector_end": app_offset + app_sector_bytes,
+            "app_sector_free": app_budget - app_sector_bytes,
             "app_free": app_budget - app_bytes, "image_bytes": image_bytes,
-            "image_budget": image_partition[1], "image_free": image_partition[1] - image_bytes,
-            "nvs_available_entries": available_entries if security_profile else None,
+            "image_budget": image_budget, "image_free": image_budget - image_bytes,
+            "nvs_available_entries": available_entries,
             "runtime_heap": "not_measured"}
 
 
@@ -309,15 +392,19 @@ def main() -> None:
     parser.add_argument("board", choices=("c3", "c6"))
     parser.add_argument("--build-dir", type=Path)
     parser.add_argument("--security-profile", action="store_true")
-    parser.add_argument("--old-c3-development001", action="store_true",
+    profiles = parser.add_mutually_exclusive_group()
+    profiles.add_argument("--old-c3-development001", action="store_true",
                         help="Require the distinct old-C3 Development001 security contract")
-    parser.add_argument("--app-image", choices=(DEFAULT_APP_IMAGE, "katmed_appmaint_c6.bin"),
+    profiles.add_argument("--c6-development001", action="store_true",
+                          help="Require the distinct C6 Development001 app security contract")
+    parser.add_argument("--app-image", choices=(DEFAULT_APP_IMAGE, MAINTENANCE_APP_IMAGE),
                         default=DEFAULT_APP_IMAGE)
     args = parser.parse_args()
     repo = Path(__file__).resolve().parents[1]
     build = args.build_dir or repo / "firmware" / f"build-{args.board}"
     print(json.dumps(check_layout(repo, args.board, build, args.security_profile,
-                                  args.app_image, old_c3_development001=args.old_c3_development001), indent=2))
+                                  args.app_image, old_c3_development001=args.old_c3_development001,
+                                  c6_development001=args.c6_development001), indent=2))
 
 
 if __name__ == "__main__":

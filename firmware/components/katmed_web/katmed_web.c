@@ -61,6 +61,8 @@ extern const unsigned char _binary_i18n_js_end[];
 #define PRE_LARGEST_DMA (2u * 1024u)
 #define POST_FREE_INTERNAL (32u * 1024u)
 #define POST_FREE_DMA (6u * 1024u)
+#define POST_LARGEST_INTERNAL (12u * 1024u)
+#define POST_LARGEST_DMA 1024u
 #define LIVE_FREE_INTERNAL (12u * 1024u)
 #define LIVE_FREE_DMA (4u * 1024u)
 
@@ -281,27 +283,37 @@ static bool save_identifier(WebContext *w, const char *value)
     return ok;
 }
 
-static bool resources_allow(bool after_start, const char *site)
+static bool resources_allow(bool after_start, const char *site, const char *snapshot_stage)
 {
+    (void)snapshot_stage;
     const uint32_t internal = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
     const uint32_t dma = MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
     size_t internal_free = heap_caps_get_free_size(internal);
     size_t internal_largest = heap_caps_get_largest_free_block(internal);
     size_t dma_free = heap_caps_get_free_size(dma);
     size_t dma_largest = heap_caps_get_largest_free_block(dma);
-    if (after_start)
-        return internal_free >= POST_FREE_INTERNAL && dma_free >= POST_FREE_DMA &&
-               internal_largest >= 12u * 1024u && dma_largest >= 1024u;
-    const bool allowed = internal_free >= PRE_FREE_INTERNAL &&
-                         internal_largest >= PRE_LARGEST_INTERNAL &&
-                         dma_free >= PRE_FREE_DMA && dma_largest >= PRE_LARGEST_DMA;
-    if (!allowed)
+#if CONFIG_IDF_TARGET_ESP32C3
+    if (snapshot_stage) {
+        ESP_LOGI("katmed_heap",
+                 "startup stage=%s internal_free=%zu internal_largest=%zu "
+                 "dma_free=%zu dma_largest=%zu",
+                 snapshot_stage, internal_free, internal_largest, dma_free, dma_largest);
+    }
+#endif
+    const unsigned min_internal_free = after_start ? POST_FREE_INTERNAL : PRE_FREE_INTERNAL;
+    const unsigned min_internal_largest = after_start ? POST_LARGEST_INTERNAL : PRE_LARGEST_INTERNAL;
+    const unsigned min_dma_free = after_start ? POST_FREE_DMA : PRE_FREE_DMA;
+    const unsigned min_dma_largest = after_start ? POST_LARGEST_DMA : PRE_LARGEST_DMA;
+    const bool allowed = internal_free >= min_internal_free &&
+                         internal_largest >= min_internal_largest &&
+                         dma_free >= min_dma_free && dma_largest >= min_dma_largest;
+    if (!allowed && site)
         ESP_LOGW(WEB_TAG,
-                 "HTTPS resource admission rejected site=%s internal_free=%zu/%u "
+                 "HTTPS resource admission rejected site=%s err=%s (0x%x) internal_free=%zu/%u "
                  "internal_largest=%zu/%u dma_free=%zu/%u dma_largest=%zu/%u",
-                 site, internal_free, PRE_FREE_INTERNAL,
-                 internal_largest, PRE_LARGEST_INTERNAL,
-                 dma_free, PRE_FREE_DMA, dma_largest, PRE_LARGEST_DMA);
+                 site, esp_err_to_name(ESP_ERR_NO_MEM), (unsigned)ESP_ERR_NO_MEM,
+                 internal_free, min_internal_free, internal_largest, min_internal_largest,
+                 dma_free, min_dma_free, dma_largest, min_dma_largest);
     return allowed;
 }
 
@@ -1729,15 +1741,15 @@ static bool register_routes(httpd_handle_t server)
            katmed_web_media_register(server, &media);
 }
 
-static bool start_listeners(void)
+static esp_err_t start_listeners(void)
 {
     web_socket_diag_sample(monotonic_ms(), true);
-    if (!resources_allow(false, "start_listeners")) {
-        return false;
+    if (!resources_allow(false, "start_listeners", NULL)) {
+        return ESP_ERR_NO_MEM;
     }
     if (web.https || web.redirect || web.tls_key_id != PSA_KEY_ID_NULL) {
         ESP_LOGE(WEB_TAG, "HTTPS listener from prior lifecycle remains active");
-        return false;
+        return ESP_ERR_INVALID_STATE;
     }
     httpd_ssl_config_t tls = HTTPD_SSL_CONFIG_DEFAULT();
 #if CONFIG_IDF_TARGET_ESP32C6
@@ -1764,7 +1776,7 @@ static bool start_listeners(void)
         tls.client_cert_authmode_optional = true;
 #else
         ESP_LOGE(WEB_TAG, "optional client certificate verification unavailable");
-        return false;
+        return ESP_ERR_NOT_SUPPORTED;
 #endif
     }
     if (web.identity.key_len == 32) {
@@ -1786,7 +1798,7 @@ static bool start_listeners(void)
         psa_reset_key_attributes(&attributes);
         if (status != PSA_SUCCESS) {
             ESP_LOGE(WEB_TAG, "HTTPS server key import failed");
-            return false;
+            return ESP_FAIL;
         }
         web.tls_key_id = imported_key;
         web.tls_key_config.source = ESP_KEY_SOURCE_PSA;
@@ -1797,16 +1809,22 @@ static bool start_listeners(void)
         tls.prvtkey_pem = web.identity.key;
         tls.prvtkey_len = web.identity.key_len;
     }
-    if (httpd_ssl_start(&web.https, &tls) != ESP_OK || !web.https) {
+    esp_err_t error = httpd_ssl_start(&web.https, &tls);
+    if (error != ESP_OK || !web.https) {
         stop_listeners();
         ESP_LOGE(WEB_TAG, "HTTPS server start failed");
-        return false;
+        return error == ESP_OK ? ESP_ERR_INVALID_STATE : error;
     }
-    if (!resources_allow(true, NULL) || !register_routes(web.https)) {
+    const bool admitted = resources_allow(true, NULL, "web_after_https_start");
+    if (!admitted || !register_routes(web.https)) {
         ESP_LOGW(WEB_TAG, "HTTPS post-start admission or route registration failed");
         stop_listeners();
-        return false;
+        return admitted ? ESP_FAIL : ESP_ERR_NO_MEM;
     }
+#if CONFIG_IDF_TARGET_ESP32C3
+    /* The route snapshot does not participate in resource admission. */
+    (void)resources_allow(true, NULL, "web_after_https_routes");
+#endif
     httpd_config_t plain = HTTPD_DEFAULT_CONFIG();
     plain.server_port = 80;
     plain.ctrl_port = tls.httpd.ctrl_port + 1;
@@ -1817,24 +1835,28 @@ static bool start_listeners(void)
     plain.recv_wait_timeout = 2;
     plain.send_wait_timeout = 2;
     plain.uri_match_fn = katmed_web_plain_uri_match;
-    if (httpd_start(&web.redirect, &plain) != ESP_OK || !web.redirect) {
+    error = httpd_start(&web.redirect, &plain);
+    if (error != ESP_OK || !web.redirect) {
         ESP_LOGW(WEB_TAG, "HTTP redirect start failed");
         stop_listeners();
-        return false;
+        return error == ESP_OK ? ESP_ERR_INVALID_STATE : error;
     }
     httpd_uri_t redirect = {.uri = "/*", .method = HTTP_GET,
                             .handler = redirect_get, .user_ctx = NULL};
-    if (httpd_register_uri_handler(web.redirect, &redirect) != ESP_OK) {
+    error = httpd_register_uri_handler(web.redirect, &redirect);
+    if (error != ESP_OK) {
+        ESP_LOGW(WEB_TAG, "HTTP redirect URI registration failed stage=redirect_uri err=%s (0x%x)",
+                 esp_err_to_name(error), (unsigned)error);
         stop_listeners();
-        return false;
+        return error;
     }
-    if (!resources_allow(true, NULL)) {
+    if (!resources_allow(true, "final_admission", "web_after_redirect_registration")) {
         stop_listeners();
-        return false;
+        return ESP_ERR_NO_MEM;
     }
     web.started = true;
     web_socket_diag_sample(monotonic_ms(), true);
-    return true;
+    return ESP_OK;
 }
 
 static bool management_enabled=true;
@@ -1843,38 +1865,41 @@ void katmed_web_set_enabled(bool enabled) {
     if (!enabled) katmed_web_stop();
 }
 
-bool katmed_web_start(const KatmedWebServices *services)
+esp_err_t katmed_web_start(const KatmedWebServices *services)
 {
-    if (!management_enabled) return false;
+    if (!management_enabled) return ESP_ERR_INVALID_STATE;
     if (services) web.services = *services;
-    if (web.started || web.nvs_open) return web.started;
-    if (!resources_allow(false, "katmed_web_start")) {
-        return false;
+    if (web.started || web.nvs_open) return web.started ? ESP_OK : ESP_ERR_INVALID_STATE;
+    if (!resources_allow(false, "katmed_web_start", NULL)) {
+        return ESP_ERR_NO_MEM;
     }
     /* Fresh devices reach Web before any provisioned Mesh/Wi-Fi startup. */
-    if (esp_netif_init() != ESP_OK) {
+    esp_err_t error = esp_netif_init();
+    if (error != ESP_OK) {
         ESP_LOGE(WEB_TAG, "TCP/IP initialization failed");
-        return false;
+        return error;
     }
     web.certificate_fd = -1;
-    if (nvs_open("katmed_web", NVS_READWRITE, &web.nvs) != ESP_OK) {
+    error = nvs_open("katmed_web", NVS_READWRITE, &web.nvs);
+    if (error != ESP_OK) {
         ESP_LOGE(WEB_TAG, "web security storage unavailable");
-        return false;
+        return error;
     }
     web.nvs_open = true;
     if (!load_auth(&web) || !load_identifier(&web) ||
         !katmed_web_identity_load_or_create(web.nvs, &web.identity)) {
         ESP_LOGE(WEB_TAG, "web security identity unavailable");
         katmed_web_stop();
-        return false;
+        return ESP_FAIL;
     }
     web.auth_mutex = xSemaphoreCreateMutex();
-    if (!web.auth_mutex || !start_listeners()) {
+    error = web.auth_mutex ? start_listeners() : ESP_ERR_NO_MEM;
+    if (error != ESP_OK) {
         katmed_web_stop();
-        return false;
+        return error;
     }
     ESP_LOGI(WEB_TAG, "HTTPS configuration listener ready");
-    return true;
+    return ESP_OK;
 }
 
 void katmed_web_poll(uint64_t now_ms)
@@ -1883,8 +1908,8 @@ void katmed_web_poll(uint64_t now_ms)
     if (!management_enabled) return;
     if (!web.started && !web.https && !web.redirect &&
         web.tls_key_id == PSA_KEY_ID_NULL && now_ms >= web.retry_due_ms) {
-        bool ready = web.nvs_open ? start_listeners() : katmed_web_start(&web.services);
-        if (!ready) web.retry_due_ms = now_ms + 30000;
+        esp_err_t error = web.nvs_open ? start_listeners() : katmed_web_start(&web.services);
+        if (error != ESP_OK) web.retry_due_ms = now_ms + 30000;
     }
     if (!web.nvs_open) return;
     if (web.auth_mutex && xSemaphoreTake(web.auth_mutex, 0) == pdTRUE) {
@@ -1900,7 +1925,7 @@ void katmed_web_poll(uint64_t now_ms)
         return;
     }
     web.restart_pending = false;
-    if (!start_listeners()) {
+    if (start_listeners() != ESP_OK) {
         web.retry_due_ms = now_ms + 30000;
         ESP_LOGE(WEB_TAG, "HTTPS listener restart failed");
     }

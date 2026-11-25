@@ -90,6 +90,17 @@ elif [[ "$mode" == dependencies || "$mode" == firmware ]]; then
             python tools/check_firmware_layout.py c3 --build-dir "$diagnostic" \
                 --security-profile --old-c3-development001
             python tests/check_c3_diagnostic_port.py "$diagnostic"
+        else
+            development="$repo/firmware/build-c6-development001"
+            python tools/private_wifi_defaults.py \
+                --output "$development/generated/private_wifi_defaults.h" \
+                --ui-profile-output "$development/generated/katmed_private_ui_profile.h"
+            defaults='sdkconfig.defaults;boards/c6.defaults;security.defaults;boards/c6.security.defaults;boards/c6.development001.defaults'
+            (cd firmware && idf.py -B "$development" -D "IDF_TARGET=$target" \
+                -D "SDKCONFIG=$development/sdkconfig" -D "SDKCONFIG_DEFAULTS=$defaults" \
+                -D KATMED_C6_DEVELOPMENT001=ON build)
+            python tools/check_firmware_layout.py c6 --build-dir "$development" \
+                --security-profile --c6-development001
         fi
     fi
 elif [[ "$mode" == host ]]; then
