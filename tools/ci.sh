@@ -114,6 +114,7 @@ elif [[ "$mode" == host ]]; then
         echo 'Pinned ESP-IDF mbedTLS 4.1.0 public headers are missing from IDF_PATH.' >&2
         exit 1
     fi
+    python3 tests/host_persistence_review/check_usb_crlf.py
     python3 tests/check_crop_geometry.py
     python3 tests/host_private_wifi_defaults/check.py
     python3 tests/host_tooling_qlty58/test_tooling_contracts.py
