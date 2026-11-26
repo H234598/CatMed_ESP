@@ -183,6 +183,8 @@ void ui_appmaint_show_status(unsigned status);
 #endif
 void ui_reset_show_warning(void);
 void ui_reset_close_remote(void);
+/* With the LVGL lock held, abandon the reset before changing display geometry. */
+bool ui_prepare_display_rebuild(void);
 UiView ui_current_view(void);
 UiView ui_next_view(UiView current, UiGesture gesture, bool alarm_active);
 void ui_render(const AppState *state, const LocalSettings *local,

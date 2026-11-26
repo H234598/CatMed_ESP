@@ -647,12 +647,27 @@ static bool orientation_auto_for(const Runtime *rt)
            !rt->store.record.orientation_manual;
 }
 
+static BoardResult rotate_live_display(Orientation orientation)
+{
+#if CONFIG_IDF_TARGET_ESP32C6
+    if (!lvgl_port_lock(1000)) return BOARD_IO_ERROR;
+    /* Keep the old geometry on a reset veto. The board takes the same
+     * recursive LVGL lock when applying panel and touch transforms. */
+    BoardResult result = ui_prepare_display_rebuild()
+        ? board_set_orientation(orientation) : BOARD_IO_ERROR;
+    lvgl_port_unlock();
+    return result;
+#else
+    return board_set_orientation(orientation);
+#endif
+}
+
 static void poll_auto_orientation(Runtime *rt)
 {
 #if CONFIG_IDF_TARGET_ESP32C6
     Orientation sensed;
     if (orientation_auto_for(rt) && board_auto_orientation(&sensed) &&
-        sensed!=rt->local.orientation && board_set_orientation(sensed)==BOARD_OK)
+        sensed!=rt->local.orientation && rotate_live_display(sensed)==BOARD_OK)
         rt->local.orientation=sensed; /* no Store, shared event or clock mutation */
 #else
     (void)rt;
@@ -906,7 +921,7 @@ static UiSubmitResult submit_ui_with_id(void *context, const UiRequest *request,
         if (request->value.orientation > ORIENTATION_270) return UI_SUBMIT_REJECTED;
         const Orientation previous=rt->local.orientation;
         if (request->value.orientation!=previous &&
-            board_set_orientation(request->value.orientation)!=BOARD_OK)
+            rotate_live_display(request->value.orientation)!=BOARD_OK)
             return UI_SUBMIT_UNAVAILABLE;
         const StoreResult result=store_set_orientation(&rt->store,&rt->local,
             request->value.orientation,orientation_auto_supported());

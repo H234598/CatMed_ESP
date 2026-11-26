@@ -79,6 +79,8 @@ static bool fail_ui_lock;
 bool lvgl_port_lock(uint32_t timeout){(void)timeout;return !fail_ui_lock;}
 void lvgl_port_unlock(void){}
 /* Standalone Main bridge only: native UI integration links its strong implementation. */
+static bool veto_display_rebuild;
+__attribute__((weak)) bool ui_prepare_display_rebuild(void){return !veto_display_rebuild;}
 __attribute__((weak)) void ui_set_display_awake(bool awake){(void)awake;}
 static unsigned deferred_calls,final_shared_calls,ui_completion_order;
 __attribute__((weak)) void ui_deferred_result(const UiRequest *request,UiSubmitResult result){
@@ -612,6 +614,17 @@ static void test_orientation_mode(void)
     assert(orientation_auto_for(&runtime)==c6);
     const AppState state=runtime.state;
     sensed_valid=true;
+    if (c6) {
+        const Orientation initial=runtime.local.orientation;
+        const Orientation applied=board_orientation;
+        sensed_orientation=(Orientation)((initial+1)%4);
+        veto_display_rebuild=true;
+        poll_auto_orientation(&runtime);
+        assert(runtime.local.orientation==initial && board_orientation==applied);
+        veto_display_rebuild=false;
+        poll_auto_orientation(&runtime);
+        assert(runtime.local.orientation==sensed_orientation && board_orientation==sensed_orientation);
+    }
     for(unsigned i=0;i<10;++i){sensed_orientation=(Orientation)(i%4);poll_auto_orientation(&runtime);}
     assert(writes==before && memcmp(&state,&runtime.state,sizeof(state))==0);
     if(c6)assert(runtime.local.orientation==ORIENTATION_90);

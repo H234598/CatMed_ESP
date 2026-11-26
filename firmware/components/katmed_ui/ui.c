@@ -93,7 +93,7 @@ typedef struct {
     SettingsMenu settings_menu;
     lv_obj_t *night_status;
     lv_obj_t *night_toggle;
-    bool reset_dialog_pressed;
+    bool reset_dialog_pressed, reset_settings_suspended;
     uint8_t reset_stage; /* 0 idle, 1 physical button tile, 2 warning. */
     char reset_token[33];
     size_t reset_token_length;
@@ -1328,8 +1328,29 @@ static void update_night_status(void)
     if(strcmp(lv_label_get_text(ui.night_status),text)!=0)lv_label_set_text(ui.night_status,text);
 }
 
+static const lv_font_t *reset_caption_font(bool small)
+{
+    const lv_font_t *font = small ? &katmed_font_12 : &katmed_font_14;
+#if !KATMED_APPSTORE_MAINTENANCE
+    if (katmed_i18n_selected() != KATMED_LANG_AR) return font;
+    static lv_font_t arabic_small, arabic_normal;
+    lv_font_t *arabic = small ? &arabic_small : &arabic_normal;
+    if (!arabic->line_height) {
+        /* Arabic fallback glyphs require extra descender space in wrapped
+         * reset labels. Grow the line below the existing glyph origin. */
+        const int descender_space = small ? 2 : 3;
+        *arabic = *font;
+        arabic->line_height += descender_space;
+        arabic->base_line += descender_space;
+    }
+    font = arabic;
+#endif
+    return font;
+}
+
 static void build_settings(void)
 {
+    if (ui.reset_settings_suspended) return;
     retire_clock_for_menu();
     if (ui.settings) {
         lv_obj_set_hidden(ui.settings, false);
@@ -1467,8 +1488,16 @@ static void build_settings(void)
     label(ui.settings,T("Nachtmodus"),row_w);
     button(ui.settings,T("Nachtmodus einstellen"),row_w,40,settings_submenu_button,(void*)(intptr_t)SETTINGS_NIGHT);
     label(ui.settings, T("Reset"), row_w);
+#if KATMED_APPSTORE_MAINTENANCE
     button(ui.settings, T("Werkseinstellungen zurücksetzen"), row_w, 42,
            reset_open, NULL);
+#else
+    lv_obj_t *reset = button(ui.settings, T("Werkseinstellungen zurücksetzen"),
+                             row_w, LV_SIZE_CONTENT, reset_open, NULL);
+    lv_obj_set_style_min_height(reset, 42, 0);
+    if (katmed_i18n_selected() == KATMED_LANG_AR)
+        lv_obj_set_style_text_font(lv_obj_get_child(reset, 0), reset_caption_font(false), 0);
+#endif
     restore_scroll(ui.settings, 5);
     if (ui.feedback && !lv_obj_is_hidden(ui.feedback))
         lv_obj_move_foreground(ui.feedback);
@@ -1503,6 +1532,7 @@ static void reset_dialog_close(void)
     if (ui.reset_dialog) lv_obj_delete(ui.reset_dialog);
     ui.reset_dialog = NULL;
     ui.reset_dialog_pressed = false;
+    ui.reset_settings_suspended = false;
     ui.reset_stage = 0;
     volatile char *token = ui.reset_token;
     for (size_t i = 0; i < sizeof(ui.reset_token); ++i) token[i] = '\0';
@@ -1516,6 +1546,11 @@ static bool reset_abandon(void)
         !ui.services.reset_cancel(ui.services.context)) return false;
     reset_dialog_close();
     return true;
+}
+
+bool ui_prepare_display_rebuild(void)
+{
+    return reset_abandon();
 }
 
 static void reset_cancel(lv_event_t *event)
@@ -1553,6 +1588,14 @@ static void reset_open(lv_event_t *event)
         show_feedback(T("Reset nicht verfügbar"));
         return;
     }
+#if !KATMED_APPSTORE_MAINTENANCE
+    /* The opaque preparation tile replaces Settings in the LVGL pool.
+     * Keep its scroll position so the ordinary render can restore it. */
+    if (ui.settings) {
+        ui.reset_settings_suspended = true;
+        destroy_menu();
+    }
+#endif
     ui.reset_dialog = lv_obj_create(ui.screen);
     lv_obj_set_size(ui.reset_dialog, ui.width, ui.height);
     lv_obj_center(ui.reset_dialog);
@@ -1565,7 +1608,8 @@ static void reset_open(lv_event_t *event)
     label(ui.reset_dialog, T("C6 App-Testdaten-Wartung vorbereiten"), ui.width - 32);
     label(ui.reset_dialog, T("Nur App-Testdaten: vier katmed-Schlüssel und zwei Mesh-Namensdateien. Andere Daten bleiben erhalten. RESET drücken, während diese Kachel offen ist."), ui.width - 32);
 #else
-    label(ui.reset_dialog, T("Factory Reset vorbereiten"), ui.width - 32);
+    lv_obj_t *title = label(ui.reset_dialog, T("Factory Reset vorbereiten"), ui.width - 32);
+    lv_obj_set_style_text_font(title, reset_caption_font(false), 0);
     lv_obj_t *instruction_view = lv_obj_create(ui.reset_dialog);
     lv_obj_set_width(instruction_view, ui.width - 32);
     lv_obj_set_height(instruction_view, 1);
@@ -1579,10 +1623,13 @@ static void reset_open(lv_event_t *event)
     lv_obj_t *instruction = label(instruction_view,
           T("Um den Factory Reset durchzuführen, bitte die RESET-Taste links oben auf der Rückseite des Displays drücken, während diese Kachel offen ist."),
           ui.width - 32);
-    lv_obj_set_style_text_font(instruction, &katmed_font_14, 0);
+    lv_obj_set_style_text_font(instruction, reset_caption_font(false), 0);
 #endif
     lv_obj_t *cancel = button(ui.reset_dialog, T("Abbrechen"), ui.width - 36,
                               42, reset_cancel, NULL);
+#if !KATMED_APPSTORE_MAINTENANCE
+    lv_obj_set_style_text_font(lv_obj_get_child(cancel, 0), reset_caption_font(false), 0);
+#endif
     lv_obj_add_event_cb(cancel, reset_dialog_press, LV_EVENT_PRESSED, NULL);
     lv_obj_move_foreground(ui.reset_dialog);
     if (!ui.services.reset_arm(ui.services.context, event == NULL)) {
@@ -1670,7 +1717,7 @@ void ui_reset_show_warning(void)
     lv_obj_set_size(yes, yes_width, yes_height);
     lv_obj_t *yes_text = lv_obj_get_child(yes, 0);
     lv_obj_set_width(yes_text, yes_width - 8);
-    lv_obj_set_style_text_font(yes_text, &katmed_font_12, 0);
+    lv_obj_set_style_text_font(yes_text, reset_caption_font(true), 0);
     lv_obj_center(yes_text);
     lv_obj_set_style_bg_color(yes, lv_color_hex(0xff3d00), LV_PART_MAIN);
     lv_obj_set_style_text_color(yes, lv_color_white(), LV_PART_MAIN);
@@ -1930,6 +1977,7 @@ static void build_screen(int16_t width, int16_t height)
     ui.alarm_text = NULL;
     ui.settings = NULL;
     ui.settings_options = NULL;
+    ui.reset_settings_suspended = false;
     ui.pairing_label = NULL;
     ui.status = NULL;
     ui.certificate_button = NULL;
@@ -2692,6 +2740,14 @@ void ui_render(const AppState *state, const LocalSettings *local,
 {
     if(display_sleeping)return;
     if (!state || !local || !clock) return;
+    lv_display_t *display = lv_display_get_default();
+    const int16_t width = display ? (int16_t)lv_display_get_horizontal_resolution(display) : 0;
+    const int16_t height = display ? (int16_t)lv_display_get_vertical_resolution(display) : 0;
+    const bool language_rebuild = ui.applied_language != katmed_i18n_selected();
+    const bool rebuild = display && (!ui.screen || ui.screen != lv_screen_active() ||
+                         width != ui.width || height != ui.height ||
+                         local->orientation != ui.screen_orientation || language_rebuild);
+    if (rebuild && !ui_prepare_display_rebuild()) return;
     bool alarm_started = state->alarm_active && ui.view != ALARM;
     if (alarm_started) close_certificate_status(false);
     if (alarm_started && ui.reset_stage && !reset_abandon()) return;
@@ -2756,16 +2812,8 @@ void ui_render(const AppState *state, const LocalSettings *local,
         else if (view == UI_VIEW_PLACEHOLDER) ui.grid.row = 0;
     }
 
-    lv_display_t *display = lv_display_get_default();
     if (!display) return;
     watch_display(display);
-    int16_t width = (int16_t)lv_display_get_horizontal_resolution(display);
-    int16_t height = (int16_t)lv_display_get_vertical_resolution(display);
-    bool rebuild = !ui.screen || ui.screen != lv_screen_active() ||
-                   width != ui.width || height != ui.height ||
-                   local->orientation != ui.screen_orientation ||
-                   ui.applied_language != katmed_i18n_selected();
-    const bool language_rebuild=ui.applied_language != katmed_i18n_selected();
     bool editing_before_rebuild = rebuild && (ui.keypad || ui.style_dialog);
     if (rebuild) {
         interaction_cancel(clock->monotonic_ms);

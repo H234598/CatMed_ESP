@@ -357,7 +357,28 @@ foreach(format "240;240" "172;320" "320;172")
         COMMAND check_ui_surface uat-clock ${width} ${height})
     add_test(NAME ui_uat_reset_${width}x${height}
         COMMAND check_ui_surface uat-reset ${width} ${height})
+    if(KATMED_UI_HOST_MEM34 AND NOT width EQUAL 240)
+        foreach(phase IN ITEMS prepare warning)
+            add_test(NAME ui_reset_small_pool_${phase}_${width}x${height}
+                COMMAND check_ui_surface reset-small-pool ${width} ${height} ${phase})
+        endforeach()
+    endif()
 endforeach()
+
+if(KATMED_UI_HOST_MEM34)
+    add_test(NAME ui_reset_language_rebuild
+        COMMAND check_ui_surface reset-language-rebuild)
+    foreach(from RANGE 0 3)
+        foreach(to RANGE 0 3)
+            if(NOT from EQUAL to)
+                foreach(phase IN ITEMS prepare warning)
+                    add_test(NAME ui_reset_rotation_${phase}_${from}_${to}
+                        COMMAND check_ui_surface reset-rotation ${from} ${to} ${phase})
+                endforeach()
+            endif()
+        endforeach()
+    endforeach()
+endif()
 
 # Startup cache work uses the target's unmodified LittleFS core on a RAM device.
 set(ALARM_LFS "${ROOT}/firmware/managed_components/joltwallet__littlefs/src/littlefs")

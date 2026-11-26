@@ -33,6 +33,7 @@ _Static_assert(KATMED_C3_TOUCH_SDA == 4 && KATMED_C3_TOUCH_SCL == 5 &&
 /* Host-only request accounting. TLSF block capacity can gain alignment slack
  * without retaining another allocation or another requested byte. */
 static struct { void *pointer; size_t bytes; } surface_allocations[4096];
+static unsigned surface_allocation_failures;
 void *__real_lv_malloc_core(size_t bytes);
 void *__real_lv_realloc_core(void *pointer, size_t bytes);
 void __real_lv_free_core(void *pointer);
@@ -63,12 +64,14 @@ static void surface_forget(void *pointer)
 void *__wrap_lv_malloc_core(size_t bytes)
 {
     void *pointer = __real_lv_malloc_core(bytes);
+    if (bytes && !pointer) ++surface_allocation_failures;
     surface_remember(pointer, bytes);
     return pointer;
 }
 void *__wrap_lv_realloc_core(void *pointer, size_t bytes)
 {
     void *replacement = __real_lv_realloc_core(pointer, bytes);
+    if (bytes && !replacement) ++surface_allocation_failures;
     if (replacement) {
         surface_forget(pointer);
         surface_remember(replacement, bytes);
@@ -106,7 +109,8 @@ typedef struct {
     KatmedResetConfirmation reset_confirmation;
     uint64_t reset_now_ms;
     uint8_t reset_random_sequence;
-    unsigned reset_arms, reset_cancels, reset_confirms;
+    unsigned reset_arms, reset_cancel_attempts, reset_cancels, reset_confirms;
+    bool reset_cancel_blocked;
 } Host;
 
 static bool reset_arm(void *context, bool from_web)
@@ -123,6 +127,8 @@ static bool reset_arm(void *context, bool from_web)
 static bool reset_cancel(void *context)
 {
     Host *host = context;
+    ++host->reset_cancel_attempts;
+    if (host->reset_cancel_blocked) return false;
     host->reset_prepared = host->reset_warning = false;
     host->reset_marker = false;
     memset(&host->reset_confirmation, 0, sizeof(host->reset_confirmation));
@@ -420,8 +426,18 @@ static void pointer_click(lv_display_t *display, lv_obj_t *target)
     lv_indev_delete(pointer);
 }
 
+static bool gated_pointer_sample(lv_indev_t *pointer, bool down, uint64_t tick)
+{
+    pointer_down = down;
+    ui_touch_sample(down, pointer_point.x, pointer_point.y, true, tick);
+    const bool allowed = ui_lvgl_touch_allowed(down, pointer_point.x, pointer_point.y,
+                                               true, tick);
+    if (allowed) lv_indev_read(pointer);
+    return allowed;
+}
+
 /* The product touch gate runs before LVGL dispatches a real button click. */
-static bool gated_pointer_click(lv_display_t *display, lv_obj_t *target)
+static bool gated_pointer_tap(lv_display_t *display, lv_indev_t *pointer, lv_obj_t *target)
 {
     static uint64_t tick = 1000000;
     tick += 1000;
@@ -431,31 +447,29 @@ static bool gated_pointer_click(lv_display_t *display, lv_obj_t *target)
     pointer_point = (lv_point_t){(area.x1 + area.x2) / 2, (area.y1 + area.y2) / 2};
     assert(pointer_point.x >= 0 && pointer_point.x < lv_display_get_horizontal_resolution(display));
     assert(pointer_point.y >= 0 && pointer_point.y < lv_display_get_vertical_resolution(display));
+    ui_touch_sample(false, 0, 0, true, tick);
+    const bool down_allowed = gated_pointer_sample(pointer, true, tick + 30);
+    lv_tick_inc(60);
+    const bool up_allowed = gated_pointer_sample(pointer, false, tick + 90);
+    fprintf(stderr, "gated tap %dx%d at %d,%d down=%u up=%u\n",
+            lv_display_get_horizontal_resolution(display),
+            lv_display_get_vertical_resolution(display),
+            pointer_point.x, pointer_point.y, down_allowed, up_allowed);
+    return down_allowed && up_allowed;
+}
+
+static bool gated_pointer_click(lv_display_t *display, lv_obj_t *target)
+{
     lv_indev_t *pointer = lv_indev_create();
     assert(pointer);
     lv_indev_set_type(pointer, LV_INDEV_TYPE_POINTER);
     lv_indev_set_display(pointer, display);
     lv_indev_set_read_cb(pointer, pointer_read);
     lv_indev_set_mode(pointer, LV_INDEV_MODE_EVENT);
-    ui_touch_sample(false, 0, 0, true, tick);
-    pointer_down = true;
-    ui_touch_sample(true, pointer_point.x, pointer_point.y, true, tick + 30);
-    const bool down_allowed = ui_lvgl_touch_allowed(true, pointer_point.x, pointer_point.y,
-                                                     true, tick + 30);
-    if (down_allowed) lv_indev_read(pointer);
-    lv_tick_inc(60);
-    pointer_down = false;
-    ui_touch_sample(false, pointer_point.x, pointer_point.y, true, tick + 90);
-    const bool up_allowed = ui_lvgl_touch_allowed(false, pointer_point.x, pointer_point.y,
-                                                   true, tick + 90);
-    if (up_allowed) lv_indev_read(pointer);
-    fprintf(stderr, "gated tap %dx%d at %d,%d down=%u up=%u\n",
-            lv_display_get_horizontal_resolution(display),
-            lv_display_get_vertical_resolution(display),
-            pointer_point.x, pointer_point.y, down_allowed, up_allowed);
+    const bool allowed = gated_pointer_tap(display, pointer, target);
     lv_indev_reset(pointer, NULL);
     lv_indev_delete(pointer);
-    return down_allowed && up_allowed;
+    return allowed;
 }
 
 static void assert_control_clears_edge(lv_obj_t *control)
@@ -1190,8 +1204,340 @@ static int check_certificate_status(int width, int height)
     return 0;
 }
 
+#if defined(KATMED_SURFACE_ALLOC_ACCOUNTING) && LV_MEM_SIZE == (34 * 1024U)
+static lv_obj_t *reset_localized_label(lv_obj_t *screen, const char *key)
+{
+    const char *text = katmed_i18n_text(key);
+    char shaped[lv_text_ap_strlen(text) + 1];
+    lv_text_ap_proc(text, shaped);
+    return find_label(screen, shaped);
+}
+
+static void reset_pool_frame(lv_display_t *display, const char *phase)
+{
+    lv_refr_now(display);
+    assert(lv_mem_test() == LV_RESULT_OK);
+    lv_mem_monitor_t heap;
+    lv_mem_monitor(&heap);
+    printf("reset pool %s: free=%zu largest=%zu peak=%zu objects=%u failed=%u\n",
+           phase, heap.free_size, heap.free_biggest_size, heap.max_used,
+           count_objects(lv_screen_active()), surface_allocation_failures);
+    assert(surface_allocation_failures == 0);
+}
+
+static void reset_scroll_text(lv_indev_t *pointer, lv_obj_t *text, lv_obj_t *action)
+{
+    assert(text && action);
+    lv_obj_t *viewport = lv_obj_get_parent(text);
+    assert(lv_obj_is_scrollable(viewport) && lv_obj_get_scroll_dir(viewport) == LV_DIR_VER);
+    lv_area_t window, label, button;
+    lv_obj_get_content_coords(viewport, &window);
+    lv_obj_get_coords(text, &label);
+    lv_obj_get_coords(action, &button);
+    assert(label.x1 >= window.x1 && label.x2 <= window.x2 && label.y1 >= window.y1);
+    assert(window.y2 < button.y1);
+    assert(lv_area_get_height(&window) >=
+           lv_font_get_line_height(lv_obj_get_style_text_font(text, LV_PART_MAIN)));
+    const int limit = LV_MAX(0, lv_obj_get_scroll_bottom(viewport));
+    for (unsigned swipe = 0; lv_obj_get_scroll_bottom(viewport) > 0; ++swipe) {
+        assert(swipe < 20);
+        const int before = lv_obj_get_scroll_y(viewport);
+        const uint64_t tick = UINT64_C(2000000) + (uint64_t)swipe * 1000;
+        pointer_point.x = (window.x1 + window.x2) / 2;
+        for (int step = 0; step <= 4; ++step) {
+            pointer_point.y = window.y2 - 2 - (window.y2 - window.y1 - 4) * step / 4;
+            assert(gated_pointer_sample(pointer, true, tick + (uint64_t)step * 25));
+            lv_tick_inc(25);
+        }
+        assert(gated_pointer_sample(pointer, false, tick + 125));
+        /* Keep the actual input device alive until LVGL's throw has settled. */
+        for (unsigned wait = 0; wait < 50; ++wait) {
+            lv_tick_inc(20);
+            lv_anim_refr_now();
+        }
+        assert(lv_obj_get_scroll_y(viewport) > before);
+    }
+    lv_obj_get_coords(text, &label);
+    assert(lv_obj_get_scroll_y(viewport) == limit && label.y2 <= window.y2);
+    lv_area_t after;
+    lv_obj_get_coords(action, &after);
+    assert(after.x1 == button.x1 && after.y1 == button.y1 &&
+           after.x2 == button.x2 && after.y2 == button.y2);
+    printf("reset scroll: viewport=%dx%d label=%dx%d bottom=%d\n",
+           (int)lv_area_get_width(&window), (int)lv_area_get_height(&window),
+           (int)lv_area_get_width(&label), (int)lv_area_get_height(&label), limit);
+}
+
+static void reset_rotation_pointer_read(lv_indev_t *pointer, lv_indev_data_t *data)
+{
+    pointer_read(pointer, data);
+    lv_display_t *display = lv_indev_get_display(pointer);
+    const int width = lv_display_get_horizontal_resolution(display);
+    const int height = lv_display_get_vertical_resolution(display);
+    /* The UI gate sees logical points. The LVGL driver sees panel base points,
+     * which LVGL converts to the logical orientation during pointer dispatch. */
+    switch (lv_display_get_rotation(display)) {
+    case LV_DISPLAY_ROTATION_90:
+        data->point = (lv_point_t){pointer_point.y, width - 1 - pointer_point.x};
+        break;
+    case LV_DISPLAY_ROTATION_180:
+        data->point = (lv_point_t){width - 1 - pointer_point.x, height - 1 - pointer_point.y};
+        break;
+    case LV_DISPLAY_ROTATION_270:
+        data->point = (lv_point_t){height - 1 - pointer_point.y, pointer_point.x};
+        break;
+    default:
+        break;
+    }
+}
+
+static void check_reset_rotation(lv_display_t *display, lv_indev_t *pointer, Host *host,
+                                 const AppState *state, LocalSettings *local,
+                                 const ClockSample *clock, bool warning, Orientation next)
+{
+    lv_obj_t *screen = lv_screen_active();
+    const char *entry_key = "Werkseinstellungen zurücksetzen";
+    const char *modal_control = warning ? "Nein" : "Abbrechen";
+    const UiView view = warning ? BACKGROUND : SETTINGS;
+    if (warning) {
+        host->reset_marker = true;
+        reset_simulate_hardware_boot(host, true);
+        ui_reset_show_warning();
+        assert(host->reset_warning && host->reset_confirmation.valid);
+    } else {
+        ui_render(state, local, view, clock);
+        lv_obj_t *entry = reset_localized_label(screen, entry_key);
+        assert(entry);
+        lv_obj_t *button = lv_obj_get_parent(entry);
+        lv_obj_scroll_to_view(button, LV_ANIM_OFF);
+        assert(gated_pointer_tap(display, pointer, button));
+        assert(host->reset_prepared && host->reset_marker);
+    }
+    reset_pool_frame(display, "before-rotation");
+    lv_obj_t *control = reset_localized_label(screen, modal_control);
+    assert(control);
+    assert(host->reset_cancels == 0 && host->reset_confirms == 0);
+
+    const Orientation previous = local->orientation;
+    host->reset_cancel_blocked = true;
+    if (next == previous) {
+        /* A language rebuild uses the render path without a Board preflight. */
+        katmed_i18n_select(KATMED_LANG_DE);
+        ui_render(state, local, view, clock);
+        reset_pool_frame(display, "language-rebuild-veto");
+        assert(host->reset_cancel_attempts == 1 && host->reset_cancels == 0);
+        assert(host->reset_warning && host->reset_confirmation.valid && lv_obj_is_valid(control));
+        host->reset_cancel_blocked = false;
+        ui_render(state, local, view, clock);
+        reset_pool_frame(display, "language-rebuild-after-cancel");
+        assert(host->reset_cancel_attempts == 2 && host->reset_cancels == 1);
+        assert(!host->reset_warning && !host->reset_confirmation.valid && host->reset_confirms == 0);
+        assert(ui_current_view() == BACKGROUND && find_label(screen, "Bild nicht verfügbar"));
+        return;
+    }
+    assert(!ui_prepare_display_rebuild());
+    assert(host->reset_cancel_attempts == 1);
+    assert(lv_display_get_rotation(display) == (lv_display_rotation_t)previous);
+    assert(lv_display_get_horizontal_resolution(display) == host->width);
+    assert(lv_display_get_vertical_resolution(display) == host->height);
+    reset_pool_frame(display, "rotation-veto");
+    assert(reset_localized_label(screen, modal_control) == control);
+    assert(gated_pointer_tap(display, pointer, lv_obj_get_parent(control)));
+    assert(host->reset_cancel_attempts == 2 && host->reset_cancels == 0);
+    assert(host->reset_prepared == !warning && host->reset_marker == !warning);
+    assert(host->reset_warning == warning && host->reset_confirmation.valid == warning);
+    assert(host->reset_confirms == 0);
+
+    /* The finger is still down as the next orientation sample is applied. */
+    lv_obj_t *pressed = reset_localized_label(screen, warning ? "Ja, zurücksetzen" : modal_control);
+    assert(pressed);
+    lv_obj_t *held_button = lv_obj_get_parent(pressed);
+    lv_area_t area;
+    lv_obj_get_coords(held_button, &area);
+    pointer_point = (lv_point_t){(area.x1 + area.x2) / 2, (area.y1 + area.y2) / 2};
+    assert(gated_pointer_sample(pointer, true, UINT64_C(3000000)));
+    assert(lv_obj_has_state(held_button, LV_STATE_PRESSED));
+    size_t active_requests, active_bytes, after_requests, after_bytes;
+    surface_live_requests(&active_requests, &active_bytes);
+    host->reset_cancel_blocked = false;
+    /* Match Main: abandon, apply LVGL rotation, then render with the new angle. */
+    assert(ui_prepare_display_rebuild());
+    surface_live_requests(&after_requests, &after_bytes);
+    assert(after_requests < active_requests && after_bytes < active_bytes);
+    printf("reset rotation release: requests=%zu->%zu bytes=%zu->%zu\n",
+           active_requests, after_requests, active_bytes, after_bytes);
+    lv_display_set_rotation(display, (lv_display_rotation_t)next);
+    local->orientation = next;
+    host->width = lv_display_get_horizontal_resolution(display);
+    host->height = lv_display_get_vertical_resolution(display);
+    ui_render(state, local, view, clock);
+    reset_pool_frame(display, "after-rotation");
+    assert(!gated_pointer_sample(pointer, false, UINT64_C(3000060)));
+    const bool modal_visible = reset_localized_label(screen, modal_control) != NULL;
+    printf("reset rotation: %u->%u %dx%d modal=%u cancels=%u prepared=%u marker=%u warning=%u token=%u confirms=%u\n",
+           (unsigned)previous * 90, (unsigned)next * 90, host->width, host->height,
+           modal_visible, host->reset_cancels,
+           host->reset_prepared, host->reset_marker, host->reset_warning,
+           host->reset_confirmation.valid, host->reset_confirms);
+    assert(!modal_visible && host->reset_cancel_attempts == 3 &&
+           host->reset_cancels == 1 && host->reset_confirms == 0 && host->submit_calls == 0);
+    assert(!host->reset_prepared && !host->reset_marker &&
+           !host->reset_warning && !host->reset_confirmation.valid);
+    assert(ui_current_view() == view);
+    if (!warning) assert(reset_localized_label(screen, entry_key));
+}
+
+static int check_reset_small_pool(int width, int height, bool warning, int from, int to)
+{
+    assert((width == 172 && height == 320) || (width == 320 && height == 172));
+    printf("reset profile: pool=%u pointer_bits=%zu geometry=%dx%d locale=ar\n",
+           (unsigned)LV_MEM_SIZE, sizeof(void *) * 8, width, height);
+    static uint16_t frame[172 * 320];
+    static uint16_t draw_buffer[2][320 * 16];
+    Host host = {.width = width, .height = height, .frame = frame, .reset_now_ms = 1000};
+    lv_init();
+    lv_display_t *display = lv_display_create(from >= 0 ? 172 : width, from >= 0 ? 320 : height);
+    assert(display);
+    if (from >= 0) lv_display_set_rotation(display, (lv_display_rotation_t)from);
+    lv_display_set_color_format(display, LV_COLOR_FORMAT_RGB565);
+    lv_display_set_buffers(display, draw_buffer[0], draw_buffer[1], sizeof(draw_buffer[0]),
+                           LV_DISPLAY_RENDER_MODE_PARTIAL);
+    lv_display_set_flush_cb(display, flush);
+    lv_display_set_user_data(display, &host);
+    lv_indev_t *pointer = lv_indev_create();
+    assert(pointer);
+    lv_indev_set_type(pointer, LV_INDEV_TYPE_POINTER);
+    lv_indev_set_display(pointer, display);
+    lv_indev_set_read_cb(pointer, from >= 0 ? reset_rotation_pointer_read : pointer_read);
+    lv_indev_set_mode(pointer, LV_INDEV_MODE_EVENT);
+    katmed_i18n_select(KATMED_LANG_AR);
+    UiServices services = {.context = &host, .submit = submit, .network_status = network_status,
+        .reset_arm = reset_arm, .reset_cancel = reset_cancel, .reset_prepare = reset_prepare_warning,
+        .reset_confirm = reset_confirm};
+    ui_set_services(&services);
+    AppState state = {0};
+    LocalSettings local = {.clock_style = DIGITAL_LARGE,
+        .orientation = from >= 0 ? (Orientation)from : width > height ? ORIENTATION_90 : ORIENTATION_0};
+    ClockSample clock = {.monotonic_ms = 1000, .domain = 1};
+    ui_render(&state, &local, BACKGROUND, &clock);
+    lv_obj_t *screen = lv_screen_active();
+    reset_pool_frame(display, "startup");
+    if (from >= 0) {
+        check_reset_rotation(display, pointer, &host, &state, &local, &clock, warning, (Orientation)to);
+    } else if (warning) {
+        host.reset_marker = true;
+        reset_simulate_hardware_boot(&host, false);
+        assert(!host.reset_warning && !host.reset_marker);
+        host.reset_marker = true;
+        reset_simulate_hardware_boot(&host, true);
+        assert(host.reset_warning && !host.reset_marker && host.reset_confirms == 0);
+        ui_reset_show_warning();
+        reset_pool_frame(display, "warning");
+        lv_obj_t *text = reset_localized_label(screen,
+            "WARNUNG: Löscht WLAN, Laufzeittexte, Mesh, Alarm/Verlauf, Webzugang, Zertifikate/ACME, Uploads und Cache. Firmware und Standardbilder bleiben. In einem privaten Build bleiben einkompilierte private Vorgaben erhalten.");
+        lv_obj_t *yes_text = reset_localized_label(screen, "Ja, zurücksetzen");
+        lv_obj_t *no_text = reset_localized_label(screen, "Nein");
+        assert(yes_text && no_text);
+        lv_obj_t *yes = lv_obj_get_parent(yes_text);
+        lv_obj_t *no = lv_obj_get_parent(no_text);
+        assert(lv_obj_get_width(yes) * 10 == lv_obj_get_width(no) * 7);
+        assert(lv_obj_get_height(yes) * 10 == lv_obj_get_height(no) * 7);
+        reset_scroll_text(pointer, text, yes);
+        reset_pool_frame(display, "warning-scrolled");
+        assert(gated_pointer_tap(display, pointer, no));
+        assert(host.reset_cancels == 1 && host.reset_confirms == 0 && !host.reset_warning &&
+               !host.reset_confirmation.valid);
+        reset_pool_frame(display, "warning-declined");
+        host.reset_marker = true;
+        reset_simulate_hardware_boot(&host, true);
+        ui_reset_show_warning();
+        yes_text = reset_localized_label(screen, "Ja, zurücksetzen");
+        assert(yes_text);
+        yes = lv_obj_get_parent(yes_text);
+        lv_obj_send_event(yes, LV_EVENT_CLICKED, NULL);
+        assert(host.reset_confirms == 0 && host.reset_warning);
+        assert(gated_pointer_tap(display, pointer, yes));
+        assert(host.reset_confirms == 1 && !host.reset_warning &&
+               !host.reset_confirmation.valid && host.submit_calls == 0);
+        reset_pool_frame(display, "confirmation-ram-only");
+    } else {
+        const char *entry_key = "Werkseinstellungen zurücksetzen";
+        ui_render(&state, &local, SETTINGS, &clock);
+        lv_obj_t *entry = reset_localized_label(screen, entry_key);
+        assert(entry);
+        lv_obj_t *button = lv_obj_get_parent(entry);
+        lv_obj_t *settings = lv_obj_get_parent(button);
+        lv_obj_scroll_to_view(button, LV_ANIM_OFF);
+        reset_pool_frame(display, "settings-scrolled");
+        const int saved_scroll = lv_obj_get_scroll_y(settings);
+        assert(saved_scroll > 0 && gated_pointer_tap(display, pointer, button));
+        assert(host.reset_arms == 1 && host.reset_marker && host.reset_confirms == 0);
+        reset_pool_frame(display, "preparation");
+        const char *instruction_key =
+            "Um den Factory Reset durchzuführen, bitte die RESET-Taste links oben auf der Rückseite des Displays drücken, während diese Kachel offen ist.";
+        lv_obj_t *instruction = reset_localized_label(screen, instruction_key);
+        lv_obj_t *cancel_text = reset_localized_label(screen, "Abbrechen");
+        assert(instruction && cancel_text);
+        lv_obj_t *cancel = lv_obj_get_parent(cancel_text);
+        reset_scroll_text(pointer, instruction, cancel);
+        host.reset_cancel_blocked = true;
+        assert(gated_pointer_tap(display, pointer, cancel));
+        assert(host.reset_cancels == 0 && host.reset_marker && host.reset_confirms == 0);
+        clock.monotonic_ms += 3025;
+        ui_render(&state, &local, SETTINGS, &clock);
+        reset_pool_frame(display, "preparation-periodic");
+        assert(!reset_localized_label(screen, entry_key) &&
+               reset_localized_label(screen, instruction_key) == instruction);
+        host.reset_cancel_blocked = false;
+        assert(gated_pointer_tap(display, pointer, cancel));
+        assert(host.reset_cancels == 1 && !host.reset_marker && host.reset_confirms == 0);
+        ui_render(&state, &local, SETTINGS, &clock);
+        reset_pool_frame(display, "settings-restored");
+        entry = reset_localized_label(screen, entry_key);
+        assert(entry && lv_obj_get_scroll_y(lv_obj_get_parent(lv_obj_get_parent(entry))) == saved_scroll);
+        assert(!reset_localized_label(screen, instruction_key));
+        host.reset_prepared = true;
+        assert(!ui_reset_offer_from_web() && host.reset_arms == 1);
+        host.reset_prepared = false;
+        ui_render(&state, &local, SETTINGS, &clock);
+        assert(reset_localized_label(screen, entry_key));
+        assert(ui_reset_offer_from_web() && host.reset_arms == 2 && host.reset_marker);
+        assert(reset_cancel(&host)); /* The remote caller clears its RAM marker. */
+        ui_reset_close_remote();
+        assert(!reset_localized_label(screen, entry_key));
+        ui_render(&state, &local, SETTINGS, &clock);
+        reset_pool_frame(display, "settings-restored-after-remote-close");
+        entry = reset_localized_label(screen, entry_key);
+        assert(entry && lv_obj_get_scroll_y(lv_obj_get_parent(lv_obj_get_parent(entry))) == saved_scroll);
+        assert(host.reset_confirms == 0 && !host.reset_marker && host.submit_calls == 0);
+    }
+    lv_anim_delete(pointer, NULL);
+    lv_indev_delete(pointer);
+    lv_display_delete(display);
+    lv_deinit();
+    assert(surface_allocation_failures == 0);
+    return 0;
+}
+#endif
+
 int main(int argc, char **argv)
 {
+#if defined(KATMED_SURFACE_ALLOC_ACCOUNTING) && LV_MEM_SIZE == (34 * 1024U)
+    if (argc == 2 && strcmp(argv[1], "reset-language-rebuild") == 0)
+        return check_reset_small_pool(172, 320, true, ORIENTATION_0, ORIENTATION_0);
+    if (argc == 5 && strcmp(argv[1], "reset-rotation") == 0) {
+        const int from = atoi(argv[2]), to = atoi(argv[3]);
+        assert(from >= 0 && from <= ORIENTATION_270 && to >= 0 && to <= ORIENTATION_270 && from != to);
+        assert(strcmp(argv[4], "prepare") == 0 || strcmp(argv[4], "warning") == 0);
+        return check_reset_small_pool(from % 2 ? 320 : 172, from % 2 ? 172 : 320,
+                                      strcmp(argv[4], "warning") == 0, from, to);
+    }
+    if (argc == 5 && strcmp(argv[1], "reset-small-pool") == 0) {
+        assert(strcmp(argv[4], "prepare") == 0 || strcmp(argv[4], "warning") == 0);
+        return check_reset_small_pool(atoi(argv[2]), atoi(argv[3]), strcmp(argv[4], "warning") == 0,
+                                      -1, -1);
+    }
+#endif
     if (argc == 4 && strcmp(argv[1], "uat-certificate") == 0)
         return check_certificate_status(atoi(argv[2]), atoi(argv[3]));
     if (argc == 4 && strcmp(argv[1], "uat-clock") == 0)
