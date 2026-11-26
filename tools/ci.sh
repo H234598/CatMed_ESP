@@ -213,6 +213,7 @@ elif [[ "$mode" == host ]]; then
     python3 -m unittest discover -s tests/ha_integration -p 'test_adapter.py'
     bash tests/host_runtime_metrics/check_runtime_metrics.sh
     bash tests/host_store/check_main_submit.sh
+    KATMED_TEST_CHIP=6 bash tests/host_store/check_main_submit.sh orientation
     bash tests/host_mesh/check_engine.sh
     bash tests/host_mesh/check_status.sh
     bash tests/host_mesh/check_wire.sh
