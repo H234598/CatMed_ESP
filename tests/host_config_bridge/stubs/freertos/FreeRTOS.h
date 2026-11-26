@@ -11,4 +11,5 @@ typedef pthread_mutex_t portMUX_TYPE;
 #define pdTRUE 1
 #define pdFALSE 0
 #define pdMS_TO_TICKS(ms) ((TickType_t)(ms))
+#define portTICK_PERIOD_MS 1u
 #endif

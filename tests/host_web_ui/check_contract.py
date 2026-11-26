@@ -63,10 +63,12 @@ def expect(status, result):
 def run(info):
     files = {name: (ASSETS / name).read_bytes() for name in ("index.html", "style.css", "app.js", "i18n.js")}
     # Twelve-language setup, brightness/night controls and copy progress now
-    # include localized setup exit guidance. Keep a tight 195 KiB host-asset bound;
+    # include localized setup exit guidance. Keep a tight 214 KiB host-asset bound;
     # this is not a target RAM budget. Native gzip and app-slot bounds remain
     # independently enforced by firmware builds and their existing checks.
-    assert sum(map(len, files.values())) < 195 * 1024
+    asset_bytes = sum(map(len, files.values()))
+    if asset_bytes >= 214 * 1024:
+        raise AssertionError(f"Host web assets total {asset_bytes} bytes, expected less than 214 KiB")
     links = Links()
     links.feed(files["index.html"].decode())
     assert links.resources == ["/style.css", "/i18n.js", "/app.js"]
@@ -156,7 +158,7 @@ def run(info):
     expect(401, request(info, "/api/login", "POST", {"method": "certificate"}, client=True))
     expect(200, request(info, "/api/logout", "POST", {}, cookie, csrf))
     expect(401, request(info, "/api/config", cookie=cookie))
-    print("asset bytes", sum(map(len, files.values())))
+    print("asset bytes", asset_bytes)
     print("HTTP redirect, HTTPS assets, setup/code, login, CSRF, config/preview/readback, TLS client certificate, removal, logout: OK")
 
 

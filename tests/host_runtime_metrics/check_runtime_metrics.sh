@@ -34,7 +34,7 @@ cc -std=c11 -Wall -Wextra -Werror -pedantic \
    "-I${repo_root}/firmware/components/katmed_core/include" \
    "-I${repo_root}/firmware/components/katmed_images/include" \
    "-I${repo_root}/firmware/components/katmed_ui/include" \
-   "-I${repo_root}/firmware/managed_components/lvgl__lvgl" \
+   "-I${KATMED_HOST_LVGL_SOURCE:-${repo_root}/firmware/build-a61-c3/katmed-overrides/lvgl__lvgl}" \
    "${repo_root}/firmware/main/runtime_metrics_idf.c" \
    "${repo_root}/tests/host_runtime_metrics/check_runtime_collect.c" \
    -o "${out}/check_runtime_collect"
@@ -50,7 +50,7 @@ cc -std=c11 -Wall -Wextra -Werror -Wno-unused-variable \
    "-I${repo_root}/firmware/components/board/include" \
    "-I${repo_root}/firmware/components/katmed_core/include" \
    "-I${repo_root}/firmware/boards" \
-   "-I${repo_root}/firmware/managed_components/lvgl__lvgl" \
+   "-I${KATMED_HOST_LVGL_SOURCE:-${repo_root}/firmware/build-a61-c3/katmed-overrides/lvgl__lvgl}" \
    "${repo_root}/tests/host_board_cache_review/check_c6_diagnostics.c" \
    "${repo_root}/firmware/components/board/board_geometry.c" \
    "${repo_root}/firmware/components/board/board_protocol.c" \
@@ -63,4 +63,5 @@ python3 "${repo_root}/tests/host_runtime_metrics/test_startup_heap.py"
 # Native PWM prerequisite, omitted by the ESP_PLATFORM-free board SDK doubles.
 python3 "${repo_root}/tests/host_board_cache_review/check_pwm_startup.py"
 # Keep LVGL's matching TJpgD implementation under C6's absolute ROM aliases.
-python3 "${repo_root}/tests/host_ui_images/check_tjpgd_rom_binding.py"
+python3 "${repo_root}/tests/host_ui_images/check_tjpgd_rom_binding.py" \
+    --lvgl-root "${KATMED_HOST_LVGL_SOURCE:-${repo_root}/firmware/build-a61-c3/katmed-overrides/lvgl__lvgl}"

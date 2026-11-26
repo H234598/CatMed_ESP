@@ -40,6 +40,9 @@ typedef struct {
     bool native_diagnostic_valid, jpeg_detail_valid;
     uint32_t jpeg_sequence, jpeg_stage, jpeg_mcus;
     uint32_t touch_init, touch_probe, touch_sequence, touch_transfer, touch_sample;
+    bool c3_touch_present;
+    uint32_t c3_period, c3_coverage, c3_contact_state, c3_clean_release;
+    uint32_t c3_interrupted, c3_invalid, c3_stale, c3_overflow, c3_discard;
     bool jpeg_pool_valid;
     uint32_t jpeg_pool_free, jpeg_pool_largest, touch_result;
 } KatmedRuntimeMetricInput;
@@ -92,6 +95,8 @@ void katmed_runtime_metrics_collect(uint64_t now_ms, KatmedRuntimeMetricInput *o
 void katmed_runtime_metrics_log(const KatmedRuntimeMetricInput *input);
 void katmed_runtime_evidence_log(const KatmedRuntimeEvidenceState *state,
                                  const KatmedRuntimeEvidenceHealth *health);
+void katmed_runtime_c3_touch_log(const KatmedRuntimeMetricInput *input,
+                                 uint64_t sequence, uint64_t boot_domain);
 void katmed_runtime_usb_phase_log(const KatmedUsbPhase *phase);
 
 #endif

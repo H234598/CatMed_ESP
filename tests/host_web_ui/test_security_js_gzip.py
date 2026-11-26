@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from tools.build_web_gzip import ASSETS, build
+from tools.build_web_gzip import ASSETS, RAW_LIMITS, build
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -22,6 +22,22 @@ class SecurityScriptBudget(unittest.TestCase):
             (source / "app.js").write_bytes(b"x" * (128 * 1024 + 1))
             with self.assertRaisesRegex(ValueError, "bounded raw response"):
                 build(source, Path(directory) / "output")
+
+    def test_each_asset_exact_limit_and_one_over(self):
+        for name, limit in (("app.js", 128 * 1024), ("i18n.js", 143 * 1024)):
+            for size in (limit, limit + 1):
+                with self.subTest(asset=name, size=size), tempfile.TemporaryDirectory() as directory:
+                    source = Path(directory) / "source"
+                    source.mkdir()
+                    for asset in ASSETS:
+                        (source / asset).write_bytes(b"x" * (size if asset == name else 1))
+                    if size == limit:
+                        build(source, Path(directory) / "output")
+                        self.assertEqual(gzip.decompress((Path(directory) / "output" / (name + ".gz")).read_bytes()), b"x" * size)
+                    else:
+                        with self.assertRaisesRegex(ValueError, "bounded raw response"):
+                            build(source, Path(directory) / "output")
+        self.assertEqual(RAW_LIMITS, {"app.js": 128 * 1024, "i18n.js": 143 * 1024})
 
     def test_complete_scripts_fit_with_reserve(self):
         with tempfile.TemporaryDirectory() as directory:

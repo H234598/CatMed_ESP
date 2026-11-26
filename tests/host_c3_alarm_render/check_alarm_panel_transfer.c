@@ -4,16 +4,25 @@
 #define main existing_surface_main
 #include "../check_ui_surface.c"
 #undef main
+#include "../../firmware/components/board/include/board_display_budget.h"
 
 static bool drop_one_transfer;
 static unsigned dropped_transfers;
 static unsigned submitted_transfers;
 static lv_area_t lost_area;
+static bool flush_starts_at_row[320];
+static const uint16_t *single_buffer;
 
 static void panel_flush(lv_display_t *display, const lv_area_t *area,
                         uint8_t *pixels)
 {
     ++submitted_transfers;
+    assert(area->y1 >= 0 && area->y1 < 320);
+    if (single_buffer) {
+        assert(pixels == (const uint8_t *)single_buffer);
+        assert(lv_area_get_size(area) <= 240u * 80u);
+    }
+    flush_starts_at_row[area->y1] = true;
     if (drop_one_transfer && area->y1 <= 90 && area->y2 >= 90) {
         drop_one_transfer = false;
         ++dropped_transfers;
@@ -39,18 +48,117 @@ static uint64_t time_with_interior_fill(const AppState *state,
     abort();
 }
 
-int main(void)
+typedef struct {
+    uint64_t age;
+    int c3_top, c3_end;
+    int c6_top, c6_end;
+    uint16_t color;
+} BarSample;
+
+static void check_phase_pixels(Host *host, AppState *state, LocalSettings *local,
+                               ClockSample *clock, bool coalesce, bool single)
 {
-    Host host = {.width = 240, .height = 240, .result = UI_SUBMIT_COMMITTED};
-    host.frame = calloc(240u * 240u, sizeof(*host.frame));
-    uint16_t *first = calloc(240u * 16u, sizeof(*first));
-    uint16_t *second = calloc(240u * 16u, sizeof(*second));
-    assert(host.frame && first && second);
+    /* Boot-relative fixtures, with the first and last covered rows set from
+     * the alarm timing and panel geometry. End rows are exclusive. No phase
+     * query, bar object geometry or whole-frame redraw supplies the oracle. */
+    static const BarSample samples[] = {
+        {1801441, 30, 81, 40, 107, 0xfe00},
+        {1801562, 30, 106, 40, 141, 0xfe00},
+        {1805774, 79, 210, 106, 280, 0xfe00},
+        {1805895, 105, 210, 140, 280, 0xfe00},
+        {7200186, 30, 81, 40, 108, 0xd000},
+        {7200220, 30, 106, 40, 141, 0xd000},
+        {7200435, 80, 210, 106, 280, 0xd000},
+        {7200470, 105, 210, 140, 280, 0xd000},
+    };
+    const bool c3 = host->width == 240;
+    const int xs[] = {c3 ? 18 : 6, c3 ? 221 : 165};
+    const int first_row = c3 ? 65 : 86;
+    const int end_row = c3 ? 110 : 149;
+    unsigned checked = 0;
+    for (unsigned i = 0; i < sizeof(samples) / sizeof(samples[0]); ++i) {
+        const BarSample *sample = &samples[i];
+        clock->monotonic_ms = 1000 + sample->age;
+        ui_render(state, local, ALARM, clock);
+        if (coalesce && i % 2 == 0) continue;
+        memset(flush_starts_at_row, 0, sizeof(flush_starts_at_row));
+        draw();
+        const int top = c3 ? sample->c3_top : sample->c6_top;
+        const int end = c3 ? sample->c3_end : sample->c6_end;
+        /* The 16-line profile must split these transitions. With 80 lines,
+         * the changed band can fit in a tile; the initial frame checks splits. */
+        if (!single && i % 2 != 0) {
+            const BarSample *previous = sample - 1;
+            const int from = i % 4 == 1 ?
+                (c3 ? previous->c3_end : previous->c6_end) :
+                (c3 ? previous->c3_top : previous->c6_top);
+            const int to = i % 4 == 1 ? end : top;
+            bool crossed = false;
+            for (int y = from + 1; y < to; ++y) crossed |= flush_starts_at_row[y];
+            assert(crossed);
+        }
+        for (int y = first_row; y < end_row; ++y) {
+            for (unsigned col = 0; col < sizeof(xs) / sizeof(xs[0]); ++col) {
+                const int index = y * host->width + xs[col];
+                const uint16_t background = test_image[index];
+                const uint16_t actual = host->frame[index];
+                if (y < top || y >= end) {
+                    if (actual != background) {
+                        fprintf(stderr, "alarm_background_mismatch sample=%u x=%d y=%d\n",
+                                i, xs[col], y);
+                        abort();
+                    }
+                } else {
+                    /* Independent channel blend at opacity 217 with one
+                     * quantization level of tolerance for RGB565 rounding. */
+                    const unsigned shifts[] = {0, 5, 11};
+                    const unsigned masks[] = {31, 63, 31};
+                    for (unsigned n = 0; n < 3; ++n) {
+                        const unsigned fg = (sample->color >> shifts[n]) & masks[n];
+                        const unsigned bg = (background >> shifts[n]) & masks[n];
+                        const int expected = (217u * fg + 38u * bg) / 255u;
+                        const int channel = (actual >> shifts[n]) & masks[n];
+                        if (abs(channel - expected) > 1) {
+                            fprintf(stderr, "alarm_fill_mismatch sample=%u x=%d y=%d channel=%u\n",
+                                    i, xs[col], y, n);
+                            abort();
+                        }
+                    }
+                }
+                ++checked;
+            }
+        }
+    }
+    printf("alarm_pixels panel=%s single80=%u coalesced=%u checked=%u\n",
+           c3 ? "C3" : "C6", single, coalesce, checked);
+}
+
+static int run_alarm_panel_test(int argc, char **argv)
+{
+    const bool c6 = argc == 2 && strcmp(argv[1], "c6") == 0;
+    const bool single_coalesced = argc == 2 && strcmp(argv[1], "c3-single-coalesced") == 0;
+    const bool single = single_coalesced || (argc == 2 && strcmp(argv[1], "c3-single") == 0);
+    const bool coalesce = single_coalesced || (argc == 2 && strcmp(argv[1], "c3-coalesced") == 0);
+    const bool pixel_test = argc == 2 && strcmp(argv[1], "c3") == 0;
+    assert(argc == 1 || c6 || single || coalesce || pixel_test);
+    Host host = {.width = c6 ? 172 : 240, .height = c6 ? 320 : 240,
+                 .result = UI_SUBMIT_COMMITTED};
+    size_t pixels_per_buffer = (size_t)host.height * 16u;
+    if (single) {
+        const BoardC3DisplayPlan plan = board_c3_display_plan(host.width, 64u * 1024u);
+        assert(plan.lines == 80 && !plan.double_buffer);
+        pixels_per_buffer = (size_t)host.height * plan.lines;
+    }
+    host.frame = calloc((size_t)host.width * host.height, sizeof(*host.frame));
+    uint16_t *first = calloc(pixels_per_buffer, sizeof(*first));
+    uint16_t *second = single ? NULL : calloc(pixels_per_buffer, sizeof(*second));
+    assert(host.frame && first && (single || second));
+    if (single) single_buffer = first;
     lv_init();
-    lv_display_t *display = lv_display_create(240, 240);
+    lv_display_t *display = lv_display_create(host.width, host.height);
     assert(display);
     lv_display_set_color_format(display, LV_COLOR_FORMAT_RGB565);
-    lv_display_set_buffers(display, first, second, 240u * 16u * 2u,
+    lv_display_set_buffers(display, first, second, pixels_per_buffer * sizeof(*first),
                            LV_DISPLAY_RENDER_MODE_PARTIAL);
     lv_display_set_flush_cb(display, panel_flush);
     lv_display_set_user_data(display, &host);
@@ -70,6 +178,19 @@ int main(void)
     quiet.alarm_active = false;
     ui_render(&quiet, &local, BACKGROUND, &clock);
     draw();
+    if (single) {
+        assert(flush_starts_at_row[0] && flush_starts_at_row[80] && flush_starts_at_row[160]);
+        printf("alarm_flush panel=C3 single80=1 initial_tile_starts=0,80,160\n");
+    }
+    if (c6 || single || coalesce || pixel_test) {
+        check_phase_pixels(&host, &state, &local, &clock, coalesce, single);
+        lv_display_delete(display);
+        lv_deinit();
+        free(second);
+        free(first);
+        free(host.frame);
+        return 0;
+    }
     const uint16_t baseline = host.frame[90u * 240u + 5u];
 
     bool repaired_all = true;
@@ -128,3 +249,10 @@ int main(void)
     free(host.frame);
     return repaired_all ? 0 : 1;
 }
+
+#ifndef KATMED_PANEL_TRANSPORT_TEST
+int main(int argc, char **argv)
+{
+    return run_alarm_panel_test(argc, argv);
+}
+#endif

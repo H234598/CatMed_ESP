@@ -1,3 +1,5 @@
 CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="boards/c6.partitions.csv"
-CONFIG_LWIP_MAX_SOCKETS=12
+# Six HTTPD internal sockets + one redirect client + two HTTPS clients +
+# four background slots. The compile policy also checks retained sdkconfig.
+CONFIG_LWIP_MAX_SOCKETS=13

@@ -84,7 +84,7 @@ struct esp_mesh_lite_msg_config_t {
 constexpr int ESP_MESH_LITE_RAW_MSG=1;
 void esp_mesh_lite_init(esp_mesh_lite_config_t *);
 void esp_mesh_lite_start();
-esp_err_t esp_mesh_lite_connect();
+void esp_mesh_lite_connect();
 uint8_t esp_mesh_lite_get_level();
 esp_err_t esp_mesh_lite_disconnect();
 esp_err_t esp_mesh_lite_set_argot(uint32_t);
@@ -101,3 +101,8 @@ QueueHandle_t xQueueCreate(unsigned,size_t);
 int xQueueSend(QueueHandle_t,const void *,unsigned);
 int xQueueReceive(QueueHandle_t,void *,unsigned);
 int xQueueReset(QueueHandle_t);
+
+/* Thin existing-engine diagnostic test surface; real SDK connect is void. */
+struct wifi_event_sta_disconnected_t { uint8_t reason; };
+int64_t esp_timer_get_time();
+void host_event_log(const char *,const char *,...) __attribute__((format(printf,2,3)));

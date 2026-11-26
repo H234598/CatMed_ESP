@@ -69,7 +69,8 @@ class FakeSerial:
         return len(data)
 
     def flush(self) -> None:
-        pass
+        # The fake makes each write immediately available.
+        return None
 
     def read_until(self, expected: bytes = b"\n", size: int | None = None) -> bytes:
         self.read_sizes.append(size or 0)
@@ -133,7 +134,7 @@ class ObservationTests(unittest.TestCase):
             port = FakeSerial(statuses=[bad_status], idle=[metrics()])
             output: list[str] = []
             with self.subTest(bad_status=bad_status[-60:]), self.assertRaises(setup.SetupError):
-                setup.run_observation(args(), opener=lambda _: port, startup=lambda _: None,
+                setup.run_observation(args(), opener=lambda _, port=port: port, startup=lambda _: None,
                                       command=commands("quit"), clock=Clock(), emit=output.append)
             self.assertEqual([], output)
             self.assertEqual([b"KM1 STATUS\n"], port.writes)
@@ -179,7 +180,7 @@ class ObservationTests(unittest.TestCase):
             port = FakeSerial(statuses=[changed])
             output: list[str] = []
             with self.assertRaises(setup.SetupError) as caught:
-                setup.run_observation(args(), opener=lambda _: port, startup=lambda _: None,
+                setup.run_observation(args(), opener=lambda _, port=port: port, startup=lambda _: None,
                                       command=commands("quit"), clock=Clock(), emit=output.append)
             self.assertEqual([], output)
             self.assertNotIn("SYNTHETIC_TEST_SECRET", str(caught.exception))
@@ -229,6 +230,25 @@ class ObservationTests(unittest.TestCase):
             self.run_client(wrong, device="0" * 12)
         self.assertEqual([b"KM1 STATUS\n"], wrong.writes)
         self.assertTrue(wrong.closed)
+
+    def test_native_firmware_labels_match_exactly_on_each_status(self) -> None:
+        for expected, different in (("tree-123456abcd", "tree-123456abce"),
+                                    ("AbC1234-dirty", "abc1234-dirty")):
+            with self.subTest(firmware=expected):
+                good = STATUS.replace(b"f4575aa", expected.encode("ascii"))
+                wrong = STATUS.replace(b"f4575aa", different.encode("ascii"))
+                port = FakeSerial(statuses=[good, good, wrong])
+                output: list[str] = []
+                with self.assertRaisesRegex(setup.SetupError, "Firmwarekennung"):
+                    setup.run_observation(args(firmware=expected), opener=lambda _, port=port: port,
+                                          startup=lambda _: None,
+                                          command=commands("status", "status", "quit"),
+                                          clock=Clock(), emit=output.append)
+                self.assertEqual([b"KM1 STATUS\n"] * 3, port.writes)
+                statuses = [line for line in output if line.startswith("Status ")]
+                self.assertEqual(2, len(statuses))
+                self.assertTrue(all(f"firmware={expected} " in line for line in statuses))
+                self.assertTrue(port.closed)
 
     def test_explicit_firmware_gate_checks_initial_and_later_status(self) -> None:
         wrong_first = FakeSerial(statuses=[STATUS.replace(b"f4575aa", b"deadbee0")])

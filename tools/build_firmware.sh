@@ -2,13 +2,15 @@
 set -euo pipefail
 umask 077
 repo_dir="$(cd -- "$(dirname -- "$0")/.." && pwd)"
-board="${1:?Usage: build_firmware.sh c3|c6 [--security-profile] [--private-profile PATH] [idf.py options/actions]}"
+board="${1:?Usage: build_firmware.sh c3|c6 [--security-profile|--development001] [--private-profile PATH] [idf.py options/actions]}"
 shift
 private_profile=""
 security_profile=0
+development001=0
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --security-profile) security_profile=1; shift ;;
+        --development001) development001=1; shift ;;
         --private-profile)
             [[ $# -ge 2 ]] || { echo '--private-profile needs an external config path' >&2; exit 2; }
             [[ -n "$2" ]] || { echo '--private-profile needs an external config path' >&2; exit 2; }
@@ -16,6 +18,13 @@ while [[ $# -gt 0 ]]; do
         *) break ;;
     esac
 done
+if [[ "$development001" -eq 1 ]]; then
+    if [[ "$board" != c6 || "$security_profile" -eq 1 || -n "$private_profile" ]]; then
+        echo 'Development001 requires C6 with neutral defaults and no other profile.' >&2
+        exit 2
+    fi
+    security_profile=1
+fi
 if [[ "$security_profile" -eq 1 && $# -gt 0 ]]; then
     echo 'Security profile accepts build only; no flash, monitor or idf.py actions.' >&2
     exit 2
@@ -73,6 +82,7 @@ fi
 profile_suffix=""
 profile_label="neutral"
 defaults="sdkconfig.defaults;boards/${board}.defaults"
+profile_args=()
 if [[ "$security_profile" -eq 1 ]]; then
     profile_suffix="-security"
     profile_label="security"
@@ -82,6 +92,12 @@ if [[ "$security_profile" -eq 1 ]]; then
         profile_suffix="-security-private"
         profile_label="security private"
     fi
+fi
+if [[ "$development001" -eq 1 ]]; then
+    profile_suffix="-development001"
+    profile_label="Development001"
+    defaults="${defaults};boards/c6.development001.defaults"
+    profile_args+=(-D KATMED_C6_DEVELOPMENT001=ON)
 fi
 build_dir="${build_root}/build-a61-${board}${profile_suffix}"
 if [[ "$security_profile" -eq 1 && -n "$private_profile" ]]; then
@@ -120,8 +136,6 @@ else
 fi
 python3 "${repo_dir}/tools/prepare_images.py" --verify-only > /dev/null
 source "${repo_dir}/tools/idf_env.sh"
-python3 "${repo_dir}/tools/prepare_iot_bridge_compat.py" \
-    --component "${repo_dir}/firmware/managed_components/espressif__iot_bridge" --idf "${IDF_PATH}"
 cd "${repo_dir}/firmware"
 # SDK config, CMake state and component lock are target-local. Never reuse a
 # C3 sdkconfig or dependency solution for C6 (or the other way around).
@@ -129,7 +143,7 @@ export IDF_PY_BUILD_JOBS="${IDF_PY_BUILD_JOBS:-4}"
 build_log="$(mktemp "${build_dir}/private-build.XXXXXX.log")"
 if ! idf.py -B "${build_dir}" -D "IDF_TARGET=${chip}" \
     -D "SDKCONFIG=${build_dir}/sdkconfig" \
-    -D "SDKCONFIG_DEFAULTS=${defaults}" "$@" build \
+    -D "SDKCONFIG_DEFAULTS=${defaults}" "${profile_args[@]}" "$@" build \
     >"${build_log}" 2>&1; then
     echo "Firmware build failed; detailed output is retained in the protected build log." >&2
     exit 1
@@ -137,6 +151,7 @@ fi
 
 layout_args=()
 if [[ "$security_profile" -eq 1 ]]; then layout_args+=(--security-profile); fi
+if [[ "$development001" -eq 1 ]]; then layout_args+=(--c6-development001); fi
 if ! python "${repo_dir}/tools/check_firmware_layout.py" "${board}" \
     --build-dir "${build_dir}" "${layout_args[@]}" >>"${build_log}" 2>&1; then
     echo "Firmware layout check failed; detailed output is retained in the protected build log." >&2

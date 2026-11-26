@@ -5,6 +5,7 @@
   const state = { bootstrap: null, config: null, preview: null, wifiProfiles: [],
     wifiLimit: 0, advancedScrollY: 0,
     catalogOffset: 0, catalogCount: 0, language: "en" };
+  let serverIdentityKey = null;
   const catalog = window.KATMED_I18N || { keys: [], values: {} };
   const translations = Object.fromEntries(Object.entries(catalog.values).map(([code, values]) =>
     [code, Object.fromEntries(catalog.keys.map((key, index) => [key, values[index]]))]));
@@ -49,6 +50,7 @@
 
   function applyLocale(language) {
     if (!translations[language]) language = "en";
+    const localeChanged = language !== state.language;
     state.language = language;
     document.documentElement.lang = language;
     document.documentElement.dir = language === "ar" ? "rtl" : "ltr";
@@ -62,6 +64,9 @@
       $("runtime-setup-state").textContent = setupConfigured ?
         tr("Eingerichtet; Änderungen erfordern ausdrückliches Speichern.") :
         tr("Ersteinrichtung; Gruppe wählen oder Einrichtung offline verlassen. Ohne sichere Gruppe bleibt Mesh aus.");
+    if (serverIdentityKey !== null)
+      $("server-identity-state").textContent = tr(serverIdentityKey);
+    if (localeChanged) resetPreview();
     document.body?.classList?.remove("i18n-loading");
   }
 
@@ -71,12 +76,13 @@
     applyLocale(response.language);
   }
   const views = ["setup-view", "login-view", "private-view"];
-  const fields = ["medication_hours", "image_hours", "next_due_hhmm", "clock_style", "orientation", "rotation", "brightness", "night_enabled", "night_start", "night_end"];
+  const fields = ["medication_hours", "image_hours", "next_due_hhmm", "clock_style", "orientation", "rotation", "brightness", "night_enabled", "night_start", "night_end", "system_datetime"];
   const controls = {
     medication_hours: "medication-hours", image_hours: "image-hours",
     next_due_hhmm: "due-time", clock_style: "clock-style",
     orientation: "orientation", rotation: "rotation", brightness:"brightness",
-    night_enabled:"night-enabled", night_start:"night-start", night_end:"night-end"
+    night_enabled:"night-enabled", night_start:"night-start", night_end:"night-end",
+    system_datetime:"system-datetime"
   };
   let advancedTouchStart = null;
   let resetPoll = 0;
@@ -143,7 +149,19 @@
     return tr("Anfrage fehlgeschlagen. Bitte erneut versuchen.");
   }
 
-  async function api(path, method = "GET", body = null) {
+  // The HTTPS server admits one client session. Keep API bursts bounded through
+  // JSON consumption; rejection must not prevent independent callers running.
+  let apiTail = null;
+  function api(path, method = "GET", body = null) {
+    const request = apiTail ? apiTail.then(() => apiRequest(path, method, body)) :
+      apiRequest(path, method, body);
+    const finished = request.then(clear, clear);
+    apiTail = finished;
+    function clear() { if (apiTail === finished) apiTail = null; }
+    return request;
+  }
+
+  async function apiRequest(path, method = "GET", body = null) {
     const headers = { Accept: "application/json" };
     const rawBody = typeof Blob !== "undefined" && body instanceof Blob;
     if (body !== null) headers["Content-Type"] = rawBody ? body.type : "application/json";
@@ -174,6 +192,8 @@
     if (!config || typeof config.revision !== "string" || !config.revision) return false;
     if (!fields.every((field) => Object.prototype.hasOwnProperty.call(config, field))) return false;
     if (typeof config.medication_hours !== "string" || typeof config.image_hours !== "string") return false;
+    if (config.system_datetime !== null && (typeof config.system_datetime !== "string" ||
+        !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(config.system_datetime))) return false;
     if (config.next_due_hhmm !== null && typeof config.next_due_hhmm !== "string") return false;
     if (!["none", "active", "paused_boot"].includes(config.next_due_state)) return false;
     if ((config.next_due_state === "none") !== (config.next_due_hhmm === null)) return false;
@@ -206,6 +226,7 @@
     state.config = config;
     $(controls.medication_hours).value = config.medication_hours;
     $(controls.image_hours).value = config.image_hours;
+    $(controls.system_datetime).value = config.system_datetime || "";
     $(controls.next_due_hhmm).value = config.next_due_hhmm || "";
     $(controls.clock_style).value = config.clock_style;
     const orientation = $(controls.orientation);
@@ -234,10 +255,11 @@
   let setupRevision = null, setupConfigured = false;
   async function loadRuntimeEinrichtung() {
     const value = await api("/api/runtime-setup");
-    if (!value || typeof value.configured !== "boolean" || ![0,1,2].includes(value.mode) || typeof value.revision !== "string") throw new Error("Invalid setup state");
+    if (!value || typeof value.configured !== "boolean" || ![0,1,2].includes(value.mode) || typeof value.revision !== "string" || typeof value.time_source !== "string" || value.time_source.length > 63) throw new Error("Invalid setup state");
     setupRevision = value.revision;
     setupConfigured = value.configured;
     $("network-mode").value = String(value.mode);
+    $("runtime-time-source").value = value.time_source;
     $("group-action").value = value.configured ? "0" : "1";
     $("runtime-setup-state").textContent = value.configured ? tr("Eingerichtet; Änderungen erfordern ausdrückliches Speichern.") : tr("Ersteinrichtung; Gruppe wählen oder Einrichtung offline verlassen. Ohne sichere Gruppe bleibt Mesh aus.");
     $("runtime-setup-active").hidden = !value.setup_open;
@@ -294,6 +316,20 @@
 
   async function loadCertificate() {
     renderCertificate(await api("/api/client-cert"));
+  }
+
+  async function loadServerIdentity() {
+    const result = await api("/api/server-identity");
+    const labels = {
+      legacy: "Bisherige Serveridentität aktiv.",
+      pending: "Übernahme ausstehend; die Verbindung kann kurz unterbrochen werden.",
+      active: "Serveridentität aktiviert und gespeichert.",
+      failed: "Übernahme fehlgeschlagen; die vorherige Identität wird wiederhergestellt.",
+      uncertain: "Der Wechselzustand ist unklar. Der Dienst benötigt eine Wiederherstellung."
+    };
+    const key = Object.hasOwn(labels, result?.state) ? labels[result.state] : "Status unbekannt.";
+    serverIdentityKey = key;
+    $("server-identity-state").textContent = tr(serverIdentityKey);
   }
 
   async function loadWifi() {
@@ -479,7 +515,7 @@
     }
     show("private-view");
     $("save-status").textContent = tr("Aktuelle Werte werden geladen.");
-    await Promise.all([loadConfig(), loadAcmeIdentifier(), loadRuntimeEinrichtung(), loadCertificate(), loadWifi(), loadImages(), loadCatalog()]);
+    await Promise.all([loadConfig(), loadAcmeIdentifier(), loadRuntimeEinrichtung(), loadCertificate(), loadServerIdentity(), loadWifi(), loadImages(), loadCatalog()]);
     $("save-status").textContent = tr("Aktuelle Werte geladen.");
   }
 
@@ -523,6 +559,18 @@
     }catch(error){await handleFailure(error,true);}finally{button.disabled=false;}
   });
 
+  function confirmedSave(committed, readback, field, requestedValue) {
+    if (!validConfig(committed) || !validConfig(readback) ||
+        committed.revision !== readback.revision) return false;
+    if (field === "orientation")
+      return committed.orientation_automatic === readback.orientation_automatic &&
+        (readback.orientation_automatic || committed.orientation === readback.orientation);
+    if (field === "system_datetime")
+      return committed.accepted_system_datetime === requestedValue &&
+        readback.system_datetime !== null;
+    return committed[field] === readback[field];
+  }
+
   async function saveField(form) {
     if (!state.config) return;
     const field = form.dataset.field;
@@ -545,12 +593,7 @@
     try {
       const committed = await api("/api/config", "PUT", request);
       const readback = await api("/api/config");
-      if (!validConfig(committed) || !validConfig(readback) ||
-          committed.revision !== readback.revision ||
-          (field === "orientation" ?
-            (committed.orientation_automatic !== readback.orientation_automatic ||
-             (!readback.orientation_automatic && committed.orientation !== readback.orientation)) :
-            committed[field] !== readback[field]))
+      if (!confirmedSave(committed, readback, field, value))
         throw new Error("Readback differs from committed configuration");
       renderConfig(readback);
       $("save-status").textContent = tr("Gespeichert und bestätigt.");
@@ -650,8 +693,13 @@
       await api("/api/logout", "POST", {});
       state.bootstrap = null;
       state.config = null;
+      // The server has invalidated the session. Do not keep private data
+      // visible if the following bootstrap request cannot complete.
+      show("login-view");
       $("cert-form").reset();
       $("cert-remove-form").reset();
+      $("server-anchor-form").reset();
+      $("server-identity-form").reset();
       await refreshBootstrap();
       notice("Abgemeldet.");
     } catch (error) { await handleFailure(error); }
@@ -694,6 +742,47 @@
     finally { setBusy(form, false); }
   });
 
+  $("server-identity-refresh").addEventListener("click", async () => {
+    try { await loadServerIdentity(); } catch (error) { await handleFailure(error); }
+  });
+  $("server-anchor-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget, file = $("server-anchor-file").files[0];
+    if (!file || file.size > 2000) { notice(tr("CA-Zertifikat ist zu groß."), true); return; }
+    setBusy(form, true);
+    try {
+      await api("/api/server-anchor", "POST", {
+        anchor_pem: await file.text(), password: $("server-anchor-password").value
+      });
+      form.reset();
+      notice(tr("Vertrauensanker gespeichert."));
+    } catch (error) { await handleFailure(error); }
+    finally { setBusy(form, false); }
+  });
+  $("server-identity-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget, file = $("server-chain-file").files[0];
+    const key = $("server-key").value.trim();
+    if (!file || file.size > 6143 || !/^[0-9a-fA-F]{64}$/.test(key)) {
+      notice(tr("Zertifikatskette oder Schlüssel hat ein ungültiges Format."), true); return;
+    }
+    setBusy(form, true);
+    try {
+      await api("/api/server-identity", "POST", {
+        chain_pem: await file.text(), key_hex: key, password: $("server-password").value
+      });
+      form.reset();
+      serverIdentityKey = "Übernahme ausstehend; nach der Unterbrechung erneut anmelden und den Status aktualisieren.";
+      $("server-identity-state").textContent = tr(serverIdentityKey);
+    } catch (error) {
+      if (error.code === "time_unavailable") notice(tr("Für die Zertifikatsprüfung ist eine synchronisierte Uhr erforderlich."), true);
+      else if (error.code === "anchor_unavailable") notice(tr("Ein separat gespeicherter Vertrauensanker fehlt."), true);
+      else if (error.code === "invalid_identity") notice(tr("Zertifikatskette, DNS-Name, Schlüssel oder Gültigkeit konnte nicht bestätigt werden."), true);
+      else await handleFailure(error);
+    }
+    finally { $("server-key").value = ""; $("server-password").value = ""; setBusy(form, false); }
+  });
+
   $("cert-remove-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = event.currentTarget;
@@ -731,10 +820,11 @@
     }
     applyLocale(response.language);
     if (state.config) renderConfig(state.config);
-    try { await Promise.all([loadWifi(), loadImages(), loadCatalog()]); }
-    catch (error) { await handleFailure(error); }
-    notice(tr("Einstellung gespeichert."));
-    setBusy(form, false);
+    try {
+      await Promise.all([loadWifi(), loadImages(), loadCatalog()]);
+      notice(tr("Einstellung gespeichert."));
+    } catch (error) { await handleFailure(error); }
+    finally { setBusy(form, false); }
   });
   $("advanced-back").addEventListener("click", () => closeAdvanced());
   window.addEventListener("popstate", (event) => {
@@ -801,14 +891,27 @@
     if (password.disabled) password.value = "";
   });
 
+  function resetWifiEditor(form) {
+    form.reset();
+    delete form.dataset.editId;
+    $("wifi-password").disabled = false;
+    $("wifi-priority").value = "1";
+  }
+
   $("wifi-profile-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = event.currentTarget;
+    const editId = form.dataset.editId ? Number(form.dataset.editId) : null;
+    const previous = editId === null ? null : state.wifiProfiles.find((p) => p.id === editId);
+    if (editId !== null && !previous) {
+      resetWifiEditor(form);
+      renderWifiProfiles();
+      notice(errorText({ status: 409 }), true);
+      return;
+    }
     const ssid = $("wifi-ssid").value;
     const password = $("wifi-password").value;
     const isOpen = $("wifi-open").checked;
-    const editId = form.dataset.editId ? Number(form.dataset.editId) : null;
-    const previous = editId === null ? null : state.wifiProfiles.find((p) => p.id === editId);
     const encoder = new TextEncoder();
     const ssidBytes = encoder.encode(ssid);
     const passwordBytes = encoder.encode(password);
@@ -841,10 +944,7 @@
       if (editId) profiles = profiles.map((profile) => profile.id === editId ? candidate : profile);
       else profiles.push(candidate);
       await api("/api/wifi/profiles", "PUT", {profiles});
-      form.reset();
-      delete form.dataset.editId;
-      $("wifi-password").disabled = false;
-      $("wifi-priority").value = "1";
+      resetWifiEditor(form);
       await loadWifi();
       notice(tr("WLAN-Profile dauerhaft gespeichert. Zum Anwenden die Prioritäten bewusst neu bewerten lassen."));
     } catch (error) { await handleFailure(error); }

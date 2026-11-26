@@ -62,7 +62,7 @@ class PrivateWifiDefaultsCheck(unittest.TestCase):
                 profile.write_text(json.dumps({
                     "schema_version": 1,
                     "provenance": "synthetic Git boundary regression",
-                    "wifi": {"ssid": "SyntheticNet", "password": "SyntheticPass123"},
+                    "wifi": {"ssid": "synthetic-network-184", "password": "synthetic-password-184"},
                     "display": {
                         "medication_alarm_text": "Synthetic alarm",
                         "seltsam_morse_text": "Synthetic Morse",

@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import stat
 import sys
 import tempfile
 import unittest
@@ -434,6 +435,73 @@ class IndependentLongrunTests(unittest.TestCase):
             self.assertFalse((evidence / ".summary.tmp").exists())
             for item in evidence.iterdir():
                 self.assertNotIn(POISON.encode(), item.read_bytes())
+
+    def test_final_publication_failure_after_close_emits_no_success(self) -> None:
+        for directory_sync in (False, True):
+            with self.subTest(directory_sync=directory_sync):
+                self._check_final_publication_failure_after_close_emits_no_success(directory_sync)
+
+    def _check_final_publication_failure_after_close_emits_no_success(self, directory_sync):
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence = Path(tmp) / "evidence"
+            port = FakeSerial(Clock())
+            output = []
+            original_replace = recorder.os.replace
+            original_fsync = recorder.os.fsync
+            failure_seen = []
+
+            def replace(source, target):
+                state = json.loads(Path(source).read_text())["state"]
+                if port.closed and state == "complete" and not directory_sync:
+                    failure_seen.append("replace")
+                    raise OSError(POISON)
+                return original_replace(source, target)
+
+            def fsync(fd):
+                if (directory_sync and port.closed and stat.S_ISDIR(recorder.os.fstat(fd).st_mode)
+                        and summary(evidence)["state"] == "complete"):
+                    failure_seen.append("directory_sync")
+                    raise OSError(POISON)
+                return original_fsync(fd)
+
+            with (mock.patch.object(recorder.os, "replace", side_effect=replace),
+                  mock.patch.object(recorder.os, "fsync", side_effect=fsync),
+                  mock.patch.object(port, "close", wraps=port.close) as close):
+                with self.assertRaises(recorder.LongrunError) as caught:
+                    call(port, evidence, output=output)
+            close.assert_called_once_with()
+            self.assertEqual(["directory_sync" if directory_sync else "replace"], failure_seen)
+            self.assertEqual([], output)
+            self.assertNotIn(POISON, str(caught.exception))
+            if directory_sync:
+                self.assertIn("Dauerhaftigkeit", str(caught.exception))
+                self.assertIn("ungeklärt", str(caught.exception))
+            saved = summary(evidence)
+            self.assertEqual("failed", saved["state"])
+            self.assertEqual("not_complete", saved["completion_qualification"])
+
+    def test_first_runtime_error_survives_close_and_failure_journal_errors(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence = Path(tmp) / "evidence"
+            port = FakeSerial(Clock(), statuses=[status(firmware="def1234")])
+            output = []
+            original_save = recorder._save
+            failed_writes = []
+
+            def save(directory, evidence_summary):
+                if evidence_summary["state"] == "failed":
+                    failed_writes.append(evidence_summary["reason"])
+                    raise recorder.LongrunError(POISON)
+                original_save(directory, evidence_summary)
+
+            with (mock.patch.object(port, "close", side_effect=OSError(POISON)) as close,
+                  mock.patch.object(recorder, "_save", side_effect=save)):
+                with self.assertRaisesRegex(recorder.LongrunError, "Buildkennung weicht ab"):
+                    call(port, evidence, output=output)
+            close.assert_called_once_with()
+            self.assertEqual(1, len(failed_writes))
+            self.assertEqual([], output)
+            self.assertNotEqual("complete", summary(evidence)["state"])
 
     def test_fixed_input_budget_fails_at_boundary_without_raw_log(self) -> None:
         for field, limit in (("input_lines", recorder.MAX_INPUT_LINES),

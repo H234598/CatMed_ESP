@@ -8,8 +8,10 @@ import argparse
 import hashlib
 import json
 import os
-import subprocess
+# The converter requires subprocess; local tools must be trusted.
+import subprocess  # nosec B404  # Required converter; local tools are trusted.
 import sys
+import tempfile
 import unicodedata
 from pathlib import Path
 from urllib.request import urlopen
@@ -21,6 +23,7 @@ CJK = Path.home() / '.cache/katmed-i18n-fonts/NotoSansCJKsc-Regular.otf'
 CJK_URL = ('https://raw.githubusercontent.com/notofonts/noto-cjk/Sans2.004/'
            'Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf')
 CJK_SHA256 = '2c76254f6fc379fddfce0a7e84fb5385bb135d3e399294f6eeb6680d0365b74b'
+CJK_SIZE = 16437364
 ARABIC = Path('/usr/share/fonts/google-noto-vf/NotoSansArabic[wght].ttf')
 LATIN_CYRILLIC = Path('/usr/share/fonts/google-noto/NotoSans-Regular.ttf')
 LATIN_CYRILLIC_SHA256 = '478c558ea716033cd60c03438f628dfa75694dcf6b5f6d505a2f05fd2b4f3823'
@@ -50,14 +53,45 @@ def converter_path():
     return cached[-1]
 
 
-def render(size):
+def _download_cjk(output) -> None:
+    digest = hashlib.sha256()
+    size = 0
+    with urlopen(CJK_URL, timeout=90) as response:  # nosec B310  # Fixed HTTPS; size and SHA256 verified.
+        while data := response.read(min(1024 * 1024, CJK_SIZE - size + 1)):
+            size += len(data)
+            if size > CJK_SIZE:
+                raise RuntimeError('unexpected Noto Sans CJK SC font size')
+            digest.update(data)
+            output.write(data)
+    if size != CJK_SIZE or digest.hexdigest() != CJK_SHA256:
+        raise RuntimeError('unexpected Noto Sans CJK SC font version')
+
+
+def ensure_cjk():
+    # The cache directory and its writers must be trusted: checks here cannot
+    # prevent a later path replacement before the converter opens the font.
+    if CJK.is_symlink():
+        raise RuntimeError('font cache entry must not be a symlink')
     if not CJK.exists():
         CJK.parent.mkdir(parents=True, exist_ok=True)
-        with urlopen(CJK_URL, timeout=90) as response, CJK.open('wb') as output:
-            while data := response.read(1024 * 1024):
-                output.write(data)
-    if CJK.stat().st_size != 16437364 or hashlib.sha256(CJK.read_bytes()).hexdigest() != CJK_SHA256:
+        temporary = None
+        try:
+            with tempfile.NamedTemporaryFile(dir=CJK.parent, prefix='.cjk-', delete=False) as output:
+                temporary = Path(output.name)
+                # Fixed HTTPS source; size and digest are checked before use.
+                _download_cjk(output)
+            if CJK.is_symlink():
+                raise RuntimeError('font cache entry must not be a symlink')
+            os.replace(temporary, CJK)
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
+    if CJK.stat().st_size != CJK_SIZE or hashlib.sha256(CJK.read_bytes()).hexdigest() != CJK_SHA256:
         raise RuntimeError('unexpected Noto Sans CJK SC font version')
+
+
+def render(size):
+    ensure_cjk()
     strings = []
     for path in sorted((ROOT / 'firmware/i18n').glob('*.json')):
         document = json.loads(path.read_text())
@@ -85,7 +119,8 @@ def render(size):
     arabic_chars = ''.join(sorted(arabic_base | arabic_forms))
     if not chars:
         raise RuntimeError('empty CJK/Unicode glyph subset')
-    result = subprocess.run([
+    # No shell; PATH and converter are trusted local inputs.
+    result = subprocess.run([  # nosec B603, B607  # No shell; PATH and converter are trusted.
             'node', str(converter_path()), '--size', str(size), '--bpp', '2',
             '--format', 'lvgl', '--no-compress', '--no-kerning', '--font', str(CJK),
             '--symbols', chars, '--font', str(ARABIC),

@@ -1,6 +1,8 @@
 """Execute the C6 script handlers with their generated payloads and HTTP stubs."""
 
+import gzip
 import os
+import stat
 import subprocess
 import tempfile
 import unittest
@@ -169,7 +171,42 @@ static int check(bool language, const char *accept, const char *host,
     }
     return 0;
 }
+static int check_boundary(size_t limit, bool over) {
+    size_t raw_size = limit + (over ? 1 : 0);
+    unsigned char *raw = test_buffer_malloc(raw_size);
+    unsigned char *encoded = test_buffer_malloc(raw_size + 1024);
+    CHECK(raw && encoded);
+    memset(raw, 'x', raw_size);
+    z_stream z = {0};
+    CHECK(deflateInit2(&z, 9, Z_DEFLATED, 15 + 16, 8, Z_DEFAULT_STRATEGY) == Z_OK);
+    z.next_in = raw; z.avail_in = raw_size;
+    z.next_out = encoded; z.avail_out = raw_size + 1024;
+    CHECK(deflate(&z, Z_FINISH) == Z_STREAM_END);
+    size_t encoded_size = z.total_out;
+    CHECK(deflateEnd(&z) == Z_OK);
+    httpd_req_t req = {.accept="identity", .host="192.0.2.10"};
+    CHECK(asset_reply(&req, encoded, encoded + encoded_size,
+                      "application/javascript; charset=utf-8", true, limit) == ESP_OK);
+    httpd_req_t gzip_req = {.accept="gzip", .host="192.0.2.10"};
+    CHECK(asset_reply(&gzip_req, encoded, encoded + encoded_size,
+                      "application/javascript; charset=utf-8", true, limit) == ESP_OK);
+    if (over) {
+        CHECK(atoi(req.status) == 500 && req.finished == 0);
+        CHECK(atoi(gzip_req.status) == 500 && gzip_req.coding[0] == 0);
+    } else {
+        CHECK(req.finished == 1 && req.bytes == raw_size && !memcmp(req.body, raw, raw_size));
+        CHECK(!strcmp(gzip_req.coding, "gzip") && gzip_req.bytes == encoded_size &&
+              !memcmp(gzip_req.body, encoded, encoded_size));
+    }
+    CHECK(allocations == 0 && live_streams == 0);
+    test_buffer_free(encoded); test_buffer_free(raw);
+    return 0;
+}
 int main(void) {
+    CHECK(check_boundary(128u*1024u, false) == 0);
+    CHECK(check_boundary(128u*1024u, true) == 0);
+    CHECK(check_boundary(143u*1024u, false) == 0);
+    CHECK(check_boundary(143u*1024u, true) == 0);
     struct {const char *value; int coding;} cases[] = {
         {NULL,1}, {"",1}, {"identity",1}, {"br",1}, {"gzip;q=0",1},
         {"gzip;q=0, br;q=1",1}, {"gzip;q=0, *;q=1",1},
@@ -204,7 +241,9 @@ int main(void) {
         CHECK(check(language,"gzip","192.0.2.10",false,1,2)==0);
         CHECK(check(language,"identity","192.0.2.10",false,1,1)==0);
         CHECK(check(language,"identity","192.0.2.10",false,2,1)==0);
-        int chunks = language ? 4 : 2;
+        size_t raw_length = language ? (size_t)(raw_i18n_end - raw_i18n_start) :
+                                       (size_t)(raw_app_end - raw_app_start);
+        int chunks = (int)((raw_length + TINFL_LZ_DICT_SIZE - 1) / TINFL_LZ_DICT_SIZE);
         CHECK(check(language,"identity","192.0.2.10",false,chunks+1,1)==0);
         fail_alloc=true;
         CHECK(check(language,"identity","192.0.2.10",false,0,503)==0);
@@ -217,11 +256,12 @@ int main(void) {
         CHECK(n>=8);
         unsigned char *bad=test_buffer_malloc(n); CHECK(bad); memcpy(bad,data,n);
         ScriptInflate *work=malloc(sizeof(*work)); CHECK(work);
-        CHECK(script_inflate(work,bad,10,NULL)==ESP_FAIL);
-        bad[0]=0; CHECK(script_inflate(work,bad,n,NULL)==ESP_FAIL); bad[0]=data[0];
-        bad[n-8]^=1; CHECK(script_inflate(work,bad,n,NULL)==ESP_FAIL); bad[n-8]^=1;
-        bad[n-4]^=1; CHECK(script_inflate(work,bad,n,NULL)==ESP_FAIL); bad[n-4]^=1;
-        bad[n-1]=0xff; CHECK(script_inflate(work,bad,n,NULL)==ESP_FAIL);
+        size_t limit = language ? 143u*1024u : 128u*1024u;
+        CHECK(script_inflate(work,bad,10,limit,NULL)==ESP_FAIL);
+        bad[0]=0; CHECK(script_inflate(work,bad,n,limit,NULL)==ESP_FAIL); bad[0]=data[0];
+        bad[n-8]^=1; CHECK(script_inflate(work,bad,n,limit,NULL)==ESP_FAIL); bad[n-8]^=1;
+        bad[n-4]^=1; CHECK(script_inflate(work,bad,n,limit,NULL)==ESP_FAIL); bad[n-4]^=1;
+        bad[n-1]=0xff; CHECK(script_inflate(work,bad,n,limit,NULL)==ESP_FAIL);
         free(work); test_buffer_free(bad); CHECK(allocations==0 && live_streams==0);
     }
     printf("both production handlers: full gzip/raw bytes, negotiation, headers and failure cleanup PASS (host workspace %zu)\n",peak_allocation);
@@ -230,7 +270,45 @@ int main(void) {
 '''
 
 
+def write_boundary_assets(directory, route, raw_size):
+    assembly = [".section .rodata"]
+    for index, name in enumerate(ASSETS):
+        raw = b"x" * (raw_size if index == route else 1)
+        raw_path = directory / name
+        gzip_path = directory / (name + ".gz")
+        raw_path.write_bytes(raw)
+        gzip_path.write_bytes(gzip.compress(raw, compresslevel=9, mtime=0))
+        gzip_symbol = "_binary_" + name.replace(".", "_")
+        raw_symbol = "raw_app" if index == 0 else "raw_i18n"
+        for symbol, path in ((gzip_symbol, gzip_path), (raw_symbol, raw_path)):
+            assembly.extend((f".globl {symbol}_start", f"{symbol}_start:",
+                             f'.incbin "{path.name}"',
+                             f".globl {symbol}_end", f"{symbol}_end:"))
+    asm = directory / "assets.S"
+    asm.write_text("\n".join(assembly) + "\n")
+
+
 class SecurityScriptHandlers(unittest.TestCase):
+    def compile_and_run(self, directory, extra_flags=()):
+        compiler = Path("/usr/bin/cc").resolve(strict=True)
+        info = compiler.stat()
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0
+                or info.st_mode & 0o022 or not os.access(compiler, os.X_OK)):
+            raise RuntimeError("The host fixture requires a root-owned system compiler")
+        program = directory / "handlers"
+        command = [str(compiler), "-std=c11", "-Wall", "-Wextra", "-Werror", *extra_flags,
+                   "-DKATMED_WEB_SECURITY_JS_GZIP=1", "handlers.c", "assets.S",
+                   "-lz", "-o", str(program)]
+        env = {"PATH": "/usr/bin:/bin", "TMPDIR": str(directory)}
+        compiled = subprocess.run(command, cwd=directory, env=env,  # nosec B603 - System compiler, fixed inputs in private scratch.
+                                  capture_output=True, text=True)
+        self.assertEqual(compiled.returncode, 0, compiled.stderr)
+        # Both callers supply a fresh private TemporaryDirectory containing the compiler output.
+        result = subprocess.run([str(program)], cwd=directory, env=env,  # nosec B603 - Runs the fixture built above.
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result
+
     def test_real_c_handler_selection(self):
         source = SOURCE.read_text()
         reply = source[source.index("static esp_err_t reply("):source.index("static esp_err_t json_reply(")]
@@ -239,7 +317,7 @@ class SecurityScriptHandlers(unittest.TestCase):
                         source.index("static esp_err_t page_get(")]
         scripts = source[source.index("static esp_err_t script_get("):source.index("static const char *const language_codes")]
         with tempfile.TemporaryDirectory() as directory:
-            temporary = Path(directory)
+            temporary = Path(directory).resolve(strict=True)
             build(UI, temporary)
             elf_path = os.environ.get("KATMED_WEB_TEST_ELF")
             if elf_path:
@@ -263,25 +341,39 @@ class SecurityScriptHandlers(unittest.TestCase):
             for name in ASSETS:
                 stem = name.replace(".", "_")
                 assembly.extend((f".globl _binary_{stem}_start", f"_binary_{stem}_start:",
-                                 f'.incbin "{temporary / (name + ".gz")}"',
+                                 f'.incbin "{name}.gz"',
                                  f".globl _binary_{stem}_end", f"_binary_{stem}_end:"))
             for name in ASSETS:
                 stem = "raw_app" if name == "app.js" else "raw_i18n"
+                (temporary / name).write_bytes((UI / name).read_bytes())
                 assembly.extend((f".globl {stem}_start", f"{stem}_start:",
-                                 f'.incbin "{UI / name}"',
+                                 f'.incbin "{name}"',
                                  f".globl {stem}_end", f"{stem}_end:"))
             asm = temporary / "assets.S"
             asm.write_text("\n".join(assembly) + "\n")
             harness = temporary / "handlers.c"
             harness.write_text(PREFIX + reply + assets + scripts + SUFFIX)
-            program = temporary / "handlers"
-            compiled = subprocess.run(["cc", "-std=c11", "-Wall", "-Wextra", "-Werror",
-                                       "-DKATMED_WEB_SECURITY_JS_GZIP=1", str(harness), str(asm),
-                                       "-lz", "-o", str(program)], capture_output=True, text=True)
-            self.assertEqual(compiled.returncode, 0, compiled.stderr)
-            result = subprocess.run([str(program)], capture_output=True, text=True)
-            self.assertEqual(result.returncode, 0, result.stderr)
+            result = self.compile_and_run(temporary)
             self.assertIn("PASS", result.stdout)
+
+    def test_routed_asset_limits(self):
+        source = SOURCE.read_text()
+        reply = source[source.index("static esp_err_t reply("):source.index("static esp_err_t json_reply(")]
+        parser = source.index("static int gzip_quality(")
+        assets = source[source.rfind("#ifdef KATMED_WEB_SECURITY_JS_GZIP", 0, parser):
+                        source.index("static esp_err_t page_get(")]
+        scripts = source[source.index("static esp_err_t script_get("):source.index("static const char *const language_codes")]
+        for language, limit in ((0, 128 * 1024), (1, 143 * 1024)):
+            for over in (False, True):
+                with self.subTest(language=language, over=over), tempfile.TemporaryDirectory() as directory:
+                    tmp = Path(directory).resolve(strict=True)
+                    write_boundary_assets(tmp, language, limit + int(over))
+                    expected_identity, expected_gzip = (500, 500) if over else (1, 2)
+                    main = (f'int main(void) {{ CHECK(check({language},"identity","192.0.2.10",false,0,{expected_identity})==0); '
+                            f'CHECK(check({language},"gzip","192.0.2.10",false,0,{expected_gzip})==0); return 0; }}\n')
+                    harness = tmp / "handlers.c"
+                    harness.write_text(PREFIX + reply + assets + scripts + SUFFIX.split("int main(void)")[0] + main)
+                    self.compile_and_run(tmp, ("-Wno-unused-function",))
 
 
 if __name__ == "__main__":

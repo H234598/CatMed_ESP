@@ -2,7 +2,37 @@ cmake_minimum_required(VERSION 3.20)
 set(COMPONENTS main)
 option(KATMED_FULL_STACK "Compile and link the complete dependency probe" ON)
 option(KATMED_WITH_CORE "Link the host-tested reducer" ON)
+option(KATMED_C3_ALARM_DIAG "One C3 alarm SPI diagnostic sample in Development001" OFF)
+option(KATMED_C6_DEVELOPMENT001 "C6 app-only Development001 compiler profile" OFF)
 option(KATMED_APPSTORE_MAINTENANCE "Private C6 AppStore maintenance image" OFF)
+option(KATMED_ACME_RESOURCE_PROBE "Enable the isolated ACME resource source probe" OFF)
+option(KATMED_ACME_RESOURCE_CLIENT "Run the real client in the isolated resource probe" OFF)
+set(KATMED_DIAGNOSTIC_ARGS)
+set(KATMED_DEVELOPMENT001_DEFAULTS
+    "sdkconfig.defaults;boards/c3.defaults;security.defaults;boards/c3.security.defaults;boards/c3.development001.defaults")
+if(KATMED_C3_ALARM_DIAG)
+    if(NOT IDF_TARGET STREQUAL "esp32c3" OR NOT KATMED_FULL_STACK OR NOT KATMED_WITH_CORE OR
+       KATMED_APPSTORE_MAINTENANCE OR KATMED_ACME_RESOURCE_PROBE OR KATMED_ACME_RESOURCE_CLIENT OR
+       NOT SDKCONFIG_DEFAULTS STREQUAL KATMED_DEVELOPMENT001_DEFAULTS)
+        message(FATAL_ERROR "C3 alarm diagnostic requires the complete C3 Development001 profile")
+    endif()
+    list(APPEND EXTRA_COMPONENT_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/compat/katmed_c3_diagnostic_port")
+    list(APPEND KATMED_DIAGNOSTIC_ARGS --development001)
+elseif("boards/c3.development001.defaults" IN_LIST SDKCONFIG_DEFAULTS)
+    message(FATAL_ERROR "C3 Development001 requires its diagnostic port")
+endif()
+set(KATMED_C6_DEVELOPMENT001_DEFAULTS
+    "sdkconfig.defaults;boards/c6.defaults;security.defaults;boards/c6.security.defaults;boards/c6.development001.defaults")
+if(KATMED_C6_DEVELOPMENT001)
+    if(NOT IDF_TARGET STREQUAL "esp32c6" OR NOT KATMED_FULL_STACK OR NOT KATMED_WITH_CORE OR
+       KATMED_C3_ALARM_DIAG OR KATMED_APPSTORE_MAINTENANCE OR
+       KATMED_ACME_RESOURCE_PROBE OR KATMED_ACME_RESOURCE_CLIENT OR
+       NOT SDKCONFIG_DEFAULTS STREQUAL KATMED_C6_DEVELOPMENT001_DEFAULTS)
+        message(FATAL_ERROR "C6 Development001 requires the complete C6 app-only profile")
+    endif()
+elseif("boards/c6.development001.defaults" IN_LIST SDKCONFIG_DEFAULTS)
+    message(FATAL_ERROR "C6 Development001 defaults require explicit profile selection")
+endif()
 if(KATMED_APPSTORE_MAINTENANCE)
     if(NOT KATMED_FULL_STACK OR NOT KATMED_WITH_CORE)
         message(FATAL_ERROR "AppStore maintenance requires the full C6 UI and core")
@@ -51,8 +81,6 @@ if(KATMED_APPSTORE_MAINTENANCE)
     unset(KATMED_APPSTORE_MAC48)
     set(PROJECT_VER "appmaint-r2-20261025")
 endif()
-option(KATMED_ACME_RESOURCE_PROBE "Enable the isolated ACME resource source probe" OFF)
-option(KATMED_ACME_RESOURCE_CLIENT "Run the real client in the isolated resource probe" OFF)
 set(KATMED_ACME_RESOURCE_SERVER "http://127.0.0.1:17171/directory" CACHE STRING
     "Isolated fixture directory for the resource probe")
 if(KATMED_ACME_RESOURCE_CLIENT AND NOT KATMED_ACME_RESOURCE_PROBE)
@@ -63,17 +91,64 @@ include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 include_directories("${CMAKE_BINARY_DIR}/generated")
 idf_build_set_property(KATMED_FULL_STACK "${KATMED_FULL_STACK}")
 idf_build_set_property(KATMED_WITH_CORE "${KATMED_WITH_CORE}")
+idf_build_set_property(KATMED_C3_ALARM_DIAG "${KATMED_C3_ALARM_DIAG}")
 idf_build_set_property(KATMED_APPSTORE_MAINTENANCE "${KATMED_APPSTORE_MAINTENANCE}")
 idf_build_set_property(KATMED_ACME_RESOURCE_PROBE "${KATMED_ACME_RESOURCE_PROBE}")
 idf_build_set_property(KATMED_ACME_RESOURCE_CLIENT "${KATMED_ACME_RESOURCE_CLIENT}")
 idf_build_set_property(KATMED_ACME_RESOURCE_SERVER "${KATMED_ACME_RESOURCE_SERVER}")
-set(DEPENDENCIES_LOCK "${CMAKE_CURRENT_SOURCE_DIR}/dependencies.${IDF_TARGET}.lock")
+# Recreate the same local paths on every configure, including Ninja's reconfigure.
+file(REAL_PATH "${CMAKE_BINARY_DIR}" KATMED_BUILD_REAL)
+set(KATMED_OVERRIDE_ROOT "${KATMED_BUILD_REAL}/katmed-overrides")
+string(REPLACE "esp32" "" KATMED_TARGET_SUFFIX "${IDF_TARGET}")
+set(DEPENDENCIES_LOCK "${KATMED_BUILD_REAL}/override-${KATMED_TARGET_SUFFIX}.lock")
+execute_process(COMMAND "${PYTHON}" "${CMAKE_CURRENT_SOURCE_DIR}/../tools/prepare_iot_bridge_compat.py"
+    --prepare-override-root "${KATMED_OVERRIDE_ROOT}" --target "${IDF_TARGET}"
+    --override-lock "${DEPENDENCIES_LOCK}" --idf "$ENV{IDF_PATH}"
+    ${KATMED_DIAGNOSTIC_ARGS}
+    RESULT_VARIABLE KATMED_PREPARE_RESULT)
+if(NOT KATMED_PREPARE_RESULT STREQUAL "0")
+    message(FATAL_ERROR "Override original/end state or SDK validation failed")
+endif()
+if(EXISTS "${DEPENDENCIES_LOCK}")
+    if(NOT EXISTS "${CMAKE_BINARY_DIR}/project_description.json")
+        message(FATAL_ERROR "Existing override lock has no graph binding")
+    endif()
+    execute_process(COMMAND "${PYTHON}" "${CMAKE_CURRENT_SOURCE_DIR}/../tools/prepare_iot_bridge_compat.py"
+        --verify-override-root "${KATMED_OVERRIDE_ROOT}" --target "${IDF_TARGET}"
+        --override-lock "${DEPENDENCIES_LOCK}" --idf "$ENV{IDF_PATH}" --verify-graph "${CMAKE_BINARY_DIR}"
+        --allow-missing-config ${KATMED_DIAGNOSTIC_ARGS}
+        RESULT_VARIABLE KATMED_GRAPH_RESULT)
+    if(NOT KATMED_GRAPH_RESULT STREQUAL "0")
+        message(FATAL_ERROR "Existing override lock or graph validation failed")
+    endif()
+endif()
+set(ENV{KATMED_BUILD_OVERRIDES} "${KATMED_OVERRIDE_ROOT}")
+set(ENV{IDF_COMPONENT_STRICT_CHECKSUM} "1")
 idf_build_set_property(DEPENDENCIES_LOCK "${DEPENDENCIES_LOCK}")
 if(KATMED_APPSTORE_MAINTENANCE)
     project(katmed_appmaint_c6)
 else()
     project(katmed_foundation)
 endif()
+    add_custom_target(katmed_override_integrity
+        COMMAND "${PYTHON}" "${CMAKE_CURRENT_SOURCE_DIR}/../tools/prepare_iot_bridge_compat.py"
+            --verify-override-root "${KATMED_OVERRIDE_ROOT}" --target "${IDF_TARGET}"
+            --override-lock "${DEPENDENCIES_LOCK}" --idf "$ENV{IDF_PATH}"
+            --verify-graph "${CMAKE_BINARY_DIR}" ${KATMED_DIAGNOSTIC_ARGS}
+        VERBATIM)
+    idf_build_get_property(katmed_build_components BUILD_COMPONENTS)
+    foreach(component IN LISTS katmed_build_components)
+        idf_component_get_property(component_lib "${component}" COMPONENT_LIB)
+        add_dependencies("${component_lib}" katmed_override_integrity)
+    endforeach()
+    if(NOT TARGET bootloader)
+        message(FATAL_ERROR "Override integrity requires the IDF bootloader target")
+    endif()
+    add_dependencies(bootloader katmed_override_integrity)
+    if(NOT TARGET partition_table_bin)
+        message(FATAL_ERROR "Override integrity requires the IDF partition table target")
+    endif()
+    add_dependencies(partition_table_bin katmed_override_integrity)
 set(KATMED_USERFS_SEED_DIR "${CMAKE_BINARY_DIR}/katmed_userfs_seed")
 set(KATMED_SEED_TARGET "c3")
 if(IDF_TARGET STREQUAL "esp32c6")
@@ -86,27 +161,7 @@ add_custom_target(katmed_image_seed
             --manifest "${CMAKE_CURRENT_SOURCE_DIR}/../assets/generated/manifest.json"
             --output "${KATMED_USERFS_SEED_DIR}"
     VERBATIM)
+add_dependencies(katmed_image_seed katmed_override_integrity)
 file(MAKE_DIRECTORY "${KATMED_USERFS_SEED_DIR}")
 littlefs_create_partition_image(user_images "${KATMED_USERFS_SEED_DIR}"
     FLASH_IN_PROJECT DEPENDS katmed_image_seed)
-execute_process(
-    COMMAND "${PYTHON}" "${CMAKE_CURRENT_SOURCE_DIR}/../tools/prepare_acme_component.py"
-            --component "${CMAKE_CURRENT_SOURCE_DIR}/managed_components/dannybackx__acmeclient"
-    RESULT_VARIABLE KATMED_ACME_PATCH_RESULT)
-if(NOT KATMED_ACME_PATCH_RESULT EQUAL 0)
-    message(FATAL_ERROR "Verified ACME 1.1.1 atomic persistence bridge failed")
-endif()
-execute_process(
-    COMMAND "${PYTHON}" "${CMAKE_CURRENT_SOURCE_DIR}/../tools/prepare_iot_bridge_compat.py"
-            --component "${CMAKE_CURRENT_SOURCE_DIR}/managed_components/espressif__iot_bridge"
-    RESULT_VARIABLE KATMED_IOT_BRIDGE_PATCH_RESULT)
-if(NOT KATMED_IOT_BRIDGE_PATCH_RESULT EQUAL 0)
-    message(FATAL_ERROR "Verified IoT Bridge 1.0.1 IDF 6.1 compatibility patch failed")
-endif()
-execute_process(
-    COMMAND /usr/bin/python3 "${CMAKE_CURRENT_SOURCE_DIR}/../tools/prepare_lvgl_compat.py"
-            "${CMAKE_CURRENT_SOURCE_DIR}/managed_components/lvgl__lvgl"
-    RESULT_VARIABLE KATMED_LVGL_COMPAT_RESULT)
-if(NOT KATMED_LVGL_COMPAT_RESULT EQUAL 0)
-    message(FATAL_ERROR "Pinned LVGL TJpgD compatibility check failed")
-endif()

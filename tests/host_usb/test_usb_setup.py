@@ -9,7 +9,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
@@ -18,10 +18,18 @@ import katmed_usb_setup as setup
 
 DEVICE = "ac276e46bc2c"
 CATALOG = "a" * 64
+PROVISION_BUILD = "a58d6b359e4ad3de01234567"
+PROVISION_PREFIX = "a58d6b359e4ad3de"
+PROVISION_FIRMWARE = "tree-980f1385e8"
+NEXT_PROVISION_FIRMWARE = "tree-8caae83a0c"
 STATUS = (
     f"KM1 OK STATUS configured=0 durable=0 pending=0 clock=0 "
     f"device={DEVICE} catalog={CATALOG} firmware=1.0 build=abc123 error=OK\n"
 ).encode("ascii")
+PROVISION_STATUS = STATUS.replace(b"durable=0", b"durable=1").replace(
+    b"firmware=1.0 build=abc123",
+    f"firmware={PROVISION_FIRMWARE} build={PROVISION_BUILD}".encode("ascii"),
+)
 
 
 class FakeSerial:
@@ -243,7 +251,8 @@ class UsbSetupTests(unittest.TestCase):
                 port = setup._open_serial(port_name, timeout=timeout)
             self.assertIsInstance(port, Spy)
             self.assertEqual([
-                ("construct", dict(port=None, baudrate=115200, timeout=timeout, write_timeout=3)),
+                ("construct", dict(port=None, baudrate=115200, timeout=timeout,
+                                    write_timeout=3, exclusive=True)),
                 ("dtr", False), ("rts", False), ("port", port_name),
                 ("open", port_name, False, False),
             ], events)
@@ -310,6 +319,90 @@ class UsbSetupTests(unittest.TestCase):
                 with self.assertRaises(setup.SetupError):
                     setup._private_config_bytes(data)
 
+    def test_exact_explicit_external_config_authorization_is_required(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            base = Path(d)
+            private = base / "synthetic-external"
+            private.mkdir(mode=0o700)
+            private.chmod(0o700)
+            data = private / "config.json"
+            data.write_bytes(cfg())
+            data.chmod(0o600)
+            other = private / "other.json"
+            other.write_bytes(cfg())
+            other.chmod(0o600)
+            self.assertEqual(
+                cfg(), setup._private_config_bytes(data, authorized_external_path=data)
+            )
+            with self.assertRaises(setup.SetupError):
+                setup._private_config_bytes(data)
+            with self.assertRaises(setup.SetupError):
+                setup._private_config_bytes(other, authorized_external_path=data)
+            data.unlink()
+            data.symlink_to(other)
+            with self.assertRaises(setup.SetupError):
+                setup._private_config_bytes(data, authorized_external_path=data)
+
+    def test_c3_probe_status_preserves_legacy_and_bounded_word(self) -> None:
+        self.assertNotIn("c3p1", setup.read_status(FakeSerial([STATUS])))
+        for word in ("00000000", "00086710", "001a84d2", "001ac4d2",
+                     "003d09c4", "00134000"):
+            with self.subTest(word=word):
+                reply = STATUS[:-1] + b" c3p1=" + word.encode("ascii") + b"\n"
+                port = FakeSerial([reply])
+                self.assertEqual(setup.read_status(port)["c3p1"], word)
+                self.assertEqual(port.writes, [b"KM1 STATUS\n"])
+                self.assertLessEqual(len(reply), setup.MAX_RESPONSE_BYTES)
+        maximum = (STATUS.replace(b"pending=0", b"pending=255")
+                   .replace(b"clock=0", b"clock=2")
+                   .replace(b"firmware=1.0", b"firmware=" + b"f" * 24)
+                   .replace(b"build=abc123", b"build=" + b"b" * 24)
+                   .replace(b"error=OK\n", b"error=COMMIT_UNKNOWN c3p1=003d09c4\n"))
+        self.assertEqual(len(maximum), 250)
+        self.assertEqual(setup.read_status(FakeSerial([maximum]))["c3p1"], "003d09c4")
+
+    def test_c3_probe_decodes_enum_flags_and_unknown_without_changing_types(self) -> None:
+        cases = (
+            ("00000000", 0, None, None, False, False, False),
+            ("00084000", 1, None, 0, True, False, False),
+            ("00086710", 1, None, 10000, True, False, False),
+            ("001a84d2", 2, 1, 1234, True, True, False),
+            ("001ac4d2", 3, 1, 1234, True, True, False),
+            ("003d09c4", 4, 2, 2500, True, True, True),
+            ("00134000", 5, 1, None, False, True, False),
+            ("001d49c4", 5, 2, 2500, True, True, False),
+            ("00014000", 5, None, None, False, False, False),
+        )
+        for word, state, pixel, phase, phase_valid, sample_valid, completion_valid in cases:
+            with self.subTest(word=word):
+                result = setup.decode_c3_probe(word)
+                self.assertEqual(result, {
+                    "probe_present": True, "probe_state": state,
+                    "probe_pixel_class": pixel, "probe_phase_permyriad": phase,
+                    "probe_phase_valid": phase_valid, "probe_sample_valid": sample_valid,
+                    "probe_completion_valid": completion_valid})
+                self.assertIs(type(result["probe_state"]), int)
+                for key in ("probe_phase_valid", "probe_sample_valid", "probe_completion_valid"):
+                    self.assertIs(type(result[key]), bool)
+        for bad in (None, 0, False, b"00000000"):
+            with self.subTest(bad_type=type(bad)), self.assertRaises(setup.SetupError):
+                setup.decode_c3_probe(bad)
+
+    def test_c3_probe_status_rejects_shadow_reserved_and_invalid_values(self) -> None:
+        invalid = ("0000000", "000000000", "003D09C4", "0000000g",
+                   "00400000", "00018000", "00060000", "00082711",
+                   "00000001", "00020000", "00100000", "00200000",
+                   "00004000", "00080000")
+        for word in invalid:
+            with self.subTest(word=word), self.assertRaises(setup.SetupError):
+                setup.read_status(FakeSerial([
+                    STATUS[:-1] + b" c3p1=" + word.encode("ascii") + b"\n"]))
+        for suffix in (b" c3p1=00000000 c3p1=00000000", b" C3P1=00000000",
+                       b" c3p1=00000000 probe_present=1",
+                       b" probe_state=0", b" c3p1[x]=00000000"):
+            with self.subTest(suffix=suffix), self.assertRaises(setup.SetupError):
+                setup.read_status(FakeSerial([STATUS[:-1] + suffix + b"\n"]))
+
     def test_status_parses_and_rejects_corruption(self) -> None:
         fake = FakeSerial([b"boot output\n", STATUS])
         self.assertEqual(DEVICE, setup.read_status(fake)["device"])
@@ -357,24 +450,98 @@ class UsbSetupTests(unittest.TestCase):
             data = private / "usb-setup.json"
             data.write_bytes(cfg())
             data.chmod(0o600)
-            request_args = args("provision", config=str(data))
+            request_args = args("provision", config=str(data), expect_firmware=PROVISION_FIRMWARE,
+                                expect_build_prefix=PROVISION_PREFIX)
             with patch.object(setup, "PRIVATE_DIR", private):
-                success = FakeSerial([STATUS, b"KM1 OK PROVISION\n"])
+                success = FakeSerial([PROVISION_STATUS, b"KM1 OK PROVISION\n"])
                 result = setup.run_command(request_args, lambda _: success, lambda _: None)
                 self.assertIn("dauerhaft", result)
                 self.assertEqual(2, len(success.writes))
                 self.assertNotIn("example-only-password", result)
                 self.assertNotIn("2" * 64, result)
-                for fake in [FakeSerial([STATUS, b"KM1 ERR STORAGE\n"]), FakeSerial([STATUS], partial_at=2), FakeSerial([STATUS], error_at=2)]:
+                for fake in [FakeSerial([PROVISION_STATUS, b"KM1 ERR STORAGE\n"]),
+                             FakeSerial([PROVISION_STATUS], partial_at=2),
+                             FakeSerial([PROVISION_STATUS], error_at=2)]:
                     with self.subTest(fake=fake), self.assertRaises(setup.SetupError) as caught:
                         setup.run_command(request_args, lambda _: fake, lambda _: None)
                     self.assertNotIn("example-only-password", str(caught.exception))
                     self.assertNotIn("2" * 64, str(caught.exception))
                     self.assertTrue(fake.closed)
-                unknown = FakeSerial([STATUS, b"KM1 ERR SYNTHETIC_TEST_SECRET\n"])
+                unknown = FakeSerial([PROVISION_STATUS, b"KM1 ERR SYNTHETIC_TEST_SECRET\n"])
                 with self.assertRaises(setup.SetupError) as caught:
                     setup.run_command(request_args, lambda _: unknown, lambda _: None)
                 self.assertNotIn("SYNTHETIC_TEST_SECRET", str(caught.exception))
+
+    def test_provision_rejects_wrong_identity_or_unsafe_status_on_write_handle(self) -> None:
+        request_args = args("provision", expect_firmware=PROVISION_FIRMWARE,
+                            expect_build_prefix=PROVISION_PREFIX, expect_catalog=CATALOG)
+        for before, after, error in (
+            (DEVICE, "0123456789ab", "Gerätekennung"),
+            (PROVISION_FIRMWARE, NEXT_PROVISION_FIRMWARE, "Firmwarekennung"),
+            (PROVISION_BUILD, "b58d6b359e4ad3de01234567", "Buildpräfix"),
+            (PROVISION_BUILD, PROVISION_PREFIX + "invalid", "Buildpräfix"),
+            (PROVISION_BUILD, PROVISION_PREFIX[:-1], "Buildpräfix"),
+            (CATALOG, "b" * 64, "Katalogkennung"),
+            (CATALOG, "b" * 63, "Katalogkennung"),
+            ("durable=1", "durable=0", "Store-Zustand"),
+            ("pending=0", "pending=1", "Store-Zustand"),
+            ("error=OK", "error=STALE", "Store-Zustand"),
+            ("error=OK", "error=COMMIT_UNKNOWN", "Store-Zustand"),
+        ):
+            status = PROVISION_STATUS.replace(before.encode("ascii"), after.encode("ascii"))
+            fake = FakeSerial([status, b"KM1 OK PROVISION\n"])
+            with self.subTest(expected_error=error, mutated_field=before.partition("=")[0]), \
+                    patch.object(setup, "_private_config_bytes", return_value=cfg()):
+                with self.assertRaisesRegex(setup.SetupError, error):
+                    setup.run_command(request_args, lambda _, fake=fake: fake, lambda _: None)
+                self.assertEqual([b"KM1 STATUS\n"], fake.writes)
+                self.assertTrue(fake.closed)
+
+    def test_provision_rejects_invalid_bindings_before_read_or_open(self) -> None:
+        bindings = dict(expect_device=DEVICE, expect_firmware=PROVISION_FIRMWARE,
+                        expect_build_prefix=PROVISION_PREFIX, expect_catalog=CATALOG)
+        for field, value in (
+            ("expect_device", None), ("expect_device", "not-a-uid"),
+            ("expect_firmware", None), ("expect_firmware", "tree-123"), ("expect_firmware", "HEAD"),
+            ("expect_build_prefix", None), ("expect_build_prefix", PROVISION_PREFIX[:-1]),
+            ("expect_build_prefix", PROVISION_PREFIX + "z"), ("expect_build_prefix", "f" * 25),
+            ("expect_catalog", "b" * 63), ("expect_catalog", ""),
+        ):
+            with self.subTest(field=field, value=value), \
+                    patch.object(setup, "_private_config_bytes") as read, \
+                    self.assertRaises(setup.SetupError):
+                setup.run_command(args("provision", **(bindings | {field: value})),
+                                  lambda _: self.fail("Port opened without valid bindings"))
+            read.assert_not_called()
+
+    def test_provision_versions_and_commit_rejection_use_one_normal_write(self) -> None:
+        for firmware, reply, error in (
+            (PROVISION_FIRMWARE, b"KM1 OK PROVISION\n", None),
+            (NEXT_PROVISION_FIRMWARE, b"KM1 OK PROVISION\n", None),
+            ("511293c-dirty", b"KM1 OK PROVISION\n", None),
+            ("abcdef0", b"KM1 OK PROVISION\n", None),
+            (PROVISION_FIRMWARE, b"KM1 ERR COMMIT\n", "COMMIT"),
+        ):
+            with self.subTest(firmware=firmware, error=error), \
+                    patch.object(setup, "_private_config_bytes", return_value=cfg()):
+                status = PROVISION_STATUS.replace(b"configured=0", b"configured=1").replace(
+                    PROVISION_FIRMWARE.encode(), firmware.encode(),
+                )
+                fake = FakeSerial([status, reply])
+                request = setup.parser().parse_args([
+                    "--port", "/fake/by-id/device", "--expect-device", DEVICE,
+                    "--expect-firmware", firmware, "provision", "--expect-build-prefix",
+                    PROVISION_PREFIX.upper(), "--expect-catalog", CATALOG.upper(),
+                ])
+                opener = Mock(return_value=fake)
+                if error is None:
+                    self.assertIn("dauerhaft", setup.run_command(request, opener, lambda _: None))
+                else:
+                    with self.assertRaisesRegex(setup.SetupError, error):
+                        setup.run_command(request, opener, lambda _: None)
+                opener.assert_called_once_with(request.port)
+                self.assertEqual([b"KM1 STATUS\n", setup.build_provision_request(cfg())], fake.writes)
+                self.assertTrue(fake.closed)
 
     def test_boot_reset_output_is_bounded_and_drained_before_status(self) -> None:
         boot_prefix = b"KM1 OK STATUS configured=0 garbage=boot\nSYNTHETIC_TEST_SECRET\n"

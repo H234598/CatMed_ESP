@@ -1,4 +1,5 @@
 """Run real Host/Origin, authenticated handlers and NVS update code with public edges."""
+import os
 import subprocess
 import tempfile
 import unittest
@@ -26,8 +27,9 @@ PREFIX = r'''
 #define KATMED_WEB_TOKEN_HEX 64
 typedef int esp_err_t;
 typedef struct {char csrf[65];} KatmedWebSession;
+typedef struct {char dns[254];} TestServerIdentity;
 typedef struct {int nvs; bool nvs_open,identifier_ready; void *auth_mutex,*redirect,*https;
- char acme_identifier[KATMED_WEB_IDENTIFIER_MAX];} WebContext;
+ char acme_identifier[KATMED_WEB_IDENTIFIER_MAX]; TestServerIdentity *server_identity,*server_pending;} WebContext;
 static WebContext web;
 typedef struct {void *handle; const char *host,*origin,*csrf,*body; bool authenticated;
  char status[40],response[600],location[300];} httpd_req_t;
@@ -120,6 +122,10 @@ int main(void){
  assert(!strcmp(r.status,"308 Permanent Redirect") && !strcmp(r.location,"https://device.example.invalid/"));
  r=request();r.handle=web.redirect;redirect_get(&r);assert(!strcmp(r.location,"https://192.0.2.42/"));
  r=request();identifier_put(&r);assert(!strcmp(r.status,"409 Conflict"));
+ TestServerIdentity active={.dns="device.example.invalid"};web.server_identity=&active;
+ r=request();r.host="device.example.invalid";r.origin="https://device.example.invalid";
+ r.body="{\"identifier\":\"new.example.invalid\",\"previous\":\"device.example.invalid\"}";
+ identifier_put(&r);assert(!strcmp(r.response,"identity_active"));web.server_identity=NULL;
  r=request();r.host="device.example.invalid";r.origin="https://device.example.invalid";
  r.body="{\"identifier\":\"\",\"previous\":\"device.example.invalid\"}";identifier_put(&r);assert(!strcmp(r.status,"200 OK"));
  assert(load_identifier(&web) && !web.acme_identifier[0]);
@@ -211,7 +217,7 @@ int main(){
         with tempfile.TemporaryDirectory() as tmp:
             c = Path(tmp) / "identifier.c"
             c.write_text(PREFIX + "\n".join(function(source, sig) for sig in signatures) + CASES)
-            json_dir = ROOT / "firmware/managed_components/espressif__cjson/cJSON"
+            json_dir = Path(os.environ.get("KATMED_CJSON_DIR", ROOT / "firmware/managed_components/espressif__cjson/cJSON"))
             exe = Path(tmp) / "identifier"
             subprocess.run(["cc", "-std=gnu11", "-Wall", "-Wextra", "-Werror",
                             "-I" + str(json_dir),

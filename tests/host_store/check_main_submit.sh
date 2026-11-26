@@ -36,7 +36,27 @@ flags=(-std=c11 -Wall -Wextra -Werror -Wno-error=cpp -Wno-unused-variable -ffunc
     "-I${repo_root}/firmware/components/katmed_mesh/include"
     "-I${repo_root}/firmware/components/katmed_time/include"
     "-I${repo_root}/firmware/main"
-    "-I${repo_root}/firmware/managed_components/lvgl__lvgl")
+    "-I${KATMED_HOST_LVGL_INCLUDE:-${repo_root}/firmware/managed_components/lvgl__lvgl}")
+if [[ -n "${KATMED_TEST_MAIN_SOURCE:-}" ]]; then
+    flags+=("-DKATMED_TEST_MAIN_SOURCE=\"${KATMED_TEST_MAIN_SOURCE}\"")
+fi
+if [[ "${KATMED_TEST_PRE_COHERENCE:-0}" == 1 ]]; then
+    flags+=(-DKATMED_TEST_PRE_COHERENCE)
+fi
+if [[ "${KATMED_TEST_LEGACY_LANGUAGE_API:-0}" == 1 ]]; then
+    flags+=(-DKATMED_TEST_LEGACY_LANGUAGE_API -Wno-incompatible-pointer-types)
+fi
+cc -std=c11 -D_POSIX_C_SOURCE=200809L -Wall -Wextra -Werror -pthread \
+    -I"$repo_root/tests/host_config_bridge/stubs" \
+    -I"$repo_root/firmware/components/katmed_config_bridge/include" \
+    -I"$repo_root/firmware/components/katmed_core/include" \
+    -c "$repo_root/firmware/components/katmed_config_bridge/katmed_config_bridge.c" -o "$out/bridge.o"
+extra_objects=()
+if [[ -n "${KATMED_TEST_EMERGENCY_UI_SOURCE:-}" ]]; then
+    flags+=(-DKATMED_TEST_EMERGENCY_UI)
+    cc "${flags[@]}" -c "$KATMED_TEST_EMERGENCY_UI_SOURCE" -o "$out/emergency_ui.o"
+    extra_objects+=("$out/emergency_ui.o")
+fi
 cc "${flags[@]}" -c "$repo_root/tests/host_store/check_main_submit.c" -o "$out/main.o"
 cc "${flags[@]}" -c "$repo_root/firmware/components/katmed_ui/navigation.c" -o "$out/navigation.o"
 cc "${flags[@]}" -c "$repo_root/firmware/components/katmed_ui/i18n_catalog.c" -o "$out/i18n_catalog.o"
@@ -50,6 +70,6 @@ c++ -std=c++17 -Wall -Wextra -Werror -ffunction-sections -fdata-sections \
     -I"$repo_root/firmware/components/katmed_core/include" \
     -I"$repo_root/firmware/components/katmed_store/include" \
     -c "$repo_root/firmware/components/katmed_store/katmed_store.cpp" -o "$out/store.o"
-c++ -Wl,--gc-sections "$out/main.o" "$out/navigation.o" "$out/i18n_catalog.o" "$out/reset_journal.o" "$out/time.o" "$out/core.o" "$out/store.o" -lz -o "$out/check_main_submit"
-if [[ $# -eq 0 ]]; then "$out/check_main_submit" night; "$out/check_main_submit" night_bridge; fi
+c++ -Wl,--gc-sections "$out/main.o" "$out/navigation.o" "$out/i18n_catalog.o" "$out/reset_journal.o" "$out/time.o" "$out/core.o" "$out/store.o" "$out/bridge.o" "${extra_objects[@]}" -pthread -lz -o "$out/check_main_submit"
+if [[ $# -eq 0 ]]; then "$out/check_main_submit" night; "$out/check_main_submit" night_bridge; "$out/check_main_submit" language_owner; "$out/check_main_submit" language_http_owner; "$out/check_main_submit" language_clock_owner; "$out/check_main_submit" physical_owners; "$out/check_main_submit" wifi_owner; "$out/check_main_submit" owner_snapshot; "$out/check_main_submit" owner_completion; fi
 "$out/check_main_submit" "$@"

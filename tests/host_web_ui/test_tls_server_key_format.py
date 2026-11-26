@@ -5,11 +5,11 @@ contains the unmodified MbedTLS sources from that IDF tree; no device is used.
 """
 
 import os
-import subprocess
+import subprocess  # nosec B404 - Runs synthetic fixture setup, the host compiler and the harness.
 import tempfile
 from pathlib import Path
 
-from test_network_startup import function
+from test_network_startup import function, host_tool
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -26,10 +26,15 @@ HOST = r'''
 #include "mbedtls/pk.h"
 #include "mbedtls/ssl.h"
 #include "mbedtls/x509_crt.h"
+#include "mbedtls/pem.h"
 #include "esp_key_config.h"
 
 #define ESP_OK 0
 #define ESP_FAIL -1
+#define ESP_ERR_NO_MEM 0x101
+#define ESP_ERR_INVALID_STATE 0x103
+#define ESP_ERR_NOT_SUPPORTED 0x106
+typedef int esp_err_t;
 #define WEB_TAG "test"
 #define ESP_LOGE(...) ((void)0)
 #define ESP_LOGW(...) ((void)0)
@@ -54,8 +59,10 @@ typedef struct {
     const esp_key_config_t *server_key;
 } httpd_ssl_config_t;
 typedef struct {const char *uri;int method;void *handler,*user_ctx;} httpd_uri_t;
+typedef struct { uint8_t key[32]; char chain[6144]; size_t chain_len; } TestServerIdentity;
 static struct {
     struct { uint8_t key[256],cert[1024];size_t key_len,cert_len; } identity;
+    TestServerIdentity *server_identity;
     struct { struct {size_t cert_len;const void *client_cert;} record; } auth;
     void *https,*redirect;
     bool started;
@@ -71,7 +78,17 @@ static psa_key_id_t last_tls_key_id;
 static void *tls_session_callback, *katmed_web_plain_uri_match, *redirect_get;
 static uint64_t monotonic_ms(void){return 0;}
 static void web_socket_diag_sample(uint64_t now,bool force){(void)now;(void)force;}
-static bool resources_allow(bool post,const char *site){(void)post;(void)site;return true;}
+static bool resources_allow(bool after_start, const char *site, const char *snapshot_stage)
+{
+    if (!after_start)
+        return site && strcmp(site, "start_listeners") == 0 && !snapshot_stage;
+    if (!snapshot_stage)
+        return false;
+    if (strcmp(snapshot_stage, "web_after_redirect_registration") == 0)
+        return site && strcmp(site, "final_admission") == 0;
+    return !site && (strcmp(snapshot_stage, "web_after_https_start") == 0 ||
+                     strcmp(snapshot_stage, "web_after_https_routes") == 0);
+}
 static bool register_routes(void *handle){return handle!=NULL;}
 static void wipe(void *ptr,size_t len){volatile uint8_t *p=ptr;while(len--)*p++=0;}
 static int httpd_ssl_start(void **handle,const httpd_ssl_config_t *cfg){
@@ -87,8 +104,8 @@ static int httpd_ssl_start(void **handle,const httpd_ssl_config_t *cfg){
             mbedtls_ssl_config conf;
             mbedtls_x509_crt_init(&crt);
             mbedtls_ssl_config_init(&conf);
-            psa_wrap_result=mbedtls_x509_crt_parse_der(&crt,cfg->servercert,
-                                                       cfg->servercert_len);
+            psa_wrap_result=mbedtls_x509_crt_parse(&crt,cfg->servercert,
+                                                   cfg->servercert_len);
             if(psa_wrap_result==0)
                 psa_wrap_result=mbedtls_ssl_config_defaults(&conf,MBEDTLS_SSL_IS_SERVER,
                                MBEDTLS_SSL_TRANSPORT_STREAM,MBEDTLS_SSL_PRESET_DEFAULT);
@@ -155,7 +172,7 @@ int main(int argc,char **argv){
     mbedtls_x509write_crt_free(&writer);
     mbedtls_pk_free(&writer_key);
     if(psa_destroy_key(writer_id)!=PSA_SUCCESS)return 16;
-    if(!start_listeners()){
+    if(start_listeners()!=ESP_OK){
         fprintf(stderr,"real SDK parser rejected production HTTPS key selection: %d\n",
                 legacy_parse_result);
         return 3;
@@ -163,6 +180,15 @@ int main(int argc,char **argv){
     if(!web.started || https_starts!=1 || psa_wrap_result!=0)return 4;
     stop_listeners();
     if(https_stops!=1 || web.tls_key_id!=PSA_KEY_ID_NULL)return 5;
+    TestServerIdentity imported={0};
+    memcpy(imported.key,web.identity.key,32);
+    if(mbedtls_pem_write_buffer("-----BEGIN CERTIFICATE-----\n", "-----END CERTIFICATE-----\n",
+        web.identity.cert,web.identity.cert_len,(unsigned char *)imported.chain,
+        sizeof(imported.chain),&imported.chain_len)!=0)return 17;
+    web.server_identity=&imported;
+    if(start_listeners()!=ESP_OK || psa_wrap_result!=0)return 18;
+    stop_listeners();
+    web.server_identity=NULL;
     psa_key_attributes_t old_key=PSA_KEY_ATTRIBUTES_INIT;
     if(psa_get_key_attributes(last_tls_key_id,&old_key)==PSA_SUCCESS)return 6;
     /* Existing DER identities keep the SDK's original parser path. */
@@ -171,14 +197,14 @@ int main(int argc,char **argv){
     size_t n=fread(web.identity.key,1,sizeof(web.identity.key),legacy);
     if(fclose(legacy)!=0 || n<=32 || n==sizeof(web.identity.key))return 8;
     web.identity.key_len=n;
-    if(!start_listeners() || legacy_parse_result!=0 || web.tls_key_id!=PSA_KEY_ID_NULL)return 9;
+    if(start_listeners()!=ESP_OK || legacy_parse_result!=0 || web.tls_key_id!=PSA_KEY_ID_NULL)return 9;
     stop_listeners();
     /* Failed listener startup must release an imported key before retry. */
     memset(web.identity.key,0,sizeof(web.identity.key));
     web.identity.key[31]=1;
     web.identity.key_len=32;
     force_https_failure=true;
-    if(start_listeners() || web.tls_key_id!=PSA_KEY_ID_NULL)return 10;
+    if(start_listeners()==ESP_OK || web.tls_key_id!=PSA_KEY_ID_NULL)return 10;
     if(psa_get_key_attributes(last_tls_key_id,&old_key)==PSA_SUCCESS)return 11;
     puts("real SDK key parser and PSA TLS handoff PASS");
     return 0;
@@ -187,22 +213,26 @@ int main(int argc,char **argv){
 
 
 def main():
+    openssl = host_tool("openssl")
+    compiler = host_tool("cc")
     idf = Path(os.environ["IDF_PATH"])
     build = Path(os.environ["KATMED_MBEDTLS_HOST_BUILD"])
     mbedtls = idf / "components/mbedtls/mbedtls"
     text = SOURCE.read_text()
     c = HOST + function(text, "static bool stop_listeners(void)") + "\n" + function(
-        text, "static bool start_listeners(void)"
+        text, "static esp_err_t start_listeners(void)"
     ) + END
     with tempfile.TemporaryDirectory(prefix="katmed-tls-key-") as tmp:
         program = Path(tmp) / "check.c"
         binary = Path(tmp) / "check"
         private_pem = Path(tmp) / "synthetic.pem"
         private_der = Path(tmp) / "synthetic.der"
-        subprocess.run(["openssl", "ecparam", "-name", "prime256v1", "-genkey",
+        # The runner's OpenSSL generates the synthetic fixture in this test's directory.
+        subprocess.run([openssl, "ecparam", "-name", "prime256v1", "-genkey",  # nosec B603
                         "-noout", "-out", str(private_pem)], check=True,
                        stdout=subprocess.DEVNULL)
-        subprocess.run(["openssl", "pkey", "-in", str(private_pem),
+        # The fixed conversion reads and writes only this test's fixture paths.
+        subprocess.run([openssl, "pkey", "-in", str(private_pem),  # nosec B603
                         "-outform", "DER", "-out", str(private_der)],
                        check=True, stdout=subprocess.DEVNULL)
         program.write_text(c)
@@ -227,11 +257,13 @@ def main():
             build / "tf-psa-crypto/extras/libextras.a",
             build / "tf-psa-crypto/utilities/libutilities.a",
         ]
-        cc = ["cc", "-std=gnu11", "-Wall", "-Wextra", "-Werror", "-Wno-unused-function"]
+        cc = [compiler, "-std=gnu11", "-Wall", "-Wextra", "-Werror", "-Wno-unused-function"]
         cc += ["-I" + str(path) for path in includes]
         cc += [str(program), "-Wl,--start-group", *map(str, libraries), "-Wl,--end-group", "-pthread", "-o", str(binary)]
-        subprocess.run(cc, check=True)
-        subprocess.run([str(binary), str(private_der)], check=True)
+        # Compiler arguments name the local fixture and caller-selected host SDK inputs.
+        subprocess.run(cc, check=True)  # nosec B603
+        # Run the freshly built binary on its own synthetic fixture.
+        subprocess.run([str(binary), str(private_der)], check=True)  # nosec B603
 
 
 if __name__ == "__main__":

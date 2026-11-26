@@ -1,7 +1,7 @@
 #include "katmed_images_internal.h"
 #include "katmed_images.h"
 #include "lvgl.h"
-#include "src/draw/lv_image_decoder_private.h"
+#include "src/image/lv_image_decoder_private.h"
 
 #include <assert.h>
 #include <stdint.h>

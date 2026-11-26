@@ -5,11 +5,35 @@ import re
 import aiohttp
 from .protocol import Snapshot, InvalidSnapshot, endpoint
 
+_LOGIN_PATH = "/api/login"
+
 class CannotConnect(Exception):
     """Transport or unsupported peer."""
 
 class InvalidAuth(Exception):
     """Existing web login is required."""
+
+
+async def _read_json(response):
+    raw = bytearray()
+    while True:
+        chunk = await response.content.read(4097 - len(raw))
+        if not chunk:
+            break
+        raw.extend(chunk)
+        if len(raw) > 4096:
+            raise CannotConnect
+
+    def unique_object(pairs):
+        value = {}
+        for key, item in pairs:
+            if key in value:
+                raise ValueError("Duplicate field")
+            value[key] = item
+        return value
+
+    return json.loads(raw, object_pairs_hook=unique_object)
+
 
 class KatmedClient:
     def __init__(self, session, host, password, ssl_context, tls_server_name=None):
@@ -25,6 +49,15 @@ class KatmedClient:
         self._tls_server_name = tls_server_name or host
         self._token = None
 
+    def _accept_login(self, response, value):
+        cookie = response.cookies.get("katmed_session")
+        token = cookie.value if cookie else ""
+        if not isinstance(value, dict) or value.get("authenticated") is not True or value.get("setup_required") is not False:
+            raise InvalidAuth
+        if len(token) != 64 or any(c not in "0123456789abcdefABCDEF" for c in token):
+            raise InvalidAuth
+        self._token = token
+
     async def _request(self, method, path, body=None):
         headers = {"Origin": self.base}
         if self._token:
@@ -39,43 +72,22 @@ class KatmedClient:
                     raise InvalidAuth
                 if response.status != 200 or response.content_type != "application/json":
                     raise CannotConnect
-                raw = bytearray()
-                while True:
-                    chunk = await response.content.read(4097 - len(raw))
-                    if not chunk:
-                        break
-                    raw.extend(chunk)
-                    if len(raw) > 4096:
-                        raise CannotConnect
-                def unique_object(pairs):
-                    value = {}
-                    for key, item in pairs:
-                        if key in value:
-                            raise ValueError("Duplicate field")
-                        value[key] = item
-                    return value
-                value = json.loads(raw, object_pairs_hook=unique_object)
-                if path == "/api/login":
-                    cookie = response.cookies.get("katmed_session")
-                    token = cookie.value if cookie else ""
-                    if not isinstance(value, dict) or value.get("authenticated") is not True or value.get("setup_required") is not False:
-                        raise InvalidAuth
-                    if len(token) != 64 or any(c not in "0123456789abcdefABCDEF" for c in token):
-                        raise InvalidAuth
-                    self._token = token
+                value = await _read_json(response)
+                if path == _LOGIN_PATH:
+                    self._accept_login(response, value)
                 return value
-        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError, UnicodeError):
+        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
             raise CannotConnect from None
 
     async def read(self):
         if not self._token:
-            await self._request("POST", "/api/login", {"method": "password", "password": self._password})
+            await self._request("POST", _LOGIN_PATH, {"method": "password", "password": self._password})
         try:
             value = await self._request("GET", "/api/ha/status")
         except InvalidAuth:
             # A single session renewal; never retry a medical operation.
             self._token = None
-            await self._request("POST", "/api/login", {"method": "password", "password": self._password})
+            await self._request("POST", _LOGIN_PATH, {"method": "password", "password": self._password})
             value = await self._request("GET", "/api/ha/status")
         try:
             return Snapshot.parse(value)

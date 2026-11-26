@@ -1,0 +1,43 @@
+{
+  "component": "espressif/esp_lvgl_port",
+  "version": "2.9.0",
+  "origin": "ESP Component Registry; reviewed Katmed Command 143 diagnostic transfer",
+  "registry_component_hash": "d3c020b45c3dfc0d1706a83b63a1c34a6eb444a6e935f9afff79f92b7b94dcef",
+  "license": "Apache-2.0",
+  "license_sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+  "registry_inventory_sha256": "26efa00dfbb9c649d9a1fe526f5161f9fc9020f2cdbea51db0a990388ebac30e",
+  "prepared_inventory_sha256": "39f43a6e91f954f083db6497c07d22f7e592a6facbaee6d8330222b107947d47",
+  "adapter_sha256": "bf4a27829169aa696f1328d3756148a2b7d857d8d41fbb6bc8e31f06a075529b",
+  "changes": {
+    "CMakeLists.txt": {
+      "registry_sha256": "22d7db501dea05c95d53dc6242985c4e146b1d497b44ec47e7c254960c7a6987",
+      "command143_sha256": "3ea27b3a312462b0b3bcd66565db80b771ddc68745a01566133c3235f20a1deb",
+      "prepared_sha256": "3ea27b3a312462b0b3bcd66565db80b771ddc68745a01566133c3235f20a1deb"
+    },
+    "CMakeLists_v2.txt": {
+      "registry_sha256": "7d4aed3113df5ecfb66000ab1fa11d41128527446a5e90fd4a1ed5525576375a",
+      "command143_sha256": "49cdd48f8917bbfd751bf3113633cd147582949a660c401f0d15a5f9238cd8ae",
+      "prepared_sha256": "49cdd48f8917bbfd751bf3113633cd147582949a660c401f0d15a5f9238cd8ae"
+    },
+    "src/lvgl9/esp_lvgl_port_disp.c": {
+      "registry_sha256": "4a1bcfd9088b6216ff33509dfc15c86886426d545012568e2f21f77239c3b0f0",
+      "command143_sha256": "192f9444fc8e9f48455b0f383668d788eff7ef555b68e900d15d160b4c204816",
+      "prepared_sha256": "192f9444fc8e9f48455b0f383668d788eff7ef555b68e900d15d160b4c204816"
+    },
+    "include/esp_lvgl_port_c3_alarm_probe.h": {
+      "registry_sha256": null,
+      "command143_sha256": "0ad75f17db251ce1e20f8a2ae8b7bded7e9380f46be365d49aebc6cc4533b8ec",
+      "prepared_sha256": "90763997ac8da62d16ec01282011b03d716c82bdc9571f9ae372bbc5bfc9c5f3"
+    },
+    "priv_include/esp_lvgl_port_c3_alarm_probe_priv.h": {
+      "registry_sha256": null,
+      "command143_sha256": "ac06757d3e73ec787dd2ce3dcb00a0599edd7e09d3a3991c087323e282f09d5d",
+      "prepared_sha256": "8c420377362e80cd2e5c220226dd704551b32c99a3fa598c419b67e2cdcc14b4"
+    },
+    "src/lvgl9/esp_lvgl_port_c3_alarm_probe.c": {
+      "registry_sha256": null,
+      "command143_sha256": "0c73769beefc94d576f7ba5966beddb28d6ab8651c16340516b3a2c2d9cce017",
+      "prepared_sha256": "acaf708b4b3199d299f6ed0aab8eec91ee2f9edb51ec8dc9bf474d84d8975fa0"
+    }
+  }
+}

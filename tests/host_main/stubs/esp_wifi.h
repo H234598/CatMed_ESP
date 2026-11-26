@@ -1,7 +1,8 @@
 #ifndef KATMED_HOST_MAIN_ESP_WIFI_H
 #define KATMED_HOST_MAIN_ESP_WIFI_H
+#include <stdint.h>
 typedef enum {WIFI_MODE_NULL, WIFI_MODE_STA, WIFI_MODE_AP, WIFI_MODE_APSTA} wifi_mode_t;
-typedef struct {int unused;} wifi_ap_record_t;
+typedef struct {uint8_t bssid[6];} wifi_ap_record_t;
 static inline int esp_wifi_sta_get_ap_info(wifi_ap_record_t *ap)
 {(void)ap; return -1;}
 static inline int esp_wifi_get_mode(wifi_mode_t *mode)

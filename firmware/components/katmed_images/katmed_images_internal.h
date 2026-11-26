@@ -68,6 +68,8 @@ void katmed_images_clear_error(void);
 uint32_t katmed_images_asset_generation(void);
 void katmed_images_assets_changed(void);
 uint32_t katmed_images_open_file_count(void);
+void katmed_images_render_trace(KatmedRenderInnerPhase phase, bool begin,
+                                uint8_t outcome);
 
 #ifdef __cplusplus
 }

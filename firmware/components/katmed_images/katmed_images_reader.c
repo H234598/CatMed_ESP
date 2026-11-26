@@ -25,6 +25,23 @@ static KatmedImageTimingSample pack_hash_timing;
 static KatmedImageTimingSample variant_hash_timing;
 static atomic_uint_least32_t variant_sequence;
 static atomic_uint_least32_t asset_generation;
+/* Installed once during startup, before the request-serving main loop. The
+ * observer only copies fixed numeric phase/status values. */
+static KatmedRenderTraceObserver render_trace_observer;
+static void *render_trace_context;
+_Static_assert(KATMED_RENDER_IMAGE_STATUS_MAX==KATMED_IMAGE_BAD_STATE,
+               "fixed render status projection must match image status enum");
+void katmed_images_set_render_trace(KatmedRenderTraceObserver observer, void *context)
+{
+    render_trace_context=context;
+    render_trace_observer=observer;
+}
+void katmed_images_render_trace(KatmedRenderInnerPhase phase, bool begin,
+                                uint8_t outcome)
+{
+    if (render_trace_observer)
+        render_trace_observer(render_trace_context,phase,begin,outcome);
+}
 uint32_t katmed_images_asset_generation(void) { return atomic_load(&asset_generation); }
 void katmed_images_assets_changed(void) { atomic_fetch_add(&asset_generation, 1u); }
 
@@ -284,6 +301,7 @@ KatmedImageStatus katmed_images_read_variant(uint32_t index, uint32_t profile,
 
 KatmedImageStatus katmed_images_validate_variant(uint32_t index, uint32_t profile)
 {
+    katmed_images_render_trace(KATMED_RENDER_INNER_VARIANT_HASH,true,0);
     const uint32_t sequence=atomic_fetch_add_explicit(&variant_sequence,1,memory_order_relaxed)+1;
     const uint64_t start=monotonic_us();
     KatmedImageIoFailure failure={0}; /* Detail belongs only to this invocation. */
@@ -291,6 +309,7 @@ KatmedImageStatus katmed_images_validate_variant(uint32_t index, uint32_t profil
     if(!mounted || v == NULL) {
         KatmedImageStatus status=!mounted ? KATMED_IMAGE_UNAVAILABLE : KATMED_IMAGE_BAD_ID;
         publish_timing(&variant_hash_timing,complete_timing(start,status,failure,sequence));
+        katmed_images_render_trace(KATMED_RENDER_INNER_VARIANT_HASH,false,(uint8_t)status);
         return status;
     }
     uint8_t hash[32];
@@ -300,8 +319,11 @@ KatmedImageStatus katmed_images_validate_variant(uint32_t index, uint32_t profil
     publish_timing(&variant_hash_timing,complete_timing(start,status,failure,sequence));
     if(status != KATMED_IMAGE_OK) {
         katmed_images_record_error(status);
+        katmed_images_render_trace(KATMED_RENDER_INNER_VARIANT_HASH,false,(uint8_t)status);
         return status;
     }
+    katmed_images_render_trace(KATMED_RENDER_INNER_VARIANT_HASH,false,
+                               (uint8_t)KATMED_IMAGE_OK);
     return KATMED_IMAGE_OK;
 }
 

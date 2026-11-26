@@ -35,6 +35,13 @@
     "Digital mit Datum": "mI' jaj je",
     "Analog": "rep cha'meH ghopmey",
     "Status": "Dotlh",
+    "Zertifikatsfingerabdruck": "chaw' Degh",
+    "Geräte-ID": "jan ID",
+    "SHA-256": "SHA-256",
+    "DNS-SAN": "DNS-SAN",
+    "HTTP-Origin": "HTTP-Origin",
+    "IPv4 (WLAN AP)": "IPv4 (WLAN AP)",
+    "IPv4 (WLAN STA)": "IPv4 (WLAN STA)",
     "Zeiten": "poHmey",
     "Nächste Fälligkeit HH:MM": "Hergh poH veb HH:MM",
     "Sprachen": "Holmey",
@@ -154,9 +161,23 @@
     "WARNUNG: Nach Ihrer Bestätigung werden ausschließlich App-Testdaten gelöscht: katmed/state, mesh_history, names_ctl, names_view und zwei Mesh-Namensdateien. Bilder, Webzugang, Zertifikate und Gerätesicherheit bleiben erhalten. Ohne Bestätigung wird nichts gelöscht.": "GHUP: bIghobchu'DI' app wa'leS De' neH polHa'lu': katmed/state, mesh_history, names_ctl, names_view, mesh pong De' tetlhmey cha' je. mIllogh, web naw', chaw' 'angwI'mey, jan Hung je poltaHlu'. bIghobbe'chugh pagh polHa'lu'.",
     "Wartung abgeschlossen. Gerät angehalten; kein automatischer Neustart.": "Qapbe'Ha'moH rIn. jan mev; pang'eghbe'.",
     "Wartung angehalten. Keine weitere Löschung und kein normaler Start. Prüfbericht erforderlich.": "Qapbe'Ha'moH mev. latlh De' polHa'be'lu'; motlh taghbe'. wa'leS QonoS poQlu'.",
-    "Wartung vorbereiten": "Qapbe'Ha'moHrup"
+    "Wartung vorbereiten": "Qapbe'Ha'moHrup",
+    "Signal erfasst": "QIn qonlu'"
   },
   "web_dynamic": {
+    "Bisherige Serveridentität aktiv.": "De'wI' turwI' pong ngoqmey ngo' lo'lu'taH.",
+    "CA-Zertifikat ist zu groß.": "tInqu' CA Qoyje'.",
+    "Der Wechselzustand ist unklar. Der Dienst benötigt eine Wiederherstellung.": "choHmeH mIw Dotlh Sovlu'be'. pat tI'qa'lu'nIS.",
+    "Ein separat gespeicherter Vertrauensanker fehlt.": "voqmeH mung latlhDaq pollu'pu'bogh tu'lu'be'.",
+    "Für die Zertifikatsprüfung ist eine synchronisierte Uhr erforderlich.": "Qoyje' nuDmeH, rep rap ghajbogh rep jan poQlu'.",
+    "Serveridentität aktiviert und gespeichert.": "De'wI' turwI' pong ngoqmey lo'lu' 'ej pollu'pu'.",
+    "Status unbekannt.": "Dotlh Sovlu'be'.",
+    "Vertrauensanker gespeichert.": "voqmeH mung pollu'pu'.",
+    "Zertifikatskette oder Schlüssel hat ein ungültiges Format.": "Qoyje'mey rarbogh tetlh pagh ngaQHa'moHwI' lulo'meH mIw lughbe'.",
+    "Zertifikatskette, DNS-Name, Schlüssel oder Gültigkeit konnte nicht bestätigt werden.": "Qoyje'mey rarbogh tetlh, DNS pong, ngaQHa'moHwI' pagh 'oH lulo'laHlu' 'e' ghojlu'be'.",
+    "Übernahme ausstehend; die Verbindung kann kurz unterbrochen werden.": "choHmeH mIw rInbe'; rarmeH He poH mach retlhDaq mevlaH.",
+    "Übernahme ausstehend; nach der Unterbrechung erneut anmelden und den Status aktualisieren.": "choHmeH mIw rInbe'; rarmeH He Qapqa'DI', mab yIngaQHa'moHqa' 'ej Dotlh yIHevqa'.",
+    "Übernahme fehlgeschlagen; die vorherige Identität wird wiederhergestellt.": "choHmeH mIw lujpu'; pong ngoqmey ngo' tI'qa'lu'taH.",
     "Gerät: {0}": "jan: {0}",
     "Das Gerät ist derzeit nicht erreichbar.": "DaH janvam rarlaHbe'lu'.",
     "Die Anmeldung ist abgelaufen. Bitte erneut anmelden.": "mab naw' poH rInpu'. mab yIngaQHa'moHqa'.",
@@ -257,6 +278,15 @@
     "Einrichtung verlassen. Das Gerät startet offline; Mesh benötigt eine sichere Gruppe. Fehlende Uhrzeit lokal einstellen.": "chermeH mIw mejlu’. rarHa’taHvIS jan tagh; ghom QaD poQ mesh. poH tu’lu’be’chugh janDaq yIcher."
   },
   "web_static": {
+    "HTTPS-Serverzertifikat": "HTTPS De'wI' turwI' Qoyje'",
+    "Lege zuerst den getrennt geprüften Vertrauensanker fest. Der konfigurierte DNS-Name muss im Zertifikat stehen. Der Webdienst wird für den Wechsel kurz neu gestartet.": "wa'DIch voqmeH mung latlhDaq nuDlu'pu'bogh yIcher. Qoyje'Daq DNS pong cherlu'pu'bogh tu'lu'nIS. choHmeH, weQmoQnaQ pat taghqa'lu'; tugh taghqa'.",
+    "Privater P-256-Schlüssel (64 Hexzeichen)": "P-256 ngaQHa'moHwI' pegh (64 hex Deghmey)",
+    "Serveridentität übernehmen": "De'wI' turwI' pong yIlo'",
+    "Serverzertifikat und Zwischenzertifikate (PEM)": "De'wI' turwI' Qoyje', Qoyje'mey 'oHmey jojDaq tu'lu'bogh je (PEM)",
+    "Status aktualisieren": "Dotlh yIHevqa'",
+    "Status wird geladen.": "Dotlh Hevlu'taH.",
+    "Vertrauensanker (ein CA-Zertifikat als PEM)": "voqmeH mung (wa' CA Qoyje', PEM)",
+    "Vertrauensanker speichern": "voqmeH mung yIpol",
     "Eigener DNS-Name (FQDN, optional)": "jan DNS pong (FQDN, wIvlaH)",
     "Leer deaktiviert den DNS-Namen. Änderungen sind weiterhin über die Geräte-IP möglich.": "DNS pong chu'Ha'meH, yItebQo'. jan IP Daq lo'taHvIS, jan SeHmeH De' choHlaHtaH.",
     "KatMed · Einstellungen": "KatMed · jan SeHmeH De'",
@@ -293,7 +323,7 @@
     "Manuelles Datum und Uhrzeit (Europe/Berlin, ohne WLAN erforderlich)": "jaj poH je (Europe/Berlin, WiFi HutlhDI')",
     "Diese Einrichtungsverbindung endet nach Speichern. Gespeicherte WLAN-Profile behalten ihre Prioritäten.": "polDI' rarHa'. WiFi mIw yIpol.",
     "Netzwerkeinrichtung speichern": "rarmeH cher yIpol",
-    "Advanced": "mIw 'Itlh",
+    "Erweitert": "mIw 'Itlh",
     "Anzeige": "jIH",
     "Uhrdesign": "rep cha'meH mIw",
     "Digital groß": "mI' tIn",
@@ -369,6 +399,8 @@
     "Noch keine globale Nachtkopie": "HochvaD ram mIw ghItlhlu'pu'be'",
     "Einrichtung aktiv: Mesh pausiert. Speichern oder Einrichtung verlassen startet den Normalbetrieb neu.": "chermeH mIw QaptaH: mesh mevtaH. pol pagh mejDI' motlh mIw taghqa'.",
     "Einrichtung verlassen": "chermeH mIw yImej",
-    "Einrichtung verlassen und ein normaler Neustart löschen keine Daten.": "chermeH mIw meJlu'DI' motlh taghqa'DI' je De' Qaw'lu'be'."
+    "Einrichtung verlassen und ein normaler Neustart löschen keine Daten.": "chermeH mIw meJlu'DI' motlh taghqa'DI' je De' Qaw'lu'be'.",
+    "Datum und Uhrzeit": "jaj poH je",
+    "Vollständiges Berliner Datum und Uhrzeit eingeben; mehrdeutige oder fehlende Sommerzeitminuten sind ungültig.": "Berlin jaj poH je yIghItlh; poH muj yIlajQo'."
   }
 }

@@ -56,6 +56,20 @@ void katmed_runtime_metrics_log(const KatmedRuntimeMetricInput *input)
             input->jpeg_pool_valid,input->jpeg_pool_free,input->jpeg_pool_largest,input->touch_result);
 }
 
+void katmed_runtime_c3_touch_log(const KatmedRuntimeMetricInput *p,
+                                 uint64_t sequence, uint64_t boot_domain)
+{
+    if (!p || !p->c3_touch_present || !sequence || !boot_domain) return;
+    ESP_LOGI("katmed_c3_touch",
+        "schema=1 sample_seq=%" PRIu64 " uptime_ms=%" PRIu64 " boot_domain=%" PRIu64
+        " period=%" PRIu32 " coverage=%" PRIu32 " contact_state=%" PRIu32
+        " clean_release=%" PRIu32 " interrupted=%" PRIu32 " invalid=%" PRIu32
+        " stale=%" PRIu32 " overflow=%" PRIu32 " discard=%" PRIu32,
+        sequence,p->uptime_ms,boot_domain,p->c3_period,p->c3_coverage,
+        p->c3_contact_state,p->c3_clean_release,p->c3_interrupted,p->c3_invalid,
+        p->c3_stale,p->c3_overflow,p->c3_discard);
+}
+
 void katmed_runtime_evidence_log(const KatmedRuntimeEvidenceState *s,
                                  const KatmedRuntimeEvidenceHealth *h)
 {

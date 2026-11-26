@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import signal
 import sys
 import tempfile
 import unittest
@@ -81,13 +82,135 @@ def continuous(base=100_000, seconds=60):
                                   for n in range(1, seconds // 10 + 1)]
 
 
+def evidence_sample(uptime, sequence):
+    values = {"schema": 1, "sample_seq": sequence, "uptime_ms": uptime, "boot_domain": 1,
+              "image_v": 1, "store_v": 1, "mesh_v": 1}
+    rows = [(0, metric(uptime))]
+    for kind, keys in (("state", usb.STATE_KEYS), ("health", usb.HEALTH_KEYS)):
+        fields = " ".join(f"{key}={values.get(key, 0)}" for key in keys)
+        rows.append((0, f"I (123) katmed_{kind}: {fields}\n".encode("ascii")))
+    return rows
+
+
 class LongrunTests(unittest.TestCase):
-    def invoke(self, port, clock, directory, *, duration=60):
+    def invoke(self, port, clock, directory, *, duration=60, emit=lambda _: None):
         args = argparse.Namespace(port="/dev/serial/by-id/fake", expect_device=DEVICE,
                                   expect_firmware=FIRMWARE, expect_build=BUILD,
                                   evidence_dir=str(directory), duration_seconds=duration)
         return longrun.run_longrun(args, opener=lambda _: port, startup=lambda _: None,
-                                   monotonic=clock.mono, wall=clock.wall, emit=lambda _: None)
+                                   monotonic=clock.mono, wall=clock.wall, emit=emit)
+
+    def test_completion_is_published_only_after_one_successful_close(self):
+        for fail_close in (False, True):
+            with self.subTest(fail_close=fail_close):
+                self._check_completion_is_published_only_after_one_successful_close(fail_close)
+
+    def _check_completion_is_published_only_after_one_successful_close(self, fail_close):
+        with tempfile.TemporaryDirectory() as root:
+            clock = Clock()
+            port = FakeSerial(clock, schedule=continuous())
+            evidence = Path(root) / "run"
+            journal = evidence / "summary.json"
+            trace = []
+            original_close = port.close
+
+            def close():
+                trace.append(("close", json.loads(journal.read_text())["state"]))
+                if fail_close:
+                    raise OSError("synthetic close failure")
+                original_close()
+
+            def emit(_):
+                trace.append(("emit", port.closed, json.loads(journal.read_text())["state"]))
+
+            with mock.patch.object(port, "close", side_effect=close) as close_call:
+                if fail_close:
+                    with self.assertRaisesRegex(longrun.LongrunError, "nicht sicher geschlossen"):
+                        self.invoke(port, clock, evidence, emit=emit)
+                else:
+                    result = self.invoke(port, clock, evidence, emit=emit)
+                    self.assertEqual("complete", result["state"])
+            close_call.assert_called_once_with()
+            saved = json.loads(journal.read_text())
+            if fail_close:
+                self.assertEqual([("close", "running")], trace)
+                self.assertEqual("failed", saved["state"])
+                self.assertEqual("not_complete", saved["completion_qualification"])
+            else:
+                self.assertEqual([("close", "running"), ("emit", True, "complete")], trace)
+
+    def test_interrupt_on_first_line_after_acquisition_closes_once(self):
+        with tempfile.TemporaryDirectory() as root:
+            clock = Clock()
+            port = FakeSerial(clock)
+            evidence = Path(root) / "run"
+            emitted = []
+            acquisition_frames = (longrun.run_longrun.__code__, longrun._measure_and_close.__code__)
+            interrupted = []
+
+            def trace(frame, event, _arg):
+                if frame.f_code not in acquisition_frames:
+                    return None
+                if event == "line" and not interrupted and frame.f_locals.get("port") is port:
+                    interrupted.append(frame.f_code.co_name)
+                    signal.raise_signal(signal.SIGINT)
+                return trace
+
+            previous_trace = sys.gettrace()
+            previous_handler = signal.signal(signal.SIGINT, signal.default_int_handler)
+            try:
+                with mock.patch.object(port, "close", wraps=port.close) as close_call:
+                    sys.settrace(trace)
+                    with self.assertRaisesRegex(longrun.LongrunError, "Abbruch"):
+                        self.invoke(port, clock, evidence, emit=emitted.append)
+            finally:
+                sys.settrace(previous_trace)
+                signal.signal(signal.SIGINT, previous_handler)
+            self.assertEqual(1, len(interrupted))
+            close_call.assert_called_once_with()
+            self.assertTrue(port.closed)
+            self.assertEqual([], port.writes)
+            self.assertEqual([], emitted)
+            saved = json.loads((evidence / "summary.json").read_text())
+            self.assertEqual("failed", saved["state"])
+            self.assertEqual("not_complete", saved["completion_qualification"])
+
+    def test_finishing_reads_delayed_pair_before_success(self):
+        with tempfile.TemporaryDirectory() as root:
+            clock = Clock()
+            final_metric, final_state, final_health = evidence_sample(130_000, 2)
+            schedule = evidence_sample(100_000, 1) + [
+                (10, metric(110_000)), (10, metric(120_000)),
+                (10, final_metric[1]), final_state, (0.5, b""), (0.25, final_health[1]),
+            ]
+            port = FakeSerial(clock, schedule=schedule)
+            result = self.invoke(port, clock, Path(root) / "run", duration=30)
+            self.assertTrue(port.closed)
+            self.assertEqual(30.75, clock.now)
+            self.assertEqual("complete", result["state"])
+            self.assertEqual(2, result["evidence_samples"])
+            self.assertEqual(130_000, result["evidence_last_health"]["uptime_ms"])
+            self.assertEqual([b"KM1 STATUS\n"], port.writes)
+
+    def test_finishing_rejects_unsolicited_status_and_preserves_primary_error(self):
+        with tempfile.TemporaryDirectory() as root:
+            clock = Clock()
+            schedule = evidence_sample(100_000, 1) + [
+                (10, metric(110_000)), (10, metric(120_000)),
+                (10, metric(130_000)), (0, status()),
+            ]
+            port = FakeSerial(clock, schedule=schedule)
+            evidence = Path(root) / "run"
+            emitted = []
+            with mock.patch.object(port, "close", side_effect=OSError("synthetic close failure")) as close:
+                with self.assertRaisesRegex(longrun.LongrunError, "Unerwartete KM1-Antwort außerhalb"):
+                    self.invoke(port, clock, evidence, duration=30, emit=emitted.append)
+            close.assert_called_once_with()
+            self.assertEqual([], emitted)
+            saved = json.loads((evidence / "summary.json").read_text())
+            self.assertEqual("failed", saved["state"])
+            self.assertEqual("not_complete", saved["completion_qualification"])
+            self.assertEqual(1, saved["evidence_samples"])
 
     def test_48_hours_and_uptime_over_49_days(self):
         clock = Clock()

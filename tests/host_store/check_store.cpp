@@ -516,7 +516,7 @@ std::string hex(const uint8_t *data,size_t count) {
 }
 void test_usb() {
     Fake f{}; Store *s=fresh_store(); open(f,s);
-    StoreUsbStatusInfo info{"1.0.0","0123456789abcdef01234567",kDevice,CLOCK_UNAVAILABLE,{}};
+    StoreUsbStatusInfo info{"1.0.0","0123456789abcdef01234567",kDevice,CLOCK_UNAVAILABLE,{},false,0};
     char reply[256]{};
     const char status[]="KM1 STATUS\n";
     assert(store_usb_handle_line(s,status,sizeof(status)-1,&info,reply,sizeof(reply))==STORE_OK);
@@ -805,6 +805,43 @@ void test_display_local_copy_and_v13() {
 }
 
 }
+void test_usb_c3_probe_status() {
+    Fake f{}; Store *s=fresh_store(); open(f,s);
+    StoreUsbStatusInfo info{"511293c-dirty","29e7836a3afc62aadfd6ecb7",kDevice,
+                            CLOCK_UNAVAILABLE,{},false,0};
+    char reply[KATMED_STORE_USB_REPLY_MAX]{};
+    const char request[]="KM1 STATUS\n";
+    assert(store_usb_handle_line(s,request,sizeof(request)-1,&info,reply,sizeof(reply))==STORE_OK);
+    const std::string legacy=reply;
+    const unsigned writes=f.writes;
+    const uint32_t valid[]={0u,0x00086710u,0x001a84d2u,0x001ac4d2u,0x003d09c4u,0x00134000u};
+    for (uint32_t word : valid) {
+        info.c3_probe_present=true; info.c3_probe_word=word;
+        assert(store_usb_handle_line(s,request,sizeof(request)-1,&info,reply,sizeof(reply))==STORE_OK);
+        char suffix[16]{};
+        std::snprintf(suffix,sizeof(suffix)," c3p1=%08x\n",static_cast<unsigned>(word));
+        assert(std::string(reply)==legacy.substr(0,legacy.size()-1)+suffix);
+        assert(std::strlen(reply)<=256 && f.writes==writes);
+    }
+    const uint32_t invalid[]={0x00400000u,0x00018000u,0x00060000u,0x00082711u,
+                              1u,0x00020000u,0x00100000u,0x00200000u,0x00004000u,0x00080000u};
+    for (uint32_t word : invalid) {
+        info.c3_probe_word=word;
+        assert(store_usb_handle_line(s,request,sizeof(request)-1,&info,reply,sizeof(reply))==STORE_INVALID);
+        assert(std::strcmp(reply,"KM1 ERR STATUS\n")==0 && f.writes==writes);
+    }
+    info.c3_probe_present=false; info.c3_probe_word=UINT32_MAX;
+    assert(store_usb_handle_line(s,request,sizeof(request)-1,&info,reply,sizeof(reply))==STORE_OK);
+    assert(std::string(reply)==legacy);
+    const std::string firmware(24,'f'), build(24,'b');
+    info.firmware_version=firmware.c_str(); info.build_id=build.c_str();
+    info.clock_quality=CLOCK_SYNCHRONIZED;
+    s->record.pending_count=255; s->last_error=STORE_COMMIT_UNKNOWN;
+    info.c3_probe_present=true; info.c3_probe_word=0x003d09c4u;
+    assert(store_usb_handle_line(s,request,sizeof(request)-1,&info,reply,sizeof(reply))==STORE_OK);
+    assert(std::strlen(reply)==250 && f.writes==writes);
+}
+
 int main() {
     for (unsigned i=0;i<sizeof(catalog);++i) catalog[i]=static_cast<uint8_t>(i+1);
     test_night_policy_contacts();
@@ -821,5 +858,6 @@ int main() {
     test_manual_intent_migration_and_clear();
     test_boundaries_and_no_tick_writes();
     test_usb();
+    test_usb_c3_probe_status();
     std::puts("store host matrix passed");
 }

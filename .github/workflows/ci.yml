@@ -55,4 +55,8 @@ jobs:
           esp_idf_version: v6.1
           target: ${{ matrix.target }}
           extra_docker_args: -e CI=true
-          command: apt-get update && apt-get install -y python3-pil && python -m pip install Pillow==13.0.0 && tools/ci.sh firmware ${{ matrix.board }}
+          command: >-
+            apt-get update && apt-get install -y python3-pil &&
+            python -m pip install Pillow==13.0.0 &&
+            python3 tools/prepare_ci_host_submodules.py &&
+            tools/ci.sh firmware ${{ matrix.board }}

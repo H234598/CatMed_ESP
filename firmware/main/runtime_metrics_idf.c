@@ -5,9 +5,7 @@
 #include "freertos/task.h"
 #include "katmed_images.h"
 #include "katmed_ui.h"
-#if CONFIG_IDF_TARGET_ESP32C6
 #include "katmed_board.h"
-#endif
 #include <limits.h>
 #include <stddef.h>
 
@@ -35,6 +33,14 @@ void katmed_runtime_metrics_collect(uint64_t now_ms, KatmedRuntimeMetricInput *o
         out->lvgl_stack_valid = true;
     }
 
+#if CONFIG_IDF_TARGET_ESP32C3
+    const BoardC3TouchHealth c3 = board_c3_touch_health();
+    out->c3_touch_present = true;
+    out->c3_period = c3.period; out->c3_coverage = c3.coverage;
+    out->c3_contact_state = c3.contact_state; out->c3_clean_release = c3.clean_release;
+    out->c3_interrupted = c3.interrupted; out->c3_invalid = c3.invalid;
+    out->c3_stale = c3.stale; out->c3_overflow = c3.overflow; out->c3_discard = c3.discard;
+#endif
 #if CONFIG_IDF_TARGET_ESP32C6
     const BoardTouchDiagnostics touch = board_touch_diagnostics();
     out->native_diagnostic_valid = true;

@@ -1,4 +1,5 @@
 """Read-only local Katmed integration; requires agreed firmware snapshot endpoint."""
+from asyncio import CancelledError
 import ssl
 from functools import partial
 import aiohttp
@@ -11,21 +12,24 @@ from .coordinator import KatmedCoordinator
 async def async_setup_entry(hass, entry):
     try:
         context = await hass.async_add_executor_job(partial(ssl.create_default_context, cafile=entry.data.get(CONF_CA_FILE) or None))
-    except (OSError, ssl.SSLError):
+    except OSError:
         raise ConfigEntryNotReady("TLS trust configuration unavailable") from None
     session = aiohttp.ClientSession(cookie_jar=aiohttp.DummyCookieJar(), trust_env=False)
-    client = KatmedClient(session, entry.data["host"], entry.data["password"], context, entry.data.get(CONF_TLS_NAME))
-    coordinator = KatmedCoordinator(hass, entry, client)
     try:
+        client = KatmedClient(session, entry.data["host"], entry.data["password"], context, entry.data.get(CONF_TLS_NAME))
+        coordinator = KatmedCoordinator(hass, entry, client)
         await coordinator.async_config_entry_first_refresh()
         hass.data.setdefault(DOMAIN, {})[entry.entry_id] = (coordinator, session)
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
         async def close_on_stop(_event):
             await session.close()
         entry.async_on_unload(hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, close_on_stop))
-    except BaseException:
+    except BaseException as setup_error:
         hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
-        await session.close()
+        try:
+            await session.close()
+        except (Exception, CancelledError) as close_error:
+            setup_error.add_note(f"Session close failed during setup ({type(close_error).__name__})")
         raise
     return True
 

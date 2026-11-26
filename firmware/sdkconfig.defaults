@@ -25,3 +25,4 @@ CONFIG_MESH_LITE_ENABLE=y
 CONFIG_BRIDGE_EXTERNAL_NETIF_STATION=y
 # Ethernet is absent from these boards and outside the mesh-only scope.
 # CONFIG_BRIDGE_ETHERNET_NETIF_ENABLE is not set
+CONFIG_APP_RETRIEVE_LEN_ELF_SHA=24

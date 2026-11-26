@@ -9,6 +9,8 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from typing import cast
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools"))
@@ -40,18 +42,35 @@ def health(uptime: int, seq: int, *, domain=7, image_fail=0) -> bytes:
             " ".join(f"{k}={values[k]}" for k in usb.HEALTH_KEYS) + "\n").encode()
 
 
+def c3_touch(uptime: int, seq: int, *, domain=7, period=1, coverage=1):
+    values = dict.fromkeys(usb.C3_TOUCH_KEYS, 0)
+    values.update(schema=1, sample_seq=seq, uptime_ms=uptime, boot_domain=domain,
+                  period=period, coverage=coverage, contact_state=1, clean_release=2)
+    return ("I (123) katmed_c3_touch: " +
+            " ".join(f"{k}={values[k]}" for k in usb.C3_TOUCH_KEYS) + "\n").encode()
+
+
+def _record_bounded_history_step(i, result, mismatched_health, missing_health, rollback):
+    uptime = 100_000 + i * 10_000
+    result.extend([(0 if i == 0 else 10, metric(uptime)),
+                   (0, state(uptime, i + 1,
+                             round_sequence=2 if i < 2 else 3,
+                             due=200_000 if i < 2 else 250_000))])
+    if not (missing_health and i == 1):
+        if i == 0:
+            sample_domain = 0
+        elif rollback and i == 2:
+            sample_domain = 0
+        else:
+            sample_domain = 1
+        result.append((0, health(uptime + (1 if mismatched_health and i == 1 else 0),
+                                 i + 1, image_fail=(sample_domain))))
+
+
 def schedule(*, mismatched_health=False, missing_health=False, rollback=False):
     result = []
     for i in range(4):
-        uptime = 100_000 + i * 10_000
-        result.extend([(0 if i == 0 else 10, metric(uptime)),
-                       (0, state(uptime, i + 1,
-                                 round_sequence=2 if i < 2 else 3,
-                                 due=200_000 if i < 2 else 250_000))])
-        if not (missing_health and i == 1):
-            result.append((0, health(uptime + (1 if mismatched_health and i == 1 else 0),
-                                     i + 1, image_fail=(0 if i == 0 else
-                                                       (0 if rollback and i == 2 else 1)))))
+        _record_bounded_history_step(i, result, mismatched_health, missing_health, rollback)
     return result
 
 
@@ -67,6 +86,149 @@ class EvidenceTests(unittest.TestCase):
                                      wall=clock.wall, emit=lambda _: None)
         self.assertTrue(port.closed)
         return result
+
+    def test_c3_strict_parser_rejects_malformed_samples(self):
+        raw = c3_touch(100_000, 1).rstrip(b"\n")
+        self.assertEqual(2, usb._c3_touch_line(raw)["clean_release"])
+        for malformed in (raw + b" extra=1", raw.replace(b"period=1", b"period=4294967295"),
+                          raw.replace(b"coverage=1", b"coverage=2"),
+                          raw.replace(b"contact_state=1", b"contact_state=3"),
+                          raw.replace(b"sample_seq=1", b"sample_seq=0"),
+                          raw.replace(b"stale=0", b"stale=4294967296"),
+                          raw.replace(b"period=1 coverage=1", b"coverage=1 period=1"),
+                          raw[:-1]):
+            self.assertIsNone(usb._c3_touch_line(malformed))
+
+    def test_c3_strict_cycle_binding(self):
+        for variant in ("good", "missing", "duplicate", "domain", "sequence", "saturated"):
+            lines = self.cycle_binding_lines(variant)
+            with tempfile.TemporaryDirectory() as root:
+                result = self.invoke(lines, Path(root) / "run")
+                self.assertEqual("snapshot" if variant == "good" else "unknown",
+                                 result["c3_touch_coverage"], variant)
+                self.assertEqual(variant in ("good", "saturated"), result["c3_touch_last"] is not None,
+                                 variant)
+
+    @staticmethod
+    def cycle_binding_lines(variant):
+        lines = []
+        for i in range(4):
+            uptime, seq = 100_000 + i * 10_000, i + 1
+            lines.append((0 if i == 0 else 10, metric(uptime)))
+            if variant != "missing":
+                c3 = c3_touch(uptime, seq + (variant == "sequence"),
+                              domain=8 if variant == "domain" else 7)
+                if variant == "saturated":
+                    c3 = c3.replace(b"invalid=0", b"invalid=4294967295")
+                lines.append((0, c3))
+                if variant == "duplicate":
+                    lines.append((0, c3))
+            lines.extend([(0, state(uptime, seq)), (0, health(uptime, seq))])
+        return lines
+
+    def test_c3_bounded_adjacent_interval_and_late_lines(self):
+        cases = ("good", "period", "boot", "coverage_before", "coverage_after",
+                 "saturated_before", "saturated_after", "rollback", "missing_before",
+                 "sequence", "uptime", "late_duplicate", "late_foreign", "late_broken")
+        for variant in cases:
+            lines = self.bounded_interval_lines(variant)
+            with tempfile.TemporaryDirectory() as root:
+                clock = Clock()
+                args = argparse.Namespace(expect_device=DEVICE, expect_firmware=FIRMWARE,
+                    expect_build=BUILD, duration_seconds=30)
+                port = cast(usb.SerialPort, mock.create_autospec(usb.SerialPort, instance=True, spec_set=True))
+                recorder = longrun.Recorder(args, port, Path(root), clock.mono, clock.wall)
+                recorder.last_status_mono = 0
+                for delay, line in lines:
+                    clock.now += delay
+                    recorder._metric(line.rstrip(b"\n"))
+                result = recorder.summary
+                self.assertEqual("valid" if variant == "good" else "unknown",
+                                 result["c3_touch_interval"], variant)
+                if variant == "good":
+                    self.assertEqual(10, result["c3_touch_before"]["clean_release"])
+                    self.assertEqual(11, result["c3_touch_last"]["clean_release"])
+                    self.assertEqual(1, result["c3_touch_delta"]["clean_release"])
+                else:
+                    self.assertIsNone(result["c3_touch_before"], variant)
+                    self.assertIsNone(result["c3_touch_delta"], variant)
+                if variant.startswith("late_"):
+                    self.assertEqual("unknown", result["c3_touch_coverage"], variant)
+                    self.assertIsNone(result["c3_touch_last"], variant)
+                    saved = json.loads((Path(root) / "summary.json").read_text())
+                    self.assertEqual("unknown", saved["c3_touch_interval"])
+                    self.assertIsNone(saved["c3_touch_last"])
+
+    @staticmethod
+    def append_interval_sample(lines, variant, seq, uptime):
+        case = variant, seq
+        value = 10 if seq <= 3 else 11
+        if case == ("rollback", 4):
+            value = 9
+        period = 2 if case == ("period", 4) else 1
+        coverage = 0 if ((case == ("coverage_before", 3)) or
+                         (case == ("coverage_after", 4))) else 1
+        domain = 8 if case == ("boot", 4) else 7
+        sample_seq = seq - 1 if case == ("sequence", 4) else seq
+        sample_time = uptime - 1 if case == ("uptime", 4) else uptime
+        line = c3_touch(sample_time, sample_seq, domain=domain,
+                        period=period, coverage=coverage)
+        line = line.replace(b"clean_release=2", f"clean_release={value}".encode())
+        if ((case == ("saturated_before", 3)) or
+                (case == ("saturated_after", 4))):
+            line = line.replace(f"clean_release={value}".encode(),
+                                b"clean_release=4294967295")
+        lines.append((0, line))
+
+    def bounded_interval_lines(self, variant):
+        lines = []
+        for i in range(4):
+            uptime, seq = 100_000 + i * 9_000, i + 1
+            lines.append((0 if i == 0 else 9, metric(uptime)))
+            if not (variant == "missing_before" and seq == 3):
+                self.append_interval_sample(lines, variant, seq, uptime)
+            lines.extend([(0, state(uptime, seq)), (0, health(uptime, seq))])
+            if seq == 4 and variant.startswith("late_"):
+                late = c3_touch(uptime, seq, domain=8 if variant == "late_foreign" else 7)
+                if variant == "late_broken":
+                    late = late.replace(b"coverage=1", b"coverage=8")
+                lines.append((0, late))
+        return lines
+
+    @staticmethod
+    def append_reader_sample(rows, variant):
+        if variant != "legacy":
+            line = c3_touch(100_000, 2 if variant == "sequence" else 1,
+                            domain=8 if variant == "domain" else 7)
+            if variant == "broken":
+                line = line.replace(b"coverage=1", b"coverage=7")
+            rows.append(line)
+            if variant == "duplicate":
+                rows.append(line)
+
+    def test_bound_reader_c3_binding(self):
+        base = {"configured": 1, "durable": 1, "uptime_ms": 1, "domain": 7}
+        for variant in ("good", "legacy", "duplicate", "sequence", "domain", "broken"):
+            rows = [metric(100_000)]
+            self.append_reader_sample(rows, variant)
+            rows.extend((state(100_000, 1), health(100_000, 1)))
+            with (mock.patch.object(usb, "_drain_startup"),
+                  mock.patch.object(usb, "_bound_exchange", return_value="unused"),
+                  mock.patch.object(usb, "_bound_fields", return_value=dict(base))):
+                def call():
+                    pending = list(rows)
+                    port = mock.create_autospec(usb.SerialPort, instance=True)
+                    port.read_until.side_effect = lambda *args: pending.pop(0) if pending else b""
+                    return usb.read_boot_pair(cast(usb.SerialPort, port), expect_device=DEVICE,
+                        expect_firmware=FIRMWARE, expect_build=BUILD, expect_catalog="a" * 64,
+                        nonce_factory=lambda: "a" * 32, monotonic=lambda: 0)
+
+                if variant in ("good", "legacy"):
+                    result = call()
+                    self.assertEqual(variant == "good", "c3_touch" in result)
+                else:
+                    with self.assertRaises(usb.SetupError, msg=variant):
+                        call()
 
     def test_strict_fixed_numeric_parser(self):
         parsed = usb._evidence_line(state(100_000, 1).rstrip(b"\n"))

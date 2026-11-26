@@ -1,6 +1,7 @@
 """Offline regressions for owner-task cleanup, listener ownership and measurements."""
 from pathlib import Path
-import subprocess
+import shutil
+import subprocess  # nosec B404 - Runs host compilers, the test harness and the repository CLI.
 import tempfile
 import unittest
 import json
@@ -8,10 +9,9 @@ import test_acme_lifecycle as lifecycle
 import re
 import sys
 from test_acme_lifecycle import method, pending_client_fixture, observer_fixture
-from test_acme_ram import resource_capture, with_measurements
+from test_acme_ram import katmed_acme_ram as ram
+from test_acme_ram import resource_capture
 ROOT=Path(__file__).resolve().parents[2]
-sys.path.insert(0,str(ROOT/'tools'))
-import katmed_acme_ram as ram
 
 class Ownerfix3(unittest.TestCase):
     def test_global_and_task_local_lease_reset_and_restart_real_contexts(self):
@@ -144,8 +144,9 @@ bool katmed_reset_begin(int){
  assert(!web.nvs_open && web.auth==0 && web.identity==0);
  ++journal_saves;return true;
 }
-bool start_listeners(){web.started=true;web.redirect=1;server_alive=true;return true;}
-bool katmed_web_start(Services*){return start_listeners();}
+using esp_err_t = int;
+esp_err_t start_listeners(){web.started=true;web.redirect=1;server_alive=true;return ESP_OK;}
+esp_err_t katmed_web_start(Services*){return start_listeners();}
 void katmed_web_auth_tick(int*,uint64_t){}
 static bool management_enabled=true;
 void web_socket_diag_sample(uint64_t,bool){}
@@ -204,14 +205,28 @@ assert(leases()==0 && owned()==0);
 puts("actual_owner_retry_two_contexts_pending_response_reset_restart_lease_and_server=passed");
 }
 '''
+        cc, cxx = shutil.which("cc"), shutil.which("c++")
+        if not cc or not cxx or not Path(cc).is_absolute() or not Path(cxx).is_absolute():
+            raise RuntimeError("cc and c++ must resolve to absolute paths in the host test runner's PATH")
         with tempfile.TemporaryDirectory() as tmp:
-            tmp=Path(tmp);(tmp/'lease.c').write_text(c)
-            subprocess.run(['cc','-std=c11','-c',str(tmp/'lease.c'),'-o',str(tmp/'lease.o')],check=True,capture_output=True)
-            f=tmp/'test.cpp';f.write_text(pre+common+upstream_methods+adapter+observer+prepare+caller_stubs+callers+web_bodies+main)
-            result=subprocess.run(['c++','-std=c++17','-pthread',str(f),str(tmp/'lease.o'),'-o',str(tmp/'test')],capture_output=True)
+            tmp=Path(tmp)
+            (tmp/'lease.c').write_text(c)
+            # Use the compiler selected by the host runner. Inputs stay in this test's temporary directory.
+            subprocess.run(  # nosec B603
+                [cc,'-std=c11','-c',str(tmp/'lease.c'),'-o',str(tmp/'lease.o')],
+                check=True, capture_output=True,
+            )
+            f=tmp/'test.cpp'
+            f.write_text(pre+common+upstream_methods+adapter+observer+prepare+caller_stubs+callers+web_bodies+main)
+            # Fixed compiler arguments, with only this test's source and object as inputs.
+            result=subprocess.run(  # nosec B603
+                [cxx,'-std=c++17','-pthread',str(f),str(tmp/'lease.o'),'-o',str(tmp/'test')],
+                capture_output=True,
+            )
             self.assertEqual(0,result.returncode,result.stderr.decode())
             for args in ([],['reset']):
-                out=subprocess.run([str(tmp/'test'),*args],capture_output=True,timeout=15)
+                # Run the binary just built in this temporary directory with a fixed mode.
+                out=subprocess.run([str(tmp/'test'),*args],capture_output=True,timeout=15)  # nosec B603
                 self.assertEqual(0,out.returncode,out.stderr.decode())
                 self.assertIn(b'actual_owner_retry_two_contexts',out.stdout)
                 self.assertIn(b'phase=released status=error',out.stdout)
@@ -275,9 +290,10 @@ vTaskDelay(12000);probe_cpu_end();}
         short=[]
         for line in raw:
             if b'op=renewal' in line and b'event=end' in line:
-                line=re.sub(rb'end_seq=[0-9]+',b'end_seq=3',line)
+                line=re.sub(rb'end_seq=\d+',b'end_seq=3',line)
             short.append(line)
-        with self.assertRaises(ram.RamBenchError):ram.evaluate_resource(b''.join(short),'client')
+        with self.assertRaises(ram.RamBenchError):
+            ram.evaluate_resource(b''.join(short),'client')
 
     def test_actual_monitor_failure_cannot_be_hidden_by_later_success(self):
         ac=(ROOT/'firmware/components/katmed_acme/katmed_acme.cpp').read_text()
@@ -318,7 +334,8 @@ assert(deleted==1 && !probe_worker && acme_abort.load() && probe_cycle==1);}
 '''
         out=lifecycle.Lifecycle.compile_run(self,pre+observer+main)
         self.assertEqual(1,out.count(b'phase=released status=error'))
-        with self.assertRaises(ram.RamBenchError):ram.evaluate_resource(out,'baseline')
+        with self.assertRaises(ram.RamBenchError):
+            ram.evaluate_resource(out,'baseline')
 
     def test_actual_cpu_producer_invalid_and_overflow_windows(self):
         ac=(ROOT/'firmware/components/katmed_acme/katmed_acme.cpp').read_text()
@@ -347,12 +364,15 @@ probe_cpu_begin("after",2);tick+=12000000;tickless=true;probe_cpu_end();}
         _,records=ram._auxiliary_records(out)
         self.assertEqual([1,1,0,0,0,0,0,0],[r['valid'] for r in records])
         for record in records:
-            if record['window']=='active' and record['core']==0:self.assertEqual(0,record['idle_delta'])
+            if record['window']=='active' and record['core']==0:
+                self.assertEqual(0,record['idle_delta'])
 
     def test_resource_cli_writes_bounded_window_summary(self):
         with tempfile.TemporaryDirectory() as tmp:
-            tmp=Path(tmp);(tmp/'capture').write_bytes(resource_capture())
-            result=subprocess.run([sys.executable,str(ROOT/'tools/katmed_acme_ram.py'),
+            tmp=Path(tmp)
+            (tmp/'capture').write_bytes(resource_capture())
+            # The current interpreter runs the repository CLI with fixed flags and test paths.
+            result=subprocess.run([sys.executable,str(ROOT/'tools/katmed_acme_ram.py'),  # nosec B603
                 '--mode','resource','--variant','client','--input',str(tmp/'capture'),
                 '--output',str(tmp/'summary')],capture_output=True)
             self.assertEqual(0,result.returncode,result.stderr.decode())
@@ -377,17 +397,22 @@ probe_cpu_begin("after",2);tick+=12000000;tickless=true;probe_cpu_end();}
         ]
         for bad in changes:
             with self.subTest(case=bad[:80]):
-                with self.assertRaises(ram.RamBenchError):ram.evaluate_resource(bad,'client')
+                with self.assertRaises(ram.RamBenchError):
+                    ram.evaluate_resource(bad,'client')
         for field,value in ((b'start_seq',b'1'),(b'end_seq',b'2'),(b'op',b'download')):
-            bad=[];changed=False
+            bad=[]
+            changed=False
             for line in lines:
                 if not changed and b'op=issuance' in line and b'event=end' in line:
-                    line=re.sub(field+rb'=[a-z0-9]+',field+b'='+value,line);changed=True
+                    line=re.sub(field+rb'=[a-z0-9]+',field+b'='+value,line)
+                    changed=True
                 bad.append(line)
-            with self.assertRaises(ram.RamBenchError):ram.evaluate_resource(b''.join(bad),'client')
+            with self.assertRaises(ram.RamBenchError):
+                ram.evaluate_resource(b''.join(bad),'client')
         missing=b''.join(x for x in lines if b'katmed_acme_cpu:' not in x)
         self.assertEqual('incomplete',ram.evaluate_resource(missing,'client')['qualification'])
         missing=b''.join(x for x in lines if b'katmed_acme_window:' not in x)
         self.assertEqual('incomplete',ram.evaluate_resource(missing,'client')['qualification'])
 
-if __name__=='__main__':unittest.main()
+if __name__=='__main__':
+    unittest.main()

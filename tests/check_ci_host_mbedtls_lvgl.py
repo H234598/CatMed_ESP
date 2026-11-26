@@ -73,9 +73,18 @@ for name, content in (
     )
     require(
         '"${KATMED_MBEDTLS_SOURCE}/../port/include"' in content
-        and "build-c3/config" in content,
+        and '"${KATMED_HOST_CONFIG_DIR}"' in content
+        and "set(KATMED_HOST_CONFIG_DIR" in content,
         f"{name} must expose ESP-IDF port headers and generated sdkconfig to dependencies",
     )
+ci = (ROOT / "tools/ci.sh").read_text()
+require('export KATMED_HOST_CONFIG_DIR="${repo}/firmware/build-c3/config"' in ci
+        and 'export KATMED_HOST_LVGL_SOURCE="${repo}/firmware/build-c3/katmed-overrides/lvgl__lvgl"' in ci
+        and 'export KATMED_HOST_LVGL_INCLUDE="$KATMED_HOST_LVGL_SOURCE"' in ci,
+        "CI must bind the prepared LVGL and generated config paths")
+require("bash tests/host_board_cache_review/check_c3_touch_health.sh" in ci,
+        "CI host checks must execute the C3 touch health test")
+
 for name, content in (
     ("main host CMake", root_cmake),
     ("image host CMake", image_host_cmake),

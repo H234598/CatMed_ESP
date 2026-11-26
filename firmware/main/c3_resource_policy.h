@@ -2,11 +2,15 @@
 #define KATMED_C3_RESOURCE_POLICY_H
 
 /* Included by the full-stack main on both boards. Each HTTPS/HTTP server
- * owns a listen socket plus control receive/send sockets (six total); one
- * client on each needs two more. The ten-slot C3 build exhausted lwIP's
- * allocatable socket IDs during a Web accept. Match the existing C6 budget,
- * and reject retained sdkconfig values that override either board default. */
-#if defined(ESP_PLATFORM) && CONFIG_LWIP_MAX_SOCKETS < 12
+ * owns a listen socket plus control receive/send sockets (six total).
+ * Preserve a four-socket background allowance (not a measured owner census),
+ * one HTTP client and one C3 / two C6 HTTPS clients: twelve / thirteen total.
+ * Reject retained sdkconfig values that override either board default. */
+#if defined(ESP_PLATFORM) && defined(CONFIG_IDF_TARGET_ESP32C6) && CONFIG_IDF_TARGET_ESP32C6
+#if CONFIG_LWIP_MAX_SOCKETS < 13
+#error "C6_FULLSTACK_SOCKET_POLICY: require at least 13 lwIP sockets"
+#endif
+#elif defined(ESP_PLATFORM) && CONFIG_LWIP_MAX_SOCKETS < 12
 #error "FULLSTACK_SOCKET_POLICY: require at least 12 lwIP sockets"
 #endif
 

@@ -105,7 +105,70 @@ static BoardTouch latest_touch;
 static bool latest_valid;
 static int16_t latest_base_x, latest_base_y;
 static BoardIndevGate indev_gate = {.quarantined = true};
-#ifdef ESP_PLATFORM
+#if CONFIG_IDF_TARGET_ESP32C3
+static BoardC3TouchHealth c3_health;
+static bool c3_stale_seen;
+static bool c3_board_ready;
+static uint64_t c3_interrupt_generation;
+static void c3_increment(uint32_t *value) { if (*value != UINT32_MAX) ++*value; }
+static void c3_interrupt(void)
+{
+    if (c3_health.contact_state == 2) c3_increment(&c3_health.interrupted);
+    c3_health.contact_state = 0;
+    if (c3_interrupt_generation == UINT64_MAX) c3_health.coverage = 0;
+    else ++c3_interrupt_generation;
+}
+#if defined(ESP_PLATFORM) || defined(KATMED_C3_TOUCH_HOST_TEST)
+static void c3_period_start(void)
+{
+    uint32_t period = c3_health.period;
+    if (period < UINT32_MAX) ++period;
+    c3_health = (BoardC3TouchHealth){.period = period};
+    c3_health.coverage = period != UINT32_MAX && c3_board_ready;
+    c3_stale_seen = false;
+    c3_interrupt_generation = 0;
+}
+#endif
+#if defined(ESP_PLATFORM) || defined(KATMED_C3_TOUCH_HOST_TEST)
+/* Called under touch_lock after the read, at the real buffer decision. */
+static void c3_sample_finish(BoardTouchBuffer *buffer, bool generation_matches,
+                             uint32_t period, uint64_t interruption,
+                             BoardTouch sample, BoardResult result)
+{
+    if (!generation_matches) {
+        if (period && c3_health.coverage) {
+            c3_increment(&c3_health.discard); c3_interrupt();
+        }
+        return;
+    }
+    const bool was_overflow = buffer->overflow;
+    const bool full = buffer->count == BOARD_TOUCH_BUFFER_CAPACITY;
+    board_touch_buffer_push(buffer, sample, result);
+    if (!period || !c3_health.coverage || period != c3_health.period) return;
+    const bool uninterrupted = interruption == c3_interrupt_generation;
+    if (result != BOARD_OK) { c3_increment(&c3_health.invalid); c3_interrupt(); }
+    if (!was_overflow && full) { c3_increment(&c3_health.overflow); c3_interrupt(); }
+    else if (was_overflow) {
+        c3_interrupt();
+        if (uninterrupted && result == BOARD_OK && !sample.down)
+            c3_health.contact_state = 1;
+    } else if (!full && result == BOARD_OK && uninterrupted) {
+        if (!sample.down) {
+            if (c3_health.contact_state == 2) c3_increment(&c3_health.clean_release);
+            c3_health.contact_state = 1;
+        } else if (c3_health.contact_state == 1) c3_health.contact_state = 2;
+    }
+}
+#endif
+BoardC3TouchHealth board_c3_touch_health(void)
+{
+    portENTER_CRITICAL(&touch_lock);
+    BoardC3TouchHealth snapshot = c3_health;
+    portEXIT_CRITICAL(&touch_lock);
+    return snapshot;
+}
+#endif
+#if defined(ESP_PLATFORM) || defined(KATMED_C3_TOUCH_HOST_TEST)
 static TaskHandle_t touch_sampler_task;
 static volatile bool touch_sampler_active;
 static BoardTouchBuffer touch_samples;
@@ -113,6 +176,7 @@ static uint32_t touch_generation;
 static BoardBootGate boot_gate;
 static bool boot_input_ready;
 
+#ifdef ESP_PLATFORM
 BoardResult board_boot_button_init(void)
 {
     const gpio_config_t config = {
@@ -140,6 +204,7 @@ bool board_boot_button_high(void)
     return boot_input_ready && gpio_get_level(BOOT_GPIO) == 1;
 }
 
+#endif
 static void touch_sampler(void *argument)
 {
     (void)argument;
@@ -148,11 +213,20 @@ static void touch_sampler(void *argument)
         BoardTouch sample;
         portENTER_CRITICAL(&touch_lock);
         const uint32_t generation=touch_generation;
+#if CONFIG_IDF_TARGET_ESP32C3
+        const uint32_t period = c3_health.coverage ? c3_health.period : 0;
+        const uint64_t interrupt_generation = c3_interrupt_generation;
+#endif
         portEXIT_CRITICAL(&touch_lock);
         BoardResult result = board_read_touch(&sample);
         portENTER_CRITICAL(&touch_lock);
-        if (generation==touch_generation)
+#if CONFIG_IDF_TARGET_ESP32C3
+        c3_sample_finish(&touch_samples, generation == touch_generation,
+                         period, interrupt_generation, sample, result);
+#else
+        if (generation == touch_generation)
             board_touch_buffer_push(&touch_samples, sample, result);
+#endif
         portEXIT_CRITICAL(&touch_lock);
 #if CONFIG_IDF_TARGET_ESP32C6
         poll_orientation((uint64_t)(esp_timer_get_time()/1000));
@@ -174,11 +248,21 @@ BoardResult board_touch_sampler_start(void)
         touch_sampler_task = NULL;
         return BOARD_IO_ERROR;
     }
+#if CONFIG_IDF_TARGET_ESP32C3
+    portENTER_CRITICAL(&touch_lock);
+    c3_period_start();
+    portEXIT_CRITICAL(&touch_lock);
+#endif
     return BOARD_OK;
 }
 
 void board_touch_sampler_stop(void)
 {
+#if CONFIG_IDF_TARGET_ESP32C3
+    portENTER_CRITICAL(&touch_lock);
+    c3_interrupt(); c3_health.coverage = 0; c3_stale_seen = false;
+    portEXIT_CRITICAL(&touch_lock);
+#endif
     touch_sampler_active = false;
     /* Let an in-flight I2C read and its critical section finish first. */
     for (unsigned i = 0; touch_sampler_task && i < pdMS_TO_TICKS(500); ++i)
@@ -218,6 +302,11 @@ static void lv_touch_read(lv_indev_t *indev, lv_indev_data_t *data)
     base_x = latest_base_x;
     base_y = latest_base_y;
     bool stale = !valid || (uint64_t)(esp_timer_get_time() / 1000) - sample.monotonic_ms > 150;
+#if CONFIG_IDF_TARGET_ESP32C3
+    if (c3_health.coverage && valid && stale && !c3_stale_seen) {
+        c3_stale_seen = true; c3_increment(&c3_health.stale); c3_interrupt();
+    }
+#endif
     pressed = board_indev_gate_poll(&indev_gate, valid, sample.down, stale, &reset);
     portEXIT_CRITICAL(&touch_lock);
     if (touch_filter && !touch_filter(sample.down, sample.x, sample.y,
@@ -508,9 +597,13 @@ BoardResult board_set_orientation(Orientation orientation)
     portENTER_CRITICAL(&touch_lock);
     current_orientation = orientation;
     latest_valid = false;
-#ifdef ESP_PLATFORM
+#if defined(ESP_PLATFORM) || defined(KATMED_C3_TOUCH_HOST_TEST)
     ++touch_generation;
     touch_samples=(BoardTouchBuffer){0};
+#if CONFIG_IDF_TARGET_ESP32C3
+    c3_interrupt(); c3_stale_seen = false;
+    if (c3_health.coverage) c3_period_start();
+#endif
 #endif
     board_indev_gate_invalidate(&indev_gate);
     portEXIT_CRITICAL(&touch_lock);
@@ -569,6 +662,10 @@ BoardResult board_read_touch(BoardTouch *touch)
     touch_diagnostics.sample = !transfer_ok ? 4u : !read_ok ? 2u :
                                result == BOARD_OK ? 1u : 3u;
 #endif
+#if CONFIG_IDF_TARGET_ESP32C3
+    c3_stale_seen = false;
+    if (result != BOARD_OK && c3_health.coverage) c3_interrupt();
+#endif
     latest_touch = *touch;
     latest_valid = result == BOARD_OK;
     /* LVGL's slider recalculates on RELEASED before the UI callback. A valid
@@ -584,6 +681,11 @@ BoardResult board_read_touch(BoardTouch *touch)
 
 void board_deinit(void)
 {
+#if CONFIG_IDF_TARGET_ESP32C3
+    portENTER_CRITICAL(&touch_lock);
+    c3_interrupt(); c3_health.coverage = 0; c3_board_ready = false; c3_stale_seen = false;
+    portEXIT_CRITICAL(&touch_lock);
+#endif
     boot_input_ready = false;
 #ifdef ESP_PLATFORM
     board_touch_sampler_stop();
@@ -689,6 +791,11 @@ BoardResult board_init(lv_display_t **display)
     current_orientation = ORIENTATION_0;
     if (board_set_orientation(initial) != BOARD_OK) goto fail;
     if (board_set_backlight(true) != BOARD_OK) goto fail;
+#if CONFIG_IDF_TARGET_ESP32C3
+    portENTER_CRITICAL(&touch_lock);
+    c3_board_ready = true;
+    portEXIT_CRITICAL(&touch_lock);
+#endif
     *display = lv_display;
     return BOARD_OK;
 fail:

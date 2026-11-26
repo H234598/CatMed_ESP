@@ -3,6 +3,10 @@ project(katmed_ui_host LANGUAGES C CXX)
 
 set(ROOT "${CMAKE_CURRENT_LIST_DIR}/../../../../")
 set(UI "${CMAKE_CURRENT_LIST_DIR}/..")
+set(KATMED_HOST_CONFIG_DIR "${ROOT}/firmware/build-a61-c3/config" CACHE PATH "Generated C3 SDK config for host checks")
+set(KATMED_UI_HOST_LVGL_SOURCE "${ROOT}/firmware/build-a61-c3/katmed-overrides/lvgl__lvgl"
+    CACHE PATH "LVGL source for the existing host tests")
+option(KATMED_UI_HOST_LVGL_ONLY "Build only the LVGL host library" OFF)
 option(KATMED_UI_HOST_MEM34 "Exercise the firmware's 34 KiB LVGL pool" OFF)
 if(KATMED_UI_HOST_MEM34)
     set(LV_BUILD_CONF_PATH "${CMAKE_CURRENT_LIST_DIR}/lv_conf_34k.h" CACHE PATH "" FORCE)
@@ -13,7 +17,16 @@ endif()
 set(CONFIG_LV_BUILD_DEMOS OFF CACHE BOOL "" FORCE)
 set(CONFIG_LV_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(CONFIG_LV_USE_THORVG_INTERNAL OFF CACHE BOOL "" FORCE)
-add_subdirectory("${ROOT}/firmware/managed_components/lvgl__lvgl" "${CMAKE_CURRENT_BINARY_DIR}/lvgl")
+execute_process(COMMAND /usr/bin/python3 "${ROOT}/tools/prepare_iot_bridge_compat.py"
+    --verify-host-lvgl "${KATMED_UI_HOST_LVGL_SOURCE}"
+    RESULT_VARIABLE KATMED_HOST_LVGL_RESULT)
+if(NOT KATMED_HOST_LVGL_RESULT EQUAL 0)
+    message(FATAL_ERROR "Prepared host LVGL tree failed verification")
+endif()
+add_subdirectory("${KATMED_UI_HOST_LVGL_SOURCE}" "${CMAKE_CURRENT_BINARY_DIR}/lvgl")
+if(KATMED_UI_HOST_LVGL_ONLY)
+    return()
+endif()
 set(KATMED_I18N_FONT_SOURCES
     "${UI}/katmed_font_i18n_12.c" "${UI}/katmed_font_i18n_14.c")
 
@@ -140,7 +153,7 @@ set(ENABLE_PROGRAMS OFF CACHE BOOL "" FORCE)
 set(ENABLE_TESTING OFF CACHE BOOL "" FORCE)
 set(MBEDTLS_FATAL_WARNINGS OFF CACHE BOOL "" FORCE)
 include_directories("${KATMED_MBEDTLS_SOURCE}/../port/include"
-    "${ROOT}/firmware/build-c3/config")
+    "${KATMED_HOST_CONFIG_DIR}")
 add_subdirectory("${KATMED_MBEDTLS_SOURCE}" "${CMAKE_CURRENT_BINARY_DIR}/mbedtls" EXCLUDE_FROM_ALL)
 target_include_directories(tfpsacrypto PUBLIC "${KATMED_MBEDTLS_SOURCE}/../port/include")
 add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/refinement_catalog.c"
@@ -188,6 +201,32 @@ target_compile_options(check_ui_refinement PRIVATE -Wall -Wextra -Werror
 target_compile_features(check_ui_refinement PRIVATE cxx_std_17)
 target_link_options(check_ui_refinement PRIVATE -Wl,--gc-sections)
 target_link_libraries(check_ui_refinement PRIVATE lvgl m z tfpsacrypto)
+# The service regression reuses this existing real Main/UI/image fixture.
+# Only the Bridge and native WiFi route need their respective host SDK stubs.
+add_library(check_refinement_bridge OBJECT
+    "${ROOT}/firmware/components/katmed_config_bridge/katmed_config_bridge.c")
+target_include_directories(check_refinement_bridge PRIVATE
+    "${ROOT}/tests/host_config_bridge/stubs"
+    "${ROOT}/firmware/components/katmed_config_bridge/include"
+    "${ROOT}/firmware/components/katmed_core/include")
+target_compile_options(check_refinement_bridge PRIVATE -std=c11 -Wall -Wextra -Werror -pthread)
+add_library(check_refinement_wifi_route OBJECT
+    "${ROOT}/firmware/components/katmed_web/katmed_web_wifi.c"
+    "${ROOT}/tests/host_web_upload_wifi/check_wifi_render_route.c"
+    "${ROOT}/tests/host_web_upload_wifi/stubs/cJSON.c")
+target_include_directories(check_refinement_wifi_route PRIVATE
+    "${ROOT}/tests/host_web_upload_wifi/stubs"
+    "${ROOT}/firmware/components/katmed_web/include"
+    "${ROOT}/firmware/components/katmed_config_bridge/include"
+    "${ROOT}/firmware/components/katmed_core/include")
+target_compile_options(check_refinement_wifi_route PRIVATE
+    -std=c11 -Wall -Wextra -Werror -ffunction-sections -fdata-sections)
+target_sources(check_ui_refinement PRIVATE
+    $<TARGET_OBJECTS:check_refinement_bridge>
+    $<TARGET_OBJECTS:check_refinement_wifi_route>)
+target_link_libraries(check_ui_refinement PRIVATE pthread)
+add_test(NAME wifi_render_service COMMAND check_ui_refinement wifi_render_service
+    "${CMAKE_CURRENT_BINARY_DIR}/c3_image_stream_fixture.bin")
 foreach(mode IN ITEMS random save nav scroll scroll-status indices clock-menu tick)
     add_test(NAME ui_refinement_${mode} COMMAND check_ui_refinement ${mode}
         "${CMAKE_CURRENT_BINARY_DIR}/c3_image_stream_fixture.bin")
@@ -279,6 +318,9 @@ foreach(format IN ITEMS "240;240" "172;320" "320;172")
     add_test(NAME alarm_render_${width}x${height} COMMAND check_alarm_render ${width} ${height} "${CMAKE_CURRENT_BINARY_DIR}/c3_image_stream_fixture.bin")
 endforeach()
 
+add_test(NAME alarm_render_c3_single80 COMMAND check_alarm_render 240 240
+    "${CMAKE_CURRENT_BINARY_DIR}/c3_image_stream_fixture.bin" single80)
+
 # Neutral, unprovisioned/no-UTC settings must save through the real main/store.
 get_target_property(UNCONFIGURED_SOURCES check_settings_values SOURCES)
 list(REMOVE_ITEM UNCONFIGURED_SOURCES "${ROOT}/tests/host_store/check_settings_values.c")
@@ -315,7 +357,40 @@ foreach(format "240;240" "172;320" "320;172")
         COMMAND check_ui_surface uat-clock ${width} ${height})
     add_test(NAME ui_uat_reset_${width}x${height}
         COMMAND check_ui_surface uat-reset ${width} ${height})
+    if(KATMED_UI_HOST_MEM34 AND NOT width EQUAL 240)
+        foreach(phase IN ITEMS prepare warning)
+            add_test(NAME ui_reset_small_pool_${phase}_${width}x${height}
+                COMMAND check_ui_surface reset-small-pool ${width} ${height} ${phase})
+        endforeach()
+    endif()
 endforeach()
+
+if(KATMED_UI_HOST_MEM34)
+    add_test(NAME ui_settings_rotation_scroll_c6
+        COMMAND check_ui_surface settings-rotation-scroll)
+    add_test(NAME ui_settings_scroll_roundtrip_c6
+        COMMAND check_ui_surface settings-scroll-roundtrip)
+    add_test(NAME ui_settings_scroll_roundtrip_drag_c6
+        COMMAND check_ui_surface settings-scroll-roundtrip-drag)
+    add_test(NAME ui_status_scroll_roundtrip_c6
+        COMMAND check_ui_surface status-scroll-roundtrip)
+    add_test(NAME ui_status_scroll_roundtrip_drag_c6
+        COMMAND check_ui_surface status-scroll-roundtrip-drag)
+    add_test(NAME ui_status_scroll_columns_c3
+        COMMAND check_ui_surface status-scroll-columns-c3)
+    add_test(NAME ui_reset_language_rebuild
+        COMMAND check_ui_surface reset-language-rebuild)
+    foreach(from RANGE 0 3)
+        foreach(to RANGE 0 3)
+            if(NOT from EQUAL to)
+                foreach(phase IN ITEMS prepare warning)
+                    add_test(NAME ui_reset_rotation_${phase}_${from}_${to}
+                        COMMAND check_ui_surface reset-rotation ${from} ${to} ${phase})
+                endforeach()
+            endif()
+        endforeach()
+    endforeach()
+endif()
 
 # Startup cache work uses the target's unmodified LittleFS core on a RAM device.
 set(ALARM_LFS "${ROOT}/firmware/managed_components/joltwallet__littlefs/src/littlefs")

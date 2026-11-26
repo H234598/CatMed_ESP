@@ -24,6 +24,10 @@ int main(){
     assert(restored.count==1&&restored.ids[0]==11&&!restored.error);
     // A secret is intentionally absent from the format. RESET CONFIG keeps group.
     mesh_history_open(&restored,group,scratch);assert(restored.count==1);
+    MeshHistory failed_read{};
+    failed_read.backend={&memory,[](void *,uint8_t *,size_t *){return STORE_IO;},write};
+    mesh_history_open(&failed_read,group,scratch);
+    assert(failed_read.error&&failed_read.read_failed&&failed_read.count==0&&!failed_read.dirty);
     memory.failure=STORE_COMMIT_UNKNOWN;mesh_history_add(&h,22);mesh_history_commit(&h,scratch);
     assert(h.error&&!h.dirty&&memory.writes==2);
     mesh_history_commit(&h,scratch);assert(memory.writes==2&&h.error);

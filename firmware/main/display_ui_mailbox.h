@@ -6,7 +6,7 @@
 #else
 #define DISPLAY_MB_ZERO {0}
 #endif
-#define DISPLAY_MB_PAYLOAD .state=0,.preview_pending=false,.preview_value=0,.sequence=0,.request=DISPLAY_MB_ZERO,.result=UI_SUBMIT_UNAVAILABLE,.settings=DISPLAY_MB_ZERO,.night=DISPLAY_MB_ZERO
+#define DISPLAY_MB_PAYLOAD .emergency_pending=0,.emergency_observed=0,.emergency_failed=0,.state=0,.preview_pending=false,.preview_value=0,.sequence=0,.request=DISPLAY_MB_ZERO,.result=UI_SUBMIT_UNAVAILABLE,.settings=DISPLAY_MB_ZERO,.night=DISPLAY_MB_ZERO
 #ifdef ESP_PLATFORM
 #include "freertos/FreeRTOS.h"
 #define DISPLAY_MB_MUTEX portMUX_TYPE
@@ -24,6 +24,7 @@
  * under this lock: never Store, transport, LVGL, callbacks or allocation. */
 typedef struct {
     DISPLAY_MB_MUTEX lock;
+    uint64_t emergency_pending, emergency_observed, emergency_failed;
     unsigned state; /* 0 idle,1 queued,2 app-loop processing,3 result awaiting UI */
     bool preview_pending;
     uint8_t preview_value; /* 0 cancel; latest value replaces prior unconsumed preview */
@@ -33,6 +34,23 @@ typedef struct {
     KatmedDisplaySettings settings;
     KatmedNightCopyStatus night;
 } DisplayUiMailbox;
+/* Emergency counts are independent of the ordinary Store slot. Count every
+ * accepted press; never silently overflow or overwrite an unconsumed result. */
+static inline bool display_mb_emergency_submit(DisplayUiMailbox *m)
+{
+    DISPLAY_MB_LOCK(m);
+    const uint64_t room=UINT64_MAX-m->emergency_pending-m->emergency_observed-m->emergency_failed;
+    if(!room){DISPLAY_MB_UNLOCK(m);return false;}
+    ++m->emergency_pending;
+    DISPLAY_MB_UNLOCK(m);return true;
+}
+static inline void display_mb_emergency_results(DisplayUiMailbox *m,uint64_t *observed,uint64_t *failed)
+{
+    DISPLAY_MB_LOCK(m);
+    *observed=m->emergency_observed;*failed=m->emergency_failed;
+    m->emergency_observed=0;m->emergency_failed=0;
+    DISPLAY_MB_UNLOCK(m);
+}
 static inline bool display_mb_preview(DisplayUiMailbox *m,uint8_t value)
 {
     if(value>100)return false;

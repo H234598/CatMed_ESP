@@ -10,7 +10,9 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
+import tempfile
 
 
 SOURCE_HASH = "eed2df8383f3aee4a38011cc96f4124aeff4fa0c07abf26e24d8a451c0306a77"
@@ -129,12 +131,425 @@ def _prepare_idf6_napt(idf: Path, check_only: bool) -> None:
             raise ValueError("IDF 6.1 lwIP patch result differs from the checked-in output hash")
 
 
+# Canonical full-tree inventories derived from the registry-lock-verified originals
+# and the reviewed, once-prepared local override end states.
+OVERRIDE_TREE_HASHES = {
+    "dannybackx__acmeclient": "769203aa47cb72e33223c4410572b33bf528e51065c8c50c9ce19139a913f5b3",
+    "espressif__iot_bridge": "145e1a35b80364d48a4c5be68b09895c6b243408a80fa1f9cca055ff1a4f30df",
+    "lvgl__lvgl": "b2d56e41ae0c57e343ccec497cf08d6a5a01dfb702abaee95179dd0062676a86",
+}
+ORIGINAL_LOCK_HASHES = {
+    "esp32c3": "cffdac58ff00c3889ef5c32c4dcc55486ef07cfeb6dbb1c5102cbbb3f77d48ad",
+    "esp32c6": "40cc087b48cb8418166c7caee12f7d829d95f2a57dc52ae25124f6c1e9e0754d",
+}
+DIAGNOSTIC_PORT = "espressif__esp_lvgl_port"
+DIAGNOSTIC_MANIFEST = "katmed_c3_diagnostic_port"
+DIAGNOSTIC_COMPAT = Path(__file__).resolve().parents[1] / "firmware/compat"
+
+
+def _diagnostic_manifest():
+    return json.loads((DIAGNOSTIC_COMPAT / "esp-lvgl-port-2.9.0-c3-diagnostic.json").read_text())
+
+
+def _diagnostic_adapter(recipe):
+    delta = (DIAGNOSTIC_COMPAT / "esp-lvgl-port-2.9.0-c3-diagnostic.patch").read_bytes()
+    if hashlib.sha256(delta).hexdigest() != recipe["adapter_sha256"]:
+        raise ValueError("Development001 port adapter differs from the reviewed transfer")
+    return delta
+
+
+def _override_hashes(target, development001):
+    if not development001:
+        return OVERRIDE_TREE_HASHES
+    if target != "esp32c3":
+        raise ValueError("Development001 port requires ESP32-C3")
+    recipe = _diagnostic_manifest()
+    _diagnostic_adapter(recipe)
+    return {**OVERRIDE_TREE_HASHES, DIAGNOSTIC_PORT: recipe["prepared_inventory_sha256"]}
+
+
+def _prepare_diagnostic_port(path, component):
+    recipe = _diagnostic_manifest()
+    if (str(component.version) != recipe["version"] or
+            component.component_hash != recipe["registry_component_hash"]):
+        raise ValueError("Development001 port registry version or component hash differs")
+    if (_inventory_hash(path) != recipe["registry_inventory_sha256"] or
+            hashlib.sha256((path / "license.txt").read_bytes()).hexdigest() != recipe["license_sha256"]):
+        raise ValueError("Development001 port original inventory or license differs")
+    delta = _diagnostic_adapter(recipe)
+    # Apply only the reviewed adapter, in the unpublished build-local fetch.
+    env = {name: val for name, val in os.environ.items() if not name.startswith("GIT_")}
+    env["GIT_CEILING_DIRECTORIES"] = str(path.parent)
+    subprocess.run([_git_executable(), "apply", "--whitespace=nowarn", "-"],  # nosec B603
+                   cwd=path, input=delta, env=env, check=True)
+
+
+def _inventory_hash(root: Path) -> str:
+    if not root.is_dir() or root.is_symlink():
+        raise ValueError(f"Invalid override directory: {root}")
+    inventory = {}
+    for path in root.rglob("*"):
+        if path.is_symlink():
+            raise ValueError(f"Symlink in override tree: {path}")
+        if path.is_file():
+            inventory[path.relative_to(root).as_posix()] = hashlib.sha256(path.read_bytes()).hexdigest()
+        elif not path.is_dir():
+            raise ValueError(f"Unsupported override entry: {path}")
+    encoded = json.dumps(inventory, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _validate_override_lock(lock: Path, target: str, allowed: Path, originals: tuple[Path, ...]) -> None:
+    if not lock.is_absolute() or not allowed.is_absolute() or allowed.resolve() != allowed:
+        raise ValueError("Override lock directory must be a real absolute path")
+    if lock.parent != allowed or lock.name != f"override-{target.removeprefix('esp32')}.lock":
+        raise ValueError("Override lock must use the task-local target path")
+    if lock.is_symlink():
+        raise ValueError("Override lock must not be a symlink")
+    if lock.exists():
+        if not lock.is_file() or lock.stat().st_nlink != 1:
+            raise ValueError("Override lock must be an unaliased regular file")
+        if any(os.path.samefile(lock, original) for original in originals):
+            raise ValueError("Override lock aliases an original registry lock")
+
+
+def _git_executable() -> str:
+    executable = shutil.which("git")
+    if executable is None:
+        raise RuntimeError("Git is required to validate the SDK checkout")
+    return os.path.abspath(executable)
+
+
+def _git_status(path: Path) -> set[str]:
+    # The repository path is a separate argument to a fixed status command.
+    output = subprocess.check_output(  # nosec B603
+        [_git_executable(), "-C", str(path), "status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=none"],
+        env={**os.environ, "GIT_OPTIONAL_LOCKS": "0"},
+    )
+    return set(output.decode("utf-8").rstrip("\0").split("\0")) if output else set()
+
+
+def _validate_sdk_worktree(idf: Path) -> None:
+    idf = _validate_idf_scope(idf)
+    lwip = idf / "components/lwip/lwip"
+    mbedtls = idf / "components/mbedtls/mbedtls"
+    expected = {
+        idf: {" M components/lwip/lwip", " M components/mbedtls/mbedtls"},
+        lwip: {" M src/core/ipv4/ip4_napt.c"},
+        mbedtls: {"?? framework"},
+    }
+    for directory, permitted in expected.items():
+        if _git_status(directory) != permitted:
+            raise ValueError(f"Unexpected tracked, staged or untracked SDK state: {directory}")
+    framework = mbedtls / "framework"
+    if not framework.is_symlink() or framework.resolve(strict=True) != (mbedtls / "tf-psa-crypto/framework").resolve(strict=True):
+        raise ValueError("Unexpected mbedTLS framework link")
+    # The checkout is already validated; only Git status is read.
+    status = subprocess.check_output([_git_executable(), "-C", str(idf), "submodule", "status", "--recursive"], text=True,  # nosec B603
+                                     env={**os.environ, "GIT_OPTIONAL_LOCKS": "0"})
+    if any(not line.startswith(" ") for line in status.splitlines()):
+        raise ValueError("Unexpected uninitialized, conflicted or changed SDK submodule revision")
+
+
+def verify_override_end_state(root: Path, idf: Path, target: str, lock: Path, *,
+                              before_prepare: bool = False, development001: bool = False) -> None:
+    repo = Path(__file__).resolve().parents[1]
+    if target not in ORIGINAL_LOCK_HASHES:
+        raise ValueError("Unsupported target for override original binding")
+    allowed = root.parent
+    originals = tuple(repo / "firmware" / f"dependencies.{t}.lock" for t in sorted(ORIGINAL_LOCK_HASHES))
+    _validate_override_lock(lock, target, allowed, originals)
+    if root.is_symlink() or root != allowed / "katmed-overrides" or root.resolve() != root:
+        raise ValueError("Override root must be the real build-local directory")
+    original_lock = repo / "firmware" / f"dependencies.{target}.lock"
+    if hashlib.sha256(original_lock.read_bytes()).hexdigest() != ORIGINAL_LOCK_HASHES[target]:
+        raise ValueError("Original target registry lock differs from reviewed binding")
+    hashes = _override_hashes(target, development001)
+    if not before_prepare:
+        if not development001 and ((root / DIAGNOSTIC_PORT).exists() or (root / DIAGNOSTIC_PORT).is_symlink()):
+            raise ValueError("Unexpected Development001 port in a normal override tree")
+        for name, expected in hashes.items():
+            if _inventory_hash(root / name) != expected:
+                raise ValueError(f"Override end tree differs: {name}")
+    _verify_sdk_end_state(repo, idf)
+
+
+def _verify_sdk_end_state(repo: Path, idf: Path) -> None:
+    _prepare_idf6_napt(idf, check_only=True)
+    _validate_sdk_worktree(idf)
+    lwip = _validate_idf_scope(idf) / "components/lwip/lwip"
+    manifest = json.loads((repo / "firmware/compat/idf-6.1-lwip-napt-hooks.json").read_text())
+    if hashlib.sha256((lwip / manifest["source"]).read_bytes()).hexdigest() != manifest["source_sha256_after"]:
+        raise ValueError("IDF 6.1 lwIP patched end state required")
+    # The checked-in patch uses seven-digit object IDs; Git's automatic
+    # abbreviation length varies with the SDK repository's object count.
+    # The SDK path was validated above, and the diff switches are fixed.
+    diff = subprocess.check_output([_git_executable(), "-C", str(lwip), "diff", "--binary", "--abbrev=7"])  # nosec B603
+    if hashlib.sha256(diff).hexdigest() != manifest["patch_sha256"]:
+        raise ValueError("Unexpected lwIP working-tree diff")
+    mbedtls = _validate_idf_scope(idf) / "components/mbedtls/mbedtls"
+    # The Git revision query uses a fixed ref in the validated SDK checkout.
+    commit = subprocess.check_output([_git_executable(), "-C", str(mbedtls), "rev-parse", "HEAD"], text=True).strip()  # nosec B603
+    if commit != manifest["mbedtls_commit"]:
+        raise ValueError("mbedTLS revision differs from reviewed IDF binding")
+
+
+def _fetch_component(fetcher_type, component, pending: Path, path: Path) -> None:
+    # Manager 3.0 takes the parent directory, while 3.1 takes the component
+    # directory. Bind the effective destination before any download.
+    fetcher = fetcher_type(component, pending)
+    if fetcher.component_path != path:
+        fetcher = fetcher_type(component, path)
+    if fetcher.component_path != path:
+        raise ValueError("Component fetcher destination differs from the pending tree")
+    fetcher.download()
+
+
+def prepare_override_root(root: Path, idf: Path, target: str, lock: Path, *, development001: bool = False) -> None:
+    from idf_component_tools.hash_tools.validate import validate_hash_eq_hashfile, validate_hashfile_eq_hashdir
+    from idf_component_tools.lock.manager import LockManager
+    from idf_component_tools.sources.fetcher import ComponentFetcher
+    import prepare_acme_component
+    import prepare_lvgl_compat
+
+    verify_override_end_state(root, idf, target, lock, before_prepare=True, development001=development001)
+    if root.exists():
+        verify_override_end_state(root, idf, target, lock, development001=development001)
+        return
+    original = Path(__file__).resolve().parents[1] / "firmware" / f"dependencies.{target}.lock"
+    components = LockManager(original).load().solved_components
+    # A failed or interrupted fetch must never leave an incomplete published root.
+    # The private parent also keeps leftovers from an uncatchable termination out
+    # of the next attempt; only this invocation's directory is cleaned up.
+    with tempfile.TemporaryDirectory(prefix=".katmed-overrides-", dir=root.parent) as tmp:
+        pending = Path(tmp) / root.name
+        pending.mkdir()
+        for name, expected in _override_hashes(target, development001).items():
+            path = pending / name
+            component = components[name.replace("__", "/", 1)]
+            _fetch_component(ComponentFetcher, component, pending, path)
+            validate_hash_eq_hashfile(path, component.component_hash)
+            validate_hashfile_eq_hashdir(path)
+            if name == "dannybackx__acmeclient":
+                prepare_acme_component.apply(path)
+            elif name == "espressif__iot_bridge":
+                prepare(path)
+            elif name == DIAGNOSTIC_PORT:
+                _prepare_diagnostic_port(path, component)
+            else:
+                prepare_lvgl_compat.prepare(path)
+            if _inventory_hash(path) != expected:
+                raise ValueError(f"Prepared override differs from reviewed end tree: {name}")
+        if root.exists() or root.is_symlink():
+            raise ValueError("Override root appeared during preparation")
+        pending.rename(root)
+    verify_override_end_state(root, idf, target, lock, development001=development001)
+
+
+def _verify_registry_checkout(name, component, current, initial, firmware, graph):
+    from idf_component_tools.hash_tools.validate import validate_hash_eq_hashfile, validate_hashfile_eq_hashdir
+
+    if initial["component_hash"] != current.get("component_hash") or current["source"].get("type") != "service":
+        raise ValueError(f"Registry lock binding differs: {name}")
+    if initial["source"]["registry_url"].rstrip("/") != current["source"]["registry_url"].rstrip("/"):
+        raise ValueError(f"Registry URL differs: {name}")
+    path = (firmware / "managed_components" / component).resolve()
+    validate_hash_eq_hashfile(path, initial["component_hash"])
+    validate_hashfile_eq_hashdir(path)
+    if name == "bblanchon/arduinojson":
+        if str(path / "src") not in graph["arduinojson"]["include_dirs"]:
+            raise ValueError("ArduinoJson forwarding path differs")
+    elif Path(graph[component]["dir"]).resolve() != path:
+        raise ValueError(f"Registry graph path differs: {name}")
+
+
+def _verify_dependency_checkout(name, current, initial, root, firmware, graph, lock, development001):
+    component = name.replace("/", "__")
+    diagnostic = component == DIAGNOSTIC_PORT and development001
+    if component not in OVERRIDE_TREE_HASHES and not diagnostic:
+        _verify_registry_checkout(name, component, current, initial, firmware, graph)
+        return
+
+    path = root / component
+    if current["source"].get("type") != "local" or (lock.parent / current["source"]["path"]).resolve() != path:
+        raise ValueError(f"Override lock path differs: {name}")
+    if Path(graph[component]["dir"]).resolve() != path:
+        raise ValueError(f"Override graph path differs: {name}")
+    if diagnostic:
+        recipe = _diagnostic_manifest()
+        if initial["version"] != recipe["version"] or initial["component_hash"] != recipe["registry_component_hash"]:
+            raise ValueError("Development001 port lock origin differs")
+        lock_path = Path(os.path.abspath(lock.parent / current["source"]["path"]))
+        if lock_path != path or Path(graph[component]["dir"]) != path:
+            raise ValueError("Development001 port path aliases its prepared component")
+
+
+def _edge_bindings(entry):
+    return sorted((edge["name"], str(edge["version"]),
+                   tuple(rule["if"] for rule in edge.get("rules", [])))
+                  for edge in entry.get("dependencies", []))
+
+
+def _verify_resolved_components(old, new, root, firmware, graph, lock, development001):
+    for name, initial in old.items():
+        current = new[name]
+        if initial["version"] != current["version"]:
+            raise ValueError(f"Version changed: {name}")
+        if _edge_bindings(initial) != _edge_bindings(current):
+            raise ValueError(f"Dependency constraints changed: {name}")
+        if name == "idf":
+            continue
+        _verify_dependency_checkout(name, current, initial, root, firmware, graph, lock, development001)
+
+
+def _verified_config(build, allow_missing_config):
+    config_path = Path(json.loads((build / "project_description.json").read_text())["config_file"])
+    try:
+        config = config_path.read_text()
+    except FileNotFoundError:
+        if not allow_missing_config:
+            raise
+        config = None
+    if config is not None:
+        for symbol in ("FREETYPE", "LIBJPEG_TURBO", "LIBPNG", "LZ4"):
+            name = f"CONFIG_LV_USE_{symbol}"
+            matches = [line for line in config.splitlines() if line.startswith(name + "=") or line == f"# {name} is not set"]
+            if matches != [f"# {name} is not set"]:
+                raise ValueError(f"Original inactive dependency condition changed: {symbol}")
+    return config
+
+
+def _verify_graph_edges(firmware, graph, old):
+    import yaml
+    from idf_component_tools.semver import SimpleSpec, Version
+
+    active = {"target not in [esp32s2, esp32s3]": True,
+              "target in [esp32s2, esp32s3]": False, "idf_version >=5.1.4": True}
+    for symbol in ("FREETYPE", "LIBJPEG_TURBO", "LIBPNG"):
+        active[f"idf_version >=5.5 && $CONFIG{{LV_USE_{symbol}}} == True"] = False
+    active["idf_version >=5.5 && $CONFIG{LV_USE_LZ4} == True && $CONFIG{LV_USE_LZ4_INTERNAL} == False"] = False
+    def check_edge(source, name, spec):
+        if name not in old or Version(old[name]["version"]) not in SimpleSpec(str(spec)):
+            raise ValueError(f"Original version edge differs: {source} -> {name}: {spec}")
+    manifest = yaml.safe_load((firmware / "main/idf_component.yml").read_text())
+    for name, entry in manifest["dependencies"].items():
+        check_edge("main", name, entry if isinstance(entry, str) else entry["version"])
+    for source, entry in old.items():
+        _verify_dependency_edges(source, entry, active, graph, check_edge)
+
+
+def _verify_dependency_edges(source, entry, active, graph, check_edge):
+    for edge in entry.get("dependencies", []):
+        conditions = [rule["if"] for rule in edge.get("rules", [])]
+        if any(condition not in active for condition in conditions):
+            raise ValueError(f"Unknown original dependency condition: {conditions}")
+        if all(active[condition] for condition in conditions):
+            check_edge(source, edge["name"], edge["version"])
+            parent, child = source.replace("/", "__"), edge["name"].replace("/", "__")
+            if edge["name"] != "idf" and parent in graph:
+                if child not in graph[parent].get("reqs", []) + graph[parent].get("priv_reqs", []):
+                    raise ValueError(f"Original active graph edge missing: {source} -> {edge['name']}")
+
+
+def _verify_diagnostic_graph(firmware, graph, development001):
+    if not development001:
+        if DIAGNOSTIC_MANIFEST in graph:
+            raise ValueError("Unexpected Development001 manifest in the normal component graph")
+        return
+    manifest = graph.get(DIAGNOSTIC_MANIFEST)
+    if not manifest or Path(manifest["dir"]) != firmware / "compat" / DIAGNOSTIC_MANIFEST:
+        raise ValueError("Development001 manifest graph path differs")
+    for parent, dependency in (("main", DIAGNOSTIC_MANIFEST), (DIAGNOSTIC_MANIFEST, DIAGNOSTIC_PORT),
+                               ("board", DIAGNOSTIC_PORT), ("katmed_ui", DIAGNOSTIC_PORT)):
+        entry = graph[parent]
+        if dependency not in entry.get("reqs", []) + entry.get("priv_reqs", []):
+            raise ValueError(f"Development001 graph edge missing: {parent} -> {dependency}")
+
+
+def _verify_direct_graph_edges(graph, direct_dependencies):
+    main_edges = graph["main"].get("reqs", []) + graph["main"].get("priv_reqs", [])
+    for name in direct_dependencies:
+        if name == "idf":
+            continue
+        component = "arduinojson" if name == "bblanchon/arduinojson" else name.replace("/", "__")
+        if component not in main_edges:
+            raise ValueError(f"Direct graph edge missing: main -> {name}")
+
+
+def verify_override_graph(root: Path, target: str, lock: Path, build: Path, *,
+                          allow_missing_config: bool = False, development001: bool = False) -> None:
+    import yaml
+
+    repo = Path(__file__).resolve().parents[1]
+    firmware = repo / "firmware"
+    if development001 and target != "esp32c3":
+        raise ValueError("Development001 port requires ESP32-C3")
+    original = yaml.safe_load((firmware / f"dependencies.{target}.lock").read_text())
+    resolved = yaml.safe_load(lock.read_text())
+    if original["target"] != target or resolved["target"] != target:
+        raise ValueError("Unexpected target in dependency lock")
+    old, new = original["dependencies"], resolved["dependencies"]
+    if old.keys() != new.keys():
+        raise ValueError("Override lock dependency set differs")
+    if set(resolved["direct_dependencies"]) != set(original["direct_dependencies"]) | {"espressif/iot_bridge"}:
+        raise ValueError("Override lock direct dependency set differs")
+    graph = json.loads((build / "project_description.json").read_text())["build_component_info"]
+    _verify_direct_graph_edges(graph, resolved["direct_dependencies"])
+    _verify_resolved_components(old, new, root, firmware, graph, lock, development001)
+    if "espressif__iot_bridge" not in graph["espressif__mesh_lite"]["priv_reqs"] or "lvgl__lvgl" not in graph["espressif__esp_lvgl_port"]["reqs"]:
+        raise ValueError("Original transitive override edges missing")
+    config = _verified_config(build, allow_missing_config)
+    _verify_graph_edges(firmware, graph, old)
+    _verify_diagnostic_graph(firmware, graph, development001)
+    if development001 and not allow_missing_config:
+        from check_firmware_layout import require_old_c3_build
+        require_old_c3_build(repo, build, config, (build / "config/sdkconfig.h").read_text())
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--component", type=Path, required=True)
+    parser.add_argument("--component", type=Path)
+    parser.add_argument("--verify-override-root", type=Path)
+    parser.add_argument("--verify-host-lvgl", type=Path)
+    parser.add_argument("--prepare-override-root", type=Path)
+    parser.add_argument("--target", choices=sorted(ORIGINAL_LOCK_HASHES))
+    parser.add_argument("--override-lock", type=Path)
+    parser.add_argument("--verify-graph", type=Path)
+    parser.add_argument("--allow-missing-config", action="store_true")
+    parser.add_argument("--development001", action="store_true")
     parser.add_argument("--check-only", action="store_true")
     parser.add_argument("--idf", type=Path, default=Path(os.environ.get("IDF_PATH", ".")))
     args = parser.parse_args()
+    if args.verify_host_lvgl:
+        if any((args.component, args.verify_override_root, args.prepare_override_root,
+                args.target, args.override_lock, args.verify_graph, args.allow_missing_config,
+                args.development001, args.check_only)):
+            parser.error("host LVGL verification takes no other options")
+        if _inventory_hash(args.verify_host_lvgl) != OVERRIDE_TREE_HASHES["lvgl__lvgl"]:
+            raise ValueError("Host LVGL differs from the reviewed prepared tree")
+        print("Verified prepared host LVGL tree")
+        raise SystemExit(0)
+    if args.allow_missing_config and (not args.verify_override_root or not args.verify_graph):
+        parser.error("--allow-missing-config requires override and graph verification")
+    if args.prepare_override_root:
+        if not args.target or not args.override_lock or args.component or args.check_only or args.verify_override_root or args.verify_graph:
+            parser.error("override preparation requires target and lock")
+        prepare_override_root(args.prepare_override_root, args.idf, args.target, args.override_lock,
+                              development001=args.development001)
+        print("Verified registry originals, prepared override trees and SDK")
+        raise SystemExit(0)
+    if args.verify_override_root:
+        if not args.target or not args.override_lock or args.component or args.check_only:
+            parser.error("override verification requires --target and excludes --component/--check-only")
+        verify_override_end_state(args.verify_override_root, args.idf, args.target, args.override_lock,
+                                  development001=args.development001)
+        if args.verify_graph:
+            verify_override_graph(args.verify_override_root, args.target, args.override_lock, args.verify_graph,
+                                  allow_missing_config=args.allow_missing_config, development001=args.development001)
+        print("Verified original lock, full override end trees and patched IDF 6.1 state")
+        raise SystemExit(0)
+    if not args.component or args.target or args.override_lock or args.verify_graph or args.development001:
+        parser.error("--component is required outside override verification")
     print(prepare(args.component, args.check_only))
     _gate_legacy_lwip_patches(args.component / "CMakeLists.txt", args.check_only)
     _prepare_idf6_napt(args.idf, args.check_only)

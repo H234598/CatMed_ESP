@@ -71,29 +71,66 @@ elif [[ "$mode" == dependencies || "$mode" == firmware ]]; then
         -D "SDKCONFIG=$repo/firmware/build-$board/sdkconfig" \
         -D "SDKCONFIG_DEFAULTS=sdkconfig.defaults;boards/$board.defaults" "$action")
     if [[ "$mode" == firmware ]]; then
+        KATMED_IDF_BUILD="$repo/firmware/build-$board" KATMED_IDF_TARGET="$target" \
+            python tests/check_idf6_override_binding.py
         python tools/check_firmware_layout.py "$board"
         size=$(python -c "import csv; print(next(int(r[4].strip(),0) for r in csv.reader(open('firmware/boards/$board.partitions.csv')) if r and r[0]=='user_images'))")
         "firmware/build-$board/littlefs_py_venv/bin/python" tools/check_image_seed.py \
             --target "$board" --manifest assets/generated/manifest.json \
             --image "firmware/build-$board/user_images.bin" --size "$size"
+        if [[ "$board" == c3 ]]; then
+            diagnostic="$repo/firmware/build-c3-development001"
+            python tools/private_wifi_defaults.py \
+                --output "$diagnostic/generated/private_wifi_defaults.h" \
+                --ui-profile-output "$diagnostic/generated/katmed_private_ui_profile.h"
+            defaults='sdkconfig.defaults;boards/c3.defaults;security.defaults;boards/c3.security.defaults;boards/c3.development001.defaults'
+            (cd firmware && idf.py -B "$diagnostic" -D "IDF_TARGET=$target" \
+                -D "SDKCONFIG=$diagnostic/sdkconfig" -D "SDKCONFIG_DEFAULTS=$defaults" \
+                -D KATMED_C3_ALARM_DIAG=ON build)
+            python tools/check_firmware_layout.py c3 --build-dir "$diagnostic" \
+                --security-profile --old-c3-development001
+            python tests/check_c3_diagnostic_port.py "$diagnostic"
+        else
+            development="$repo/firmware/build-c6-development001"
+            python tools/private_wifi_defaults.py \
+                --output "$development/generated/private_wifi_defaults.h" \
+                --ui-profile-output "$development/generated/katmed_private_ui_profile.h"
+            defaults='sdkconfig.defaults;boards/c6.defaults;security.defaults;boards/c6.security.defaults;boards/c6.development001.defaults'
+            (cd firmware && idf.py -B "$development" -D "IDF_TARGET=$target" \
+                -D "SDKCONFIG=$development/sdkconfig" -D "SDKCONFIG_DEFAULTS=$defaults" \
+                -D KATMED_C6_DEVELOPMENT001=ON build)
+            python tools/check_firmware_layout.py c6 --build-dir "$development" \
+                --security-profile --c6-development001
+        fi
     fi
 elif [[ "$mode" == host ]]; then
     : "${IDF_PATH:?Use the ESP-IDF 6.1 runner environment}"
+    export KATMED_HOST_LVGL_SOURCE="${repo}/firmware/build-c3/katmed-overrides/lvgl__lvgl"
+    export KATMED_HOST_LVGL_INCLUDE="$KATMED_HOST_LVGL_SOURCE"
+    export KATMED_HOST_CONFIG_DIR="${repo}/firmware/build-c3/config"
     mbedtls_source="${IDF_PATH}/components/mbedtls/mbedtls"
     if [[ ! -f "${mbedtls_source}/include/mbedtls/ssl.h" ||
           ! -f "${mbedtls_source}/tf-psa-crypto/include/mbedtls/md.h" ]]; then
         echo 'Pinned ESP-IDF mbedTLS 4.1.0 public headers are missing from IDF_PATH.' >&2
         exit 1
     fi
+    python3 tests/host_persistence_review/check_usb_crlf.py
     python3 tests/check_crop_geometry.py
     python3 tests/host_private_wifi_defaults/check.py
     python3 tests/host_tooling_qlty58/test_tooling_contracts.py
+    python3 tests/host_i18n/check_catalog.py
+    python3 tools/build_i18n_assets.py display --check
     cmake -S . -B build-ci-host -G Ninja \
-        -DKATMED_MBEDTLS_SOURCE="${mbedtls_source}"
+        -DKATMED_MBEDTLS_SOURCE="${mbedtls_source}" \
+        -DKATMED_HOST_LVGL_SOURCE="${repo}/firmware/build-c3/katmed-overrides/lvgl__lvgl" \
+        -DKATMED_HOST_CONFIG_DIR="${repo}/firmware/build-c3/config" \
+        -DKATMED_LAYOUT_PYTHON="$(command -v python)"
     cmake --build build-ci-host -j 4
     ctest --test-dir build-ci-host --output-on-failure
     cmake -S firmware/components/katmed_ui/host -B build-ci-ui -G Ninja \
         -DKATMED_UI_HOST_MEM34=ON \
+        -DKATMED_UI_HOST_LVGL_SOURCE="${repo}/firmware/build-c3/katmed-overrides/lvgl__lvgl" \
+        -DKATMED_HOST_CONFIG_DIR="${repo}/firmware/build-c3/config" \
         -DKATMED_MBEDTLS_SOURCE="${mbedtls_source}"
     cmake --build build-ci-ui -j 4
     ctest --test-dir build-ci-ui --output-on-failure
@@ -101,6 +138,9 @@ elif [[ "$mode" == host ]]; then
     build-ci-ui/check_ui_surface 240 240 0 build-ci-ui/surface c3
     build-ci-ui/check_ui_surface 172 320 0 build-ci-ui/surface c6
     build-ci-ui/check_ui_surface 320 172 1 build-ci-ui/surface c6-landscape
+    build-ci-ui/check_ui_surface uat-certificate 240 240
+    build-ci-ui/check_ui_surface uat-certificate 172 320
+    build-ci-ui/check_ui_surface uat-certificate 320 172
     # Existing narrow main-contact check expects bootstrap tools at this path.
     host_bootstrap="$repo/build-ci-tools"
     mkdir -p "$host_bootstrap/bootstrap/bin"
@@ -108,6 +148,7 @@ elif [[ "$mode" == host ]]; then
     ln -sf "$(command -v ninja)" "$host_bootstrap/bootstrap/bin/ninja"
     KATMED_TOOLS_DIR="$host_bootstrap" bash tests/host_c3_alarm_render/check_alarm_panel_transfer.sh "$repo/build-ci-c3-alarm-panel-transfer"
     KATMED_TOOLS_DIR="$host_bootstrap" KATMED_BOARD_CACHE_BUILD_DIR="$repo/build-ci-board-cache" KATMED_BOARD_CACHE_ONLY_BRIGHTNESS=1 bash tests/host_board_cache_review/check_board_main_ui.sh
+    KATMED_BOARD_CACHE_BUILD_DIR="$repo/build-ci-board-cache" KATMED_TEST_BUILD_DIR="$repo/build-ci-board-cache/c3-health" bash tests/host_board_cache_review/check_c3_touch_health.sh
     bash tests/host_reset_physical/check.sh
     KATMED_TOOLS_DIR="$host_bootstrap" bash tests/host_reset_physical/check_ui.sh
     KATMED_TOOLS_DIR="$host_bootstrap" bash tests/host_main/check_main_contact.sh
@@ -122,11 +163,17 @@ elif [[ "$mode" == host ]]; then
     bash tests/host_web_auth/check_web_auth.sh
     python3 -m unittest discover -s tests/host_web_ui -p 'test_ap_host.py'
     node tests/host_web_ui/check_async_buttons.js
+    node tests/host_web_ui/check_async_buttons.js setup_time_source
     node tests/host_i18n/check_web_locale.js
     python3 tests/host_web_ui/check_contract.py
     python3 -m unittest discover -s tests/host_web_ui -p 'test_security_js_gzip.py'
     python3 -m unittest discover -s tests/host_web_ui -p 'test_security_js_handler.py'
     python3 -m unittest discover -s tests/host_web_ui -p 'test_network_startup.py'
+    python3 tests/host_web_ui/test_certificate_management.py
+    python3 -m unittest discover -s tests/host_web_ui -p 'test_language_owner.py'
+    python3 -m unittest discover -s tests/host_web_ui -p 'test_setup_time_source.py'
+    python3 -m unittest discover -s tests/host_web_ui -p 'test_wifi_status_diagnostics.py'
+    python3 -m unittest discover -s tests/host_web_ui -p 'test_emergency_owner.py'
     python3 tests/host_runtime_metrics/test_c3_resource_policy.py
     # This standalone main performs a real synthetic TLS handshake; discovery
     # only imports it. Build the pinned public SDK library and run it explicitly.
@@ -141,10 +188,32 @@ elif [[ "$mode" == host ]]; then
     KATMED_MBEDTLS_HOST_BUILD="$native_tls_build" \
         KATMED_MBEDTLS_HOST_CONFIG="$native_tls_config" \
         python3 tests/host_web_ui/test_tls_server_signature_policy.py
+    KATMED_MBEDTLS_HOST_BUILD="$native_tls_build" \
+        python3 tests/host_web_server_identity/check_bootstrap_snapshot.py
+    cjson_source="$repo/firmware/managed_components/espressif__cjson/cJSON"
+    if [[ ! -f "${cjson_source}/cJSON.c" || ! -f "${cjson_source}/cJSON.h" ]]; then
+        echo 'Pinned ESP-IDF cJSON 1.7.19 sources are missing from the resolved component tree.' >&2
+        exit 1
+    fi
+    printf '%s  %s\n%s  %s\n' \
+        298581a04a36c0165da4b0aade235c23088cb2faa58651d720ea2f3706ed0b0d \
+        "${cjson_source}/cJSON.c" \
+        25b0145150d500498e4d209cec69c18c42cf818bffcc54690be3b895a2a16dee \
+        "${cjson_source}/cJSON.h" | sha256sum --check --status || {
+        echo 'Resolved cJSON 1.7.19 source checksum mismatch.' >&2
+        exit 1
+    }
+    KATMED_MBEDTLS_HOST_BUILD="$native_tls_build" \
+        KATMED_CJSON_DIR="$cjson_source" \
+        python3 tests/host_web_server_identity/check_http_import.py
+    python3 -m unittest discover -s tests/host_web_server_identity -p 'test_certificate_cli.py'
+    python3 -m unittest discover -s tests/host_web_server_identity -p 'test_certificate_delivery.py'
+    python3 -m unittest discover -s tests/host_web_server_identity -p 'test_certificate_transport.py'
     # Lightweight adapter contracts only; the real HA Core fixture remains separate.
     python3 -m unittest discover -s tests/ha_integration -p 'test_adapter.py'
     bash tests/host_runtime_metrics/check_runtime_metrics.sh
     bash tests/host_store/check_main_submit.sh
+    KATMED_TEST_CHIP=6 bash tests/host_store/check_main_submit.sh orientation
     bash tests/host_mesh/check_engine.sh
     bash tests/host_mesh/check_status.sh
     bash tests/host_mesh/check_wire.sh

@@ -1,0 +1,334 @@
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -141,6 +141,11 @@
+     ${PORT_PATH}/esp_lvgl_port_disp.c
+     ${ADD_SRCS}
+     )
++idf_build_get_property(KATMED_C3_ALARM_DIAG KATMED_C3_ALARM_DIAG)
++if(KATMED_C3_ALARM_DIAG AND target STREQUAL "esp32c3" AND PORT_FOLDER STREQUAL "lvgl9")
++    target_sources(lvgl_port_lib PRIVATE "${PORT_PATH}/esp_lvgl_port_c3_alarm_probe.c")
++    target_compile_definitions(lvgl_port_lib PRIVATE KATMED_C3_ALARM_DIAG=1)
++endif()
+ target_include_directories(lvgl_port_lib PUBLIC "include")
+ target_include_directories(lvgl_port_lib PRIVATE "priv_include")
+ target_link_libraries(lvgl_port_lib PUBLIC
+--- a/CMakeLists_v2.txt
++++ b/CMakeLists_v2.txt
+@@ -63,6 +63,12 @@
+     "${PORT_PATH}/esp_lvgl_port.c"
+     "${PORT_PATH}/esp_lvgl_port_disp.c"
+ )
++idf_build_get_property(KATMED_C3_ALARM_DIAG KATMED_C3_ALARM_DIAG)
++idf_build_get_property(target IDF_TARGET)
++if(KATMED_C3_ALARM_DIAG AND target STREQUAL "esp32c3" AND PORT_FOLDER STREQUAL "lvgl9")
++    target_sources(${COMPONENT_TARGET} PRIVATE "${PORT_PATH}/esp_lvgl_port_c3_alarm_probe.c")
++    target_compile_definitions(${COMPONENT_TARGET} PRIVATE KATMED_C3_ALARM_DIAG=1)
++endif()
+ target_include_directories(${COMPONENT_TARGET} PUBLIC  "include")
+ target_include_directories(${COMPONENT_TARGET} PRIVATE "priv_include")
+ 
+--- a/src/lvgl9/esp_lvgl_port_disp.c
++++ b/src/lvgl9/esp_lvgl_port_disp.c
+@@ -18,6 +18,9 @@
+ #include "esp_lcd_panel_ops.h"
+ #include "esp_lvgl_port.h"
+ #include "esp_lvgl_port_priv.h"
++#if defined(KATMED_C3_ALARM_DIAG) && KATMED_C3_ALARM_DIAG
++#include "esp_lvgl_port_c3_alarm_probe_priv.h"
++#endif
+ 
+ #define LVGL_PORT_PPA   (CONFIG_LVGL_PORT_ENABLE_PPA)
+ 
+@@ -236,6 +239,9 @@
+     lvgl_port_display_ctx_t *disp_ctx = (lvgl_port_display_ctx_t *)lv_display_get_driver_data(disp);
+ 
+     lvgl_port_lock(0);
++#if defined(KATMED_C3_ALARM_DIAG) && KATMED_C3_ALARM_DIAG
++    lvgl_port_c3_alarm_probe_display_removed(disp);
++#endif
+     lv_disp_remove(disp);
+     lvgl_port_unlock();
+ 
+@@ -510,6 +516,9 @@
+ {
+     lv_display_t *disp_drv = (lv_display_t *)user_ctx;
+     assert(disp_drv != NULL);
++#if defined(KATMED_C3_ALARM_DIAG) && KATMED_C3_ALARM_DIAG
++    lvgl_port_c3_alarm_probe_color_done(disp_drv, panel_io);
++#endif
+     lv_disp_flush_ready(disp_drv);
+     return false;
+ }
+@@ -755,7 +764,16 @@
+             xSemaphoreTake(disp_ctx->trans_sem, portMAX_DELAY);
+         }
+     } else {
++#if defined(KATMED_C3_ALARM_DIAG) && KATMED_C3_ALARM_DIAG
++        (void)lvgl_port_c3_alarm_probe_draw(drv, disp_ctx->io_handle,
++            disp_ctx->panel_handle, offsetx1, offsety1,
++            offsetx2 + 1, offsety2 + 1, color_map,
++            disp_ctx->flags.swap_bytes,
++            disp_ctx->current_rotation == LV_DISPLAY_ROTATION_0 &&
++                !disp_ctx->flags.sw_rotate);
++#else
+         esp_lcd_panel_draw_bitmap(disp_ctx->panel_handle, offsetx1, offsety1, offsetx2 + 1, offsety2 + 1, color_map);
++#endif
+     }
+ 
+     if (disp_ctx->disp_type == LVGL_PORT_DISP_TYPE_RGB || (disp_ctx->disp_type == LVGL_PORT_DISP_TYPE_DSI
+--- /dev/null
++++ b/include/esp_lvgl_port_c3_alarm_probe.h
+@@ -0,0 +1,43 @@
++/* SPDX-License-Identifier: Apache-2.0 */
++/* One bounded C3 diagnostic on the pinned esp_lvgl_port 2.9.0 build. */
++#ifndef ESP_LVGL_PORT_C3_ALARM_PROBE_H
++#define ESP_LVGL_PORT_C3_ALARM_PROBE_H
++
++#include <stdbool.h>
++#include <stdint.h>
++#include "lvgl.h"
++
++typedef enum {
++    LVGL_C3_ALARM_PROBE_UNUSED = 0,
++    LVGL_C3_ALARM_PROBE_ARMED,
++    LVGL_C3_ALARM_PROBE_PREPARING,
++    LVGL_C3_ALARM_PROBE_PENDING,
++    LVGL_C3_ALARM_PROBE_COMPLETED,
++    LVGL_C3_ALARM_PROBE_UNKNOWN,
++} lvgl_c3_alarm_probe_state_t;
++
++typedef enum {
++    LVGL_C3_ALARM_PIXEL_UNOBSERVED = 0,
++    LVGL_C3_ALARM_PIXEL_COMPATIBLE_OR_UNKNOWN,
++    LVGL_C3_ALARM_PIXEL_OUTSIDE_FILL_HULL,
++} lvgl_c3_alarm_pixel_class_t;
++
++typedef struct {
++    lvgl_c3_alarm_probe_state_t state;
++    lvgl_c3_alarm_pixel_class_t pixel_class;
++    uint16_t phase_permyriad;
++    bool phase_valid;
++    bool sample_valid;
++    bool completion_valid;
++} lvgl_c3_alarm_probe_result_t;
++
++/* Call after each C3 alarm UI render under the existing LVGL lock. A second
++ * render before the first matching flush invalidates the original phase. */
++void lvgl_port_c3_alarm_probe_render_step(lv_display_t *display, bool eligible,
++                                           uint16_t phase_permyriad,
++                                           uint16_t expected_rgb565);
++
++/* Task-context snapshot. No raw pixel, buffer pointer or IO handle escapes. */
++bool lvgl_port_c3_alarm_probe_snapshot(lvgl_c3_alarm_probe_result_t *out);
++
++#endif
+--- /dev/null
++++ b/priv_include/esp_lvgl_port_c3_alarm_probe_priv.h
+@@ -0,0 +1,31 @@
++/* SPDX-License-Identifier: Apache-2.0 */
++#ifndef ESP_LVGL_PORT_C3_ALARM_PROBE_PRIV_H
++#define ESP_LVGL_PORT_C3_ALARM_PROBE_PRIV_H
++
++#include "esp_err.h"
++#include "esp_lcd_panel_io.h"
++#include "esp_lcd_panel_ops.h"
++#include "esp_lvgl_port_c3_alarm_probe.h"
++
++void lvgl_port_c3_alarm_probe_before_draw(lv_display_t *display,
++                                            esp_lcd_panel_io_handle_t io,
++                                            int x1, int y1, int x2, int y2,
++                                            const uint8_t *color_map,
++                                            bool swap_bytes,
++                                            bool orientation_zero);
++void lvgl_port_c3_alarm_probe_after_draw(lv_display_t *display,
++                                           esp_lcd_panel_io_handle_t io,
++                                           esp_err_t result);
++/* Called in the original Port IO callback, which still owns flush_ready. */
++void lvgl_port_c3_alarm_probe_color_done(lv_display_t *display,
++                                          esp_lcd_panel_io_handle_t io);
++void lvgl_port_c3_alarm_probe_display_removed(lv_display_t *display);
++lvgl_c3_alarm_pixel_class_t lvgl_port_c3_alarm_probe_classify_pixel(
++    uint16_t actual, uint16_t expected);
++/* This exact Port boundary delegates the unchanged LCD draw once. */
++esp_err_t lvgl_port_c3_alarm_probe_draw(lv_display_t *display,
++    esp_lcd_panel_io_handle_t io, esp_lcd_panel_handle_t panel,
++    int x1, int y1, int x2, int y2, uint8_t *color_map,
++    bool swap_bytes, bool orientation_zero);
++
++#endif
+--- /dev/null
++++ b/src/lvgl9/esp_lvgl_port_c3_alarm_probe.c
+@@ -0,0 +1,173 @@
++/* SPDX-License-Identifier: Apache-2.0 */
++/* Pinned, one-shot C3 alarm diagnostic for esp_lvgl_port 2.9.0.
++ * The IO callback remains owned by esp_lvgl_port_disp.c. */
++#include "esp_lvgl_port_c3_alarm_probe_priv.h"
++#include "freertos/FreeRTOS.h"
++#include "esp_attr.h"
++#include <stddef.h>
++
++#define PROBE_X 5
++#define PROBE_Y 90
++#define PROBE_OPA 217u
++
++typedef struct {
++    lvgl_c3_alarm_probe_result_t result;
++    lv_display_t *display;
++    esp_lcd_panel_io_handle_t io;
++    uint16_t expected_rgb565;
++} C3AlarmProbe;
++
++static portMUX_TYPE probe_mux = portMUX_INITIALIZER_UNLOCKED;
++static C3AlarmProbe probe;
++
++static bool channel_possible(unsigned actual, unsigned intended, unsigned maximum)
++{
++    /* Deliberately wider than the RGB565 rounding error. An inside-hull value
++     * is never interpreted as proof that an alarm strip was drawn. */
++    const int low = (int)(intended * PROBE_OPA / 255u) - 4;
++    const int high = (int)((intended * PROBE_OPA + maximum *
++                            (255u - PROBE_OPA) + 254u) / 255u) + 4;
++    return (int)actual >= low && (int)actual <= high;
++}
++
++lvgl_c3_alarm_pixel_class_t lvgl_port_c3_alarm_probe_classify_pixel(
++    uint16_t actual, uint16_t expected)
++{
++    const bool possible =
++        channel_possible((actual >> 11) & 31u, (expected >> 11) & 31u, 31u) &&
++        channel_possible((actual >> 5) & 63u, (expected >> 5) & 63u, 63u) &&
++        channel_possible(actual & 31u, expected & 31u, 31u);
++    return possible ? LVGL_C3_ALARM_PIXEL_COMPATIBLE_OR_UNKNOWN :
++                      LVGL_C3_ALARM_PIXEL_OUTSIDE_FILL_HULL;
++}
++
++void lvgl_port_c3_alarm_probe_render_step(lv_display_t *display, bool eligible,
++                                           uint16_t phase_permyriad,
++                                           uint16_t expected_rgb565)
++{
++    portENTER_CRITICAL(&probe_mux);
++    if (probe.result.state == LVGL_C3_ALARM_PROBE_UNUSED && eligible && display) {
++        probe.display = display;
++        probe.expected_rgb565 = expected_rgb565;
++        probe.result.phase_permyriad = phase_permyriad;
++        probe.result.phase_valid = true;
++        probe.result.state = LVGL_C3_ALARM_PROBE_ARMED;
++    } else if (probe.result.state == LVGL_C3_ALARM_PROBE_ARMED) {
++        /* A second UI state reached the display before this one was sampled. */
++        probe.result.phase_valid = false;
++        probe.result.state = LVGL_C3_ALARM_PROBE_UNKNOWN;
++    }
++    portEXIT_CRITICAL(&probe_mux);
++}
++
++void lvgl_port_c3_alarm_probe_before_draw(lv_display_t *display,
++                                            esp_lcd_panel_io_handle_t io,
++                                            int x1, int y1, int x2, int y2,
++                                            const uint8_t *color_map,
++                                            bool swap_bytes,
++                                            bool orientation_zero)
++{
++    portENTER_CRITICAL(&probe_mux);
++    if (probe.result.state == LVGL_C3_ALARM_PROBE_PENDING &&
++        probe.display == display) {
++        probe.result.state = LVGL_C3_ALARM_PROBE_UNKNOWN;
++    } else if (probe.result.state == LVGL_C3_ALARM_PROBE_ARMED &&
++               probe.display == display &&
++               x1 <= PROBE_X && PROBE_X < x2 &&
++               y1 <= PROBE_Y && PROBE_Y < y2) {
++        const int width = x2 - x1;
++        const int height = y2 - y1;
++        if (!orientation_zero || !io || !color_map ||
++            width <= 0 || width > 240 || height <= 0 || height > 80) {
++            probe.result.phase_valid = false;
++            probe.result.state = LVGL_C3_ALARM_PROBE_UNKNOWN;
++        } else {
++            const size_t offset = ((size_t)(PROBE_Y - y1) * (size_t)width +
++                                   (size_t)(PROBE_X - x1)) * 2u;
++            /* No buffer pointer or raw pixel is stored. The port has already
++             * done its rotation/byte swap and has not queued this draw yet. */
++            const uint16_t pixel = swap_bytes ?
++                ((uint16_t)color_map[offset] << 8) | color_map[offset + 1u] :
++                ((uint16_t)color_map[offset + 1u] << 8) | color_map[offset];
++            probe.result.pixel_class = lvgl_port_c3_alarm_probe_classify_pixel(pixel,
++                                                       probe.expected_rgb565);
++            probe.result.sample_valid = true;
++            probe.io = io;
++            probe.result.state = LVGL_C3_ALARM_PROBE_PREPARING;
++        }
++    } else if (probe.result.state == LVGL_C3_ALARM_PROBE_PREPARING &&
++               probe.display == display) {
++        probe.result.state = LVGL_C3_ALARM_PROBE_UNKNOWN;
++    }
++    portEXIT_CRITICAL(&probe_mux);
++}
++
++void lvgl_port_c3_alarm_probe_after_draw(lv_display_t *display,
++                                           esp_lcd_panel_io_handle_t io,
++                                           esp_err_t result)
++{
++    portENTER_CRITICAL(&probe_mux);
++    if (probe.result.state == LVGL_C3_ALARM_PROBE_PREPARING &&
++        probe.display == display && probe.io == io) {
++        probe.result.state = result == ESP_OK ? LVGL_C3_ALARM_PROBE_PENDING :
++                                                LVGL_C3_ALARM_PROBE_UNKNOWN;
++    }
++    portEXIT_CRITICAL(&probe_mux);
++}
++
++esp_err_t lvgl_port_c3_alarm_probe_draw(lv_display_t *display,
++    esp_lcd_panel_io_handle_t io, esp_lcd_panel_handle_t panel,
++    int x1, int y1, int x2, int y2, uint8_t *color_map,
++    bool swap_bytes, bool orientation_zero)
++{
++    lvgl_port_c3_alarm_probe_before_draw(display, io, x1, y1, x2, y2,
++                                          color_map, swap_bytes,
++                                          orientation_zero);
++    const esp_err_t result = esp_lcd_panel_draw_bitmap(panel, x1, y1,
++                                                        x2, y2, color_map);
++    lvgl_port_c3_alarm_probe_after_draw(display, io, result);
++    return result;
++}
++
++void IRAM_ATTR lvgl_port_c3_alarm_probe_color_done(lv_display_t *display,
++                                          esp_lcd_panel_io_handle_t io)
++{
++    /* This ISR-capable path only compares fixed fields under the existing
++     * FreeRTOS spinlock. It does not allocate, wait, log or touch DMA data. */
++    portENTER_CRITICAL_ISR(&probe_mux);
++    if (probe.result.state == LVGL_C3_ALARM_PROBE_PREPARING ||
++        probe.result.state == LVGL_C3_ALARM_PROBE_PENDING ||
++        probe.result.state == LVGL_C3_ALARM_PROBE_COMPLETED) {
++        if (probe.result.state == LVGL_C3_ALARM_PROBE_PENDING &&
++            probe.display == display && probe.io == io) {
++            probe.result.completion_valid = true;
++            probe.result.state = LVGL_C3_ALARM_PROBE_COMPLETED;
++        } else {
++            probe.result.completion_valid = false;
++            probe.result.state = LVGL_C3_ALARM_PROBE_UNKNOWN;
++        }
++    }
++    portEXIT_CRITICAL_ISR(&probe_mux);
++}
++
++void lvgl_port_c3_alarm_probe_display_removed(lv_display_t *display)
++{
++    portENTER_CRITICAL(&probe_mux);
++    if (probe.display == display) {
++        probe.display = NULL;
++        probe.io = NULL;
++        probe.result.phase_valid = false;
++        probe.result.completion_valid = false;
++        probe.result.state = LVGL_C3_ALARM_PROBE_UNKNOWN;
++    }
++    portEXIT_CRITICAL(&probe_mux);
++}
++
++bool lvgl_port_c3_alarm_probe_snapshot(lvgl_c3_alarm_probe_result_t *out)
++{
++    if (!out) return false;
++    portENTER_CRITICAL(&probe_mux);
++    *out = probe.result;
++    portEXIT_CRITICAL(&probe_mux);
++    return true;
++}

@@ -6,7 +6,12 @@ set(LV_BUILD_CONF_PATH "${UI}/host/lv_conf_34k.h" CACHE PATH "" FORCE)
 set(CONFIG_LV_BUILD_DEMOS OFF CACHE BOOL "" FORCE)
 set(CONFIG_LV_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(CONFIG_LV_USE_THORVG_INTERNAL OFF CACHE BOOL "" FORCE)
-add_subdirectory("${ROOT}/firmware/managed_components/lvgl__lvgl" "${CMAKE_CURRENT_BINARY_DIR}/lvgl")
+set(KATMED_HOST_LVGL_SOURCE "${ROOT}/firmware/build-a61-c3/katmed-overrides/lvgl__lvgl" CACHE PATH "Verified prepared LVGL tree")
+execute_process(COMMAND /usr/bin/python3 "${ROOT}/tools/prepare_iot_bridge_compat.py" --verify-host-lvgl "${KATMED_HOST_LVGL_SOURCE}" RESULT_VARIABLE lvgl_result)
+if(NOT lvgl_result EQUAL 0)
+    message(FATAL_ERROR "Prepared host LVGL tree failed verification")
+endif()
+add_subdirectory("${KATMED_HOST_LVGL_SOURCE}" "${CMAKE_CURRENT_BINARY_DIR}/lvgl")
 add_executable(check_reset_ui
     "${ROOT}/tests/check_ui_surface.c"
     "${UI}/navigation.c" "${UI}/clock_view.c" "${UI}/ui.c" "${UI}/morse.c"

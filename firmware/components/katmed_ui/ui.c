@@ -13,8 +13,14 @@
 #include "katmed_private_ui_profile.h"
 #endif
 #include "katmed_ui_defaults.h"
+#if defined(KATMED_C3_ALARM_DIAG) && KATMED_C3_ALARM_DIAG
+#include "esp_lvgl_port_c3_alarm_probe.h"
+#endif
 
 #include <stdio.h>
+#include <inttypes.h>
+#include <limits.h>
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 #ifdef ESP_PLATFORM
@@ -65,6 +71,11 @@ typedef struct {
     lv_obj_t *emergency_button;
     lv_obj_t *clock_view, *alarm_bar, *alarm_strips[ALARM_STRIPS], *alarm_text;
     lv_obj_t *settings, *status, *keypad, *feedback, *morse_layer, *reset_dialog;
+    lv_obj_t *certificate_button, *certificate_content;
+    lv_timer_t *certificate_timer;
+    UiCertificateStatus certificate;
+    uint64_t certificate_opened_ms;
+    unsigned certificate_serial;
     lv_obj_t *pairing_label, *settings_options;
     char pairing_code[7];
     lv_obj_t *entry_label, *preview_label;
@@ -82,7 +93,7 @@ typedef struct {
     SettingsMenu settings_menu;
     lv_obj_t *night_status;
     lv_obj_t *night_toggle;
-    bool reset_dialog_pressed;
+    bool reset_dialog_pressed, reset_settings_suspended;
     uint8_t reset_stage; /* 0 idle, 1 physical button tile, 2 warning. */
     char reset_token[33];
     size_t reset_token_length;
@@ -108,11 +119,27 @@ typedef struct {
     bool morse_color_valid;
     bool morse_shown_white;
     int32_t scroll_y[14]; /* Nine tiles and four independent settings submenus. */
+    lv_obj_t *clamped_scroll_panel;
     uint8_t status_scroll_slot;
     uint8_t applied_language;
 } UiContext;
 
 static UiContext ui = {.view = BACKGROUND, .grid = {1, 1}, .shown_clock_tick = INT64_MIN};
+static atomic_uint certificate_request;
+/* Main publishes before the ordinary 25 ms UI pass. Allow several passes
+ * before hiding a proof, even when Main can no longer call ui_render(). */
+#define CERTIFICATE_SAMPLE_MAX_AGE_MS 250u
+
+unsigned ui_certificate_status_request(void)
+{
+    return atomic_load(&certificate_request);
+}
+
+static void ui_trace(KatmedRenderInnerPhase phase, bool begin)
+{
+    if (ui.services.render_trace)
+        ui.services.render_trace(ui.services.context,phase,begin,0);
+}
 typedef struct {
     lv_display_t *display;
     UiBlinkRenderMetrics snapshot;
@@ -123,11 +150,15 @@ typedef struct {
     bool rendering;
 } BlinkMetricsState;
 static bool display_sleeping, wake_quarantine;
+static void close_certificate_status(bool restore_status);
 void ui_set_display_awake(bool awake)
 {
     if(display_sleeping==!awake)return;
     display_sleeping=!awake;
-    if(!awake)wake_quarantine=true;
+    if (!awake) {
+        wake_quarantine=true;
+        close_certificate_status(false);
+    }
     lv_display_t *display=lv_display_get_default();if(!display)return;
     lv_timer_t *timer=lv_display_get_refr_timer(display);
     if(timer){if(awake)lv_timer_resume(timer);else lv_timer_pause(timer);}
@@ -185,6 +216,28 @@ static void display_metrics_event(lv_event_t *event)
         blink_metrics.flushed_pixels = 0;
         break;
     case LV_EVENT_FLUSH_START:
+#if defined(KATMED_C3_ALARM_DIAG) && KATMED_C3_ALARM_DIAG
+        {
+            const lv_area_t *probe_area = lv_event_get_param(event);
+            if (probe_area && probe_area->x1 <= 5 && probe_area->x2 >= 5 &&
+                probe_area->y1 <= 90 && probe_area->y2 >= 90) {
+                AlarmAnimation probe_animation;
+                const bool eligible = ui.have_state && ui.view == ALARM &&
+                    ui.state.alarm_active && ui.local.orientation == ORIENTATION_0 &&
+                    app_alarm_animation(&ui.state, &ui.clock,
+                                        &probe_animation) == APP_OK &&
+                    (probe_animation.color == ALARM_COLOR_YELLOW ||
+                     probe_animation.color == ALARM_COLOR_RED) &&
+                    probe_animation.phase_permyriad >= 3800u &&
+                    probe_animation.phase_permyriad <= 4200u;
+                const uint16_t expected = eligible ? lv_color_to_u16(lv_color_hex(
+                    probe_animation.color == ALARM_COLOR_RED ? 0xd50000 : 0xffc107)) : 0u;
+                lvgl_port_c3_alarm_probe_render_step(blink_metrics.display,
+                    eligible, eligible ? probe_animation.phase_permyriad : 0u,
+                    expected);
+            }
+        }
+#endif
         if (blink_metrics.rendering) {
             const lv_area_t *area = lv_event_get_param(event);
             if (area && blink_metrics.flush_areas < UINT32_MAX)
@@ -251,6 +304,8 @@ static void update_status(void);
 static void build_settings(void);
 static void sync_settings_options(void);
 static void status_button(lv_event_t *event);
+static void open_certificate_status(lv_event_t *event);
+static void update_certificate_status(uint64_t now);
 static void settings_submenu_button(lv_event_t *event);
 static void language_select(lv_event_t *event);
 static void reset_open(lv_event_t *event);
@@ -277,6 +332,23 @@ static void remember_scroll(lv_obj_t *panel, unsigned slot)
 {
     if (panel && lv_obj_is_valid(panel) && slot < sizeof(ui.scroll_y)/sizeof(ui.scroll_y[0]))
         ui.scroll_y[slot] = lv_obj_get_scroll_y(panel);
+    if (panel == ui.clamped_scroll_panel)
+        ui.clamped_scroll_panel = NULL;
+}
+
+static void remember_scroll_before_rebuild(lv_obj_t *panel, unsigned slot)
+{
+    /* Rotation can hide part of the scroll range until the previous geometry returns. */
+    if (panel != ui.clamped_scroll_panel || ui.local.orientation == ui.screen_orientation)
+        remember_scroll(panel, slot);
+}
+
+static void scroll_panel_moved(lv_event_t *event)
+{
+    lv_obj_t *panel = lv_event_get_target(event);
+    lv_indev_t *indev = lv_indev_active();
+    if (panel == ui.clamped_scroll_panel && indev && lv_indev_get_scroll_obj(indev) == panel)
+        ui.clamped_scroll_panel = NULL;
 }
 
 static void restore_scroll(lv_obj_t *panel, unsigned slot)
@@ -291,11 +363,20 @@ static void restore_scroll(lv_obj_t *panel, unsigned slot)
     if (wanted < 0) wanted = 0;
     if (wanted > maximum) wanted = maximum;
     lv_obj_scroll_to_y(panel, wanted, LV_ANIM_OFF);
+    if (wanted < ui.scroll_y[slot]) {
+        ui.clamped_scroll_panel = panel;
+        lv_obj_add_event_cb(panel, scroll_panel_moved, LV_EVENT_SCROLL, NULL);
+    }
+}
+
+static unsigned settings_scroll_slot(void)
+{
+    return ui.settings_menu ? 8u + (unsigned)ui.settings_menu : 5u;
 }
 
 static void destroy_menu(void)
 {
-    remember_scroll(ui.settings, ui.settings_menu ? 8u + (unsigned)ui.settings_menu : 5u);
+    remember_scroll(ui.settings, settings_scroll_slot());
     if (ui.brightness_slider) cancel_brightness_preview();
     ui.brightness_slider=ui.brightness_percent=NULL;
     if (ui.settings) lv_obj_delete(ui.settings);
@@ -308,9 +389,11 @@ static void destroy_menu(void)
 
 static void destroy_settings(void)
 {
+    close_certificate_status(false);
     remember_scroll(ui.status, ui.status_scroll_slot);
     if (ui.status) lv_obj_delete(ui.status);
     ui.status = NULL;
+    ui.certificate_button = NULL;
     ui.status_from_home = false;
     destroy_menu();
 }
@@ -335,6 +418,7 @@ static const char *result_text(UiSubmitResult result)
     switch (result) {
     case UI_SUBMIT_COMMITTED: return T("Gespeichert");
     case UI_SUBMIT_QUEUED: return T("Änderung vorgemerkt");
+    case UI_SUBMIT_OBSERVED: return T("Signal erfasst");
     case UI_SUBMIT_DISMISSED: return T("Hinweis geschlossen");
     case UI_SUBMIT_PENDING: return T("Lokal gespeichert; Gruppe ausstehend");
     case UI_SUBMIT_PENDING_SHARED: return T("Koordinator prüft Änderung");
@@ -348,7 +432,13 @@ static const char *result_text(UiSubmitResult result)
 static UiSubmitResult submit(const UiRequest *request)
 {
     if (!ui.services.submit) return UI_SUBMIT_UNAVAILABLE;
-    return ui.services.submit(ui.services.context, request);
+    UiRequest intent=*request;
+    if(intent.kind==UI_REQUEST_CONFIRM || intent.kind==UI_REQUEST_DISMISS_BOOT ||
+       intent.kind==UI_REQUEST_SET_MEDICATION_SECONDS || intent.kind==UI_REQUEST_SET_IMAGE_SECONDS ||
+       intent.kind==UI_REQUEST_SET_NEXT_LOCAL_TIME || intent.kind==UI_REQUEST_SET_ROTATION_MODE){
+        intent.guard_model=true;intent.expected_round=ui.state.round;intent.expected_revision=ui.state.revision;
+    }
+    return ui.services.submit(ui.services.context, &intent);
 }
 
 static UiSubmitResult request_action(const UiRequest *request)
@@ -390,8 +480,18 @@ static UiSubmitResult request_action(const UiRequest *request)
 
 void ui_deferred_result(const UiRequest *request,UiSubmitResult result)
 {
-    /* Completion never closes a newly opened editor or resubmits an action. */
-    if(result==UI_SUBMIT_COMMITTED && ui.services.read_model)
+    /* Queued is not durable. Apply the original action's completion semantics
+     * only when the owner has actually executed that copied intent. */
+    if(request->kind==UI_REQUEST_CONFIRM && (result==UI_SUBMIT_COMMITTED || result==UI_SUBMIT_PENDING)){
+        ui.confirmed_round=true;ui.confirmed_id=request->guard_model ? request->expected_round : ui.state.round;
+        if(ui.morse_alarm_paused && same_round(ui.confirmed_id,ui.state.round))ui.morse_alarm_confirmed=true;
+    }
+    if(request->kind==UI_REQUEST_DISMISS_BOOT && result==UI_SUBMIT_DISMISSED){
+        ui.confirmed_round=true;ui.confirmed_id=request->guard_model ? request->expected_round : ui.state.round;
+    }
+    if(result==UI_SUBMIT_PENDING_SHARED){ui.shared_pending=true;ui.shared_result_status=0;}
+    if(result==UI_SUBMIT_STALE)ui.preview_valid=false;
+    if((result==UI_SUBMIT_COMMITTED || result==UI_SUBMIT_DISMISSED) && ui.services.read_model)
         ui.services.read_model(ui.services.context,&ui.state,&ui.local,&ui.clock);
     if(request->kind==UI_REQUEST_SET_BRIGHTNESS && ui.brightness_pending){
         ui.brightness_pending=false;
@@ -736,6 +836,12 @@ static void brightness_changed(lv_event_t *event)
         return;
     }
     if(code==LV_EVENT_PRESS_LOST){cancel_brightness_preview();sync_brightness_slider();return;}
+    if(code==LV_EVENT_INDEV_RESET){
+        /* The latest touch may expire without a fresh sample reaching Main. */
+        if(ui.brightness_dragging)cancel_brightness_preview();
+        sync_brightness_slider();
+        return;
+    }
     if(code!=LV_EVENT_RELEASED || !ui.brightness_dragging)return;
     ui.brightness_dragging=false;
     const uint16_t value=(uint16_t)lv_slider_get_value(slider);
@@ -975,7 +1081,7 @@ static void style_save(lv_event_t *event)
     UiRequest request = {.kind = UI_REQUEST_SET_CLOCK_STYLE};
     request.value.clock_style = ui.pending_style;
     UiSubmitResult result = request_action(&request);
-    if (result == UI_SUBMIT_COMMITTED) style_cancel(NULL);
+    if (result == UI_SUBMIT_COMMITTED || result == UI_SUBMIT_QUEUED) style_cancel(NULL);
     else if (ui.style_title) lv_label_set_text(ui.style_title, result_text(result));
 }
 
@@ -1069,8 +1175,147 @@ static void status_button(lv_event_t *event)
     lv_obj_t *title = label(ui.status, T("Status"), row_w);
     if (ui.height < 200)
         lv_obj_set_style_text_font(title, &katmed_font_12, 0);
+    if (ui.services.certificate_status) {
+        ui.certificate_button = button(ui.status, T("Zertifikatsfingerabdruck"), row_w, 40,
+                                       open_certificate_status, NULL);
+        lv_obj_set_style_text_font(lv_obj_get_child(ui.certificate_button, 0), &katmed_font_12, 0);
+    }
     update_status();
     restore_scroll(ui.status, ui.status_scroll_slot);
+}
+
+static void close_certificate_status(bool restore_status)
+{
+    if (!ui.certificate_content) return;
+    atomic_store(&certificate_request, 0);
+    if (ui.certificate_timer) lv_timer_delete(ui.certificate_timer);
+    ui.certificate_timer = NULL;
+    ui.certificate = (UiCertificateStatus){0};
+    ui.certificate_content = NULL;
+    ui.certificate_button = NULL;
+    if (ui.status && lv_obj_is_valid(ui.status)) lv_obj_delete(ui.status);
+    ui.status = NULL;
+    ++ui.overlay_generation;
+    if (ui.touch_down) ui.reject_contact = true;
+    if (restore_status && ui.view == UI_VIEW_STATUS) status_button(NULL);
+}
+
+static lv_obj_t *certificate_label(const char *text, bool literal)
+{
+    const int width = lv_obj_get_width(ui.certificate_content) - 4;
+    lv_obj_t *item = label(ui.certificate_content, text, width);
+    lv_obj_set_style_text_font(item, &katmed_font_12, 0);
+    if (literal) lv_obj_set_style_base_dir(item, LV_BASE_DIR_LTR, 0);
+    return item;
+}
+
+static void certificate_status_timer(lv_timer_t *timer)
+{
+    (void)timer;
+    update_certificate_status(ui.clock.monotonic_ms);
+}
+
+static void open_certificate_status(lv_event_t *event)
+{
+    (void)event;
+    if (!ui.status || ui.view != UI_VIEW_STATUS || ui.certificate_content ||
+        !ui.services.certificate_status || ui.state.alarm_active ||
+        display_sleeping || ui.reset_stage || ui.certificate_serial == UINT_MAX)
+        return;
+    remember_scroll(ui.status, ui.status_scroll_slot);
+    lv_obj_clean(ui.status);
+    ui.certificate_button = NULL;
+    lv_obj_set_layout(ui.status, LV_LAYOUT_NONE);
+    lv_obj_set_scrollable(ui.status, false);
+    lv_obj_set_style_pad_all(ui.status, 0, 0);
+    ui.certificate_content = lv_obj_create(ui.status);
+    const bool round = ui.width == 240 && ui.height == 240;
+    /* The entire scroll viewport, including its corners, fits the circle. */
+    const int x = round ? 48 : 10;
+    const int y = round ? 40 : 10;
+    lv_obj_t *content = ui.certificate_content;
+    lv_obj_remove_style_all(content);
+    lv_obj_set_pos(content, x, y);
+    lv_obj_set_size(content, ui.width - 2 * x, ui.height - 2 * y);
+    lv_obj_set_style_pad_all(content, 2, 0);
+    lv_obj_set_style_pad_row(content, 3, 0);
+    lv_obj_set_flex_flow(content, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_scroll_dir(content, LV_DIR_VER);
+    lv_obj_set_scroll_elastic(content, false);
+    lv_obj_set_scroll_momentum(content, false);
+    lv_obj_update_layout(content);
+    certificate_label(T("Zertifikatsfingerabdruck"), false);
+    certificate_label(T("nicht verfügbar"), false);
+    ui.certificate_timer = lv_timer_create(certificate_status_timer, 50, NULL);
+    if (!ui.certificate_timer) {
+        close_certificate_status(true);
+        return;
+    }
+    ui.certificate_opened_ms = ui.clock.monotonic_ms;
+    atomic_store(&certificate_request, ++ui.certificate_serial);
+}
+
+static void render_certificate_status(const UiCertificateStatus *status)
+{
+    lv_obj_clean(ui.certificate_content);
+    certificate_label(T("Zertifikatsfingerabdruck"), false);
+    certificate_label(T("SHA-256"), true);
+    static const char hex[] = {
+        '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'B', 'C', 'D', 'E', 'F'
+    };
+    char fingerprint[72];
+    size_t length = 0;
+    for (size_t i = 0; i < sizeof(status->sha256); ++i) {
+        if (i && i % 4 == 0) fingerprint[length++] = '\n';
+        fingerprint[length++] = hex[status->sha256[i] >> 4];
+        fingerprint[length++] = hex[status->sha256[i] & 15u];
+    }
+    fingerprint[length] = '\0';
+    certificate_label(fingerprint, true);
+    certificate_label(T("Geräte-ID"), false);
+    char id[17];
+    snprintf(id, sizeof(id), "%012" PRIX64, status->device);
+    certificate_label(id, true);
+    certificate_label(status->interface == UI_CERTIFICATE_AP ? T("IPv4 (WLAN AP)") :
+                                                            T("IPv4 (WLAN STA)"), true);
+    certificate_label(status->ipv4, true);
+    certificate_label(T("DNS-SAN"), true);
+    certificate_label(status->dns_san, true);
+    certificate_label(T("HTTP-Origin"), true);
+    certificate_label(*status->origin ? status->origin : T("nicht verfügbar"), !!*status->origin);
+}
+
+static void update_certificate_status(uint64_t now)
+{
+    if (!ui.certificate_content) return;
+    if (!ui.services.certificate_status || ui.reset_stage ||
+        now < ui.certificate_opened_ms || now - ui.certificate_opened_ms >= 90000u) {
+        close_certificate_status(true);
+        return;
+    }
+    UiCertificateStatus current = {0};
+    ui.services.certificate_status(ui.services.context, &current);
+    if (current.request != ui_certificate_status_request()) {
+        if (ui.certificate.request) close_certificate_status(true);
+        return;
+    }
+    if (lv_tick_elaps(current.sampled_tick) >= CERTIFICATE_SAMPLE_MAX_AGE_MS) {
+        if (ui.certificate.generation) close_certificate_status(true);
+        return;
+    }
+    if (!ui.certificate.request) {
+        ui.certificate = current;
+        if (current.generation) render_certificate_status(&current);
+    } else if (ui.certificate.generation != current.generation ||
+               ui.certificate.origin_revision != current.origin_revision ||
+               ui.certificate.device != current.device ||
+               ui.certificate.interface != current.interface ||
+               memcmp(ui.certificate.sha256, current.sha256, sizeof(current.sha256)) ||
+               strcmp(ui.certificate.ipv4, current.ipv4) ||
+               strcmp(ui.certificate.dns_san, current.dns_san) ||
+               strcmp(ui.certificate.origin, current.origin)) {
+        close_certificate_status(true);
+    }
 }
 
 static void open_setup(lv_event_t *event) {
@@ -1110,8 +1355,29 @@ static void update_night_status(void)
     if(strcmp(lv_label_get_text(ui.night_status),text)!=0)lv_label_set_text(ui.night_status,text);
 }
 
+static const lv_font_t *reset_caption_font(bool small)
+{
+    const lv_font_t *font = small ? &katmed_font_12 : &katmed_font_14;
+#if !KATMED_APPSTORE_MAINTENANCE
+    if (katmed_i18n_selected() != KATMED_LANG_AR) return font;
+    static lv_font_t arabic_small, arabic_normal;
+    lv_font_t *arabic = small ? &arabic_small : &arabic_normal;
+    if (!arabic->line_height) {
+        /* Arabic fallback glyphs require extra descender space in wrapped
+         * reset labels. Grow the line below the existing glyph origin. */
+        const int descender_space = small ? 2 : 3;
+        *arabic = *font;
+        arabic->line_height += descender_space;
+        arabic->base_line += descender_space;
+    }
+    font = arabic;
+#endif
+    return font;
+}
+
 static void build_settings(void)
 {
+    if (ui.reset_settings_suspended) return;
     retire_clock_for_menu();
     if (ui.settings) {
         lv_obj_set_hidden(ui.settings, false);
@@ -1187,7 +1453,7 @@ static void build_settings(void)
             rotation_map[0]=T("Aus");rotation_map[2]=T("Nach Namen");rotation_map[4]=T("Zufall");
             option_matrix(ui.settings, rotation_map, row_w, 3, false);
         }
-        restore_scroll(ui.settings, 8u + (unsigned)ui.settings_menu);
+        restore_scroll(ui.settings, settings_scroll_slot());
         if (ui.feedback && !lv_obj_is_hidden(ui.feedback))
             lv_obj_move_foreground(ui.feedback);
         return;
@@ -1249,9 +1515,17 @@ static void build_settings(void)
     label(ui.settings,T("Nachtmodus"),row_w);
     button(ui.settings,T("Nachtmodus einstellen"),row_w,40,settings_submenu_button,(void*)(intptr_t)SETTINGS_NIGHT);
     label(ui.settings, T("Reset"), row_w);
+#if KATMED_APPSTORE_MAINTENANCE
     button(ui.settings, T("Werkseinstellungen zurücksetzen"), row_w, 42,
            reset_open, NULL);
-    restore_scroll(ui.settings, 5);
+#else
+    lv_obj_t *reset = button(ui.settings, T("Werkseinstellungen zurücksetzen"),
+                             row_w, LV_SIZE_CONTENT, reset_open, NULL);
+    lv_obj_set_style_min_height(reset, 42, 0);
+    if (katmed_i18n_selected() == KATMED_LANG_AR)
+        lv_obj_set_style_text_font(lv_obj_get_child(reset, 0), reset_caption_font(false), 0);
+#endif
+    restore_scroll(ui.settings, settings_scroll_slot());
     if (ui.feedback && !lv_obj_is_hidden(ui.feedback))
         lv_obj_move_foreground(ui.feedback);
 }
@@ -1285,6 +1559,7 @@ static void reset_dialog_close(void)
     if (ui.reset_dialog) lv_obj_delete(ui.reset_dialog);
     ui.reset_dialog = NULL;
     ui.reset_dialog_pressed = false;
+    ui.reset_settings_suspended = false;
     ui.reset_stage = 0;
     volatile char *token = ui.reset_token;
     for (size_t i = 0; i < sizeof(ui.reset_token); ++i) token[i] = '\0';
@@ -1298,6 +1573,11 @@ static bool reset_abandon(void)
         !ui.services.reset_cancel(ui.services.context)) return false;
     reset_dialog_close();
     return true;
+}
+
+bool ui_prepare_display_rebuild(void)
+{
+    return reset_abandon();
 }
 
 static void reset_cancel(lv_event_t *event)
@@ -1335,6 +1615,14 @@ static void reset_open(lv_event_t *event)
         show_feedback(T("Reset nicht verfügbar"));
         return;
     }
+#if !KATMED_APPSTORE_MAINTENANCE
+    /* The opaque preparation tile replaces Settings in the LVGL pool.
+     * Keep its scroll position so the ordinary render can restore it. */
+    if (ui.settings) {
+        ui.reset_settings_suspended = true;
+        destroy_menu();
+    }
+#endif
     ui.reset_dialog = lv_obj_create(ui.screen);
     lv_obj_set_size(ui.reset_dialog, ui.width, ui.height);
     lv_obj_center(ui.reset_dialog);
@@ -1347,7 +1635,8 @@ static void reset_open(lv_event_t *event)
     label(ui.reset_dialog, T("C6 App-Testdaten-Wartung vorbereiten"), ui.width - 32);
     label(ui.reset_dialog, T("Nur App-Testdaten: vier katmed-Schlüssel und zwei Mesh-Namensdateien. Andere Daten bleiben erhalten. RESET drücken, während diese Kachel offen ist."), ui.width - 32);
 #else
-    label(ui.reset_dialog, T("Factory Reset vorbereiten"), ui.width - 32);
+    lv_obj_t *title = label(ui.reset_dialog, T("Factory Reset vorbereiten"), ui.width - 32);
+    lv_obj_set_style_text_font(title, reset_caption_font(false), 0);
     lv_obj_t *instruction_view = lv_obj_create(ui.reset_dialog);
     lv_obj_set_width(instruction_view, ui.width - 32);
     lv_obj_set_height(instruction_view, 1);
@@ -1361,10 +1650,13 @@ static void reset_open(lv_event_t *event)
     lv_obj_t *instruction = label(instruction_view,
           T("Um den Factory Reset durchzuführen, bitte die RESET-Taste links oben auf der Rückseite des Displays drücken, während diese Kachel offen ist."),
           ui.width - 32);
-    lv_obj_set_style_text_font(instruction, &katmed_font_14, 0);
+    lv_obj_set_style_text_font(instruction, reset_caption_font(false), 0);
 #endif
     lv_obj_t *cancel = button(ui.reset_dialog, T("Abbrechen"), ui.width - 36,
                               42, reset_cancel, NULL);
+#if !KATMED_APPSTORE_MAINTENANCE
+    lv_obj_set_style_text_font(lv_obj_get_child(cancel, 0), reset_caption_font(false), 0);
+#endif
     lv_obj_add_event_cb(cancel, reset_dialog_press, LV_EVENT_PRESSED, NULL);
     lv_obj_move_foreground(ui.reset_dialog);
     if (!ui.services.reset_arm(ui.services.context, event == NULL)) {
@@ -1452,7 +1744,7 @@ void ui_reset_show_warning(void)
     lv_obj_set_size(yes, yes_width, yes_height);
     lv_obj_t *yes_text = lv_obj_get_child(yes, 0);
     lv_obj_set_width(yes_text, yes_width - 8);
-    lv_obj_set_style_text_font(yes_text, &katmed_font_12, 0);
+    lv_obj_set_style_text_font(yes_text, reset_caption_font(true), 0);
     lv_obj_center(yes_text);
     lv_obj_set_style_bg_color(yes, lv_color_hex(0xff3d00), LV_PART_MAIN);
     lv_obj_set_style_text_color(yes, lv_color_white(), LV_PART_MAIN);
@@ -1503,8 +1795,8 @@ static lv_obj_t *status_label(uint32_t *next, const char *text, int width)
 
 static void update_status(void)
 {
-    if (!ui.status) return;
-    uint32_t next = 1;
+    if (!ui.status || ui.certificate_content) return;
+    uint32_t next = ui.certificate_button ? 2 : 1;
     int text_w = ui.width - (ui.width == 240 ? 100 : 20);
     char date[64], line[128];
     if (ui.pairing_code[0]) {
@@ -1688,8 +1980,10 @@ void ui_set_pairing_code(const char code[7])
 
 static void build_screen(int16_t width, int16_t height)
 {
-    remember_scroll(ui.settings, ui.settings_menu ? 8u + (unsigned)ui.settings_menu : 5u);
-    remember_scroll(ui.status, ui.status_scroll_slot);
+    close_certificate_status(false);
+    remember_scroll_before_rebuild(ui.settings, settings_scroll_slot());
+    remember_scroll_before_rebuild(ui.status, ui.status_scroll_slot);
+    ui.clamped_scroll_panel = NULL;
     ui.page = ui.interaction_title = ui.send_button = NULL;
     ui.rx_layer = ui.notice = NULL;
     ui.overlay_key = 0;
@@ -1711,8 +2005,10 @@ static void build_screen(int16_t width, int16_t height)
     ui.alarm_text = NULL;
     ui.settings = NULL;
     ui.settings_options = NULL;
+    ui.reset_settings_suspended = false;
     ui.pairing_label = NULL;
     ui.status = NULL;
+    ui.certificate_button = NULL;
     if(ui.brightness_slider)cancel_brightness_preview();
     ui.brightness_slider=ui.brightness_percent=NULL;
     ui.slider_contact=ui.lv_slider_contact=false;
@@ -2337,6 +2633,11 @@ void ui_touch_sample(bool touched, int16_t x, int16_t y,
             ui.reject_confirm_motion = false;
             return;
         }
+        if (ui.certificate_content) {
+            if (!ui.edge_contact && dx >= 40 && dx >= 2 * abs(dy))
+                close_certificate_status(true);
+            return;
+        }
         if (ui.view == SETTINGS && ui.settings_menu != SETTINGS_ROOT && dx >= 40 &&
             dx >= 2 * abs(dy)) {
             /* A detail editor returns to its owning submenu first. */
@@ -2467,7 +2768,16 @@ void ui_render(const AppState *state, const LocalSettings *local,
 {
     if(display_sleeping)return;
     if (!state || !local || !clock) return;
+    lv_display_t *display = lv_display_get_default();
+    const int16_t width = display ? (int16_t)lv_display_get_horizontal_resolution(display) : 0;
+    const int16_t height = display ? (int16_t)lv_display_get_vertical_resolution(display) : 0;
+    const bool language_rebuild = ui.applied_language != katmed_i18n_selected();
+    const bool rebuild = display && (!ui.screen || ui.screen != lv_screen_active() ||
+                         width != ui.width || height != ui.height ||
+                         local->orientation != ui.screen_orientation || language_rebuild);
+    if (rebuild && !ui_prepare_display_rebuild()) return;
     bool alarm_started = state->alarm_active && ui.view != ALARM;
+    if (alarm_started) close_certificate_status(false);
     if (alarm_started && ui.reset_stage && !reset_abandon()) return;
     bool round_changed = ui.have_state && ui.state.alarm_active && state->alarm_active &&
                          !same_round(ui.state.round, state->round);
@@ -2530,20 +2840,15 @@ void ui_render(const AppState *state, const LocalSettings *local,
         else if (view == UI_VIEW_PLACEHOLDER) ui.grid.row = 0;
     }
 
-    lv_display_t *display = lv_display_get_default();
     if (!display) return;
     watch_display(display);
-    int16_t width = (int16_t)lv_display_get_horizontal_resolution(display);
-    int16_t height = (int16_t)lv_display_get_vertical_resolution(display);
-    bool rebuild = !ui.screen || ui.screen != lv_screen_active() ||
-                   width != ui.width || height != ui.height ||
-                   local->orientation != ui.screen_orientation ||
-                   ui.applied_language != katmed_i18n_selected();
     bool editing_before_rebuild = rebuild && (ui.keypad || ui.style_dialog);
     if (rebuild) {
         interaction_cancel(clock->monotonic_ms);
         if (ui.touch_down) ui.reject_contact = true;
+        if (language_rebuild) ui_trace(KATMED_RENDER_INNER_LANGUAGE_REBUILD,true);
         build_screen(width, height);
+        if (language_rebuild) ui_trace(KATMED_RENDER_INNER_LANGUAGE_REBUILD,false);
         ui.applied_language=katmed_i18n_selected();
         if (editing_before_rebuild) show_feedback(T("Eingabe nach Drehung verworfen"));
     }
@@ -2607,6 +2912,7 @@ void ui_render(const AppState *state, const LocalSettings *local,
         update_status();
         ui.status_second = clock->monotonic_ms / 1000u;
     }
+    update_certificate_status(clock->monotonic_ms);
     if (ui.alarm_bar) update_alarm_bar(state, clock);
     if (ui.feedback && clock->monotonic_ms >= ui.feedback_until_ms)
         lv_obj_set_hidden(ui.feedback, true);

@@ -1,0 +1,4 @@
+dependencies:
+  espressif/esp_lvgl_port:
+    version: "==2.9.0"
+    override_path: "${KATMED_BUILD_OVERRIDES}/espressif__esp_lvgl_port"

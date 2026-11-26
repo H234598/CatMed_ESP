@@ -44,6 +44,15 @@ typedef struct {
     uint32_t native_result;
 } BoardTouchDiagnostics;
 BoardTouchDiagnostics board_touch_diagnostics(void);
+/* C3-only bounded observation; 0/1/2 means unknown/idle/contact.
+ * Period UINT32_MAX or coverage 0 makes interval comparison unknown. */
+typedef struct {
+    uint32_t period, coverage, contact_state;
+    uint32_t clean_release, interrupted, invalid, stale, overflow, discard;
+} BoardC3TouchHealth;
+#if CONFIG_IDF_TARGET_ESP32C3
+BoardC3TouchHealth board_c3_touch_health(void);
+#endif
 /* Polls the I2C controller independently of LVGL's potentially long render
  * lock. Events retain their acquisition timestamps and are consumed in order. */
 BoardResult board_touch_sampler_start(void);

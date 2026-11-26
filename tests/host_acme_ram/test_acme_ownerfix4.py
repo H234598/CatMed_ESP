@@ -8,10 +8,11 @@ from pathlib import Path
 import re
 import unittest
 import test_acme_lifecycle as life
-method=life.method
-observer_fixture=life.observer_fixture
 import test_acme_ownerfix3 as owner3
 import katmed_acme_ram as ram
+
+method=life.method
+observer_fixture=life.observer_fixture
 ROOT=Path(__file__).resolve().parents[2]
 
 def client_capture(failures=0, delayed_delete=False):
@@ -116,7 +117,8 @@ class Ownerfix4(unittest.TestCase):
         outputs=[]
         def capture(test, source, args=()):
             out=original(test,source,args)
-            if b'katmed_acme_window:' in out: outputs.append(out)
+            if b'katmed_acme_window:' in out:
+                outputs.append(out)
             return out
         with patch.object(life.Lifecycle,'compile_run',capture):
             owner3.Ownerfix3().test_actual_operation_and_cpu_producer_complete_retries_and_aggregation()
@@ -150,7 +152,8 @@ class Ownerfix4(unittest.TestCase):
             if b'katmed_acme_cpu:' in line and b'window=active ' in line:
                 kv=dict(x.split(b'=') for x in line.split(b': ')[1].split())
                 end=cleanups[int(kv[b'cycle'])]+1000
-                start=int(kv[b'start_us']);idle=int(kv[b'idle_start'])
+                start=int(kv[b'start_us'])
+                idle=int(kv[b'idle_start'])
                 for k,v in {'end_us':end,'elapsed_us':end-start,'idle_delta':(end-start)//2,'idle_end':idle+(end-start)//2}.items():
                     line=replace_field(line,k,v)
             return line
@@ -158,8 +161,8 @@ class Ownerfix4(unittest.TestCase):
 
     def test_operations_outside_worker_or_renewal_are_rejected(self):
         for only in (None,b'op=challenge '):
-            def shift(line):
-                if b'katmed_acme_window:' in line and (only is None or only in line):
+            def shift(line, operation=only):
+                if b'katmed_acme_window:' in line and (operation is None or operation in line):
                     for k in ('start_us','end_us'):
                         value=int(re.search(k.encode()+rb'=([0-9]+)',line)[1])+10**12
                         line=replace_field(line,k,value)
@@ -170,8 +173,8 @@ class Ownerfix4(unittest.TestCase):
     def test_download_end_cannot_move_before_actual_write_close_parse_samples(self):
         def short(line):
             if b'op=download ' in line and b'event=end' in line:
-                seq=int(re.search(rb'start_seq=([0-9]+)',line)[1])
-                start=int(re.search(rb'start_us=([0-9]+)',line)[1])
+                seq=int(re.search(rb'start_seq=(\d+)',line)[1])
+                start=int(re.search(rb'start_us=(\d+)',line)[1])
                 for k,v in {'end_seq':seq,'end_us':start+1,'max_gap_us':1}.items():
                     line=replace_field(line,k,v)
             return line
@@ -181,7 +184,7 @@ class Ownerfix4(unittest.TestCase):
         def time_only(line):
             damaged=short(line)
             if damaged != line:
-                damaged=replace_field(damaged,'end_seq',int(re.search(rb'end_seq=([0-9]+)',line)[1]))
+                damaged=replace_field(damaged,'end_seq',int(re.search(rb'end_seq=(\d+)',line)[1]))
             return damaged
         self.assert_invalid(mutate(self.retry,time_only))
 
@@ -193,7 +196,8 @@ class Ownerfix4(unittest.TestCase):
             if b'katmed_acme_window:' in line:
                 kv=dict(x.split(b'=') for x in line.split(b': ')[1].split())
                 key=kv[b'cycle'],kv[b'op'],kv[b'attempt']
-                if kv[b'event']==b'begin': begins[key]=kv
+                if kv[b'event']==b'begin':
+                    begins[key]=kv
                 else:
                     old=line
                     for metric in ('internal_min','dma_min','internal_block_observed','dma_block_observed'):
@@ -206,9 +210,10 @@ class Ownerfix4(unittest.TestCase):
 
     def test_reordered_marks_and_missing_microsecond_binding_are_rejected(self):
         lines=self.control.splitlines()
-        i=next(i for i,l in enumerate(lines) if b'op=download ' in l and b'event=end' in l)
-        j=next(j for j,l in enumerate(lines) if b'op=download ' in l and b'event=begin' in l)
-        moved=lines[:];moved.insert(j,moved.pop(i))
+        i=next(i for i,line in enumerate(lines) if b'op=download ' in line and b'event=end' in line)
+        j=next(j for j,line in enumerate(lines) if b'op=download ' in line and b'event=begin' in line)
+        moved=lines[:]
+        moved.insert(j,moved.pop(i))
         self.assert_invalid(b'\n'.join(moved)+b'\n')
-        self.assert_invalid(re.sub(rb' sample_us=[0-9]+',b'',self.control))
+        self.assert_invalid(re.sub(rb' sample_us=\d+',b'',self.control))
         self.assert_invalid(self.retry.replace(b'op=download attempt=2',b'op=download attempt=3'))

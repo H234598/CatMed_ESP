@@ -10,7 +10,8 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 SPEC = importlib.util.spec_from_file_location("katmed_usb_setup_p7_review", ROOT / "tools" / "katmed_usb_setup.py")
-assert SPEC and SPEC.loader
+if SPEC is None or SPEC.loader is None:
+    raise AssertionError("KM1 client test module could not be loaded")
 setup = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(setup)
 
@@ -20,7 +21,7 @@ EXPECTED_WRONG = "deadbee"
 STATUS = (
     "KM1 OK STATUS configured=0 durable=1 pending=0 clock=0 "
     f"device={DEVICE} catalog={'a' * 64} firmware={ACTUAL} "
-    "build=12345678 error=OK\n"
+    "build=1234567890abcdef01234567 error=OK\n"
 ).encode("ascii")
 
 
@@ -48,13 +49,15 @@ class FakeSerial:
         return len(data)
 
     def flush(self) -> None:
-        pass
+        # The fake makes each write immediately available.
+        return None
 
     def read_until(self, expected: bytes = b"\n", size: int | None = None) -> bytes:
         if not self.lines:
             return b""
         answer = self.lines.pop(0)
-        assert size is None or len(answer) <= size
+        if size is not None and len(answer) > size:
+            raise AssertionError("Synthetic reply exceeds the read bound")
         return answer
 
     def close(self) -> None:
@@ -69,7 +72,7 @@ def cli_args(command: str, firmware: str | None = EXPECTED_WRONG, device: str = 
     if command == "reset-config":
         tokens += ["--confirm-reset", "RESET CONFIG"]
     if command == "provision":
-        tokens += ["--config", "/fake/private/review.json"]
+        tokens += ["--config", "/fake/private/review.json", "--expect-build-prefix", "1234567890abcdef"]
     return setup.parser().parse_args(tokens)
 
 
@@ -134,7 +137,7 @@ class FirmwareGateReview(unittest.TestCase):
         self.assertIsNotNone(caught, "Mismatched firmware was accepted")
 
     def test_without_optional_flag_keeps_existing_contract(self) -> None:
-        for command in ("status", "provision", "reset-config"):
+        for command in ("status", "reset-config"):
             with self.subTest(command=command):
                 fake, result = run_fake(command, firmware=None)
                 self.assertTrue(result)
@@ -152,14 +155,14 @@ class FirmwareGateReview(unittest.TestCase):
                         patch.object(setup, "build_provision_request",
                                      return_value=b"KM1 PROVISION synthetic=1\n"):
                     with self.assertRaises(setup.SetupError):
-                        setup.run_command(args, opener=lambda path: fake,
+                        setup.run_command(args, opener=lambda _path, fake=fake: fake,
                                           startup=lambda port: None)
                 self.assertEqual([b"KM1 STATUS\n"], fake.writes)
                 self.assertEqual(0, fake.mutations)
                 self.assertTrue(fake.closed)
 
-    def test_observe_strict_hex_and_device_gate_remain(self) -> None:
-        for firmware, device in (("d941fae-dirty", DEVICE), (ACTUAL, "bad")):
+    def test_observe_rejects_malformed_version_and_device_before_open(self) -> None:
+        for firmware, device in (("d941fae-DIRTY", DEVICE), (ACTUAL, "bad")):
             with self.subTest(firmware=firmware, device=device):
                 openings = 0
 

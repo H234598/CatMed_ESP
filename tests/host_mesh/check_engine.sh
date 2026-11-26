@@ -6,7 +6,7 @@ fixture=$(mktemp)
 trap 'rm -f "$out" "$fixture"' EXIT
 adapter="${KATMED_MESH_ADAPTER:-$repo/firmware/components/katmed_mesh/katmed_mesh_idf.cpp}"
 sanitizers=()
-if [[ "${KATMED_HOST_SANITIZE:-0}" == 1 ]]; then sanitizers=(-fsanitize=address,undefined -fno-omit-frame-pointer); fi
+if [[ "${KATMED_HOST_SANITIZE:-0}" == 1 ]]; then sanitizers=("-fsanitize=address,undefined" -fno-omit-frame-pointer); fi
 g++ -pthread "${sanitizers[@]}" -std=c++17 -Wall -Wextra -Werror -DKATMED_MESH_HOST \
   -I"$repo/firmware/components/katmed_ui/include" \
   -I"$repo/tests/host_mesh/stubs" \
@@ -29,6 +29,7 @@ if [[ $# -gt 0 ]]; then
     exit 0
 fi
 "$out"
+"$out" network_events
 "$out" night_interleave
 "$out" night_solo
 "$out" night_copy
