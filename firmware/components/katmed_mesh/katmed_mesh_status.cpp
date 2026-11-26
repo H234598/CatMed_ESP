@@ -60,11 +60,14 @@ extern "C" StoreResult mesh_history_decode(MeshHistory *h,const uint8_t *b,size_
         if(!id)return STORE_CORRUPT;
         for(unsigned j=0;j<i;++j)if(id==get(b+28+8*j,8))return STORE_CORRUPT;
     }
+    const uint64_t generation=legacy?1:get(b+2140,8);
+    if(!generation)return STORE_CORRUPT;
+
     for(unsigned i=0;i<256;++i)h->ids[i]=get(b+28+8*i,8);
     std::memcpy(h->group,group,16);h->count=uint16_t(count);
     h->saturated=(b[5]&1)!=0;h->dirty=legacy;h->error=false;
     std::memset(h->baseline,0xff,32);
-    h->generation=legacy?1:get(b+2140,8);if(!h->generation)return STORE_CORRUPT;
+    h->generation=generation;
     std::memset(h->admitted,0,32);std::memset(h->processed,0xff,32);
     if(!legacy){
         std::memcpy(h->admitted,b+2076,32);std::memcpy(h->processed,b+2108,32);
