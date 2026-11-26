@@ -18,7 +18,8 @@ typedef enum {
     KATMED_CONFIG_SETUP_GET, KATMED_CONFIG_SETUP_SAVE, KATMED_CONFIG_SETUP_EXIT, KATMED_CONFIG_HA_GET,
     KATMED_CONFIG_LANGUAGE_GET, KATMED_CONFIG_LANGUAGE_SAVE,
     KATMED_CONFIG_WIFI_STATUS, KATMED_CONFIG_WIFI_LIST, KATMED_CONFIG_WIFI_SAVE,
-    KATMED_CONFIG_WIFI_DELETE, KATMED_CONFIG_WIFI_RECONNECT
+    KATMED_CONFIG_WIFI_DELETE, KATMED_CONFIG_WIFI_RECONNECT,
+    KATMED_CONFIG_SECURITY_TIME
 } KatmedConfigOperation;
 
 typedef enum {
@@ -127,6 +128,7 @@ typedef struct {
 
 typedef struct {
     KatmedConfigStatus status;
+    int64_t security_utc_ms;
     uint8_t language;
     struct { bool ready, configured, recovery; uint8_t limit, count; KatmedConfigWifiView profiles[KATMED_CONFIG_WIFI_MAX]; } wifi;
     KatmedConfigSnapshot snapshot;

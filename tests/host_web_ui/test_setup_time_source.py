@@ -10,7 +10,6 @@ ROOT = Path(__file__).resolve().parents[2]
 
 HTTP = r'''
 #define KATMED_WEB_TOKEN_HEX 64
-#define KATMED_WEB_IDENTIFIER_MAX 64
 #define BRIDGE_TIMEOUT_MS 1500
 typedef int esp_err_t;
 struct host_httpd_req {int unused;};

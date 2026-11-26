@@ -7,6 +7,7 @@
 #include "esp_http_server.h"
 #include "katmed_web_wifi.h"
 #include "katmed_web_reset.h"
+#include "katmed_web_policy.h"
 #include "katmed_language.h"
 #include "katmed_config_bridge.h"
 #include <stddef.h>
@@ -16,6 +17,15 @@ extern "C" {
 #endif
 
 #define KATMED_WEB_DEVICE_NAME_MAX 24u
+
+typedef struct {
+    uint64_t generation;
+    uint64_t origin_revision;
+    uint8_t sha256[32];
+    char dns_san[KATMED_WEB_IDENTIFIER_MAX];
+    /* Persisted configured host for the HTTPS Origin, empty if unconfigured. */
+    char authority[KATMED_WEB_IDENTIFIER_MAX];
+} KatmedWebBootstrapSnapshot;
 
 typedef struct {
     char device_name[KATMED_WEB_DEVICE_NAME_MAX];
@@ -45,6 +55,12 @@ void katmed_web_poll(uint64_t monotonic_ms);
 /* Main loop copies this outside the LVGL lock and displays it under that lock.
  * The six digits must never be included in HTTP replies or logs. */
 bool katmed_web_pairing_code(char out[7]);
+/* Firmware-local copy of the active bootstrap listener's public leaf metadata.
+ * Safe from another task. A false return clears any supplied output. Re-read
+ * before using a retained generation across a listener transition. */
+bool katmed_web_bootstrap_snapshot(KatmedWebBootstrapSnapshot *out);
+/* Validate a previously copied listener and Origin without copying strings. */
+bool katmed_web_bootstrap_snapshot_matches(uint64_t generation, uint64_t origin_revision);
 /* False leaves retained HTTPS/key/identity state intact for a later retry. */
 bool katmed_web_stop(void);
 

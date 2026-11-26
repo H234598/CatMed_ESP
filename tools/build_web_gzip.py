@@ -7,13 +7,14 @@ from pathlib import Path
 
 
 ASSETS = ("app.js", "i18n.js")
+RAW_LIMITS = {"app.js": 128 * 1024, "i18n.js": 143 * 1024}
 
 
 def build(source_dir: Path, output_dir: Path) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     for name in ASSETS:
         source = (source_dir / name).read_bytes()
-        if len(source) > 128 * 1024:
+        if len(source) > RAW_LIMITS[name]:
             raise ValueError(f"script exceeds bounded raw response limit: {name}")
         encoded = gzip.compress(source, compresslevel=9, mtime=0)
         if encoded[:4] != b"\x1f\x8b\x08\x00":

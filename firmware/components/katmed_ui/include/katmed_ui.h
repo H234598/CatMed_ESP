@@ -86,6 +86,25 @@ typedef struct {
     char sync_server_ip[16]; /* Last local SNTP sync, not current reachability. */
     char ap_ip[16];
 } UiNetworkStatus;
+typedef enum {
+    UI_CERTIFICATE_NO_INTERFACE, UI_CERTIFICATE_STA, UI_CERTIFICATE_AP
+} UiCertificateInterface;
+
+/* Local display data, valid only for the requesting contact's status page. */
+#define KATMED_UI_CERTIFICATE_NAME_CAPACITY 254
+typedef struct {
+    unsigned request;
+    uint32_t sampled_tick;
+    uint64_t generation;
+    uint64_t origin_revision;
+    uint64_t device;
+    UiCertificateInterface interface;
+    uint8_t sha256[32];
+    char ipv4[16];
+    char dns_san[KATMED_UI_CERTIFICATE_NAME_CAPACITY];
+    char origin[KATMED_UI_CERTIFICATE_NAME_CAPACITY + 8]; /* Includes https://. */
+} UiCertificateStatus;
+
 typedef struct {
     void *context;
     bool (*interaction_input)(void *context, const KatmedInteractionInput *input, uint64_t now_ms);
@@ -95,6 +114,7 @@ typedef struct {
      * Called only after durable success, under the caller's existing UI lock. */
     bool (*read_model)(void *context, AppState *state, LocalSettings *local, ClockSample *clock);
     void (*network_status)(void *context, UiNetworkStatus *status);
+    void (*certificate_status)(void *context, UiCertificateStatus *status);
     bool (*connected)(void *context); /* Optional; absent means unknown/offline. */
     bool (*last_confirmation)(void *context, ClockSample *historical);
     uint8_t (*pending_count)(void *context);
@@ -118,6 +138,9 @@ typedef struct {
     /* Optional fixed-number observer; never receives UI strings or IDs. */
     KatmedRenderTraceObserver render_trace;
 } UiServices;
+
+/* Main samples public certificate status only for a locally opened page. */
+unsigned ui_certificate_status_request(void);
 
 /* A display render cycle caused by a change of the alarm bar's visibility.
  * The cycle may also contain other invalidated UI areas. Duration covers

@@ -138,6 +138,9 @@ elif [[ "$mode" == host ]]; then
     build-ci-ui/check_ui_surface 240 240 0 build-ci-ui/surface c3
     build-ci-ui/check_ui_surface 172 320 0 build-ci-ui/surface c6
     build-ci-ui/check_ui_surface 320 172 1 build-ci-ui/surface c6-landscape
+    build-ci-ui/check_ui_surface uat-certificate 240 240
+    build-ci-ui/check_ui_surface uat-certificate 172 320
+    build-ci-ui/check_ui_surface uat-certificate 320 172
     # Existing narrow main-contact check expects bootstrap tools at this path.
     host_bootstrap="$repo/build-ci-tools"
     mkdir -p "$host_bootstrap/bootstrap/bin"
@@ -166,6 +169,7 @@ elif [[ "$mode" == host ]]; then
     python3 -m unittest discover -s tests/host_web_ui -p 'test_security_js_gzip.py'
     python3 -m unittest discover -s tests/host_web_ui -p 'test_security_js_handler.py'
     python3 -m unittest discover -s tests/host_web_ui -p 'test_network_startup.py'
+    python3 tests/host_web_ui/test_certificate_management.py
     python3 -m unittest discover -s tests/host_web_ui -p 'test_language_owner.py'
     python3 -m unittest discover -s tests/host_web_ui -p 'test_setup_time_source.py'
     python3 -m unittest discover -s tests/host_web_ui -p 'test_wifi_status_diagnostics.py'
@@ -184,6 +188,27 @@ elif [[ "$mode" == host ]]; then
     KATMED_MBEDTLS_HOST_BUILD="$native_tls_build" \
         KATMED_MBEDTLS_HOST_CONFIG="$native_tls_config" \
         python3 tests/host_web_ui/test_tls_server_signature_policy.py
+    KATMED_MBEDTLS_HOST_BUILD="$native_tls_build" \
+        python3 tests/host_web_server_identity/check_bootstrap_snapshot.py
+    cjson_source="$repo/firmware/managed_components/espressif__cjson/cJSON"
+    if [[ ! -f "${cjson_source}/cJSON.c" || ! -f "${cjson_source}/cJSON.h" ]]; then
+        echo 'Pinned ESP-IDF cJSON 1.7.19 sources are missing from the resolved component tree.' >&2
+        exit 1
+    fi
+    printf '%s  %s\n%s  %s\n' \
+        298581a04a36c0165da4b0aade235c23088cb2faa58651d720ea2f3706ed0b0d \
+        "${cjson_source}/cJSON.c" \
+        25b0145150d500498e4d209cec69c18c42cf818bffcc54690be3b895a2a16dee \
+        "${cjson_source}/cJSON.h" | sha256sum --check --status || {
+        echo 'Resolved cJSON 1.7.19 source checksum mismatch.' >&2
+        exit 1
+    }
+    KATMED_MBEDTLS_HOST_BUILD="$native_tls_build" \
+        KATMED_CJSON_DIR="$cjson_source" \
+        python3 tests/host_web_server_identity/check_http_import.py
+    python3 -m unittest discover -s tests/host_web_server_identity -p 'test_certificate_cli.py'
+    python3 -m unittest discover -s tests/host_web_server_identity -p 'test_certificate_delivery.py'
+    python3 -m unittest discover -s tests/host_web_server_identity -p 'test_certificate_transport.py'
     # Lightweight adapter contracts only; the real HA Core fixture remains separate.
     python3 -m unittest discover -s tests/ha_integration -p 'test_adapter.py'
     bash tests/host_runtime_metrics/check_runtime_metrics.sh

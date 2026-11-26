@@ -5,6 +5,7 @@
   const state = { bootstrap: null, config: null, preview: null, wifiProfiles: [],
     wifiLimit: 0, advancedScrollY: 0,
     catalogOffset: 0, catalogCount: 0, language: "en" };
+  let serverIdentityKey = null;
   const catalog = window.KATMED_I18N || { keys: [], values: {} };
   const translations = Object.fromEntries(Object.entries(catalog.values).map(([code, values]) =>
     [code, Object.fromEntries(catalog.keys.map((key, index) => [key, values[index]]))]));
@@ -63,6 +64,8 @@
       $("runtime-setup-state").textContent = setupConfigured ?
         tr("Eingerichtet; Änderungen erfordern ausdrückliches Speichern.") :
         tr("Ersteinrichtung; Gruppe wählen oder Einrichtung offline verlassen. Ohne sichere Gruppe bleibt Mesh aus.");
+    if (serverIdentityKey !== null)
+      $("server-identity-state").textContent = tr(serverIdentityKey);
     if (localeChanged) resetPreview();
     document.body?.classList?.remove("i18n-loading");
   }
@@ -315,6 +318,20 @@
     renderCertificate(await api("/api/client-cert"));
   }
 
+  async function loadServerIdentity() {
+    const result = await api("/api/server-identity");
+    const labels = {
+      legacy: "Bisherige Serveridentität aktiv.",
+      pending: "Übernahme ausstehend; die Verbindung kann kurz unterbrochen werden.",
+      active: "Serveridentität aktiviert und gespeichert.",
+      failed: "Übernahme fehlgeschlagen; die vorherige Identität wird wiederhergestellt.",
+      uncertain: "Der Wechselzustand ist unklar. Der Dienst benötigt eine Wiederherstellung."
+    };
+    const key = Object.hasOwn(labels, result?.state) ? labels[result.state] : "Status unbekannt.";
+    serverIdentityKey = key;
+    $("server-identity-state").textContent = tr(serverIdentityKey);
+  }
+
   async function loadWifi() {
     const wifi = await api("/api/wifi");
     if (!wifi || typeof wifi.configured !== "boolean" ||
@@ -498,7 +515,7 @@
     }
     show("private-view");
     $("save-status").textContent = tr("Aktuelle Werte werden geladen.");
-    await Promise.all([loadConfig(), loadAcmeIdentifier(), loadRuntimeEinrichtung(), loadCertificate(), loadWifi(), loadImages(), loadCatalog()]);
+    await Promise.all([loadConfig(), loadAcmeIdentifier(), loadRuntimeEinrichtung(), loadCertificate(), loadServerIdentity(), loadWifi(), loadImages(), loadCatalog()]);
     $("save-status").textContent = tr("Aktuelle Werte geladen.");
   }
 
@@ -681,6 +698,8 @@
       show("login-view");
       $("cert-form").reset();
       $("cert-remove-form").reset();
+      $("server-anchor-form").reset();
+      $("server-identity-form").reset();
       await refreshBootstrap();
       notice("Abgemeldet.");
     } catch (error) { await handleFailure(error); }
@@ -721,6 +740,47 @@
       else await handleFailure(error);
     }
     finally { setBusy(form, false); }
+  });
+
+  $("server-identity-refresh").addEventListener("click", async () => {
+    try { await loadServerIdentity(); } catch (error) { await handleFailure(error); }
+  });
+  $("server-anchor-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget, file = $("server-anchor-file").files[0];
+    if (!file || file.size > 2000) { notice(tr("CA-Zertifikat ist zu groß."), true); return; }
+    setBusy(form, true);
+    try {
+      await api("/api/server-anchor", "POST", {
+        anchor_pem: await file.text(), password: $("server-anchor-password").value
+      });
+      form.reset();
+      notice(tr("Vertrauensanker gespeichert."));
+    } catch (error) { await handleFailure(error); }
+    finally { setBusy(form, false); }
+  });
+  $("server-identity-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget, file = $("server-chain-file").files[0];
+    const key = $("server-key").value.trim();
+    if (!file || file.size > 6143 || !/^[0-9a-fA-F]{64}$/.test(key)) {
+      notice(tr("Zertifikatskette oder Schlüssel hat ein ungültiges Format."), true); return;
+    }
+    setBusy(form, true);
+    try {
+      await api("/api/server-identity", "POST", {
+        chain_pem: await file.text(), key_hex: key, password: $("server-password").value
+      });
+      form.reset();
+      serverIdentityKey = "Übernahme ausstehend; nach der Unterbrechung erneut anmelden und den Status aktualisieren.";
+      $("server-identity-state").textContent = tr(serverIdentityKey);
+    } catch (error) {
+      if (error.code === "time_unavailable") notice(tr("Für die Zertifikatsprüfung ist eine synchronisierte Uhr erforderlich."), true);
+      else if (error.code === "anchor_unavailable") notice(tr("Ein separat gespeicherter Vertrauensanker fehlt."), true);
+      else if (error.code === "invalid_identity") notice(tr("Zertifikatskette, DNS-Name, Schlüssel oder Gültigkeit konnte nicht bestätigt werden."), true);
+      else await handleFailure(error);
+    }
+    finally { $("server-key").value = ""; $("server-password").value = ""; setBusy(form, false); }
   });
 
   $("cert-remove-form").addEventListener("submit", async (event) => {

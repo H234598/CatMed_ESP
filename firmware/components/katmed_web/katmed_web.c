@@ -8,6 +8,7 @@
 #include <time.h>
 #include <strings.h>
 #include <time.h>
+#include <stdatomic.h>
 #include <arpa/inet.h>
 #include <sys/socket.h>
 #include "cJSON.h"
@@ -23,6 +24,8 @@
 #include "katmed_web_auth.h"
 #include "katmed_web_acme_route.h"
 #include "katmed_web_identity.h"
+#include "katmed_web_server_journal.h"
+#include "katmed_web_server_validation.h"
 #include "katmed_web_media.h"
 #include "katmed_web_policy.h"
 #include "mbedtls/md.h"
@@ -53,7 +56,7 @@ extern const unsigned char _binary_i18n_js_start[];
 extern const unsigned char _binary_i18n_js_end[];
 
 #define WEB_TAG "katmed_web"
-#define BODY_MAX 3072u
+#define BODY_MAX 8192u
 #define BRIDGE_TIMEOUT_MS 1500u
 #define PRE_FREE_INTERNAL (48u * 1024u)
 #define PRE_LARGEST_INTERNAL (16u * 1024u)
@@ -69,6 +72,13 @@ extern const unsigned char _binary_i18n_js_end[];
 typedef struct {
     nvs_handle_t nvs;
     KatmedWebIdentity identity;
+    KatmedServerRecord *server_identity;
+    KatmedServerRecord *server_pending;
+    KatmedServerRecord *server_previous;
+    unsigned server_pending_slot;
+    uint64_t server_probe_deadline_ms;
+    const char *server_result;
+    bool server_quarantined;
     psa_key_id_t tls_key_id;
     esp_key_config_t tls_key_config;
     KatmedWebAuth auth;
@@ -90,6 +100,8 @@ typedef struct {
 } WebContext;
 
 static WebContext web = {.certificate_fd = -1};
+static atomic_bool server_probe_active;
+static atomic_bool server_probe_seen;
 
 #if CONFIG_IDF_TARGET_ESP32C6
 /* Diagnostic only: the SDK's debug accessor exposes its actual socket slots.
@@ -224,6 +236,91 @@ static int sha256_bytes(const uint8_t *input, size_t length, uint8_t output[32])
     return info == NULL ? -1 : mbedtls_md(info, input, length, output);
 }
 
+/* Readers never use auth_mutex: its lifetime ends when the Web owner stops.
+ * Keep crypto, listener operations and all blocking calls out of this lock. */
+static portMUX_TYPE bootstrap_snapshot_lock = portMUX_INITIALIZER_UNLOCKED;
+static KatmedWebBootstrapSnapshot bootstrap_snapshot = {.origin_revision = 1};
+static uint64_t bootstrap_generation;
+static bool bootstrap_origin_pending;
+
+static void invalidate_bootstrap_snapshot(void)
+{
+    portENTER_CRITICAL(&bootstrap_snapshot_lock);
+    bootstrap_snapshot.generation = 0;
+    portEXIT_CRITICAL(&bootstrap_snapshot_lock);
+}
+
+/* Called with bootstrap_snapshot_lock held. */
+static bool bootstrap_snapshot_available(void)
+{
+    return bootstrap_snapshot.generation != 0 && !bootstrap_origin_pending &&
+           bootstrap_snapshot.origin_revision != UINT64_MAX;
+}
+
+bool katmed_web_bootstrap_snapshot(KatmedWebBootstrapSnapshot *out)
+{
+    if (!out) return false;
+    memset(out, 0, sizeof(*out));
+    portENTER_CRITICAL(&bootstrap_snapshot_lock);
+    const bool available = bootstrap_snapshot_available();
+    if (available) *out = bootstrap_snapshot;
+    portEXIT_CRITICAL(&bootstrap_snapshot_lock);
+    return available;
+}
+
+bool katmed_web_bootstrap_snapshot_matches(uint64_t generation, uint64_t origin_revision)
+{
+    portENTER_CRITICAL(&bootstrap_snapshot_lock);
+    const bool matches = bootstrap_snapshot_available() &&
+                         bootstrap_snapshot.generation == generation &&
+                         bootstrap_snapshot.origin_revision == origin_revision;
+    portEXIT_CRITICAL(&bootstrap_snapshot_lock);
+    return matches;
+}
+
+static bool describe_bootstrap_leaf(const uint8_t *der, size_t len,
+                                    KatmedWebBootstrapSnapshot *snapshot)
+{
+    if (!der || !len || len > KATMED_WEB_SERVER_CERT_MAX) return false;
+    mbedtls_x509_crt cert;
+    mbedtls_x509_crt_init(&cert);
+    const mbedtls_x509_buf *dns = NULL;
+    bool valid = mbedtls_x509_crt_parse_der_nocopy(&cert, der, len) == 0 &&
+                 cert.raw.len == len;
+    for (const mbedtls_x509_sequence *san = &cert.subject_alt_names;
+         valid && san; san = san->next) {
+        if (san->buf.tag != (MBEDTLS_ASN1_CONTEXT_SPECIFIC | MBEDTLS_X509_SAN_DNS_NAME))
+            continue;
+        valid = !dns && san->buf.p && san->buf.len &&
+                san->buf.len < sizeof(snapshot->dns_san) &&
+                !memchr(san->buf.p, '\0', san->buf.len);
+        dns = &san->buf;
+    }
+    if (valid && dns) {
+        memcpy(snapshot->dns_san, dns->p, dns->len);
+        snapshot->dns_san[dns->len] = '\0';
+        valid = katmed_web_identifier_valid(snapshot->dns_san) &&
+                sha256_bytes(der, len, snapshot->sha256) == 0;
+    }
+    valid = valid && dns != NULL;
+    mbedtls_x509_crt_free(&cert);
+    return valid;
+}
+
+/* The final publisher and restart scheduling are ordered by auth_mutex.
+ * The Main owner serializes start and stop. */
+static void publish_bootstrap_snapshot(KatmedWebBootstrapSnapshot *snapshot, const char *authority)
+{
+    portENTER_CRITICAL(&bootstrap_snapshot_lock);
+    if (bootstrap_generation != UINT64_MAX && bootstrap_snapshot.origin_revision != UINT64_MAX) {
+        snapshot->generation = ++bootstrap_generation;
+        snapshot->origin_revision = bootstrap_snapshot.origin_revision;
+        memcpy(snapshot->authority, authority, strlen(authority) + 1);
+        bootstrap_snapshot = *snapshot;
+    }
+    portEXIT_CRITICAL(&bootstrap_snapshot_lock);
+}
+
 static bool commit_auth(void *context, const KatmedWebAuthRecord *record)
 {
     WebContext *w = context;
@@ -276,10 +373,29 @@ static bool save_identifier(WebContext *w, const char *value)
 {
     if (!w->nvs_open || !w->identifier_ready ||
         !katmed_web_identifier_valid(value) || !katmed_source_writer_enter()) return false;
+#ifdef ESP_PLATFORM
+    const bool changed = strcmp(w->acme_identifier, value) != 0;
+    if (changed) {
+        portENTER_CRITICAL(&bootstrap_snapshot_lock);
+        bootstrap_origin_pending = true;
+        portEXIT_CRITICAL(&bootstrap_snapshot_lock);
+    }
+#endif
     bool ok=nvs_set_str(w->nvs,"acme_id",value)==ESP_OK && nvs_commit(w->nvs)==ESP_OK;
     katmed_source_writer_leave();
     if (ok) memcpy(w->acme_identifier,value,strlen(value)+1);
     else w->identifier_ready=false;
+#ifdef ESP_PLATFORM
+    if (changed || !ok) {
+        portENTER_CRITICAL(&bootstrap_snapshot_lock);
+        if (bootstrap_snapshot.origin_revision != UINT64_MAX)
+            ++bootstrap_snapshot.origin_revision;
+        if (ok) memcpy(bootstrap_snapshot.authority, value, strlen(value)+1);
+        else bootstrap_snapshot.generation = 0;
+        bootstrap_origin_pending = false;
+        portEXIT_CRITICAL(&bootstrap_snapshot_lock);
+    }
+#endif
     return ok;
 }
 
@@ -446,6 +562,13 @@ static void tls_session_callback(esp_https_server_user_cb_arg_t *arg)
     if (fd_result != ESP_OK) fd = -1;
     ESP_LOGI(WEB_TAG, "TLS hook event=%s fd=%d fd_result=%d", event, fd, (int)fd_result);
     if (fd_result != ESP_OK) return;
+    /* esp_https_server emits SESS_CREATE only after the TLS handshake has
+     * completed. This listener was configured from web.server_identity, so a
+     * successful session while the candidate probe is armed proves that the
+     * candidate listener actually served TLS before its NVS marker is moved. */
+    if (arg->user_cb_state == HTTPD_SSL_USER_CB_SESS_CREATE &&
+        atomic_load_explicit(&server_probe_active, memory_order_acquire))
+        atomic_store_explicit(&server_probe_seen, true, memory_order_release);
 #if CONFIG_IDF_TARGET_ESP32C6
     if (arg->user_cb_state == HTTPD_SSL_USER_CB_SESS_CREATE) tls_endpoint_diagnostic(arg->tls, fd);
 #endif
@@ -534,6 +657,9 @@ static bool certificate_on_request(httpd_req_t *req, uint8_t out[32])
 
 static bool stop_listeners(void)
 {
+#ifdef ESP_PLATFORM
+    invalidate_bootstrap_snapshot();
+#endif
     if (web.redirect) {
         if (httpd_stop(web.redirect) != ESP_OK) {
             ESP_LOGE(WEB_TAG, "HTTP redirect stop failed");
@@ -764,15 +890,15 @@ static uint32_t script_le32(const unsigned char *p)
  * member into chunks with the same workspace. A send failure returns directly
  * to httpd, which closes the session; never append a successful terminator. */
 static esp_err_t script_inflate(ScriptInflate *work, const unsigned char *start,
-                                size_t length, httpd_req_t *req)
+                                size_t length, size_t raw_limit, httpd_req_t *req)
 {
     if (length < 18 || start[0] != 0x1f || start[1] != 0x8b ||
         start[2] != 8 || start[3] != 0) return ESP_FAIL;
     size_t input = 10, output = 0, offset = 0;
     uint32_t crc = 0;
     uint32_t expected = script_le32(start + length - 4);
-    /* Hard limit independent of the member trailer; covers the full catalog. */
-    if (expected > 128u * 1024u) return ESP_FAIL;
+    /* The route supplies its own hard limit; the member cannot enlarge it. */
+    if (expected > raw_limit) return ESP_FAIL;
     tinfl_init(&work->inflater);
     for (;;) {
         size_t consumed = length - 8 - input;
@@ -871,10 +997,13 @@ static int script_coding(httpd_req_t *req)
 
 static esp_err_t asset_reply(httpd_req_t *req, const unsigned char *start,
                               const unsigned char *end, const char *type,
-                              bool gzip_encoded)
+                              bool gzip_encoded, size_t raw_limit)
 {
     char host[KATMED_WEB_IDENTIFIER_MAX];
     if (!request_host(req, host)) return error_reply(req, "403 Forbidden", "host");
+#ifndef KATMED_WEB_SECURITY_JS_GZIP
+    (void)raw_limit;
+#endif
 #ifdef KATMED_WEB_SECURITY_JS_GZIP
     if (gzip_encoded) {
         httpd_resp_set_hdr(req, "Vary", "Accept-Encoding");
@@ -882,10 +1011,14 @@ static esp_err_t asset_reply(httpd_req_t *req, const unsigned char *start,
         if (coding < 0) return error_reply(req, "400 Bad Request", "accept_encoding");
         if (coding == 0)
             return error_reply(req, "406 Not Acceptable", "encoding_unavailable");
+        if (coding == 2 && ((size_t)(end - start) < 18 ||
+            start[0] != 0x1f || start[1] != 0x8b || start[2] != 8 || start[3] != 0 ||
+            script_le32(end - 4) > raw_limit))
+            return error_reply(req, "500 Internal Server Error", "script_data");
         if (coding == 1) {
             ScriptInflate *work = malloc(sizeof(*work));
             if (!work) return error_reply(req, "503 Service Unavailable", "script_memory");
-            esp_err_t result = script_inflate(work, start, (size_t)(end - start), NULL);
+            esp_err_t result = script_inflate(work, start, (size_t)(end - start), raw_limit, NULL);
             if (result != ESP_OK) {
                 free(work);
                 return error_reply(req, "500 Internal Server Error", "script_data");
@@ -897,7 +1030,7 @@ static esp_err_t asset_reply(httpd_req_t *req, const unsigned char *start,
             httpd_resp_set_hdr(req, "Content-Security-Policy",
                 "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; "
                 "img-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'");
-            result = script_inflate(work, start, (size_t)(end - start), req);
+            result = script_inflate(work, start, (size_t)(end - start), raw_limit, req);
             free(work);
             if (result != ESP_OK) return result;
             return httpd_resp_send_chunk(req, NULL, 0);
@@ -920,21 +1053,21 @@ static esp_err_t asset_reply(httpd_req_t *req, const unsigned char *start,
 static esp_err_t page_get(httpd_req_t *req)
 {
     return asset_reply(req, _binary_index_html_start, _binary_index_html_end,
-                       "text/html; charset=utf-8", false);
+                       "text/html; charset=utf-8", false, 0);
 }
 static esp_err_t style_get(httpd_req_t *req)
 {
     return asset_reply(req, _binary_style_css_start, _binary_style_css_end,
-                       "text/css; charset=utf-8", false);
+                       "text/css; charset=utf-8", false, 0);
 }
 static esp_err_t script_get(httpd_req_t *req)
 {
     return asset_reply(req, _binary_app_js_start, _binary_app_js_end,
                        "application/javascript; charset=utf-8",
 #ifdef KATMED_WEB_SECURITY_JS_GZIP
-                       true);
+                       true, 128u * 1024u);
 #else
-                       false);
+                       false, 128u * 1024u);
 #endif
 }
 static esp_err_t language_script_get(httpd_req_t *req)
@@ -942,9 +1075,9 @@ static esp_err_t language_script_get(httpd_req_t *req)
     return asset_reply(req, _binary_i18n_js_start, _binary_i18n_js_end,
                        "application/javascript; charset=utf-8",
 #ifdef KATMED_WEB_SECURITY_JS_GZIP
-                       true);
+                       true, 143u * 1024u);
 #else
-                       false);
+                       false, 143u * 1024u);
 #endif
 }
 
@@ -1229,10 +1362,164 @@ static esp_err_t client_cert_get(httpd_req_t *req)
                  "{\"enrolled\":true}" : "{\"enrolled\":false}");
 }
 
+/* This is a separately authenticated trust decision. It never treats an
+ * uploaded server chain as its own authority. Existing HTTPS identity is not
+ * changed by installing an anchor. */
+static esp_err_t server_anchor_post(httpd_req_t *req)
+{
+    char token[KATMED_WEB_TOKEN_HEX + 1];
+    if (!require_session(req, true, token)) return ESP_OK;
+    cJSON *obj = read_json(req);
+    const char *const keys[] = {"anchor_pem", "password"};
+    const char *pem = json_string(obj, "anchor_pem", 2000);
+    const char *password = json_string(obj, "password", 128);
+    if (!keys_only(obj, keys, 2) || !pem || !password || strstr(pem, "PRIVATE KEY")) {
+        if (obj) { wipe_json(obj); cJSON_Delete(obj); }
+        return error_reply(req, "422 Unprocessable Entity", "invalid");
+    }
+    if (!katmed_web_auth_recheck_password(&web.auth, password, monotonic_ms())) {
+        wipe_json(obj); cJSON_Delete(obj);
+        return error_reply(req, "401 Unauthorized", "denied");
+    }
+    mbedtls_x509_crt cert;
+    mbedtls_x509_crt_init(&cert);
+    size_t len = strlen(pem) + 1;
+    bool valid = mbedtls_x509_crt_parse(&cert, (const unsigned char *)pem, len) == 0 &&
+                 !cert.next && cert.MBEDTLS_PRIVATE(ca_istrue);
+    mbedtls_x509_crt_free(&cert);
+    if (!valid) {
+        wipe_json(obj); cJSON_Delete(obj);
+        return error_reply(req, "422 Unprocessable Entity", "invalid_anchor");
+    }
+    char *check = malloc(len);
+    bool ok = false;
+    xSemaphoreTake(web.auth_mutex, portMAX_DELAY);
+    if (!web.server_pending && check && katmed_source_writer_enter()) {
+        ok = nvs_set_blob(web.nvs, "server_anchor", pem, len) == ESP_OK &&
+             nvs_commit(web.nvs) == ESP_OK;
+        size_t read_len = len;
+        if (ok) ok = nvs_get_blob(web.nvs, "server_anchor", check, &read_len) == ESP_OK &&
+                     read_len == len && memcmp(check, pem, len) == 0;
+        katmed_source_writer_leave();
+    }
+    xSemaphoreGive(web.auth_mutex);
+    if (check) { wipe(check, len); free(check); }
+    wipe_json(obj); cJSON_Delete(obj);
+    if (!ok) return error_reply(req, "503 Service Unavailable", "commit_unknown");
+    return reply(req, "200 OK", "{\"anchor_configured\":true}");
+}
+
+static int hex_digit(char c)
+{
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
+static esp_err_t server_identity_get(httpd_req_t *req)
+{
+    char token[KATMED_WEB_TOKEN_HEX + 1];
+    if (!require_session(req, false, token)) return ESP_OK;
+    xSemaphoreTake(web.auth_mutex, portMAX_DELAY);
+    const char *result = web.server_quarantined ? "uncertain" : web.server_pending ? "pending" :
+        web.server_result ? web.server_result : web.server_identity ? "active" : "legacy";
+    char response[48];
+    snprintf(response, sizeof(response), "{\"state\":\"%s\"}", result);
+    xSemaphoreGive(web.auth_mutex);
+    return reply(req, "200 OK", response);
+}
+
+static esp_err_t server_identity_post(httpd_req_t *req)
+{
+    char token[KATMED_WEB_TOKEN_HEX + 1];
+    if (!require_session(req, true, token)) return ESP_OK;
+    cJSON *obj = read_json(req);
+    const char *const keys[] = {"chain_pem", "key_hex", "password"};
+    const char *chain = json_string(obj, "chain_pem", KATMED_SERVER_CHAIN_MAX - 1);
+    const char *key = json_string(obj, "key_hex", 64);
+    const char *password = json_string(obj, "password", 128);
+    if (!keys_only(obj, keys, 3) || !chain || !key || strlen(key) != 64 || !password ||
+        strstr(chain, "PRIVATE KEY")) {
+        if (obj) { wipe_json(obj); cJSON_Delete(obj); }
+        return error_reply(req, "422 Unprocessable Entity", "invalid");
+    }
+    if (!katmed_web_auth_recheck_password(&web.auth, password, monotonic_ms())) {
+        wipe_json(obj); cJSON_Delete(obj);
+        return error_reply(req, "401 Unauthorized", "denied");
+    }
+    KatmedServerRecord *candidate = calloc(1, sizeof(*candidate));
+    char *anchor = malloc(2048);
+    bool input_ok = candidate && anchor;
+    if (input_ok) for (size_t i = 0; i < sizeof(candidate->key); ++i) {
+        int hi = hex_digit(key[i * 2]), lo = hex_digit(key[i * 2 + 1]);
+        if (hi < 0 || lo < 0) { input_ok = false; break; }
+        candidate->key[i] = (uint8_t)((hi << 4) | lo);
+    }
+    if (input_ok) {
+        candidate->magic = KATMED_SERVER_RECORD_MAGIC;
+        candidate->chain_len = (uint16_t)(strlen(chain) + 1);
+        memcpy(candidate->chain, chain, candidate->chain_len);
+        input_ok = katmed_web_acme_identifier(candidate->dns, sizeof(candidate->dns)) &&
+                   candidate->dns[0] != 0;
+    }
+    wipe_json(obj); cJSON_Delete(obj);
+    KatmedConfigRequest request = {.operation = KATMED_CONFIG_SECURITY_TIME};
+    KatmedConfigResponse response = {0};
+    bool time_ok = input_ok && katmed_config_exchange(&request, &response, BRIDGE_TIMEOUT_MS) == KATMED_CONFIG_OK &&
+                   response.status == KATMED_CONFIG_OK;
+    /* Keep the trust decision stable through validation and slot staging.
+     * server_anchor_post uses this same mutex, and refuses updates once a
+     * candidate is pending. */
+    xSemaphoreTake(web.auth_mutex, portMAX_DELAY);
+    size_t anchor_len = 2048;
+    bool anchor_ok = time_ok && nvs_get_blob(web.nvs, "server_anchor", anchor, &anchor_len) == ESP_OK &&
+                     anchor_len > 1 && anchor_len <= 2048;
+#ifdef KATMED_WEB_ANCHOR_RACE_TEST
+    extern void katmed_web_test_anchor_validation_pause(void);
+    if (anchor_ok) katmed_web_test_anchor_validation_pause();
+#endif
+    bool valid = anchor_ok && katmed_web_server_identity_validate(candidate->key, sizeof(candidate->key),
+        candidate->chain, candidate->chain_len, anchor, anchor_len, candidate->dns,
+        response.security_utc_ms / 1000);
+    if (anchor) { wipe(anchor, 2048); free(anchor); }
+    if (!valid) {
+        xSemaphoreGive(web.auth_mutex);
+        if (candidate) { wipe(candidate, sizeof(*candidate)); free(candidate); }
+        if (input_ok && !time_ok) return error_reply(req, "503 Service Unavailable", "time_unavailable");
+        if (time_ok && !anchor_ok) return error_reply(req, "422 Unprocessable Entity", "anchor_unavailable");
+        return error_reply(req, "422 Unprocessable Entity", "invalid_identity");
+    }
+    unsigned slot = 0;
+    bool staged = !web.server_pending && !web.restart_pending &&
+                  web.identifier_ready && strcmp(web.acme_identifier, candidate->dns) == 0 &&
+                  katmed_server_journal_stage(web.nvs, candidate, &slot);
+    if (staged) {
+#ifdef ESP_PLATFORM
+        invalidate_bootstrap_snapshot();
+#endif
+        web.server_pending = candidate;
+        web.server_pending_slot = slot;
+        web.server_result = NULL;
+        web.restart_due_ms = monotonic_ms() + 500;
+        web.restart_pending = true;
+    }
+    xSemaphoreGive(web.auth_mutex);
+    if (!staged) {
+        wipe(candidate, sizeof(*candidate)); free(candidate);
+        return error_reply(req, "503 Service Unavailable", "stage_failed");
+    }
+    return reply(req, "202 Accepted", "{\"state\":\"pending\"}");
+}
+
 static esp_err_t client_cert_post(httpd_req_t *req)
 {
     char token[KATMED_WEB_TOKEN_HEX + 1];
     if (!require_session(req, true, token)) return ESP_OK;
+    xSemaphoreTake(web.auth_mutex, portMAX_DELAY);
+    bool identity_pending = web.server_pending != NULL;
+    xSemaphoreGive(web.auth_mutex);
+    if (identity_pending) return error_reply(req, "409 Conflict", "identity_pending");
     cJSON *obj = read_json(req);
     const char *const keys[] = {"certificate_pem", "password"};
     const char *pem = json_string(obj, "certificate_pem", 2000);
@@ -1257,8 +1544,13 @@ static esp_err_t client_cert_post(httpd_req_t *req)
     wipe(der, sizeof(der));
     wipe(fingerprint, sizeof(fingerprint));
     if (result != KATMED_WEB_AUTH_OK) return auth_result_reply(req, result);
+    xSemaphoreTake(web.auth_mutex, portMAX_DELAY);
+#ifdef ESP_PLATFORM
+    invalidate_bootstrap_snapshot();
+#endif
     web.restart_due_ms = monotonic_ms() + 500;
     web.restart_pending = true;
+    xSemaphoreGive(web.auth_mutex);
     return reply(req, "200 OK", "{\"enrolled\":true}");
 }
 
@@ -1266,6 +1558,10 @@ static esp_err_t client_cert_delete(httpd_req_t *req)
 {
     char token[KATMED_WEB_TOKEN_HEX + 1];
     if (!require_session(req, true, token)) return ESP_OK;
+    xSemaphoreTake(web.auth_mutex, portMAX_DELAY);
+    bool identity_pending = web.server_pending != NULL;
+    xSemaphoreGive(web.auth_mutex);
+    if (identity_pending) return error_reply(req, "409 Conflict", "identity_pending");
     cJSON *obj = read_json(req);
     const char *const keys[] = {"password"};
     const char *password = json_string(obj, "password", 128);
@@ -1279,8 +1575,13 @@ static esp_err_t client_cert_delete(httpd_req_t *req)
     if (!verified) return error_reply(req, "401 Unauthorized", "denied");
     KatmedWebAuthResult result = katmed_web_auth_remove_client(&web.auth);
     if (result != KATMED_WEB_AUTH_OK) return auth_result_reply(req, result);
+    xSemaphoreTake(web.auth_mutex, portMAX_DELAY);
+#ifdef ESP_PLATFORM
+    invalidate_bootstrap_snapshot();
+#endif
     web.restart_due_ms = monotonic_ms() + 500;
     web.restart_pending = true;
+    xSemaphoreGive(web.auth_mutex);
     return reply(req, "200 OK", "{\"enrolled\":false}");
 }
 
@@ -1682,9 +1983,12 @@ static esp_err_t identifier_put(httpd_req_t *req)
     xSemaphoreTake(web.auth_mutex,portMAX_DELAY);
     bool ready=web.identifier_ready;
     bool stale=strcmp(previous,web.acme_identifier)!=0;
-    bool ok=ready && !stale && save_identifier(&web,value);
+    bool identity_conflict=web.server_pending ||
+        (web.server_identity && strcmp(value,web.server_identity->dns)!=0);
+    bool ok=ready && !stale && !identity_conflict && save_identifier(&web,value);
     xSemaphoreGive(web.auth_mutex);
     wipe_json(obj);cJSON_Delete(obj);
+    if (identity_conflict) return error_reply(req,"409 Conflict","identity_active");
     if (!ready || (!stale && !ok)) return error_reply(req,"503 Service Unavailable","commit_unknown");
     if (stale) return error_reply(req,"409 Conflict","stale");
     return identifier_reply(req);
@@ -1720,6 +2024,9 @@ static bool register_routes(httpd_handle_t server)
         {"/api/client-cert", HTTP_GET, client_cert_get},
         {"/api/client-cert", HTTP_POST, client_cert_post},
         {"/api/client-cert", HTTP_DELETE, client_cert_delete},
+        {"/api/server-anchor", HTTP_POST, server_anchor_post},
+        {"/api/server-identity", HTTP_GET, server_identity_get},
+        {"/api/server-identity", HTTP_POST, server_identity_post},
     };
     for (size_t i = 0; i < sizeof(routes) / sizeof(routes[0]); ++i) {
         httpd_uri_t uri = {.uri = routes[i].path, .method = routes[i].method,
@@ -1743,6 +2050,9 @@ static bool register_routes(httpd_handle_t server)
 
 static esp_err_t start_listeners(void)
 {
+#ifdef ESP_PLATFORM
+    invalidate_bootstrap_snapshot();
+#endif
     web_socket_diag_sample(monotonic_ms(), true);
     if (!resources_allow(false, "start_listeners", NULL)) {
         return ESP_ERR_NO_MEM;
@@ -1759,15 +2069,15 @@ static esp_err_t start_listeners(void)
 #else
     tls.httpd.max_open_sockets = 1;
 #endif
-    /* 21 local routes plus Wi-Fi(4), reset(3) and media(5). */
-    tls.httpd.max_uri_handlers = 35;
+    /* Local routes plus Wi-Fi, reset and media. */
+    tls.httpd.max_uri_handlers = 38;
     tls.httpd.backlog_conn = 1;
     tls.httpd.lru_purge_enable = true;
     tls.httpd.recv_wait_timeout = 2;
     tls.httpd.send_wait_timeout = 2;
     tls.tls_handshake_timeout_ms = 4000;
-    tls.servercert = web.identity.cert;
-    tls.servercert_len = web.identity.cert_len;
+    tls.servercert = web.server_identity ? (const unsigned char *)web.server_identity->chain : web.identity.cert;
+    tls.servercert_len = web.server_identity ? web.server_identity->chain_len : web.identity.cert_len;
     tls.user_cb = tls_session_callback;
     if (web.auth.record.cert_len) {
         tls.cacert_pem = web.auth.record.client_cert;
@@ -1779,7 +2089,9 @@ static esp_err_t start_listeners(void)
         return ESP_ERR_NOT_SUPPORTED;
 #endif
     }
-    if (web.identity.key_len == 32) {
+    const uint8_t *server_key = web.server_identity ? web.server_identity->key : web.identity.key;
+    size_t server_key_len = web.server_identity ? sizeof(web.server_identity->key) : web.identity.key_len;
+    if (server_key_len == 32) {
         /* New identities store a raw P-256 scalar. prvtkey_pem is parsed as
          * PEM/DER by esp-tls, so provide its supported PSA key reference. */
         psa_key_attributes_t attributes = PSA_KEY_ATTRIBUTES_INIT;
@@ -1793,7 +2105,7 @@ static esp_err_t start_listeners(void)
         psa_status_t status = psa_crypto_init();
         psa_key_id_t imported_key = PSA_KEY_ID_NULL;
         if (status == PSA_SUCCESS)
-            status = psa_import_key(&attributes, web.identity.key, web.identity.key_len,
+            status = psa_import_key(&attributes, server_key, server_key_len,
                                     &imported_key);
         psa_reset_key_attributes(&attributes);
         if (status != PSA_SUCCESS) {
@@ -1806,8 +2118,8 @@ static esp_err_t start_listeners(void)
         tls.server_key = &web.tls_key_config;
     } else {
         /* Existing DER identities retain their original parse path. */
-        tls.prvtkey_pem = web.identity.key;
-        tls.prvtkey_len = web.identity.key_len;
+        tls.prvtkey_pem = server_key;
+        tls.prvtkey_len = server_key_len;
     }
     esp_err_t error = httpd_ssl_start(&web.https, &tls);
     if (error != ESP_OK || !web.https) {
@@ -1855,12 +2167,26 @@ static esp_err_t start_listeners(void)
         return ESP_ERR_NO_MEM;
     }
     web.started = true;
+#ifdef ESP_PLATFORM
+    KatmedWebBootstrapSnapshot snapshot = {0};
+    if (!web.server_identity &&
+        describe_bootstrap_leaf(tls.servercert, tls.servercert_len, &snapshot)) {
+        xSemaphoreTake(web.auth_mutex, portMAX_DELAY);
+        if (web.identifier_ready && !web.restart_pending && !web.server_pending &&
+            !web.server_quarantined)
+            publish_bootstrap_snapshot(&snapshot, web.acme_identifier);
+        xSemaphoreGive(web.auth_mutex);
+    }
+#endif
     web_socket_diag_sample(monotonic_ms(), true);
     return ESP_OK;
 }
 
 static bool management_enabled=true;
 void katmed_web_set_enabled(bool enabled) {
+#ifdef ESP_PLATFORM
+    if (!enabled) invalidate_bootstrap_snapshot();
+#endif
     management_enabled=enabled;
     if (!enabled) katmed_web_stop();
 }
@@ -1892,6 +2218,19 @@ esp_err_t katmed_web_start(const KatmedWebServices *services)
         katmed_web_stop();
         return ESP_FAIL;
     }
+    size_t marker_size = 0;
+    esp_err_t marker_status = nvs_get_blob(web.nvs, "server_active", NULL, &marker_size);
+    if (marker_status != ESP_ERR_NVS_NOT_FOUND) {
+        unsigned slot = 0;
+        web.server_identity = malloc(sizeof(*web.server_identity));
+        if (marker_status != ESP_OK || !web.server_identity ||
+            katmed_server_journal_load(web.nvs, web.server_identity, &slot) != KATMED_SERVER_ACTIVE ||
+            strcmp(web.acme_identifier, web.server_identity->dns) != 0) {
+            ESP_LOGE(WEB_TAG, "HTTPS server identity journal unavailable");
+            katmed_web_stop();
+            return ESP_FAIL;
+        }
+    }
     web.auth_mutex = xSemaphoreCreateMutex();
     error = web.auth_mutex ? start_listeners() : ESP_ERR_NO_MEM;
     if (error != ESP_OK) {
@@ -1906,7 +2245,7 @@ void katmed_web_poll(uint64_t now_ms)
 {
     web_socket_diag_sample(now_ms, false);
     if (!management_enabled) return;
-    if (!web.started && !web.https && !web.redirect &&
+    if (!web.server_quarantined && !web.started && !web.https && !web.redirect &&
         web.tls_key_id == PSA_KEY_ID_NULL && now_ms >= web.retry_due_ms) {
         esp_err_t error = web.nvs_open ? start_listeners() : katmed_web_start(&web.services);
         if (error != ESP_OK) web.retry_due_ms = now_ms + 30000;
@@ -1916,15 +2255,135 @@ void katmed_web_poll(uint64_t now_ms)
         katmed_web_auth_tick(&web.auth, now_ms);
         xSemaphoreGive(web.auth_mutex);
     }
-    if (!web.restart_pending || now_ms < web.restart_due_ms) return;
+    /* The bootstrap listener has no previous journal record. */
+    if (web.server_pending && web.started &&
+        atomic_load_explicit(&server_probe_active, memory_order_acquire)) {
+        bool served = atomic_load_explicit(&server_probe_seen, memory_order_acquire);
+        if (served) {
+            atomic_store_explicit(&server_probe_active, false, memory_order_release);
+            if (katmed_server_journal_commit(web.nvs, web.server_pending_slot)) {
+                if (web.server_previous) {
+                    wipe(web.server_previous, sizeof(*web.server_previous));
+                    free(web.server_previous);
+                    web.server_previous = NULL;
+                }
+                xSemaphoreTake(web.auth_mutex, portMAX_DELAY);
+                web.server_pending = NULL;
+                web.server_result = "active";
+                xSemaphoreGive(web.auth_mutex);
+                return;
+            }
+            /* The marker write may be durable despite an error. Stop the
+             * candidate and quarantine instead of guessing which identity is
+             * active across this boot and a later reboot. */
+            if (!stop_listeners()) {
+                web.server_quarantined = true;
+            } else {
+                web.server_quarantined = true;
+            }
+            xSemaphoreTake(web.auth_mutex, portMAX_DELAY);
+            web.server_result = "uncertain";
+            xSemaphoreGive(web.auth_mutex);
+            return;
+        }
+        if (now_ms >= web.server_probe_deadline_ms) {
+            atomic_store_explicit(&server_probe_active, false, memory_order_release);
+            KatmedServerRecord *candidate = web.server_pending;
+            KatmedServerRecord *previous = web.server_previous;
+            if (!stop_listeners()) {
+                web.server_quarantined = true;
+                xSemaphoreTake(web.auth_mutex, portMAX_DELAY);
+                web.server_result = "uncertain";
+                xSemaphoreGive(web.auth_mutex);
+                return;
+            }
+            xSemaphoreTake(web.auth_mutex, portMAX_DELAY);
+            web.server_identity = previous;
+            web.server_previous = NULL;
+            web.server_pending = NULL;
+            web.server_result = "failed";
+            xSemaphoreGive(web.auth_mutex);
+            wipe(candidate, sizeof(*candidate));
+            free(candidate);
+            if (start_listeners() != ESP_OK) web.retry_due_ms = now_ms + 30000u;
+            return;
+        }
+    }
+    xSemaphoreTake(web.auth_mutex, portMAX_DELAY);
+    bool restart_ready = web.restart_pending && now_ms >= web.restart_due_ms;
+    xSemaphoreGive(web.auth_mutex);
+    if (!restart_ready) return;
     if (web.services.prepare_listener_stop &&
         !web.services.prepare_listener_stop(web.services.context)) return;
     if (!stop_listeners()) {
+        xSemaphoreTake(web.auth_mutex, portMAX_DELAY);
         web.restart_pending = false;
+        if (web.server_pending) web.server_quarantined = true;
+        xSemaphoreGive(web.auth_mutex);
         ESP_LOGE(WEB_TAG, "HTTPS listener restart blocked by failed stop");
         return;
     }
+    xSemaphoreTake(web.auth_mutex, portMAX_DELAY);
     web.restart_pending = false;
+    bool identity_switch = web.server_pending != NULL;
+    xSemaphoreGive(web.auth_mutex);
+    if (identity_switch) {
+        KatmedServerRecord *previous = web.server_identity;
+        KatmedServerRecord *candidate = web.server_pending;
+        xSemaphoreTake(web.auth_mutex, portMAX_DELAY);
+        web.server_identity = candidate;
+        xSemaphoreGive(web.auth_mutex);
+        atomic_store_explicit(&server_probe_seen, false, memory_order_release);
+        atomic_store_explicit(&server_probe_active, true, memory_order_release);
+        bool started = start_listeners() == ESP_OK;
+        bool served = atomic_load_explicit(&server_probe_seen, memory_order_acquire);
+        if (started && !served) {
+            /* Keep the candidate online only for a bounded opportunity to
+             * complete a real TLS handshake. Poll handles proof or rollback. */
+            web.server_previous = previous;
+            web.server_probe_deadline_ms = now_ms + 10000u;
+            return;
+        }
+        atomic_store_explicit(&server_probe_active, false, memory_order_release);
+        bool committed = started && served &&
+                         katmed_server_journal_commit(web.nvs, web.server_pending_slot);
+        bool resolved_old = !started;
+        /* A failed marker write, commit or readback has an uncertain durable
+         * result. A same-handle read cannot prove that pending NVS state will
+         * not later become durable, so do not claim success or guess rollback. */
+        if (committed) {
+            if (previous) { wipe(previous, sizeof(*previous)); free(previous); }
+            xSemaphoreTake(web.auth_mutex, portMAX_DELAY);
+            web.server_pending = NULL;
+            web.server_result = "active";
+            xSemaphoreGive(web.auth_mutex);
+            return;
+        }
+        if (web.https || web.redirect || web.tls_key_id != PSA_KEY_ID_NULL)
+            if (!stop_listeners()) resolved_old = false;
+        if (!resolved_old || web.https || web.redirect || web.tls_key_id != PSA_KEY_ID_NULL) {
+            /* Marker or listener state is uncertain. Do not restart a guessed
+             * identity or free buffers that a surviving listener may borrow. */
+            xSemaphoreTake(web.auth_mutex, portMAX_DELAY);
+            web.server_quarantined = true;
+            web.server_previous = previous;
+            web.server_result = "uncertain";
+            xSemaphoreGive(web.auth_mutex);
+            ESP_LOGE(WEB_TAG, "HTTPS identity switch requires recovery");
+            return;
+        }
+        xSemaphoreTake(web.auth_mutex, portMAX_DELAY);
+        web.server_identity = previous;
+        web.server_pending = NULL;
+        web.server_result = "failed";
+        xSemaphoreGive(web.auth_mutex);
+        wipe(candidate, sizeof(*candidate)); free(candidate);
+        if (start_listeners() != ESP_OK) {
+            web.retry_due_ms = now_ms + 30000;
+            ESP_LOGE(WEB_TAG, "HTTPS previous identity restore failed");
+        }
+        return;
+    }
     if (start_listeners() != ESP_OK) {
         web.retry_due_ms = now_ms + 30000;
         ESP_LOGE(WEB_TAG, "HTTPS listener restart failed");
@@ -1945,9 +2404,13 @@ bool katmed_web_pairing_code(char out[7])
 
 bool katmed_web_stop(void)
 {
+#ifdef ESP_PLATFORM
+    invalidate_bootstrap_snapshot();
+#endif
     if (web.services.prepare_listener_stop &&
         !web.services.prepare_listener_stop(web.services.context)) return false;
     if (!stop_listeners()) return false;
+    atomic_store_explicit(&server_probe_active, false, memory_order_release);
     if (web.auth_mutex) {
         vSemaphoreDelete(web.auth_mutex);
         web.auth_mutex = NULL;
@@ -1958,6 +2421,23 @@ bool katmed_web_stop(void)
     }
     wipe(&web.auth, sizeof(web.auth));
     wipe(&web.identity, sizeof(web.identity));
+    if (web.server_pending == web.server_identity) web.server_pending = NULL;
+    if (web.server_identity) {
+        wipe(web.server_identity, sizeof(*web.server_identity));
+        free(web.server_identity);
+        web.server_identity = NULL;
+    }
+    if (web.server_pending) {
+        wipe(web.server_pending, sizeof(*web.server_pending));
+        free(web.server_pending);
+        web.server_pending = NULL;
+    }
+    if (web.server_previous) {
+        wipe(web.server_previous, sizeof(*web.server_previous));
+        free(web.server_previous);
+        web.server_previous = NULL;
+    }
+    web.server_quarantined = false;
     web.restart_pending = false;
     return true;
 }

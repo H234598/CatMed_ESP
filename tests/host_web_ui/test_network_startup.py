@@ -37,7 +37,13 @@ def function(text, signature):
     return text[start:end]
 
 
-PREFIX = r'''
+SERVER_PROBE_HOST = r'''
+#include <stdatomic.h>
+static atomic_bool server_probe_active;
+static atomic_bool server_probe_seen;
+'''
+
+PREFIX = SERVER_PROBE_HOST + r'''
 #include <stdbool.h>
 #include <stdarg.h>
 #include <stddef.h>
@@ -117,9 +123,35 @@ typedef struct {
 } httpd_ssl_config_t;
 typedef struct {const char *uri;int method;void *handler,*user_ctx;} httpd_uri_t;
 typedef struct {void *context;bool (*prepare_listener_stop)(void *);} KatmedWebServices;
+typedef struct { unsigned char key[32];char chain[6144],dns[254];size_t chain_len; } KatmedServerRecord;
+typedef enum { KATMED_SERVER_LEGACY, KATMED_SERVER_ACTIVE, KATMED_SERVER_STORAGE_ERROR } KatmedServerLoad;
+#define ESP_ERR_NVS_NOT_FOUND 0x1102
+static bool mock_load_active_identity;
+static int nvs_get_blob(int nvs,const char *key,void *out,size_t *len)
+{
+ (void)nvs;(void)out;
+ if(!mock_load_active_identity || strcmp(key,"server_active"))return ESP_ERR_NVS_NOT_FOUND;
+ *len=1;return ESP_OK;
+}
+static KatmedServerLoad katmed_server_journal_load(int nvs,KatmedServerRecord *out,unsigned *slot)
+{
+ (void)nvs;
+ if(!mock_load_active_identity)return KATMED_SERVER_LEGACY;
+ *out=(KatmedServerRecord){.chain="previous",.chain_len=sizeof("previous")};
+ *slot=0;return KATMED_SERVER_ACTIVE;
+}
+static bool mock_commit_failure;
+static int mock_commit_attempts;
+static unsigned mock_commit_slot;
+static bool katmed_server_journal_commit(int nvs,unsigned slot)
+{ (void)nvs;++mock_commit_attempts;mock_commit_slot=slot;return !mock_commit_failure; }
 static struct {
  KatmedWebServices services;bool started,nvs_open,restart_pending;uint64_t retry_due_ms,restart_due_ms;int nvs,certificate_fd;
  struct {unsigned char cert[1024],key[256];size_t cert_len,key_len;} identity;
+ KatmedServerRecord *server_identity,*server_pending,*server_previous;
+ char acme_identifier[254];
+ unsigned server_pending_slot;uint64_t server_probe_deadline_ms;
+ const char *server_result;bool server_quarantined;
  psa_key_id_t tls_key_id;esp_key_config_t tls_key_config;
  bool certificate_verified;unsigned char certificate_fingerprint[32];
  struct {struct {size_t cert_len;const void *client_cert;} record;} auth;
@@ -127,12 +159,15 @@ static struct {
 } web;
 static bool tcpip_ready,init_fails,https_stop_fails;
 static bool https_start_fails,redirect_start_fails,route_fails,post_admission_fails;
+static bool https_fail_once;
+static bool handshake_during_start;
 static bool redirect_registration_fails,final_admission_fails;
 static bool routes_registered,snapshot_stages;
 static int https_stops,redirect_stops,storage_closes,mutex_deletes;
 static int redirect_registrations,route_heap_reads,final_heap_reads;
 static int listener_attempts,uninitialized_listener_attempts,nvs_opens;
 static httpd_config_t https_httpd_config, redirect_httpd_config;
+static const void *https_servercert;
 static uint64_t monotonic_ms(void){return 0;}
 static void web_socket_diag_sample(uint64_t now_ms,bool force){(void)now_ms;(void)force;}
 static int esp_netif_init(void) {
@@ -170,9 +205,16 @@ static void *xSemaphoreCreateMutex(void){return (void*)1;}
 static int httpd_ssl_start(void **handle,const httpd_ssl_config_t *cfg){
  https_httpd_config=cfg->httpd;++listener_attempts;
  if(!tcpip_ready){++uninitialized_listener_attempts;return ESP_FAIL;}
+ if(https_fail_once){https_fail_once=false;return ESP_FAIL;}
  if(https_start_fails)return ESP_FAIL;
  routes_registered=false;
- *handle=(void*)2;return ESP_OK;
+ https_servercert=cfg->servercert;
+ *handle=(void*)2;
+ /* A completed handshake may reach the callback before start returns. The
+  * separate callback fixture checks which real events produce this signal. */
+ if(handshake_during_start && atomic_load_explicit(&server_probe_active,memory_order_acquire))
+  atomic_store_explicit(&server_probe_seen,true,memory_order_release);
+ return ESP_OK;
 }
 static int httpd_start(void **handle,const httpd_config_t *cfg){
  redirect_httpd_config=*cfg;++listener_attempts;
@@ -238,7 +280,7 @@ int main(int argc,char **argv){
   CHECK(redirect_httpd_config.max_open_sockets==1);
   CHECK(https_httpd_config.lru_purge_enable && https_httpd_config.backlog_conn==1);
   CHECK(https_httpd_config.recv_wait_timeout==2 && https_httpd_config.send_wait_timeout==2);
-  CHECK(https_httpd_config.max_uri_handlers==35);
+    CHECK(https_httpd_config.max_uri_handlers==38);
   CHECK(redirect_httpd_config.server_port==80 && redirect_httpd_config.ctrl_port!=https_httpd_config.ctrl_port);
  }else if(!strcmp(argv[1],"start_failure_cleanup")){
   CHECK(argc==3);web.identity.key_len=32;
@@ -279,6 +321,96 @@ int main(int argc,char **argv){
   int demand=4+2*atoi(argv[3])+https_httpd_config.max_open_sockets+
              redirect_httpd_config.max_open_sockets;
   CHECK(atoi(argv[2])>=demand);
+ }else if(!strcmp(argv[1],"identity_switch")){
+  CHECK(argc==3);
+  bool journal=!strcmp(argv[2],"deferred_success") || !strcmp(argv[2],"timeout") ||
+      !strcmp(argv[2],"deferred_commit_failure") || !strcmp(argv[2],"timeout_stop_failure");
+  bool delayed_success=!strcmp(argv[2],"deferred_success") || !strcmp(argv[2],"legacy_delayed_success");
+  bool deferred=journal || delayed_success || !strcmp(argv[2],"legacy_timeout") ||
+      !strcmp(argv[2],"probe_shutdown");
+  mock_load_active_identity=journal;
+  CHECK(katmed_web_start(NULL)==ESP_OK);
+  KatmedServerRecord *previous=web.server_identity;
+  CHECK((previous!=NULL)==journal);
+  const void *previous_cert=previous?(const void *)previous->chain:web.identity.cert;
+  CHECK(web.https && web.redirect && https_servercert==previous_cert);
+  KatmedServerRecord *candidate=calloc(1,sizeof(*candidate));CHECK(candidate);
+  web.server_pending=candidate;
+  unsigned pending_slot=journal?1:0;
+  web.server_pending_slot=pending_slot;web.restart_pending=true;web.restart_due_ms=1000;
+  if(!strcmp(argv[2],"startup"))https_fail_once=true;
+  if(!strcmp(argv[2],"commit"))mock_commit_failure=true;
+  if(!strcmp(argv[2],"stop"))https_stop_fails=true;
+  handshake_during_start=!strcmp(argv[2],"success") || !strcmp(argv[2],"commit");
+  katmed_web_poll(999);
+  CHECK(web.server_identity==previous && https_servercert==previous_cert);
+  CHECK(web.restart_pending && mock_commit_attempts==0 && listener_attempts==2);
+  katmed_web_poll(1000);
+  if(deferred){
+   CHECK(web.started && web.server_identity==candidate);
+   CHECK(web.https && web.redirect && https_servercert==candidate->chain);
+   CHECK(web.server_pending==candidate && web.server_previous==previous);
+   CHECK(atomic_load_explicit(&server_probe_active,memory_order_acquire));
+   CHECK(!atomic_load_explicit(&server_probe_seen,memory_order_acquire));
+   CHECK(web.server_probe_deadline_ms==11000 && mock_commit_attempts==0);
+   katmed_web_poll(10999);
+   CHECK(web.started && web.server_pending==candidate && mock_commit_attempts==0);
+   CHECK(atomic_load_explicit(&server_probe_active,memory_order_acquire));
+   if(!strcmp(argv[2],"probe_shutdown")){
+    https_stop_fails=true;
+    CHECK(!katmed_web_stop());
+    CHECK(web.server_identity==candidate && web.server_pending==candidate);
+    CHECK(atomic_load_explicit(&server_probe_active,memory_order_acquire));
+    https_stop_fails=false;
+    CHECK(katmed_web_stop());
+    CHECK(!web.server_identity && !web.server_pending && !web.server_previous);
+    CHECK(mock_commit_attempts==0);
+   }else if(delayed_success){
+    /* Supply the signal delivered by the TLS callback after startup. */
+    atomic_store_explicit(&server_probe_seen,true,memory_order_release);
+    katmed_web_poll(10999);
+    CHECK(web.started && web.server_identity==candidate && !web.server_pending);
+    CHECK(!web.server_previous && !strcmp(web.server_result,"active"));
+    CHECK(mock_commit_attempts==1 && mock_commit_slot==pending_slot);
+    katmed_web_poll(20000);
+    CHECK(web.started && web.server_identity==candidate && mock_commit_attempts==1);
+   }else if(!strcmp(argv[2],"deferred_commit_failure") || !strcmp(argv[2],"timeout_stop_failure")){
+    mock_commit_failure=!strcmp(argv[2],"deferred_commit_failure");
+    https_stop_fails=!mock_commit_failure;
+    if(mock_commit_failure)
+     atomic_store_explicit(&server_probe_seen,true,memory_order_release);
+    katmed_web_poll(11000);
+    CHECK(web.server_quarantined && !strcmp(web.server_result,"uncertain"));
+    CHECK(web.server_identity==candidate && web.server_pending==candidate);
+    CHECK(web.server_previous==previous && mock_commit_attempts==(int)mock_commit_failure);
+    katmed_web_poll(20000);
+    CHECK(web.server_quarantined && web.server_pending==candidate);
+    CHECK(mock_commit_attempts==(int)mock_commit_failure && listener_attempts==4);
+    https_stop_fails=false;
+   }else{
+    katmed_web_poll(11000);
+    CHECK(web.started && web.server_identity==previous && !web.server_pending);
+    CHECK(!web.server_previous && !strcmp(web.server_result,"failed"));
+    CHECK(web.https && web.redirect && https_servercert==previous_cert && listener_attempts==6);
+    CHECK(mock_commit_attempts==0);
+    katmed_web_poll(20000);
+    CHECK(web.started && web.server_identity==previous && mock_commit_attempts==0);
+   }
+  } else if(!strcmp(argv[2],"success")) {
+   CHECK(web.started && web.server_identity && !web.server_pending);
+   CHECK(!strcmp(web.server_result,"active"));
+   CHECK(mock_commit_attempts==1 && mock_commit_slot==pending_slot);
+  } else if(!strcmp(argv[2],"stop") || !strcmp(argv[2],"commit")) {
+   CHECK(web.server_quarantined && web.server_pending);
+   CHECK(mock_commit_attempts==(int)mock_commit_failure);
+   https_stop_fails=false;
+  } else {
+   CHECK(web.started && !web.server_identity && !web.server_pending);
+   CHECK(!strcmp(web.server_result,"failed"));
+   CHECK(mock_commit_attempts==0);
+  }
+  CHECK(!atomic_load_explicit(&server_probe_active,memory_order_acquire));
+  CHECK(katmed_web_stop());
  }else if(!strcmp(argv[1],"https_stop_failure_retains_state")){
   CHECK(katmed_web_start(NULL)==ESP_OK);
   web.tls_key_id=7;web.tls_key_config.source=ESP_KEY_SOURCE_PSA;
@@ -362,6 +494,19 @@ class NetworkStartup(unittest.TestCase):
 
     def test_c6_preserves_first_connection_with_two_client_slots(self):
         self.run_case("target_listener_capacity", "2", target="esp32c6")
+
+    def test_identity_switch_and_rollback(self):
+        for target in ("esp32c3", "esp32c6"):
+            for scenario in ("success", "startup", "commit", "stop", "deferred_success", "timeout",
+                             "deferred_commit_failure", "timeout_stop_failure", "probe_shutdown"):
+                with self.subTest(target=target, scenario=scenario):
+                    self.run_case("identity_switch", scenario, target=target)
+
+    def test_legacy_identity_switch_waits_for_handshake_or_restores_bootstrap(self):
+        for target in ("esp32c3", "esp32c6"):
+            for scenario in ("legacy_delayed_success", "legacy_timeout"):
+                with self.subTest(target=target, scenario=scenario):
+                    self.run_case("identity_switch", scenario, target=target)
 
     def test_c3_listener_capacity_remains_one(self):
         self.run_case("target_listener_capacity", "1", target="esp32c3")
@@ -482,7 +627,7 @@ class NetworkStartup(unittest.TestCase):
 # Synthetic execution of the actual TLS callback, not a model of its policy.
 TLS_BEHAVIOR_ONLY = os.environ.get("KATMED_TLS_DIAGNOSTICS_BEHAVIOR_ONLY") == "1"
 
-TLS_DIAGNOSTIC_HOST = r'''
+TLS_DIAGNOSTIC_HOST = SERVER_PROBE_HOST + r'''
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -531,12 +676,14 @@ static bool katmed_web_auth_equal(const void *a,const void *b,size_t n){return m
 '''
 TLS_DIAGNOSTIC_MAIN = r'''
 int main(int argc,char **argv){
-    if(argc!=9)return 2;
+    if(argc!=10)return 2;
     int event=atoi(argv[1]);internal_free=strtoul(argv[2],NULL,10);dma_free=strtoul(argv[3],NULL,10);dma_largest=strtoul(argv[4],NULL,10);
     web.https=atoi(argv[5])?(void*)1:NULL;close_result=atoi(argv[6]);fd_result=atoi(argv[7]);
     web.certificate_fd=17;web.certificate_verified=true;memset(web.certificate_fingerprint,0xa5,32);web.auth.record.cert_len=1;
     esp_tls_t tls={0};esp_https_server_user_cb_arg_t arg={.user_cb_state=event,.tls=atoi(argv[8])?&tls:NULL};
+    atomic_store_explicit(&server_probe_active,atoi(argv[9])!=0,memory_order_release);
     tls_session_callback(event==9?NULL:&arg);
+    printf("PROBE %d\n",(int)atomic_load_explicit(&server_probe_seen,memory_order_acquire));
     unsigned remaining=0;for(size_t i=0;i<32;++i)remaining|=web.certificate_fingerprint[i];
     printf("STATE %d %d %d %d %d %u %d %d %d %d\n",closes,last_close_fd,cert_checks,web.certificate_fd,web.certificate_verified,remaining,fd_calls,samples[0],samples[1],samples[2]);
     return 0;
@@ -577,11 +724,18 @@ class TlsSessionDiagnostics(unittest.TestCase):
         execute_tls_callback([host_tool("gcc"), "-std=c11", "-Wall", "-Wextra", "-Werror", str(source), "-o", cls.binary])
 
     def case(self, event=0, internal=12288, dma=4096, largest=1024,
-             server=1, close_return=0, fd_return=0, tls=1):
+             server=1, close_return=0, fd_return=0, tls=1, probe_active=False, probe_seen=False):
         out = execute_tls_callback([self.binary, *map(str, [event, internal, dma, largest,
-                                             server, close_return, fd_return, tls])])
+                                             server, close_return, fd_return, tls, int(probe_active)])])
+        self.assertIn(f"PROBE {int(probe_seen)}", out.splitlines())
         state = next(line for line in out.splitlines() if line.startswith("STATE "))
         return list(map(int, state.split()[1:])), [line[4:] for line in out.splitlines() if line.startswith("LOG ")]
+
+    def test_armed_server_probe_observes_only_valid_create(self):
+        self.case(probe_active=True, probe_seen=True)
+        for event, fd_return, tls in [(1, 0, 1), (2, 0, 1), (0, -1, 1), (0, 0, 0)]:
+            with self.subTest(event=event, fd_return=fd_return, tls=tls):
+                self.case(event=event, fd_return=fd_return, tls=tls, probe_active=True)
 
     def test_equality_and_above_floors_keep_certificate_path(self):
         for values in [(12288, 4096, 1024), (12289, 4097, 1025)]:

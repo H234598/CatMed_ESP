@@ -26,6 +26,7 @@ HOST = r'''
 #include "mbedtls/pk.h"
 #include "mbedtls/ssl.h"
 #include "mbedtls/x509_crt.h"
+#include "mbedtls/pem.h"
 #include "esp_key_config.h"
 
 #define ESP_OK 0
@@ -58,8 +59,10 @@ typedef struct {
     const esp_key_config_t *server_key;
 } httpd_ssl_config_t;
 typedef struct {const char *uri;int method;void *handler,*user_ctx;} httpd_uri_t;
+typedef struct { uint8_t key[32]; char chain[6144]; size_t chain_len; } TestServerIdentity;
 static struct {
     struct { uint8_t key[256],cert[1024];size_t key_len,cert_len; } identity;
+    TestServerIdentity *server_identity;
     struct { struct {size_t cert_len;const void *client_cert;} record; } auth;
     void *https,*redirect;
     bool started;
@@ -101,8 +104,8 @@ static int httpd_ssl_start(void **handle,const httpd_ssl_config_t *cfg){
             mbedtls_ssl_config conf;
             mbedtls_x509_crt_init(&crt);
             mbedtls_ssl_config_init(&conf);
-            psa_wrap_result=mbedtls_x509_crt_parse_der(&crt,cfg->servercert,
-                                                       cfg->servercert_len);
+            psa_wrap_result=mbedtls_x509_crt_parse(&crt,cfg->servercert,
+                                                   cfg->servercert_len);
             if(psa_wrap_result==0)
                 psa_wrap_result=mbedtls_ssl_config_defaults(&conf,MBEDTLS_SSL_IS_SERVER,
                                MBEDTLS_SSL_TRANSPORT_STREAM,MBEDTLS_SSL_PRESET_DEFAULT);
@@ -177,6 +180,15 @@ int main(int argc,char **argv){
     if(!web.started || https_starts!=1 || psa_wrap_result!=0)return 4;
     stop_listeners();
     if(https_stops!=1 || web.tls_key_id!=PSA_KEY_ID_NULL)return 5;
+    TestServerIdentity imported={0};
+    memcpy(imported.key,web.identity.key,32);
+    if(mbedtls_pem_write_buffer("-----BEGIN CERTIFICATE-----\n", "-----END CERTIFICATE-----\n",
+        web.identity.cert,web.identity.cert_len,(unsigned char *)imported.chain,
+        sizeof(imported.chain),&imported.chain_len)!=0)return 17;
+    web.server_identity=&imported;
+    if(start_listeners()!=ESP_OK || psa_wrap_result!=0)return 18;
+    stop_listeners();
+    web.server_identity=NULL;
     psa_key_attributes_t old_key=PSA_KEY_ATTRIBUTES_INIT;
     if(psa_get_key_attributes(last_tls_key_id,&old_key)==PSA_SUCCESS)return 6;
     /* Existing DER identities keep the SDK's original parser path. */

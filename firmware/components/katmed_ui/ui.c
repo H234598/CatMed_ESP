@@ -18,6 +18,9 @@
 #endif
 
 #include <stdio.h>
+#include <inttypes.h>
+#include <limits.h>
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 #ifdef ESP_PLATFORM
@@ -68,6 +71,11 @@ typedef struct {
     lv_obj_t *emergency_button;
     lv_obj_t *clock_view, *alarm_bar, *alarm_strips[ALARM_STRIPS], *alarm_text;
     lv_obj_t *settings, *status, *keypad, *feedback, *morse_layer, *reset_dialog;
+    lv_obj_t *certificate_button, *certificate_content;
+    lv_timer_t *certificate_timer;
+    UiCertificateStatus certificate;
+    uint64_t certificate_opened_ms;
+    unsigned certificate_serial;
     lv_obj_t *pairing_label, *settings_options;
     char pairing_code[7];
     lv_obj_t *entry_label, *preview_label;
@@ -116,6 +124,15 @@ typedef struct {
 } UiContext;
 
 static UiContext ui = {.view = BACKGROUND, .grid = {1, 1}, .shown_clock_tick = INT64_MIN};
+static atomic_uint certificate_request;
+/* Main publishes before the ordinary 25 ms UI pass. Allow several passes
+ * before hiding a proof, even when Main can no longer call ui_render(). */
+#define CERTIFICATE_SAMPLE_MAX_AGE_MS 250u
+
+unsigned ui_certificate_status_request(void)
+{
+    return atomic_load(&certificate_request);
+}
 
 static void ui_trace(KatmedRenderInnerPhase phase, bool begin)
 {
@@ -132,11 +149,15 @@ typedef struct {
     bool rendering;
 } BlinkMetricsState;
 static bool display_sleeping, wake_quarantine;
+static void close_certificate_status(bool restore_status);
 void ui_set_display_awake(bool awake)
 {
     if(display_sleeping==!awake)return;
     display_sleeping=!awake;
-    if(!awake)wake_quarantine=true;
+    if (!awake) {
+        wake_quarantine=true;
+        close_certificate_status(false);
+    }
     lv_display_t *display=lv_display_get_default();if(!display)return;
     lv_timer_t *timer=lv_display_get_refr_timer(display);
     if(timer){if(awake)lv_timer_resume(timer);else lv_timer_pause(timer);}
@@ -282,6 +303,8 @@ static void update_status(void);
 static void build_settings(void);
 static void sync_settings_options(void);
 static void status_button(lv_event_t *event);
+static void open_certificate_status(lv_event_t *event);
+static void update_certificate_status(uint64_t now);
 static void settings_submenu_button(lv_event_t *event);
 static void language_select(lv_event_t *event);
 static void reset_open(lv_event_t *event);
@@ -339,9 +362,11 @@ static void destroy_menu(void)
 
 static void destroy_settings(void)
 {
+    close_certificate_status(false);
     remember_scroll(ui.status, ui.status_scroll_slot);
     if (ui.status) lv_obj_delete(ui.status);
     ui.status = NULL;
+    ui.certificate_button = NULL;
     ui.status_from_home = false;
     destroy_menu();
 }
@@ -1123,8 +1148,147 @@ static void status_button(lv_event_t *event)
     lv_obj_t *title = label(ui.status, T("Status"), row_w);
     if (ui.height < 200)
         lv_obj_set_style_text_font(title, &katmed_font_12, 0);
+    if (ui.services.certificate_status) {
+        ui.certificate_button = button(ui.status, T("Zertifikatsfingerabdruck"), row_w, 40,
+                                       open_certificate_status, NULL);
+        lv_obj_set_style_text_font(lv_obj_get_child(ui.certificate_button, 0), &katmed_font_12, 0);
+    }
     update_status();
     restore_scroll(ui.status, ui.status_scroll_slot);
+}
+
+static void close_certificate_status(bool restore_status)
+{
+    if (!ui.certificate_content) return;
+    atomic_store(&certificate_request, 0);
+    if (ui.certificate_timer) lv_timer_delete(ui.certificate_timer);
+    ui.certificate_timer = NULL;
+    ui.certificate = (UiCertificateStatus){0};
+    ui.certificate_content = NULL;
+    ui.certificate_button = NULL;
+    if (ui.status && lv_obj_is_valid(ui.status)) lv_obj_delete(ui.status);
+    ui.status = NULL;
+    ++ui.overlay_generation;
+    if (ui.touch_down) ui.reject_contact = true;
+    if (restore_status && ui.view == UI_VIEW_STATUS) status_button(NULL);
+}
+
+static lv_obj_t *certificate_label(const char *text, bool literal)
+{
+    const int width = lv_obj_get_width(ui.certificate_content) - 4;
+    lv_obj_t *item = label(ui.certificate_content, text, width);
+    lv_obj_set_style_text_font(item, &katmed_font_12, 0);
+    if (literal) lv_obj_set_style_base_dir(item, LV_BASE_DIR_LTR, 0);
+    return item;
+}
+
+static void certificate_status_timer(lv_timer_t *timer)
+{
+    (void)timer;
+    update_certificate_status(ui.clock.monotonic_ms);
+}
+
+static void open_certificate_status(lv_event_t *event)
+{
+    (void)event;
+    if (!ui.status || ui.view != UI_VIEW_STATUS || ui.certificate_content ||
+        !ui.services.certificate_status || ui.state.alarm_active ||
+        display_sleeping || ui.reset_stage || ui.certificate_serial == UINT_MAX)
+        return;
+    remember_scroll(ui.status, ui.status_scroll_slot);
+    lv_obj_clean(ui.status);
+    ui.certificate_button = NULL;
+    lv_obj_set_layout(ui.status, LV_LAYOUT_NONE);
+    lv_obj_set_scrollable(ui.status, false);
+    lv_obj_set_style_pad_all(ui.status, 0, 0);
+    ui.certificate_content = lv_obj_create(ui.status);
+    const bool round = ui.width == 240 && ui.height == 240;
+    /* The entire scroll viewport, including its corners, fits the circle. */
+    const int x = round ? 48 : 10;
+    const int y = round ? 40 : 10;
+    lv_obj_t *content = ui.certificate_content;
+    lv_obj_remove_style_all(content);
+    lv_obj_set_pos(content, x, y);
+    lv_obj_set_size(content, ui.width - 2 * x, ui.height - 2 * y);
+    lv_obj_set_style_pad_all(content, 2, 0);
+    lv_obj_set_style_pad_row(content, 3, 0);
+    lv_obj_set_flex_flow(content, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_scroll_dir(content, LV_DIR_VER);
+    lv_obj_set_scroll_elastic(content, false);
+    lv_obj_set_scroll_momentum(content, false);
+    lv_obj_update_layout(content);
+    certificate_label(T("Zertifikatsfingerabdruck"), false);
+    certificate_label(T("nicht verfügbar"), false);
+    ui.certificate_timer = lv_timer_create(certificate_status_timer, 50, NULL);
+    if (!ui.certificate_timer) {
+        close_certificate_status(true);
+        return;
+    }
+    ui.certificate_opened_ms = ui.clock.monotonic_ms;
+    atomic_store(&certificate_request, ++ui.certificate_serial);
+}
+
+static void render_certificate_status(const UiCertificateStatus *status)
+{
+    lv_obj_clean(ui.certificate_content);
+    certificate_label(T("Zertifikatsfingerabdruck"), false);
+    certificate_label(T("SHA-256"), true);
+    static const char hex[] = {
+        '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'B', 'C', 'D', 'E', 'F'
+    };
+    char fingerprint[72];
+    size_t length = 0;
+    for (size_t i = 0; i < sizeof(status->sha256); ++i) {
+        if (i && i % 4 == 0) fingerprint[length++] = '\n';
+        fingerprint[length++] = hex[status->sha256[i] >> 4];
+        fingerprint[length++] = hex[status->sha256[i] & 15u];
+    }
+    fingerprint[length] = '\0';
+    certificate_label(fingerprint, true);
+    certificate_label(T("Geräte-ID"), false);
+    char id[17];
+    snprintf(id, sizeof(id), "%012" PRIX64, status->device);
+    certificate_label(id, true);
+    certificate_label(status->interface == UI_CERTIFICATE_AP ? T("IPv4 (WLAN AP)") :
+                                                            T("IPv4 (WLAN STA)"), true);
+    certificate_label(status->ipv4, true);
+    certificate_label(T("DNS-SAN"), true);
+    certificate_label(status->dns_san, true);
+    certificate_label(T("HTTP-Origin"), true);
+    certificate_label(*status->origin ? status->origin : T("nicht verfügbar"), !!*status->origin);
+}
+
+static void update_certificate_status(uint64_t now)
+{
+    if (!ui.certificate_content) return;
+    if (!ui.services.certificate_status || ui.reset_stage ||
+        now < ui.certificate_opened_ms || now - ui.certificate_opened_ms >= 90000u) {
+        close_certificate_status(true);
+        return;
+    }
+    UiCertificateStatus current = {0};
+    ui.services.certificate_status(ui.services.context, &current);
+    if (current.request != ui_certificate_status_request()) {
+        if (ui.certificate.request) close_certificate_status(true);
+        return;
+    }
+    if (lv_tick_elaps(current.sampled_tick) >= CERTIFICATE_SAMPLE_MAX_AGE_MS) {
+        if (ui.certificate.generation) close_certificate_status(true);
+        return;
+    }
+    if (!ui.certificate.request) {
+        ui.certificate = current;
+        if (current.generation) render_certificate_status(&current);
+    } else if (ui.certificate.generation != current.generation ||
+               ui.certificate.origin_revision != current.origin_revision ||
+               ui.certificate.device != current.device ||
+               ui.certificate.interface != current.interface ||
+               memcmp(ui.certificate.sha256, current.sha256, sizeof(current.sha256)) ||
+               strcmp(ui.certificate.ipv4, current.ipv4) ||
+               strcmp(ui.certificate.dns_san, current.dns_san) ||
+               strcmp(ui.certificate.origin, current.origin)) {
+        close_certificate_status(true);
+    }
 }
 
 static void open_setup(lv_event_t *event) {
@@ -1557,8 +1721,8 @@ static lv_obj_t *status_label(uint32_t *next, const char *text, int width)
 
 static void update_status(void)
 {
-    if (!ui.status) return;
-    uint32_t next = 1;
+    if (!ui.status || ui.certificate_content) return;
+    uint32_t next = ui.certificate_button ? 2 : 1;
     int text_w = ui.width - (ui.width == 240 ? 100 : 20);
     char date[64], line[128];
     if (ui.pairing_code[0]) {
@@ -1742,6 +1906,7 @@ void ui_set_pairing_code(const char code[7])
 
 static void build_screen(int16_t width, int16_t height)
 {
+    close_certificate_status(false);
     remember_scroll(ui.settings, ui.settings_menu ? 8u + (unsigned)ui.settings_menu : 5u);
     remember_scroll(ui.status, ui.status_scroll_slot);
     ui.page = ui.interaction_title = ui.send_button = NULL;
@@ -1767,6 +1932,7 @@ static void build_screen(int16_t width, int16_t height)
     ui.settings_options = NULL;
     ui.pairing_label = NULL;
     ui.status = NULL;
+    ui.certificate_button = NULL;
     if(ui.brightness_slider)cancel_brightness_preview();
     ui.brightness_slider=ui.brightness_percent=NULL;
     ui.slider_contact=ui.lv_slider_contact=false;
@@ -2391,6 +2557,11 @@ void ui_touch_sample(bool touched, int16_t x, int16_t y,
             ui.reject_confirm_motion = false;
             return;
         }
+        if (ui.certificate_content) {
+            if (!ui.edge_contact && dx >= 40 && dx >= 2 * abs(dy))
+                close_certificate_status(true);
+            return;
+        }
         if (ui.view == SETTINGS && ui.settings_menu != SETTINGS_ROOT && dx >= 40 &&
             dx >= 2 * abs(dy)) {
             /* A detail editor returns to its owning submenu first. */
@@ -2522,6 +2693,7 @@ void ui_render(const AppState *state, const LocalSettings *local,
     if(display_sleeping)return;
     if (!state || !local || !clock) return;
     bool alarm_started = state->alarm_active && ui.view != ALARM;
+    if (alarm_started) close_certificate_status(false);
     if (alarm_started && ui.reset_stage && !reset_abandon()) return;
     bool round_changed = ui.have_state && ui.state.alarm_active && state->alarm_active &&
                          !same_round(ui.state.round, state->round);
@@ -2664,6 +2836,7 @@ void ui_render(const AppState *state, const LocalSettings *local,
         update_status();
         ui.status_second = clock->monotonic_ms / 1000u;
     }
+    update_certificate_status(clock->monotonic_ms);
     if (ui.alarm_bar) update_alarm_bar(state, clock);
     if (ui.feedback && clock->monotonic_ms >= ui.feedback_until_ms)
         lv_obj_set_hidden(ui.feedback, true);

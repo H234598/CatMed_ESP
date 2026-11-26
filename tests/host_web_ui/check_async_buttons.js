@@ -544,6 +544,7 @@ async function checkWifiStaleEdit() {
     "/api/config": config, "/api/acme-identifier": {identifier:""},
     "/api/runtime-setup": {configured:true,mode:0,revision:"setup-r1",setup_open:false,time_source:"time.test"},
     "/api/client-cert": {enrolled:false},
+    "/api/server-identity": {state:"active"},
     "/api/wifi": {configured:true,recovery_available:true,profile_limit:8,profiles:[]},
     "/api/images?offset=0": {images:[],used_bytes:0,free_bytes:1024,image_count:0,next_offset:false},
     "/api/catalog/images?offset=0": {images:[],catalog_count:0,offset:0},
@@ -551,9 +552,20 @@ async function checkWifiStaleEdit() {
   };
   const initialPaths = Object.keys(bodies).filter(url=>url!=="/api/probe-after-failure").sort();
   scenario = {bodies,active:0,peak:0,completed:[]};
+  const initialCallStart = calls.length;
   await window.__testApplyBootstrap({setup_required:false,authenticated:true,device_name:"Synthetic"});
   assert.equal(scenario.peak,1,"authenticated initial API burst must be bounded");
   assert.deepEqual([...scenario.completed].sort(),initialPaths,"all intended loaders complete");
+  assert.deepEqual(calls.slice(initialCallStart).map(call=>[call.options.method,call.url]), [
+    ["GET", "/api/config"], ["GET", "/api/acme-identifier"],
+    ["GET", "/api/runtime-setup"], ["GET", "/api/client-cert"],
+    ["GET", "/api/server-identity"], ["GET", "/api/wifi"],
+    ["GET", "/api/images?offset=0"], ["GET", "/api/catalog/images?offset=0"]
+  ], "authenticated initial loaders retain their serialized order");
+  const identityRead = calls.slice(initialCallStart).find(call=>call.url==="/api/server-identity");
+  assert.equal(identityRead.options.credentials, "same-origin");
+  assert.equal(identityRead.options.body, undefined);
+  assert.equal(element("server-identity-state").textContent, "Serveridentität aktiviert und gespeichert.");
   assert.equal(element("clock-style").value,config.clock_style);
   assert.equal(element("brightness").value,config.brightness);
   assert.equal(element("network-mode").value,"0");

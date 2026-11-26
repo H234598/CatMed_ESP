@@ -1034,8 +1034,166 @@ static void text_shaping_allocation_failure(void)
            "ordinary Arabic shaping must resume after temporary pressure");
 }
 
+static void certificate_status_fake(void *context, UiCertificateStatus *status)
+{
+    *status = *(UiCertificateStatus *)context;
+}
+
+static void certificate_tap(lv_display_t *display, lv_obj_t *screen)
+{
+    lv_obj_t *label = find_label(screen, "Zertifikatsfingerabdruck");
+    assert(label);
+    lv_obj_t *control = lv_obj_get_parent(label);
+    assert(lv_obj_check_type(control, &lv_button_class));
+    lv_obj_scroll_to_view(control, LV_ANIM_OFF);
+    assert(gated_pointer_click(display, control));
+    assert(ui_certificate_status_request());
+}
+
+static void check_certificate_geometry(lv_obj_t *screen, int width, int height,
+                                       const char *fingerprint, const char *dns,
+                                       const char *origin)
+{
+    lv_obj_t *pin = find_label(screen, fingerprint);
+    lv_obj_t *name = find_label(screen, dns);
+    lv_obj_t *authority = find_label(screen, origin);
+    assert(pin && name && authority);
+    lv_obj_t *viewport = lv_obj_get_parent(pin);
+    lv_obj_update_layout(screen);
+    lv_area_t area;
+    lv_obj_get_coords(viewport, &area);
+    assert(area.x1 >= 0 && area.x2 < width && area.y1 >= 0 && area.y2 < height);
+    if (width == 240 && height == 240) {
+        const int x = area.x1 < width - 1 - area.x2 ? area.x1 : width - 1 - area.x2;
+        const int y = area.y1 < height - 1 - area.y2 ? area.y1 : height - 1 - area.y2;
+        assert((120 - x) * (120 - x) + (120 - y) * (120 - y) < 120 * 120);
+    }
+    assert(lv_obj_get_width(pin) <= lv_obj_get_content_width(viewport));
+    assert(lv_obj_get_style_base_dir(pin, 0) == LV_BASE_DIR_LTR);
+    assert(lv_obj_get_content_height(pin) >= 8 * lv_font_get_line_height(&katmed_font_12));
+    lv_obj_scroll_to_y(viewport, 32000, LV_ANIM_OFF);
+    assert(lv_obj_get_scroll_bottom(viewport) <= 0);
+    lv_area_t end;
+    lv_obj_get_coords(authority, &end);
+    assert(end.x1 >= area.x1 && end.x2 <= area.x2 && end.y2 <= area.y2);
+    assert(end.y2 >= area.y1);
+    draw();
+}
+
+static int check_certificate_status(int width, int height)
+{
+    assert((width == 240 && height == 240) || (width == 172 && height == 320) ||
+           (width == 320 && height == 172));
+    Host host = {.width = width, .height = height};
+    host.frame = calloc((size_t)width * height, 2);
+    uint16_t *buffer = malloc((size_t)width * 16 * 2);
+    assert(host.frame && buffer);
+    lv_init();
+    lv_display_t *display = lv_display_create(width, height);
+    assert(display);
+    lv_display_set_color_format(display, LV_COLOR_FORMAT_RGB565);
+    lv_display_set_buffers(display, buffer, NULL, (uint32_t)width * 16 * 2,
+                           LV_DISPLAY_RENDER_MODE_PARTIAL);
+    lv_display_set_flush_cb(display, flush);
+    lv_display_set_user_data(display, &host);
+    katmed_i18n_select(KATMED_LANG_DE);
+    UiCertificateStatus sample = {0};
+    UiServices services = {.context = &sample, .certificate_status = certificate_status_fake};
+    ui_set_services(&services);
+    AppState state = {0};
+    LocalSettings local = {.clock_style = DIGITAL_LARGE,
+                           .orientation = width > height ? ORIENTATION_90 : ORIENTATION_0};
+    ClockSample clock = {.monotonic_ms = 1000, .domain = 1};
+    ui_render(&state, &local, UI_VIEW_STATUS, &clock);
+    lv_obj_t *screen = lv_screen_active();
+    assert(!ui_certificate_status_request());
+    certificate_tap(display, screen);
+    assert(find_label(screen, "nicht verfügbar"));
+    sample.request = ui_certificate_status_request() + 1;
+    sample.generation = 7;
+    sample.origin_revision = 3;
+    sample.device = UINT64_C(0x001122AABBCC);
+    sample.interface = UI_CERTIFICATE_STA;
+    strcpy(sample.ipv4, "192.0.2.254");
+    memset(sample.dns_san, 'a', sizeof(sample.dns_san) - 1);
+    strcpy(sample.origin, "https://");
+    memset(sample.origin + 8, 'b', sizeof(sample.origin) - 9);
+    for (unsigned i = 63; i < sizeof(sample.dns_san) - 1; i += 64) {
+        sample.dns_san[i] = '.';
+        sample.origin[8 + i] = '.';
+    }
+    for (unsigned i = 0; i < sizeof(sample.sha256); ++i)
+        sample.sha256[i] = (uint8_t)i;
+    ui_render(&state, &local, UI_VIEW_STATUS, &clock);
+    assert(!find_label(screen, "SHA-256"));
+    sample.request = ui_certificate_status_request();
+    sample.sampled_tick = lv_tick_get();
+    ui_render(&state, &local, UI_VIEW_STATUS, &clock);
+    const char *pin = "00010203\n04050607\n08090A0B\n0C0D0E0F\n"
+                      "10111213\n14151617\n18191A1B\n1C1D1E1F";
+    assert(find_label(screen, "001122AABBCC") && find_label(screen, "192.0.2.254"));
+    assert(find_label(screen, "IPv4 (WLAN STA)") && find_label(screen, "DNS-SAN") &&
+           find_label(screen, "HTTP-Origin"));
+    check_certificate_geometry(screen, width, height, pin, sample.dns_san, sample.origin);
+    swipe(35, 115, 1100);
+    assert(!ui_certificate_status_request() && ui_current_view() == UI_VIEW_STATUS);
+    assert(!find_label(screen, pin));
+
+    for (unsigned stage = 0; stage < 8; ++stage) {
+        clock.monotonic_ms += 100;
+        certificate_tap(display, screen);
+        sample.request = ui_certificate_status_request();
+        sample.sampled_tick = lv_tick_get();
+        sample.generation = 7;
+        ui_render(&state, &local, UI_VIEW_STATUS, &clock);
+        assert(find_label(screen, pin));
+        switch (stage) {
+        case 0: ++sample.generation; break;
+        case 1: sample.ipv4[8] = '1'; break;
+        case 2: sample.origin[8] = 'c'; break;
+        case 3: sample.generation = 0; break;
+        case 4: clock.monotonic_ms += 90000; break;
+        case 5: ui_set_display_awake(false); break;
+        case 6: lv_tick_inc(251); lv_timer_handler(); break;
+        case 7: sample.origin_revision += 2; break; /* Returned Origin text, newer revision. */
+        }
+        if (stage == 5) {
+            assert(!ui_certificate_status_request() && !find_label(screen, pin));
+            ui_set_display_awake(true);
+            assert(!ui_lvgl_touch_allowed(false, 0, 0, true, clock.monotonic_ms));
+        }
+        if (stage == 6)
+            assert(!ui_certificate_status_request() && !find_label(screen, pin));
+        ui_render(&state, &local, UI_VIEW_STATUS, &clock);
+        assert(!ui_certificate_status_request() && !find_label(screen, pin));
+    }
+    ui_render(&state, &local, UI_VIEW_STATUS, &clock);
+    certificate_tap(display, screen);
+    sample.request = ui_certificate_status_request();
+    sample.sampled_tick = lv_tick_get();
+    sample.interface = UI_CERTIFICATE_AP;
+    sample.origin[0] = '\0';
+    ui_render(&state, &local, UI_VIEW_STATUS, &clock);
+    assert(find_label(screen, "IPv4 (WLAN AP)") && find_label(screen, "nicht verfügbar"));
+    assert(find_label(screen, pin));
+    state.alarm_active = true;
+    state.start_reason = START_BOOT;
+    ui_render(&state, &local, ALARM, &clock);
+    assert(!ui_certificate_status_request() && !find_label(screen, pin));
+    assert(ui_current_view() == ALARM);
+    printf("certificate status %dx%d: touch, complete binding, scroll, invalidation PASS\n",
+           width, height);
+    lv_display_delete(display);
+    lv_deinit();
+    free(buffer);
+    free(host.frame);
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
+    if (argc == 4 && strcmp(argv[1], "uat-certificate") == 0)
+        return check_certificate_status(atoi(argv[2]), atoi(argv[3]));
     if (argc == 4 && strcmp(argv[1], "uat-clock") == 0)
         return check_uat_controls(atoi(argv[2]), atoi(argv[3]), true);
     if (argc == 4 && strcmp(argv[1], "uat-reset") == 0)

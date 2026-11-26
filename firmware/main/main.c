@@ -677,6 +677,7 @@ typedef struct {
     bool wifi_render_valid;
 } UiOwnerSnapshot;
 static UiOwnerSnapshot ui_owner_snapshot;
+static UiCertificateStatus ui_certificate_owner_snapshot;
 static bool wifi_render_active;
 _Static_assert(KATMED_WEB_WIFI_SNAPSHOT_MAX_PROFILES==KATMED_STORE_WIFI_PROFILE_MAX,
                "render WiFi view must match Store profile capacity");
@@ -1243,6 +1244,15 @@ static void config_execute(void *context, const KatmedConfigRequest *request,
     }
     if (!rt || !request || !response || !rt->store_ready || rt->reboot_required ||
         store_get_status(&rt->store,NULL,NULL,NULL)!=STORE_OK) return;
+    if (request->operation == KATMED_CONFIG_SECURITY_TIME) {
+        const ClockSample sample = katmed_time_sample(&rt->time, monotonic_ms());
+        if (sample.utc_valid && sample.quality == CLOCK_SYNCHRONIZED &&
+            (rt->utc_source == 1 || rt->utc_source == 2)) {
+            response->security_utc_ms = sample.utc_ms;
+            response->status = KATMED_CONFIG_OK;
+        } else response->status = KATMED_CONFIG_TIME_UNAVAILABLE;
+        return;
+    }
     if (request->operation==KATMED_CONFIG_LANGUAGE_GET ||
         request->operation==KATMED_CONFIG_LANGUAGE_SAVE) {
         if (request->operation==KATMED_CONFIG_LANGUAGE_SAVE) {
@@ -1612,6 +1622,95 @@ static void network_status(void *context, UiNetworkStatus *out)
         esp_netif_is_netif_up(ap) && esp_netif_get_ip_info(ap, &ip) == ESP_OK &&
         ip.ip.addr != 0)
         snprintf(out->ap_ip, sizeof(out->ap_ip), IPSTR, IP2STR(&ip.ip));
+}
+
+typedef struct {
+    esp_netif_t *netif;
+    uint32_t address;
+    uint8_t bssid[6];
+} CertificateStation;
+
+/* The management proof uses the upstream STA in ordinary online operation.
+ * The Mesh SoftAP can be up at the same time. Its address is never nominated. */
+static bool certificate_station(const Runtime *runtime, CertificateStation *station)
+{
+    if (runtime->setup_ap || !runtime->mesh_started ||
+        !runtime->store.record.provision.configured ||
+        runtime->store.record.provision.network_mode != STORE_NETWORK_ONLINE)
+        return false;
+
+    wifi_mode_t mode;
+    if (esp_wifi_get_mode(&mode) != ESP_OK ||
+        (mode != WIFI_MODE_STA && mode != WIFI_MODE_APSTA))
+        return false;
+
+    esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+    esp_netif_ip_info_t info = {0};
+    wifi_ap_record_t before, after;
+    if (!netif || !esp_netif_is_netif_up(netif) ||
+        esp_wifi_sta_get_ap_info(&before) != ESP_OK ||
+        esp_netif_get_ip_info(netif, &info) != ESP_OK || !info.ip.addr ||
+        !esp_netif_is_netif_up(netif) ||
+        esp_wifi_sta_get_ap_info(&after) != ESP_OK ||
+        memcmp(before.bssid, after.bssid, sizeof(before.bssid)) != 0)
+        return false;
+
+    station->netif = netif;
+    station->address = info.ip.addr;
+    memcpy(station->bssid, after.bssid, sizeof(station->bssid));
+    return true;
+}
+
+/* Run only on Main. The display copies public values only. */
+static void publish_certificate_status(const Runtime *runtime)
+{
+    UiCertificateStatus status = {.request = ui_certificate_status_request()};
+    if (status.request) status.sampled_tick = lv_tick_get();
+    KatmedWebBootstrapSnapshot snapshot;
+    if (status.request && runtime->store_ready && !runtime->store.uncertain &&
+        !runtime->reboot_required && !runtime->state.alarm_active &&
+        (!runtime->display_policy.initialized || runtime->display_policy.awake) &&
+        runtime->boot.device && katmed_web_bootstrap_snapshot(&snapshot)) {
+        CertificateStation station, repeated_station;
+        if (certificate_station(runtime, &station) &&
+            certificate_station(runtime, &repeated_station) &&
+            station.netif == repeated_station.netif &&
+            station.address == repeated_station.address &&
+            memcmp(station.bssid, repeated_station.bssid, sizeof(station.bssid)) == 0 &&
+            katmed_web_bootstrap_snapshot_matches(snapshot.generation, snapshot.origin_revision)) {
+            _Static_assert(sizeof(status.dns_san) == sizeof(snapshot.dns_san),
+                           "UI must accommodate the entire Web bootstrap DNS SAN");
+            _Static_assert(sizeof(status.origin) >= sizeof("https://") + sizeof(snapshot.authority) - 1,
+                           "UI must accommodate the entire configured HTTPS Origin");
+            status.generation = snapshot.generation;
+            status.origin_revision = snapshot.origin_revision;
+            status.device = runtime->boot.device;
+            status.interface = UI_CERTIFICATE_STA;
+            memcpy(status.sha256, snapshot.sha256, sizeof(status.sha256));
+            memcpy(status.dns_san, snapshot.dns_san, sizeof(status.dns_san));
+            if (snapshot.authority[0])
+                snprintf(status.origin, sizeof(status.origin), "https://%s", snapshot.authority);
+            const esp_ip4_addr_t ip = {.addr = station.address};
+            snprintf(status.ipv4, sizeof(status.ipv4), IPSTR, IP2STR(&ip));
+        }
+    }
+    if (!status.generation)
+        status = (UiCertificateStatus){.request = status.request,
+                                       .sampled_tick = status.sampled_tick};
+    DISPLAY_MB_LOCK(&display_mailbox);
+    ui_certificate_owner_snapshot = status;
+    DISPLAY_MB_UNLOCK(&display_mailbox);
+}
+
+static void certificate_status(void *context, UiCertificateStatus *out)
+{
+    (void)context;
+    DISPLAY_MB_LOCK(&display_mailbox);
+    *out = ui_certificate_owner_snapshot;
+    DISPLAY_MB_UNLOCK(&display_mailbox);
+    if (out->generation &&
+        !katmed_web_bootstrap_snapshot_matches(out->generation, out->origin_revision))
+        *out = (UiCertificateStatus){.request = out->request, .sampled_tick = out->sampled_tick};
 }
 
 static void web_wipe(void *buffer, size_t length)
@@ -2716,6 +2815,7 @@ void app_main(void)
         .interaction_status = interaction_status,
         .connected = group_connected,
         .network_status = network_status,
+        .certificate_status = certificate_status,
         .last_confirmation = historical_confirmation,
         .pending_count = pending_confirmations,
         .storage_ready = storage_ready,
@@ -2915,6 +3015,7 @@ void app_main(void)
         if (runtime.mesh_started && !runtime.reboot_required)
             interaction_drain(now.monotonic_ms);
         const bool render_due = now.monotonic_ms - last_render_ms >= 50;
+        publish_certificate_status(&runtime);
         publish_render_owner(&runtime);
         katmed_config_owner_phase(KATMED_CONFIG_OWNER_PHASE_RENDER_CALL);
         const bool rendered=render_ui(&runtime.state, &runtime.local, &now, NULL,

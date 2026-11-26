@@ -166,6 +166,29 @@
 <button id="catalog-more" class="secondary" type="button">Weitere Katalogbilder</button>
 </section>
 
+<section class="panel" aria-labelledby="server-cert-title" data-main-panel>
+<h2 id="server-cert-title">HTTPS-Serverzertifikat</h2>
+<p class="help">Lege zuerst den getrennt geprüften Vertrauensanker fest. Der konfigurierte DNS-Name muss im Zertifikat stehen. Der Webdienst wird für den Wechsel kurz neu gestartet.</p>
+<form id="server-anchor-form">
+<label for="server-anchor-file">Vertrauensanker (ein CA-Zertifikat als PEM)</label>
+<input id="server-anchor-file" type="file" accept=".pem,.crt" required>
+<label for="server-anchor-password">Passwort zur Bestätigung</label>
+<input id="server-anchor-password" type="password" autocomplete="current-password" required>
+<button>Vertrauensanker speichern</button>
+</form>
+<form id="server-identity-form">
+<label for="server-chain-file">Serverzertifikat und Zwischenzertifikate (PEM)</label>
+<input id="server-chain-file" type="file" accept=".pem,.crt" required>
+<label for="server-key">Privater P-256-Schlüssel (64 Hexzeichen)</label>
+<input id="server-key" type="password" autocomplete="off" minlength="64" maxlength="64" required>
+<label for="server-password">Passwort zur Bestätigung</label>
+<input id="server-password" type="password" autocomplete="current-password" required>
+<button>Serveridentität übernehmen</button>
+</form>
+<p id="server-identity-state" class="help">Status wird geladen.</p>
+<button id="server-identity-refresh" class="secondary" type="button">Status aktualisieren</button>
+</section>
+
 <section class="panel" aria-labelledby="cert-title" data-main-panel>
 <h2 id="cert-title">Clientzertifikat</h2>
 <p class="help">Das Serverzertifikat schützt die Verbindung. Ein freigegebenes Clientzertifikat ist ein zusätzlicher Anmeldeweg; der private Clientschlüssel bleibt auf deinem Gerät.</p>

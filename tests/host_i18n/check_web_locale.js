@@ -61,6 +61,11 @@ const document = {
 const setupReplies = [];
 let languageReply = null;
 let languagePutStatus = 200;
+let serverIdentityState = "legacy";
+let serverIdentityError = null;
+let serverAnchorRequests = 0;
+let serverIdentityRequests = 0;
+let serverIdentityReads = 0;
 function jsonResponse(status, payload) {
   return {ok: status >= 200 && status < 300, status,
     headers: {get: () => "application/json"}, json: async () => payload};
@@ -70,6 +75,18 @@ const context = { window, document, NodeFilter: { SHOW_TEXT: 4 },
   history: { pushState() {}, replaceState() {} },
   location: { hostname: "localhost", protocol: "https:", hash: "", pathname: "/", search: "" },
   setTimeout() {}, fetch: async (url, options = {}) => {
+    if (url === "/api/server-anchor" && options.method === "POST") {
+      serverAnchorRequests++;
+      return jsonResponse(200, {});
+    }
+    if (url === "/api/server-identity") {
+      if (options.method === "POST") {
+        serverIdentityRequests++;
+        return serverIdentityError ? jsonResponse(422, {error: serverIdentityError}) : jsonResponse(200, {});
+      }
+      serverIdentityReads++;
+      return jsonResponse(200, {state: serverIdentityState});
+    }
     if (url === "/api/config" && options.method !== "PUT")
       return jsonResponse(503, {error: "unavailable"});
     if (url === "/api/runtime-setup") {
@@ -143,6 +160,102 @@ assert.equal(nodes[0].nodeValue, " Einstellungen ");
 assert.equal(nodes[1].nodeValue, "My own alarm text");
 
 (async () => {
+  // Use the registered browser controls and real catalog for each state and locale.
+  const identityStates = {
+    legacy: "Bisherige Serveridentität aktiv.",
+    pending: "Übernahme ausstehend; die Verbindung kann kurz unterbrochen werden.",
+    active: "Serveridentität aktiviert und gespeichert.",
+    failed: "Übernahme fehlgeschlagen; die vorherige Identität wird wiederhergestellt.",
+    uncertain: "Der Wechselzustand ist unklar. Der Dienst benötigt eine Wiederherstellung.",
+    unknown_synthetic: "Status unbekannt.",
+  };
+  const translated = (code, key) => window.KATMED_I18N.values[code][window.KATMED_I18N.keys.indexOf(key)];
+  for (const code of supported) {
+    window.__applyLocale(code);
+    for (const [status, key] of Object.entries(identityStates)) {
+      serverIdentityState = status;
+      await element("server-identity-refresh").listeners.click();
+      assert.equal(element("server-identity-state").textContent, translated(code, key), `${code}: ${status}`);
+    }
+  }
+  window.__applyLocale("en");
+  serverIdentityState = "active";
+  await element("server-identity-refresh").listeners.click();
+  assert.equal(element("server-identity-state").textContent, translated("en", identityStates.active));
+  const readsBeforeLanguageChange = serverIdentityReads;
+  element("language-select").value = "fr";
+  languageReply = "fr";
+  await element("language-form").listeners.submit({preventDefault() {}, currentTarget: element("language-form")});
+  assert.equal(document.documentElement.lang, "fr");
+  assert.equal(element("server-identity-state").textContent, translated("fr", identityStates.active));
+  assert.equal(serverIdentityReads, readsBeforeLanguageChange, "language change must not refetch identity");
+  window.__applyLocale("en");
+  serverIdentityState = "toString";
+  await element("server-identity-refresh").listeners.click();
+  assert.equal(element("server-identity-state").textContent, translated("en", "Status unbekannt."));
+  const submit = (id) => element(id).listeners.submit({preventDefault() {}, currentTarget: element(id)});
+  element("server-anchor-file").files = [{size: 2001, text: async () => "synthetic"}];
+  await submit("server-anchor-form");
+  assert.equal(serverAnchorRequests, 0);
+  assert.equal(element("notice").textContent, translated("en", "CA-Zertifikat ist zu groß."));
+  element("server-anchor-file").files = [{size: 10, text: async () => "synthetic anchor"}];
+  await submit("server-anchor-form");
+  assert.equal(serverAnchorRequests, 1);
+  assert.equal(element("notice").textContent, translated("en", "Vertrauensanker gespeichert."));
+  element("server-chain-file").files = [{size: 10, text: async () => "synthetic chain"}];
+  element("server-key").value = "invalid";
+  await submit("server-identity-form");
+  assert.equal(serverIdentityRequests, 0);
+  assert.equal(element("notice").textContent, translated("en", "Zertifikatskette oder Schlüssel hat ein ungültiges Format."));
+  const failures = {
+    time_unavailable: "Für die Zertifikatsprüfung ist eine synchronisierte Uhr erforderlich.",
+    anchor_unavailable: "Ein separat gespeicherter Vertrauensanker fehlt.",
+    invalid_identity: "Zertifikatskette, DNS-Name, Schlüssel oder Gültigkeit konnte nicht bestätigt werden.",
+  };
+  for (const [code, key] of Object.entries(failures)) {
+    serverIdentityError = code;
+    element("server-key").value = "a".repeat(64);
+    element("server-password").value = "synthetic";
+    await submit("server-identity-form");
+    assert.equal(element("notice").textContent, translated("en", key), code);
+    assert.equal(element("server-key").value, "", code);
+    assert.equal(element("server-password").value, "", code);
+  }
+  serverIdentityError = null;
+  element("server-key").value = "a".repeat(64);
+  element("server-password").value = "synthetic";
+  await submit("server-identity-form");
+  assert.equal(serverIdentityRequests, 4);
+  assert.equal(element("server-identity-state").textContent, translated("en", "Übernahme ausstehend; nach der Unterbrechung erneut anmelden und den Status aktualisieren."));
+  assert.equal(element("server-key").value, "");
+  assert.equal(element("server-password").value, "");
+  const pendingKey = "Übernahme ausstehend; nach der Unterbrechung erneut anmelden und den Status aktualisieren.";
+  const readsBeforePendingChange = serverIdentityReads;
+  element("language-select").value = "ja";
+  languageReply = "ja";
+  await submit("language-form");
+  assert.equal(element("server-identity-state").textContent, translated("ja", pendingKey));
+  assert.equal(serverIdentityReads, readsBeforePendingChange);
+  element("language-select").value = "en";
+  languagePutStatus = 503;
+  await submit("language-form");
+  assert.equal(document.documentElement.lang, "ja");
+  assert.equal(element("server-identity-state").textContent, translated("ja", pendingKey));
+  languagePutStatus = 200;
+  for (const language of ["fr", "ar"]) {
+    window.__applyLocale(language);
+    element("server-anchor-file").files = [{size: 2001, text: async () => "synthetic"}];
+    await submit("server-anchor-form");
+    assert.equal(element("notice").textContent, translated(language, "CA-Zertifikat ist zu groß."));
+    for (const [code, key] of Object.entries(failures)) {
+      serverIdentityError = code;
+      element("server-key").value = "a".repeat(64);
+      await submit("server-identity-form");
+      assert.equal(element("notice").textContent, translated(language, key), `${language}: ${code}`);
+    }
+  }
+  window.__applyLocale("de");
+
   /* Exercise the actual runtime Setup status producer, then change language
    * while the Settings page stays open. Static DOM translation alone passes. */
   setupReplies.push({configured: false, mode: 2, setup_open: true,

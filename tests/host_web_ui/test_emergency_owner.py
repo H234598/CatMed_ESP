@@ -17,6 +17,7 @@ PREFIX = r'''
 #define T(s) (s)
 #define LV_STATE_DISABLED 1
 typedef struct {int unused;} lv_obj_t;
+typedef struct _lv_timer_t lv_timer_t;
 typedef struct {int x1,y1,x2,y2;} lv_area_t;
 '''
 # These doubles are graphics/unselected-view boundaries, not emergency policy.
@@ -52,6 +53,17 @@ static void cancel_brightness_preview(void){assert(false);}
 static void cancel_edit(void *event){(void)event;assert(false);}
 static void destroy_menu(void){assert(false);}
 static void change_page(int dx,int dy,uint64_t now){(void)dx;(void)dy;(void)now;assert(false);}
+static void close_certificate_status(bool restore_status){
+    (void)restore_status; /* Only the view state is modeled here; LVGL rendering is external. */
+    if(!ui.certificate_content)return;
+    ui.certificate_timer=NULL;
+    ui.certificate=(UiCertificateStatus){0};
+    ui.certificate_content=NULL;
+    ui.certificate_button=NULL;
+    ui.status=NULL;
+    ++ui.overlay_generation;
+    if(ui.touch_down)ui.reject_contact=true;
+}
 static bool at_edge(int y){(void)y;return false;}
 static bool brightness_hit(int16_t x,int16_t y){(void)x;(void)y;return false;}
 '''
