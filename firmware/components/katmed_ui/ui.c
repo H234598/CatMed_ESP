@@ -119,6 +119,7 @@ typedef struct {
     bool morse_color_valid;
     bool morse_shown_white;
     int32_t scroll_y[14]; /* Nine tiles and four independent settings submenus. */
+    lv_obj_t *clamped_scroll_panel;
     uint8_t status_scroll_slot;
     uint8_t applied_language;
 } UiContext;
@@ -331,6 +332,23 @@ static void remember_scroll(lv_obj_t *panel, unsigned slot)
 {
     if (panel && lv_obj_is_valid(panel) && slot < sizeof(ui.scroll_y)/sizeof(ui.scroll_y[0]))
         ui.scroll_y[slot] = lv_obj_get_scroll_y(panel);
+    if (panel == ui.clamped_scroll_panel)
+        ui.clamped_scroll_panel = NULL;
+}
+
+static void remember_scroll_before_rebuild(lv_obj_t *panel, unsigned slot)
+{
+    /* Rotation can hide part of the scroll range until the previous geometry returns. */
+    if (panel != ui.clamped_scroll_panel || ui.local.orientation == ui.screen_orientation)
+        remember_scroll(panel, slot);
+}
+
+static void scroll_panel_moved(lv_event_t *event)
+{
+    lv_obj_t *panel = lv_event_get_target(event);
+    lv_indev_t *indev = lv_indev_active();
+    if (panel == ui.clamped_scroll_panel && indev && lv_indev_get_scroll_obj(indev) == panel)
+        ui.clamped_scroll_panel = NULL;
 }
 
 static void restore_scroll(lv_obj_t *panel, unsigned slot)
@@ -345,11 +363,20 @@ static void restore_scroll(lv_obj_t *panel, unsigned slot)
     if (wanted < 0) wanted = 0;
     if (wanted > maximum) wanted = maximum;
     lv_obj_scroll_to_y(panel, wanted, LV_ANIM_OFF);
+    if (wanted < ui.scroll_y[slot]) {
+        ui.clamped_scroll_panel = panel;
+        lv_obj_add_event_cb(panel, scroll_panel_moved, LV_EVENT_SCROLL, NULL);
+    }
+}
+
+static unsigned settings_scroll_slot(void)
+{
+    return ui.settings_menu ? 8u + (unsigned)ui.settings_menu : 5u;
 }
 
 static void destroy_menu(void)
 {
-    remember_scroll(ui.settings, ui.settings_menu ? 8u + (unsigned)ui.settings_menu : 5u);
+    remember_scroll(ui.settings, settings_scroll_slot());
     if (ui.brightness_slider) cancel_brightness_preview();
     ui.brightness_slider=ui.brightness_percent=NULL;
     if (ui.settings) lv_obj_delete(ui.settings);
@@ -1426,7 +1453,7 @@ static void build_settings(void)
             rotation_map[0]=T("Aus");rotation_map[2]=T("Nach Namen");rotation_map[4]=T("Zufall");
             option_matrix(ui.settings, rotation_map, row_w, 3, false);
         }
-        restore_scroll(ui.settings, 8u + (unsigned)ui.settings_menu);
+        restore_scroll(ui.settings, settings_scroll_slot());
         if (ui.feedback && !lv_obj_is_hidden(ui.feedback))
             lv_obj_move_foreground(ui.feedback);
         return;
@@ -1498,7 +1525,7 @@ static void build_settings(void)
     if (katmed_i18n_selected() == KATMED_LANG_AR)
         lv_obj_set_style_text_font(lv_obj_get_child(reset, 0), reset_caption_font(false), 0);
 #endif
-    restore_scroll(ui.settings, 5);
+    restore_scroll(ui.settings, settings_scroll_slot());
     if (ui.feedback && !lv_obj_is_hidden(ui.feedback))
         lv_obj_move_foreground(ui.feedback);
 }
@@ -1954,8 +1981,9 @@ void ui_set_pairing_code(const char code[7])
 static void build_screen(int16_t width, int16_t height)
 {
     close_certificate_status(false);
-    remember_scroll(ui.settings, ui.settings_menu ? 8u + (unsigned)ui.settings_menu : 5u);
-    remember_scroll(ui.status, ui.status_scroll_slot);
+    remember_scroll_before_rebuild(ui.settings, settings_scroll_slot());
+    remember_scroll_before_rebuild(ui.status, ui.status_scroll_slot);
+    ui.clamped_scroll_panel = NULL;
     ui.page = ui.interaction_title = ui.send_button = NULL;
     ui.rx_layer = ui.notice = NULL;
     ui.overlay_key = 0;

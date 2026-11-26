@@ -366,6 +366,18 @@ foreach(format "240;240" "172;320" "320;172")
 endforeach()
 
 if(KATMED_UI_HOST_MEM34)
+    add_test(NAME ui_settings_rotation_scroll_c6
+        COMMAND check_ui_surface settings-rotation-scroll)
+    add_test(NAME ui_settings_scroll_roundtrip_c6
+        COMMAND check_ui_surface settings-scroll-roundtrip)
+    add_test(NAME ui_settings_scroll_roundtrip_drag_c6
+        COMMAND check_ui_surface settings-scroll-roundtrip-drag)
+    add_test(NAME ui_status_scroll_roundtrip_c6
+        COMMAND check_ui_surface status-scroll-roundtrip)
+    add_test(NAME ui_status_scroll_roundtrip_drag_c6
+        COMMAND check_ui_surface status-scroll-roundtrip-drag)
+    add_test(NAME ui_status_scroll_columns_c3
+        COMMAND check_ui_surface status-scroll-columns-c3)
     add_test(NAME ui_reset_language_rebuild
         COMMAND check_ui_surface reset-language-rebuild)
     foreach(from RANGE 0 3)
